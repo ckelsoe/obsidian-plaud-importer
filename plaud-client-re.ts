@@ -308,15 +308,18 @@ function parseListResponse(raw: unknown, endpoint: string): readonly RawRecordin
 	});
 }
 
-// Upper bound on a plausible unix-seconds timestamp. If start_time is
-// greater than this the producer probably sent milliseconds — reject
-// loudly rather than creating a note dated in the year 6000.
-const MAX_PLAUSIBLE_UNIX_SECONDS = 4102444800; // 2100-01-01 UTC
+// Plausibility bounds for a Plaud recording's start_time, which is a unix
+// MILLISECONDS timestamp. Reject anything beyond 2100 or before 2000 — the
+// former catches unit-confusion where something even larger than ms is
+// sent, the latter catches a regression to unix seconds which would map to
+// ~1970 when interpreted as ms.
+const MIN_PLAUSIBLE_UNIX_MS = 946684800000; // 2000-01-01 UTC
+const MAX_PLAUSIBLE_UNIX_MS = 4102444800000; // 2100-01-01 UTC
 
 // Upper bound on a plausible transcript-segment timestamp in milliseconds.
 // A single recording longer than 24h is unheard of; a segment offset
-// greater than 24h almost certainly means the producer sent seconds
-// instead of milliseconds — reject as a unit-confusion canary.
+// greater than 24h almost certainly means the producer sent a unix
+// timestamp instead of a segment offset — reject as a unit-confusion canary.
 const MAX_PLAUSIBLE_SEGMENT_MS = 24 * 60 * 60 * 1000; // 24h
 
 function parseRecording(raw: RawRecording, endpoint: string): Recording {
@@ -338,9 +341,20 @@ function parseRecording(raw: RawRecording, endpoint: string): Recording {
 			endpoint,
 		);
 	}
-	if (raw.start_time > MAX_PLAUSIBLE_UNIX_SECONDS) {
+	// Plaud serializes start_time as unix MILLISECONDS on /file/simple/web.
+	// Earlier reverse-engineering notes (rsteckler/applaud pre-2026) said
+	// "seconds" and that was what the initial commit 2 of this client
+	// assumed — commit 4c corrected to ms after real-API testing showed
+	// values like 1776085791000 (2026-04-15 in ms) on every recording.
+	if (raw.start_time < MIN_PLAUSIBLE_UNIX_MS) {
 		throw new PlaudParseError(
-			`Recording ${raw.id} has start_time ${raw.start_time} which is beyond year 2100 — likely milliseconds instead of seconds`,
+			`Recording ${raw.id} has start_time ${raw.start_time} which is before year 2000 — likely seconds instead of milliseconds`,
+			endpoint,
+		);
+	}
+	if (raw.start_time > MAX_PLAUSIBLE_UNIX_MS) {
+		throw new PlaudParseError(
+			`Recording ${raw.id} has start_time ${raw.start_time} which is beyond year 2100 — probably not a unix timestamp at all`,
 			endpoint,
 		);
 	}
@@ -348,8 +362,7 @@ function parseRecording(raw: RawRecording, endpoint: string): Recording {
 	return {
 		id: raw.id as PlaudRecordingId,
 		title: raw.filename,
-		// Plaud serializes start_time as unix seconds, not millis.
-		createdAt: new Date(raw.start_time * 1000),
+		createdAt: new Date(raw.start_time),
 		durationSeconds: raw.duration,
 		transcriptAvailable: raw.is_trans,
 		summaryAvailable: raw.is_summary,

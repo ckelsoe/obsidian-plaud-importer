@@ -25,8 +25,11 @@ function record(overrides: Record<string, unknown> = {}): Record<string, unknown
 		fullname: 'REC_20260414_0900.wav',
 		filesize: 1024,
 		file_md5: 'deadbeef',
-		start_time: 1744628400, // 2025-04-14 11:00 UTC (unix seconds)
-		end_time: 1744629000,
+		// Plaud's /file/simple/web returns start_time as unix MILLISECONDS.
+		// Commit 4c corrected this after real-API testing — the initial
+		// assumption was seconds (from stale research notes).
+		start_time: 1744628400000, // 2025-04-14 11:00 UTC (unix ms)
+		end_time: 1744629000000,
 		duration: 600,
 		version: 1,
 		version_ms: 1744628400000,
@@ -141,8 +144,9 @@ describe('listRecordings happy path', () => {
 		expect(r.durationSeconds).toBe(600);
 		expect(r.transcriptAvailable).toBe(true);
 		expect(r.summaryAvailable).toBe(true);
-		// start_time is seconds on the wire; createdAt is a Date in millis.
-		expect(r.createdAt.getTime()).toBe(1744628400 * 1000);
+		// start_time is milliseconds on the wire; createdAt is a Date
+		// constructed directly from the ms value.
+		expect(r.createdAt.getTime()).toBe(1744628400000);
 	});
 
 	it('returns an empty array when the list is empty', async () => {
@@ -240,10 +244,11 @@ describe('listRecordings request shape', () => {
 
 describe('listRecordings filter behavior', () => {
 	function threeRecords(): Record<string, unknown>[] {
+		// Unix ms values: r1 = 2023-11-14, r2 = 2024-07-03, r3 = 2025-02-20.
 		return [
-			record({ id: 'r1', start_time: 1700000000, is_trans: true }),
-			record({ id: 'r2', start_time: 1720000000, is_trans: false }),
-			record({ id: 'r3', start_time: 1740000000, is_trans: true }),
+			record({ id: 'r1', start_time: 1700000000000, is_trans: true }),
+			record({ id: 'r2', start_time: 1720000000000, is_trans: false }),
+			record({ id: 'r3', start_time: 1740000000000, is_trans: true }),
 		];
 	}
 
@@ -260,8 +265,8 @@ describe('listRecordings filter behavior', () => {
 		const { fetcher } = captureFetcher(ok(listEnvelope(threeRecords())));
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
-		// 1720000000 unix seconds = 2024-07-03 11:46:40 UTC
-		const result = await client.listRecordings({ since: new Date(1720000000 * 1000) });
+		// 1720000000000 unix ms = 2024-07-03 11:46:40 UTC (same as r2)
+		const result = await client.listRecordings({ since: new Date(1720000000000) });
 
 		expect(result.map((r) => r.id)).toEqual(['r2', 'r3']);
 	});
@@ -270,7 +275,7 @@ describe('listRecordings filter behavior', () => {
 		const { fetcher } = captureFetcher(ok(listEnvelope(threeRecords())));
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
-		const result = await client.listRecordings({ until: new Date(1720000000 * 1000) });
+		const result = await client.listRecordings({ until: new Date(1720000000000) });
 
 		expect(result.map((r) => r.id)).toEqual(['r1', 'r2']);
 	});
@@ -382,16 +387,29 @@ describe('listRecordings parse errors', () => {
 		await expect(client.listRecordings()).rejects.toBeInstanceOf(PlaudParseError);
 	});
 
-	it('rejects start_time beyond year 2100 as likely milliseconds-mistaken-for-seconds', async () => {
-		// Year 2100 in unix seconds is 4102444800. A unix-millis value like
-		// 1744628400000 (year 2025) masquerading as seconds would land in
-		// year 57226 — this test pins the sanity check.
+	it('rejects start_time before year 2000 as likely seconds-mistaken-for-milliseconds', async () => {
+		// Plaud uses unix MILLISECONDS for start_time. A seconds-valued
+		// timestamp like 1744628400 (year 2025 in seconds) would land in
+		// January 1970 if interpreted as ms — pin the sanity check so a
+		// regression to the old "seconds" assumption fails loudly.
 		const { fetcher } = captureFetcher(
-			ok(listEnvelope([record({ start_time: 1744628400000 })])),
+			ok(listEnvelope([record({ start_time: 1744628400 })])),
 		);
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
-		await expect(client.listRecordings()).rejects.toThrow(/milliseconds/i);
+		await expect(client.listRecordings()).rejects.toThrow(/seconds/i);
+	});
+
+	it('rejects start_time beyond year 2100 as likely not-a-unix-timestamp', async () => {
+		// Year 2100 in unix ms is 4102444800000. Anything beyond that is
+		// almost certainly a unit-confusion bug (e.g., seconds-squared,
+		// microseconds misinterpreted) — reject loudly.
+		const { fetcher } = captureFetcher(
+			ok(listEnvelope([record({ start_time: 5_000_000_000_000 })])),
+		);
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+
+		await expect(client.listRecordings()).rejects.toThrow(/year 2100/);
 	});
 
 	it('aggregates multiple per-record parse failures into one error with counts', async () => {
