@@ -30,6 +30,14 @@ export default [
 		},
 	},
 	{
+		files: ["**/__tests__/**/*.ts"],
+		languageOptions: {
+			globals: {
+				...globals.jest,
+			},
+		},
+	},
+	{
 		ignores: ["main.js", "node_modules/**", "*.mjs"],
 	},
 ];
