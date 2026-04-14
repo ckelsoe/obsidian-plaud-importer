@@ -9,6 +9,7 @@
 // implements and §4.2 for the source research on the endpoint shapes.
 
 import type {
+	Chapter,
 	PlaudClient,
 	PlaudRecordingId,
 	Recording,
@@ -241,6 +242,7 @@ export class ReverseEngineeredPlaudClient implements PlaudClient {
 			polishedTranscript: null,
 			newerSummary: null,
 			aiKeywords: [],
+			chapters: [],
 		};
 		let bundleError: unknown = null;
 		try {
@@ -284,6 +286,7 @@ export class ReverseEngineeredPlaudClient implements PlaudClient {
 					summaryLength: finalSummary?.text.length ?? 0,
 					aiKeywordCount: bundle.aiKeywords.length,
 					aiKeywordSample: bundle.aiKeywords.slice(0, 5),
+					chapterCount: bundle.chapters.length,
 				},
 			});
 		}
@@ -292,6 +295,7 @@ export class ReverseEngineeredPlaudClient implements PlaudClient {
 			transcript: finalTranscript,
 			summary: finalSummary,
 			aiKeywords: bundle.aiKeywords.length > 0 ? bundle.aiKeywords : undefined,
+			chapters: bundle.chapters.length > 0 ? bundle.chapters : undefined,
 		};
 	}
 
@@ -322,17 +326,18 @@ export class ReverseEngineeredPlaudClient implements PlaudClient {
 	 *   - newer AI-generated summary (embedded under
 	 *     `pre_download_content_list[auto_sum_note].data_content`)
 	 *   - AI keyword tags (under `extra_data.aiContentHeader.keywords`)
+	 *   - chapters outline (follows the outline S3 link)
 	 *
-	 * The three fields are independent: a recording may have any subset.
-	 * Newer recordings typically have all three; older ones may only have
+	 * The fields are independent: a recording may have any subset. Newer
+	 * recordings typically have all of them; older ones may only have
 	 * the polish (or nothing at all). Callers treat each field as
 	 * best-effort and fall back to the legacy `/ai/transsumm/` response
 	 * for transcript and summary when the bundle lacks them.
 	 *
 	 * Throws on any network / structural-parse error so the caller can
-	 * decide whether to fall back or surface. The two-hop polish fetch
-	 * runs back-to-back with the detail fetch so the 5-minute pre-signed
-	 * S3 URL doesn't expire in between.
+	 * decide whether to fall back or surface. The two-hop polish and
+	 * outline fetches run back-to-back with the detail fetch so the
+	 * 5-minute pre-signed S3 URLs don't expire in between.
 	 */
 	private async fetchFileDetailBundle(
 		id: PlaudRecordingId,
@@ -342,6 +347,7 @@ export class ReverseEngineeredPlaudClient implements PlaudClient {
 		const rawDetail = await this.fetchJson(detailUrl, detailEndpoint);
 
 		const polishLink = findTransactionPolishLink(rawDetail, detailEndpoint);
+		const outlineLink = findOutlineLink(rawDetail, detailEndpoint);
 		const newerSummaryMarkdown = findNewerSummaryMarkdown(rawDetail, detailEndpoint);
 		const aiKeywords = findAiKeywords(rawDetail, detailEndpoint);
 
@@ -365,7 +371,38 @@ export class ReverseEngineeredPlaudClient implements PlaudClient {
 			polishedTranscript = parseTranscriptField(id, rawPolish, polishEndpoint);
 		}
 
-		return { polishedTranscript, newerSummary, aiKeywords };
+		let chapters: readonly Chapter[] = [];
+		if (outlineLink !== null) {
+			const outlineEndpoint = `/s3/file_outline/${encodeURIComponent(id)}`;
+			// Same authless fetch pattern as the polish: the S3 URL carries
+			// its own signature and must not receive the Bearer token. Any
+			// failure at this step is swallowed upstream in
+			// getTranscriptAndSummary (best-effort outline), so we don't
+			// wrap it here.
+			const rawOutline = await this.fetchJson(outlineLink, outlineEndpoint, {
+				skipAuth: true,
+			});
+			chapters = parseOutlineBody(rawOutline);
+			if (chapters.length === 0 && this.debugLogger?.enabled === true) {
+				// Shape discovery aid: the wire shape of the outline body is
+				// not yet fully captured, so when the parser returns empty
+				// we log the raw body (truncated to 2 KB) to make iteration
+				// cheap. Once Charles confirms the real shape, tighten
+				// parseOutlineBody and remove this diagnostic.
+				const sample =
+					typeof rawOutline === 'string'
+						? rawOutline.slice(0, 2048)
+						: JSON.stringify(rawOutline).slice(0, 2048);
+				this.debugLogger.log({
+					kind: 'parsed',
+					endpoint: outlineEndpoint,
+					message: `outline body present but parseOutlineBody returned 0 chapters — shape may be new`,
+					payload: { rawSample: sample },
+				});
+			}
+		}
+
+		return { polishedTranscript, newerSummary, aiKeywords, chapters };
 	}
 
 	private async fetchJson(
@@ -722,15 +759,17 @@ function isRawRecording(value: unknown): value is RawRecording {
  * it through the normal parse-error path.
  */
 /**
- * Shape returned by `fetchFileDetailBundle` — the three extracts we pull
- * from a single `/file/detail/{id}` round trip. Keeping them bundled lets
- * the caller make one fetch and consume all the fields at once instead of
- * walking the response three times with three independent helpers.
+ * Shape returned by `fetchFileDetailBundle` — the four extracts we pull
+ * from a single `/file/detail/{id}` round trip (plus follow-up S3 fetches
+ * for polish and outline). Keeping them bundled lets the caller make one
+ * fetch and consume all the fields at once instead of walking the
+ * response multiple times with independent helpers.
  */
 export interface FileDetailBundle {
 	readonly polishedTranscript: Transcript | null;
 	readonly newerSummary: Summary | null;
 	readonly aiKeywords: readonly string[];
+	readonly chapters: readonly Chapter[];
 }
 
 /**
@@ -860,6 +899,213 @@ export function findAiKeywords(
 		}
 	}
 	return out;
+}
+
+/**
+ * Walk a `/file/detail/{id}` response and return the pre-signed S3 URL of
+ * the outline content entry, or null when the recording has no outline
+ * available.
+ *
+ * Same selection rules as `findTransactionPolishLink`: scan `content_list`
+ * for the entry whose `data_type === 'outline'`, require `task_status === 1`,
+ * return the `data_link` string. Null on any absent-but-valid case; throws
+ * only on structurally corrupt responses.
+ */
+export function findOutlineLink(
+	raw: unknown,
+	endpoint: string,
+): string | null {
+	if (!isRecord(raw)) {
+		throw new PlaudParseError(
+			`Response body for ${endpoint} is not an object`,
+			endpoint,
+		);
+	}
+	const data = raw.data;
+	if (!isRecord(data)) {
+		throw new PlaudParseError(
+			`Response body for ${endpoint} is missing the 'data' object`,
+			endpoint,
+		);
+	}
+	const contentList = data.content_list;
+	if (contentList === undefined || contentList === null) {
+		return null;
+	}
+	if (!Array.isArray(contentList)) {
+		throw new PlaudParseError(
+			`Response body for ${endpoint} has 'content_list' that is not an array`,
+			endpoint,
+		);
+	}
+	for (const item of contentList) {
+		if (!isRecord(item)) {
+			continue;
+		}
+		if (item.data_type !== 'outline') {
+			continue;
+		}
+		if (item.task_status !== 1) {
+			return null;
+		}
+		const link = item.data_link;
+		if (typeof link !== 'string' || link.length === 0) {
+			return null;
+		}
+		return link;
+	}
+	return null;
+}
+
+/**
+ * Parse the body of Plaud's outline S3 file into an ordered Chapter list.
+ *
+ * The wire shape is not yet fully characterized (no capture on hand as of
+ * 2026-04-14), so this parser is deliberately defensive: it handles every
+ * plausible shape listed below and returns an empty array when none match.
+ * When a non-empty body fails to parse, the caller logs the raw body
+ * (truncated) through the debug logger so Charles can inspect during the
+ * first real import and we can tighten the parser in a follow-up.
+ *
+ * Supported shapes (in precedence order):
+ *
+ *  1. Bare array of objects with a title-like field and a start-time
+ *     field in milliseconds. Accepted keys:
+ *     - title: `title` | `heading` | `name` | `topic`
+ *     - start: `start_time` | `startTime` | `start` | `start_ms` | `begin`
+ *     - end:   `end_time`   | `endTime`   | `end`   | `end_ms`   | `finish`
+ *
+ *  2. Envelope `{ content: string }` where the string is JSON that
+ *     re-parses to shape 1. Mirrors `data_result_summ`.
+ *
+ *  3. Envelope `{ content: { topics: [...] } }` or `{ content: { outline: [...] } }`
+ *     or `{ topics: [...] }` or `{ outline: [...] }`.
+ *
+ *  4. JSON-encoded string that parses to any of the above.
+ *
+ * Timestamps in the source are assumed to be milliseconds (matching every
+ * other Plaud time field), divided by 1000 for the returned `startSeconds`
+ * / `endSeconds`. Titles are trimmed; entries with an empty title or a
+ * non-finite start are dropped.
+ */
+export function parseOutlineBody(raw: unknown): readonly Chapter[] {
+	const candidates = collectOutlineCandidates(raw);
+	const out: Chapter[] = [];
+	for (const item of candidates) {
+		if (!isRecord(item)) {
+			continue;
+		}
+		const title = pickNonEmptyString(
+			item.title,
+			item.heading,
+			item.name,
+			item.topic,
+		);
+		if (title === undefined) {
+			continue;
+		}
+		const startMs = pickFiniteNumber(
+			item.start_time,
+			item.startTime,
+			item.start,
+			item.start_ms,
+			item.begin,
+		);
+		if (startMs === undefined) {
+			continue;
+		}
+		const endMs = pickFiniteNumber(
+			item.end_time,
+			item.endTime,
+			item.end,
+			item.end_ms,
+			item.finish,
+		);
+		const chapter: Chapter =
+			endMs !== undefined
+				? { title, startSeconds: startMs / 1000, endSeconds: endMs / 1000 }
+				: { title, startSeconds: startMs / 1000 };
+		out.push(chapter);
+	}
+	return out;
+}
+
+/**
+ * Unwrap Plaud's many possible envelopes around the outline data and
+ * return the array of candidate chapter objects (still raw, still
+ * un-validated). Returns an empty array when no recognizable shape is
+ * found at any level of nesting.
+ */
+function collectOutlineCandidates(raw: unknown): readonly unknown[] {
+	let cursor: unknown = raw;
+
+	// JSON-encoded string → parse first.
+	if (typeof cursor === 'string') {
+		const trimmed = cursor.trim();
+		if (trimmed.length === 0) {
+			return [];
+		}
+		if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+			try {
+				cursor = JSON.parse(trimmed);
+			} catch {
+				return [];
+			}
+		} else {
+			return [];
+		}
+	}
+
+	// Bare array → candidates directly.
+	if (Array.isArray(cursor)) {
+		return cursor;
+	}
+
+	// Envelope walk: unwrap { content: ... } → { topics: ... } / { outline: ... }
+	// until we hit an array or run out of known keys.
+	const keyChain = ['content', 'data', 'result', 'topics', 'outline', 'chapters'] as const;
+	const visited = new Set<unknown>();
+	while (isRecord(cursor) && !visited.has(cursor)) {
+		visited.add(cursor);
+		let advanced = false;
+		for (const key of keyChain) {
+			const next = cursor[key];
+			if (next === undefined || next === null) {
+				continue;
+			}
+			if (Array.isArray(next)) {
+				return next;
+			}
+			if (typeof next === 'string') {
+				// Recurse into the parsed string.
+				return collectOutlineCandidates(next);
+			}
+			if (isRecord(next)) {
+				cursor = next;
+				advanced = true;
+				break;
+			}
+		}
+		if (!advanced) {
+			break;
+		}
+	}
+	return [];
+}
+
+function pickFiniteNumber(...values: unknown[]): number | undefined {
+	for (const v of values) {
+		if (typeof v === 'number' && Number.isFinite(v)) {
+			return v;
+		}
+		if (typeof v === 'string') {
+			const n = Number(v);
+			if (Number.isFinite(n)) {
+				return n;
+			}
+		}
+	}
+	return undefined;
 }
 
 export function findTransactionPolishLink(

@@ -4,22 +4,28 @@ import {
 	expandTitleWithYear,
 	extractPlaudIdFromFrontmatter,
 	extractSpeakers,
+	formatChaptersCallout,
 	formatDurationHoursMinutes,
 	formatFrontmatter,
 	formatMarkdown,
 	formatPlaudWebUrl,
 	formatTimestamp,
+	formatTranscriptSection,
+	groupTranscriptByChapters,
 	mergeTagSources,
 	sanitizeFilename,
 	type FileLike,
 	type FolderLike,
+	type TranscriptChapterGroup,
 	type VaultLike,
 } from '../note-writer';
 import type {
+	Chapter,
 	PlaudRecordingId,
 	Recording,
 	Summary,
 	Transcript,
+	TranscriptSegment,
 } from '../plaud-client';
 
 // Fixtures ------------------------------------------------------------------
@@ -1264,5 +1270,334 @@ describe('mergeTagSources', () => {
 			'plaud/devops',
 			'plaud/workflow-modernization',
 		]);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// groupTranscriptByChapters — DD-004 item 2 follow-up (2026-04-14)
+// ---------------------------------------------------------------------------
+
+describe('groupTranscriptByChapters', () => {
+	function seg(startSeconds: number, text = 'text'): TranscriptSegment {
+		return { startSeconds, endSeconds: startSeconds + 5, text, speaker: 'A' };
+	}
+	function tx(segments: readonly TranscriptSegment[]): Transcript {
+		return { id: 'abc' as PlaudRecordingId, segments, rawText: '' };
+	}
+
+	it('returns [] when transcript is null', () => {
+		expect(
+			groupTranscriptByChapters(null, [{ title: 'A', startSeconds: 0 }]),
+		).toEqual([]);
+	});
+
+	it('returns [] when transcript has no segments', () => {
+		expect(
+			groupTranscriptByChapters(tx([]), [{ title: 'A', startSeconds: 0 }]),
+		).toEqual([]);
+	});
+
+	it('returns [] when chapters is undefined or empty', () => {
+		expect(groupTranscriptByChapters(tx([seg(0)]), undefined)).toEqual([]);
+		expect(groupTranscriptByChapters(tx([seg(0)]), [])).toEqual([]);
+	});
+
+	it('assigns segments to chapters by last startSeconds <= segment.startSeconds', () => {
+		const segments = [seg(0, 'intro'), seg(30, 'intro-2'), seg(60, 'main'), seg(120, 'main-2'), seg(200, 'wrap')];
+		const chapters: readonly Chapter[] = [
+			{ title: 'Intro', startSeconds: 0 },
+			{ title: 'Main', startSeconds: 60 },
+			{ title: 'Wrap', startSeconds: 180 },
+		];
+		const groups = groupTranscriptByChapters(tx(segments), chapters);
+		expect(groups).toHaveLength(3);
+		expect(groups[0].segments.map((s) => s.text)).toEqual(['intro', 'intro-2']);
+		expect(groups[1].segments.map((s) => s.text)).toEqual(['main', 'main-2']);
+		expect(groups[2].segments.map((s) => s.text)).toEqual(['wrap']);
+	});
+
+	it('assigns segments that start before the first chapter to the first chapter', () => {
+		const segments = [seg(0, 'early'), seg(10, 'also-early'), seg(60, 'main')];
+		const chapters: readonly Chapter[] = [
+			{ title: 'Main block', startSeconds: 30 },
+		];
+		const groups = groupTranscriptByChapters(tx(segments), chapters);
+		expect(groups).toHaveLength(1);
+		expect(groups[0].segments.map((s) => s.text)).toEqual(['early', 'also-early', 'main']);
+	});
+
+	it('gives non-empty groups a blockId of "t-ch-{idx}"', () => {
+		const groups = groupTranscriptByChapters(
+			tx([seg(0), seg(60)]),
+			[
+				{ title: 'Intro', startSeconds: 0 },
+				{ title: 'Main', startSeconds: 60 },
+			],
+		);
+		expect(groups[0].blockId).toBe('t-ch-0');
+		expect(groups[1].blockId).toBe('t-ch-1');
+	});
+
+	it('gives empty groups a null blockId so the caller can skip linking', () => {
+		// Two chapters but only one segment near the start — the second
+		// chapter gets no segments and therefore no block id.
+		const groups = groupTranscriptByChapters(
+			tx([seg(0)]),
+			[
+				{ title: 'A', startSeconds: 0 },
+				{ title: 'B', startSeconds: 300 },
+			],
+		);
+		expect(groups[0].blockId).toBe('t-ch-0');
+		expect(groups[1].blockId).toBeNull();
+		expect(groups[1].segments).toEqual([]);
+	});
+
+	it('drops chapters with blank titles before bucketing', () => {
+		const groups = groupTranscriptByChapters(
+			tx([seg(0), seg(60)]),
+			[
+				{ title: '   ', startSeconds: 0 },
+				{ title: 'Real', startSeconds: 30 },
+			],
+		);
+		expect(groups).toHaveLength(1);
+		expect(groups[0].chapter.title).toBe('Real');
+		// Both segments attach to the sole surviving chapter.
+		expect(groups[0].segments).toHaveLength(2);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// formatChaptersCallout — linked chapters list
+// ---------------------------------------------------------------------------
+
+describe('formatChaptersCallout', () => {
+	function makeGroup(
+		chapter: Chapter,
+		blockId: string | null,
+		segmentCount = 1,
+	): TranscriptChapterGroup {
+		const segments: TranscriptSegment[] = [];
+		for (let i = 0; i < segmentCount; i++) {
+			segments.push({
+				startSeconds: chapter.startSeconds + i,
+				endSeconds: chapter.startSeconds + i + 1,
+				text: 'seg',
+				speaker: 'A',
+			});
+		}
+		return { chapter, blockId, segments };
+	}
+
+	it('returns empty string for empty groups', () => {
+		expect(formatChaptersCallout([])).toBe('');
+	});
+
+	it('renders each chapter row as a wiki link to its block id', () => {
+		const groups: readonly TranscriptChapterGroup[] = [
+			makeGroup({ title: 'Introduction', startSeconds: 0 }, 't-ch-0'),
+			makeGroup({ title: 'Main', startSeconds: 125 }, 't-ch-1'),
+			makeGroup({ title: 'Conclusion', startSeconds: 600 }, 't-ch-2'),
+		];
+		expect(formatChaptersCallout(groups)).toBe(
+			[
+				'> [!note]- Chapters',
+				'> [[#^t-ch-0|**[00:00]** Introduction]]',
+				'> [[#^t-ch-1|**[02:05]** Main]]',
+				'> [[#^t-ch-2|**[10:00]** Conclusion]]',
+			].join('\n'),
+		);
+	});
+
+	it('falls back to plain text for groups with null blockId', () => {
+		const groups: readonly TranscriptChapterGroup[] = [
+			makeGroup({ title: 'Linked', startSeconds: 0 }, 't-ch-0'),
+			makeGroup({ title: 'Empty', startSeconds: 300 }, null, 0),
+		];
+		const out = formatChaptersCallout(groups);
+		expect(out).toContain('> [[#^t-ch-0|**[00:00]** Linked]]');
+		expect(out).toContain('> **[05:00]** Empty');
+		expect(out).not.toContain('#^null');
+	});
+
+	it('uses h:MM:SS for chapters past the hour mark', () => {
+		const groups = [makeGroup({ title: 'Late', startSeconds: 3700 }, 't-ch-0')];
+		expect(formatChaptersCallout(groups)).toContain('**[1:01:40]** Late');
+	});
+});
+
+// ---------------------------------------------------------------------------
+// formatTranscriptSection — grouped vs single-callout
+// ---------------------------------------------------------------------------
+
+describe('formatTranscriptSection', () => {
+	it('falls back to the single flat transcript callout when groups is empty', () => {
+		const transcript = makeTranscript();
+		const out = formatTranscriptSection(transcript, []);
+		expect(out).toContain('> [!note]- Transcript');
+		expect(out).toContain('> **[00:00]** Charles: Thanks for making time.');
+		// No inline chapter headings when there are no groups.
+		expect(out).not.toMatch(/> ### /);
+	});
+
+	it('renders a placeholder callout when transcript is null', () => {
+		const out = formatTranscriptSection(null, []);
+		expect(out).toBe('> [!note]- Transcript\n> _No transcript available._');
+	});
+
+	it('emits a unified callout with mini-TOC at top and block-id-tagged chapter paragraphs when chapters are present', () => {
+		const segs: TranscriptSegment[] = [
+			{ startSeconds: 0, endSeconds: 5, text: 'hi', speaker: 'A' },
+			{ startSeconds: 60, endSeconds: 65, text: 'mid', speaker: 'B' },
+		];
+		const groups: readonly TranscriptChapterGroup[] = [
+			{
+				chapter: { title: 'Intro', startSeconds: 0 },
+				segments: [segs[0]],
+				blockId: 't-ch-0',
+			},
+			{
+				chapter: { title: 'Middle', startSeconds: 60 },
+				segments: [segs[1]],
+				blockId: 't-ch-1',
+			},
+		];
+		const out = formatTranscriptSection(
+			{ id: 'abc' as PlaudRecordingId, segments: segs, rawText: '' },
+			groups,
+		);
+		// Starts with the collapsed callout header, exactly one.
+		expect(out.match(/> \[!note\]- Transcript/g)).toHaveLength(1);
+		// Mini-TOC is inside the callout.
+		expect(out).toContain('> **Chapters**');
+		expect(out).toContain('> - [[#^t-ch-0|**[00:00]** Intro]]');
+		expect(out).toContain('> - [[#^t-ch-1|**[01:00]** Middle]]');
+		// Horizontal rule separator between TOC and body.
+		expect(out).toContain('> ---');
+		// Chapter paragraphs with block ids at the end.
+		expect(out).toMatch(/> \*\*\[00:00\]\*\* A: hi\n> \^t-ch-0/);
+		expect(out).toMatch(/> \*\*\[01:00\]\*\* B: mid\n> \^t-ch-1/);
+		// Blank `>` separator between chapter paragraphs.
+		expect(out).toContain('> ^t-ch-0\n>\n> **[01:00]**');
+	});
+
+	it('uses plain-text TOC rows for chapters with no segments', () => {
+		const segs: TranscriptSegment[] = [
+			{ startSeconds: 0, endSeconds: 5, text: 'only', speaker: 'A' },
+		];
+		const groups: readonly TranscriptChapterGroup[] = [
+			{
+				chapter: { title: 'Intro', startSeconds: 0 },
+				segments: segs,
+				blockId: 't-ch-0',
+			},
+			{
+				chapter: { title: 'Empty', startSeconds: 300 },
+				segments: [],
+				blockId: null,
+			},
+		];
+		const out = formatTranscriptSection(
+			{ id: 'abc' as PlaudRecordingId, segments: segs, rawText: '' },
+			groups,
+		);
+		// Empty chapter shows in the TOC without a wiki link.
+		expect(out).toContain('> - [[#^t-ch-0|**[00:00]** Intro]]');
+		expect(out).toContain('> - **[05:00]** Empty');
+		// No block-id-less wiki link target was emitted.
+		expect(out).not.toContain('#^null');
+		// No paragraph body for the empty chapter.
+		expect(out).not.toContain('^t-ch-1');
+	});
+
+	it('falls back to flat callout if every group is empty', () => {
+		const segs: TranscriptSegment[] = [
+			{ startSeconds: 0, endSeconds: 5, text: 'orphan', speaker: 'A' },
+		];
+		const groups: readonly TranscriptChapterGroup[] = [
+			{
+				chapter: { title: 'Unused', startSeconds: 500 },
+				segments: [],
+				blockId: null,
+			},
+		];
+		const out = formatTranscriptSection(
+			{ id: 'abc' as PlaudRecordingId, segments: segs, rawText: '' },
+			groups,
+		);
+		// Should fall back to the single-callout form since the
+		// chaptered renderer has nothing with segments to emit.
+		expect(out).toContain('> [!note]- Transcript');
+		expect(out).toContain('> **[00:00]** A: orphan');
+		expect(out).not.toContain('**Chapters**');
+	});
+});
+
+// ---------------------------------------------------------------------------
+// formatMarkdown with chapters — end-to-end integration
+// ---------------------------------------------------------------------------
+
+describe('formatMarkdown with chapters', () => {
+	it('renders a single unified Transcript callout containing chapters TOC and segments with block ids', () => {
+		const recording = makeRecording();
+		const transcript: Transcript = {
+			id: recording.id,
+			rawText: '',
+			segments: [
+				{ startSeconds: 0, endSeconds: 30, text: 'hello', speaker: 'A' },
+				{ startSeconds: 60, endSeconds: 90, text: 'world', speaker: 'B' },
+			],
+		};
+		const summary: Summary = {
+			id: recording.id,
+			text: 'Summary body goes here.',
+		};
+		const chapters: readonly Chapter[] = [
+			{ title: 'Opening', startSeconds: 0 },
+			{ title: 'Close', startSeconds: 60 },
+		];
+		const md = formatMarkdown(recording, transcript, summary, chapters);
+
+		// No external chapters callout — it's now inside the transcript callout.
+		expect(md).not.toContain('> [!note]- Chapters');
+		// Exactly one [!note]- Transcript block.
+		expect(md.match(/> \[!note\]- Transcript/g)).toHaveLength(1);
+		// Mini-TOC inside the transcript callout with wiki links.
+		expect(md).toContain('> **Chapters**');
+		expect(md).toContain('> - [[#^t-ch-0|**[00:00]** Opening]]');
+		expect(md).toContain('> - [[#^t-ch-1|**[01:00]** Close]]');
+		// Block ids attached to chapter paragraphs.
+		expect(md).toMatch(/> \*\*\[00:00\]\*\* A: hello\n> \^t-ch-0/);
+		expect(md).toMatch(/> \*\*\[01:00\]\*\* B: world\n> \^t-ch-1/);
+		// Ordering: Summary → Transcript callout (no external chapters block).
+		const summaryIdx = md.indexOf('## Summary');
+		const transcriptIdx = md.indexOf('> [!note]- Transcript');
+		expect(summaryIdx).toBeLessThan(transcriptIdx);
+	});
+
+	it('omits the Chapters section entirely when chapters is undefined', () => {
+		const recording = makeRecording();
+		const transcript = makeTranscript();
+		const summary: Summary = { id: recording.id, text: 'Body' };
+
+		const md = formatMarkdown(recording, transcript, summary);
+
+		expect(md).not.toContain('> [!note]- Chapters');
+		expect(md).toContain('> [!note]- Transcript');
+		expect(md.indexOf('## Summary')).toBeLessThan(
+			md.indexOf('> [!note]- Transcript'),
+		);
+	});
+
+	it('omits the Chapters section when the list is empty', () => {
+		const recording = makeRecording();
+		const transcript = makeTranscript();
+		const summary: Summary = { id: recording.id, text: 'Body' };
+
+		const md = formatMarkdown(recording, transcript, summary, []);
+
+		expect(md).not.toContain('> [!note]- Chapters');
+		expect(md).toContain('> [!note]- Transcript');
 	});
 });

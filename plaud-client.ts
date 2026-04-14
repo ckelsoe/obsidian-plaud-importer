@@ -33,6 +33,35 @@ export interface TranscriptAndSummary {
 	 * so namespacing and dedup rules stay in one place.
 	 */
 	readonly aiKeywords?: readonly string[];
+	/**
+	 * Ordered list of AI-generated chapter markers for the recording.
+	 * Populated by the RE client from the `outline` entry inside
+	 * `/file/detail/{id}`'s `content_list`, which points at a pre-signed
+	 * S3 URL whose body is the chapter list. Left undefined when the
+	 * outline is absent (older recordings) or the S3 fetch/parse failed.
+	 *
+	 * The exact wire shape of the S3 body is still being pinned down — the
+	 * RE client's `parseOutlineBody` handles the shapes seen so far and
+	 * logs the raw body at debug level when it can't recognize it, so
+	 * Charles can inspect and we can widen the parser in a follow-up.
+	 */
+	readonly chapters?: readonly Chapter[];
+}
+
+/**
+ * A single chapter entry extracted from Plaud's outline data. Titles are
+ * trimmed non-empty strings; timestamps are in seconds (Plaud's wire
+ * format is milliseconds, converted by the parser) so they match the
+ * existing `TranscriptSegment.startSeconds` convention.
+ *
+ * `endSeconds` is optional because not every wire shape carries it — a
+ * stripped-down outline may only give start points. Note-writer falls
+ * back to showing just the start timestamp when end is absent.
+ */
+export interface Chapter {
+	readonly title: string;
+	readonly startSeconds: number;
+	readonly endSeconds?: number;
 }
 
 export interface PlaudClient {

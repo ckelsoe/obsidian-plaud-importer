@@ -5,7 +5,9 @@ import {
 	ReverseEngineeredPlaudClient,
 	findAiKeywords,
 	findNewerSummaryMarkdown,
+	findOutlineLink,
 	findTransactionPolishLink,
+	parseOutlineBody,
 	type PlaudHttpFetcher,
 	type PlaudHttpRequest,
 	type PlaudHttpResponse,
@@ -1922,6 +1924,7 @@ describe('findAiKeywords', () => {
 describe('getTranscriptAndSummary DD-004 paths', () => {
 	function fileDetailFull(options: {
 		readonly polishUrl?: string;
+		readonly outlineUrl?: string;
 		readonly newerSummary?: string;
 		readonly keywords?: readonly string[];
 	}): Record<string, unknown> {
@@ -1931,6 +1934,13 @@ describe('getTranscriptAndSummary DD-004 paths', () => {
 				data_type: 'transaction_polish',
 				task_status: 1,
 				data_link: options.polishUrl,
+			});
+		}
+		if (options.outlineUrl !== undefined) {
+			contentList.push({
+				data_type: 'outline',
+				task_status: 1,
+				data_link: options.outlineUrl,
 			});
 		}
 		const preDownload: unknown[] = [];
@@ -2043,6 +2053,68 @@ describe('getTranscriptAndSummary DD-004 paths', () => {
 		expect(result.aiKeywords).toBeUndefined();
 	});
 
+	it('propagates chapters on the result when /file/detail/ has an outline link and the parser recognizes the body', async () => {
+		const { fetcher } = routeFetcher({
+			transsumm: ok(transsummEnvelope()),
+			detail: ok(fileDetailFull({ outlineUrl: 'https://s3/outline?sig=x' })),
+		});
+		// Override the routeFetcher default for the outline hop by passing
+		// through polish route (it's a catch-all for "anything else").
+		const client = new ReverseEngineeredPlaudClient(
+			() => 'tok',
+			async (req) => {
+				if (req.url.includes('/ai/transsumm/')) {
+					return ok(transsummEnvelope());
+				}
+				if (req.url.includes('/file/detail/')) {
+					return ok(
+						fileDetailFull({ outlineUrl: 'https://s3/outline?sig=x' }),
+					);
+				}
+				if (req.url.includes('outline')) {
+					return ok([
+						{ title: 'Introduction', start_time: 0, end_time: 60000 },
+						{ title: 'Main topic', start_time: 60000, end_time: 180000 },
+						{ title: 'Wrap up', start_time: 180000, end_time: 240000 },
+					]);
+				}
+				return fetcher(req);
+			},
+		);
+
+		const result = await client.getTranscriptAndSummary(ID);
+
+		expect(result.chapters).toEqual([
+			{ title: 'Introduction', startSeconds: 0, endSeconds: 60 },
+			{ title: 'Main topic', startSeconds: 60, endSeconds: 180 },
+			{ title: 'Wrap up', startSeconds: 180, endSeconds: 240 },
+		]);
+	});
+
+	it('returns undefined chapters when /file/detail/ has no outline link', async () => {
+		const { fetcher } = routeFetcher({
+			transsumm: ok(transsummEnvelope()),
+			detail: ok(fileDetailFull({})), // no outlineUrl
+		});
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+
+		const result = await client.getTranscriptAndSummary(ID);
+
+		expect(result.chapters).toBeUndefined();
+	});
+
+	it('returns undefined chapters when /file/detail/ throws', async () => {
+		const { fetcher } = routeFetcher({
+			transsumm: ok(transsummEnvelope()),
+			throwOn: 'detail',
+		});
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+
+		const result = await client.getTranscriptAndSummary(ID);
+
+		expect(result.chapters).toBeUndefined();
+	});
+
 	it('combines all three DD-004 sources in one successful call', async () => {
 		// End-to-end regression: polished transcript + newer summary + keywords
 		// all arrive on the result from a single /file/detail/ round trip.
@@ -2078,5 +2150,210 @@ describe('getTranscriptAndSummary DD-004 paths', () => {
 		]);
 		expect(result.summary?.text).toContain('New body.');
 		expect(result.aiKeywords).toEqual(['Topic A', 'Topic B']);
+	});
+});
+
+// =============================================================================
+// findOutlineLink — DD-004 item 2: chapters (2026-04-14)
+// =============================================================================
+
+describe('findOutlineLink', () => {
+	function fileDetailOutline(contentList: unknown[]): Record<string, unknown> {
+		return {
+			status: 0,
+			msg: 'success',
+			data: { file_id: 'abc123', content_list: contentList, extra_data: {} },
+		};
+	}
+
+	function outlineItem(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+		return {
+			data_type: 'outline',
+			task_status: 1,
+			data_link: 'https://s3.amazonaws.com/outline.json?X-Amz-Signature=fake',
+			...overrides,
+		};
+	}
+
+	it('returns the outline data_link when a successful outline entry exists', () => {
+		const raw = fileDetailOutline([
+			{ data_type: 'transaction', task_status: 1, data_link: 'https://s3/raw' },
+			outlineItem(),
+		]);
+		const link = findOutlineLink(raw, '/file/detail/abc123');
+		expect(link).toBe('https://s3.amazonaws.com/outline.json?X-Amz-Signature=fake');
+	});
+
+	it('returns null when content_list has no outline entry', () => {
+		const raw = fileDetailOutline([
+			{ data_type: 'transaction', task_status: 1, data_link: 'https://s3/raw' },
+		]);
+		expect(findOutlineLink(raw, '/file/detail/abc')).toBeNull();
+	});
+
+	it('returns null when outline task_status is not 1', () => {
+		const raw = fileDetailOutline([outlineItem({ task_status: 0 })]);
+		expect(findOutlineLink(raw, '/file/detail/abc')).toBeNull();
+	});
+
+	it('returns null when outline entry has empty data_link', () => {
+		const raw = fileDetailOutline([outlineItem({ data_link: '' })]);
+		expect(findOutlineLink(raw, '/file/detail/abc')).toBeNull();
+	});
+
+	it('returns null when content_list is absent', () => {
+		const raw = { status: 0, data: { file_id: 'abc' } };
+		expect(findOutlineLink(raw, '/file/detail/abc')).toBeNull();
+	});
+
+	it('throws PlaudParseError when response body is not an object', () => {
+		expect(() => findOutlineLink('nope', '/file/detail/abc')).toThrow(
+			PlaudParseError,
+		);
+	});
+
+	it('throws PlaudParseError when content_list is not an array', () => {
+		const raw = { status: 0, data: { content_list: 'bogus' } };
+		expect(() => findOutlineLink(raw, '/file/detail/abc')).toThrow(
+			PlaudParseError,
+		);
+	});
+});
+
+// =============================================================================
+// parseOutlineBody — DD-004 item 2: defensive multi-shape parser
+// =============================================================================
+
+describe('parseOutlineBody', () => {
+	it('parses a bare array of {title, start_time, end_time} in ms', () => {
+		const raw = [
+			{ title: 'Intro', start_time: 0, end_time: 60000 },
+			{ title: 'Body', start_time: 60000, end_time: 180000 },
+		];
+		expect(parseOutlineBody(raw)).toEqual([
+			{ title: 'Intro', startSeconds: 0, endSeconds: 60 },
+			{ title: 'Body', startSeconds: 60, endSeconds: 180 },
+		]);
+	});
+
+	it('accepts alternate title keys (heading, name, topic)', () => {
+		expect(
+			parseOutlineBody([
+				{ heading: 'A', start_time: 0 },
+				{ name: 'B', start_time: 1000 },
+				{ topic: 'C', start_time: 2000 },
+			]),
+		).toEqual([
+			{ title: 'A', startSeconds: 0 },
+			{ title: 'B', startSeconds: 1 },
+			{ title: 'C', startSeconds: 2 },
+		]);
+	});
+
+	it('accepts alternate start keys (startTime, start, start_ms, begin)', () => {
+		expect(
+			parseOutlineBody([
+				{ title: 'A', startTime: 0 },
+				{ title: 'B', start: 1000 },
+				{ title: 'C', start_ms: 2000 },
+				{ title: 'D', begin: 3000 },
+			]),
+		).toEqual([
+			{ title: 'A', startSeconds: 0 },
+			{ title: 'B', startSeconds: 1 },
+			{ title: 'C', startSeconds: 2 },
+			{ title: 'D', startSeconds: 3 },
+		]);
+	});
+
+	it('accepts string-encoded numeric timestamps', () => {
+		expect(
+			parseOutlineBody([{ title: 'A', start_time: '5000', end_time: '10000' }]),
+		).toEqual([{ title: 'A', startSeconds: 5, endSeconds: 10 }]);
+	});
+
+	it('parses a JSON-encoded string wrapping a bare array', () => {
+		const raw = JSON.stringify([{ title: 'Intro', start_time: 0 }]);
+		expect(parseOutlineBody(raw)).toEqual([
+			{ title: 'Intro', startSeconds: 0 },
+		]);
+	});
+
+	it('unwraps an envelope { content: [...] }', () => {
+		const raw = { content: [{ title: 'Intro', start_time: 0 }] };
+		expect(parseOutlineBody(raw)).toEqual([
+			{ title: 'Intro', startSeconds: 0 },
+		]);
+	});
+
+	it('unwraps a nested envelope { content: { topics: [...] } }', () => {
+		const raw = {
+			content: { topics: [{ title: 'Intro', start_time: 0 }] },
+		};
+		expect(parseOutlineBody(raw)).toEqual([
+			{ title: 'Intro', startSeconds: 0 },
+		]);
+	});
+
+	it('unwraps { content: { outline: [...] } }', () => {
+		const raw = {
+			content: { outline: [{ title: 'Intro', start_time: 0 }] },
+		};
+		expect(parseOutlineBody(raw)).toEqual([
+			{ title: 'Intro', startSeconds: 0 },
+		]);
+	});
+
+	it('unwraps a string-encoded content field (JSON of JSON)', () => {
+		const raw = {
+			content: JSON.stringify([{ title: 'Intro', start_time: 0 }]),
+		};
+		expect(parseOutlineBody(raw)).toEqual([
+			{ title: 'Intro', startSeconds: 0 },
+		]);
+	});
+
+	it('returns [] for an unrecognized shape', () => {
+		expect(parseOutlineBody({ garbage: true })).toEqual([]);
+		expect(parseOutlineBody(42)).toEqual([]);
+		expect(parseOutlineBody(null)).toEqual([]);
+	});
+
+	it('returns [] for a malformed JSON string', () => {
+		expect(parseOutlineBody('not json {{{')).toEqual([]);
+	});
+
+	it('drops entries without a title', () => {
+		expect(
+			parseOutlineBody([
+				{ start_time: 0 },
+				{ title: 'Keep me', start_time: 1000 },
+				{ title: '   ', start_time: 2000 },
+			]),
+		).toEqual([{ title: 'Keep me', startSeconds: 1 }]);
+	});
+
+	it('drops entries without a finite start time', () => {
+		expect(
+			parseOutlineBody([
+				{ title: 'No start' },
+				{ title: 'Bad start', start_time: 'xyz' },
+				{ title: 'Keep', start_time: 1000 },
+			]),
+		).toEqual([{ title: 'Keep', startSeconds: 1 }]);
+	});
+
+	it('preserves ordering from the source array', () => {
+		expect(
+			parseOutlineBody([
+				{ title: 'Third', start_time: 180000 },
+				{ title: 'First', start_time: 0 },
+				{ title: 'Second', start_time: 60000 },
+			]),
+		).toEqual([
+			{ title: 'Third', startSeconds: 180 },
+			{ title: 'First', startSeconds: 0 },
+			{ title: 'Second', startSeconds: 60 },
+		]);
 	});
 });

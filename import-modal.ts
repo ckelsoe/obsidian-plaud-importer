@@ -811,7 +811,7 @@ export class ImportModal extends Modal {
 				this.importButton.textContent = `Importing ${i + 1} of ${selected.length}…`;
 			}
 			try {
-				const { transcript, summary, aiKeywords } =
+				const { transcript, summary, aiKeywords, chapters } =
 					await this.client.getTranscriptAndSummary(recording.id);
 				// DD-004: merge Plaud's AI-generated keyword list (from
 				// /file/detail/) into the recording's tags before the note
@@ -829,6 +829,7 @@ export class ImportModal extends Modal {
 					enrichedRecording,
 					transcript,
 					summary,
+					chapters,
 				);
 				// Report the original recording in the result so any
 				// downstream UI that renders the import summary sees the

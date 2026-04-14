@@ -26,6 +26,7 @@
 // class satisfies VaultLike structurally).
 
 import type {
+	Chapter,
 	Recording,
 	Summary,
 	Transcript,
@@ -466,13 +467,236 @@ function formatSummaryBody(summary: Summary | null): string {
 	return summary.text.trim();
 }
 
-function formatTranscriptCallout(transcript: Transcript | null): string {
+/**
+ * One chapter paired with the transcript segments that belong to it.
+ * `blockId` is the Obsidian block identifier attached at the end of
+ * this chapter's transcript segments inside the single unified
+ * `[!note]- Transcript` callout. The chapters mini-TOC at the top of
+ * the same callout links to this block id via `[[#^${blockId}|...]]`
+ * so clicking a chapter row jumps down to the matching slice of the
+ * transcript while everything stays in one collapsible block. When a
+ * chapter has zero segments the block id is `null`, and the TOC row
+ * renders as plain text since there's no jump target to emit.
+ */
+export interface TranscriptChapterGroup {
+	readonly chapter: Chapter;
+	readonly segments: readonly TranscriptSegment[];
+	readonly blockId: string | null;
+}
+
+/**
+ * Partition a transcript into one group per chapter by advancing the
+ * chapter cursor every time a segment's `startSeconds` crosses into the
+ * next chapter's window. Segments that start before the first chapter
+ * (an unusual but possible shape) attach to the first chapter so the
+ * transcript is never silently truncated.
+ *
+ * Each group's `headingAnchor` is `"MM:SS Title"` when the group has at
+ * least one segment, `null` otherwise. The caller uses this to decide
+ * whether the chapters-list row should be a wiki link to a real heading
+ * inside the transcript or fall back to plain text.
+ *
+ * Returns `[]` when either the transcript or the chapters list is
+ * empty, signaling the caller to fall back to the unlinked
+ * single-callout transcript the plugin rendered before DD-004's chapter
+ * work landed.
+ */
+export function groupTranscriptByChapters(
+	transcript: Transcript | null,
+	chapters: readonly Chapter[] | undefined,
+): readonly TranscriptChapterGroup[] {
+	if (!transcript || transcript.segments.length === 0) {
+		return [];
+	}
+	if (!chapters || chapters.length === 0) {
+		return [];
+	}
+
+	// Drop chapters with blank titles up-front so they don't consume
+	// heading slots and so the chapter list renders consistently with
+	// what the parser dropped.
+	const cleanChapters = chapters.filter((c) => c.title.trim().length > 0);
+	if (cleanChapters.length === 0) {
+		return [];
+	}
+
+	const buckets: TranscriptSegment[][] = cleanChapters.map(() => []);
+	for (const segment of transcript.segments) {
+		// Find the last chapter whose startSeconds is <= segment.startSeconds.
+		// Chapters are assumed to be in ascending order (parseOutlineBody
+		// preserves the Plaud wire order, which is ascending).
+		let idx = 0;
+		for (let i = 0; i < cleanChapters.length; i++) {
+			if (cleanChapters[i].startSeconds <= segment.startSeconds) {
+				idx = i;
+			} else {
+				break;
+			}
+		}
+		buckets[idx].push(segment);
+	}
+
+	return cleanChapters.map((chapter, i) => {
+		const segments = buckets[i];
+		return {
+			chapter,
+			segments,
+			blockId: segments.length > 0 ? `t-ch-${i}` : null,
+		};
+	});
+}
+
+/**
+ * Standalone chapters callout used in no-transcript edge cases. When a
+ * transcript exists, the chapters mini-TOC is emitted INSIDE the
+ * unified `[!note]- Transcript` callout instead — see
+ * `formatTranscriptSection`. This helper is retained so a recording
+ * that has chapters but no transcript still renders something useful,
+ * and so tests of the isolated list formatting can exercise it
+ * directly.
+ */
+export function formatChaptersCallout(
+	groups: readonly TranscriptChapterGroup[],
+): string {
+	if (groups.length === 0) {
+		return '';
+	}
+	const lines: string[] = ['> [!note]- Chapters'];
+	let rendered = 0;
+	for (const group of groups) {
+		const title = group.chapter.title.trim();
+		if (title.length === 0) {
+			continue;
+		}
+		const stamp = formatTimestamp(group.chapter.startSeconds);
+		const display = `**[${stamp}]** ${title}`;
+		const row =
+			group.blockId !== null ? `[[#^${group.blockId}|${display}]]` : display;
+		lines.push(`> ${row}`);
+		rendered += 1;
+	}
+	if (rendered === 0) {
+		return '';
+	}
+	return lines.join('\n');
+}
+
+/**
+ * Render the transcript section as a single collapsed `[!note]- Transcript`
+ * callout. This is the pre-DD-004 flat format when no chapters are
+ * available, and a unified chapters-list-plus-segments format when they
+ * are — in both cases everything lives in ONE top-level callout so the
+ * whole block collapses as one unit.
+ *
+ * **Chaptered layout (groups non-empty):**
+ *
+ * ```
+ * > [!note]- Transcript
+ * > **Chapters**
+ * > - [[#^t-ch-0|**[00:00]** Introduction]]
+ * > - [[#^t-ch-1|**[02:05]** Main topic]]
+ * >
+ * > ---
+ * >
+ * > **[00:00]** Charles: Thanks for making time.
+ * > **[00:14]** Mary: Of course, glad to be here.
+ * > ^t-ch-0
+ * >
+ * > **[02:05]** Charles: So about pricing...
+ * > ^t-ch-1
+ * ```
+ *
+ * The chapters mini-TOC and its jump targets both live inside the same
+ * callout, so collapsing the callout hides the TOC along with the
+ * transcript. Expanding reveals the TOC at the top; clicking a row
+ * scrolls down to the matching `^t-ch-{idx}` block id.
+ *
+ * This format bets on Obsidian's block-reference index picking up
+ * `^id` markers at the end of paragraphs inside a callout. If that
+ * bet fails, the fallback is the `## Transcript` + `### MM:SS Title`
+ * heading approach from the previous iteration, at the cost of losing
+ * "collapsed by default".
+ *
+ * Empty groups (chapters with no segments) contribute a plain-text row
+ * to the mini-TOC — no block id target, no paragraph.
+ */
+export function formatTranscriptSection(
+	transcript: Transcript | null,
+	groups: readonly TranscriptChapterGroup[],
+): string {
 	if (!transcript || transcript.segments.length === 0) {
 		return '> [!note]- Transcript\n> _No transcript available._';
 	}
-	const lines = ['> [!note]- Transcript'];
-	for (const segment of transcript.segments) {
-		lines.push(formatTranscriptLine(segment));
+	if (groups.length === 0) {
+		const lines: string[] = ['> [!note]- Transcript'];
+		for (const segment of transcript.segments) {
+			lines.push(formatTranscriptLine(segment));
+		}
+		return lines.join('\n');
+	}
+
+	// Chaptered: one callout containing the chapters mini-TOC followed
+	// by the transcript segments bucketed by chapter. Chapters with no
+	// segments appear in the TOC as plain text (no jump target) and
+	// contribute no paragraph downstream so the transcript never shows
+	// empty chapter gaps.
+	const lines: string[] = ['> [!note]- Transcript', '> **Chapters**'];
+	let tocRendered = 0;
+	for (const group of groups) {
+		const title = group.chapter.title.trim();
+		if (title.length === 0) {
+			continue;
+		}
+		const stamp = formatTimestamp(group.chapter.startSeconds);
+		const display = `**[${stamp}]** ${title}`;
+		const row =
+			group.blockId !== null ? `[[#^${group.blockId}|${display}]]` : display;
+		lines.push(`> - ${row}`);
+		tocRendered += 1;
+	}
+	if (tocRendered === 0) {
+		// Every chapter was filtered out — fall back to flat callout so
+		// the user still gets a transcript.
+		const fallback = ['> [!note]- Transcript'];
+		for (const segment of transcript.segments) {
+			fallback.push(formatTranscriptLine(segment));
+		}
+		return fallback.join('\n');
+	}
+
+	// Separator between the mini-TOC and the transcript body. A blank
+	// `>` line, a `---` horizontal rule, and another blank `>` line so
+	// the rule renders inside the callout.
+	lines.push('>');
+	lines.push('> ---');
+	lines.push('>');
+
+	let first = true;
+	let bodyRendered = 0;
+	for (const group of groups) {
+		if (group.blockId === null || group.segments.length === 0) {
+			continue;
+		}
+		if (!first) {
+			// Blank `>` line between chapter paragraphs so Obsidian's
+			// parser treats each chapter's segments as its own paragraph
+			// inside the callout — required for the block id to attach
+			// to the chapter and not the whole callout.
+			lines.push('>');
+		}
+		for (const segment of group.segments) {
+			lines.push(formatTranscriptLine(segment));
+		}
+		lines.push(`> ^${group.blockId}`);
+		first = false;
+		bodyRendered += 1;
+	}
+	if (bodyRendered === 0) {
+		const fallback = ['> [!note]- Transcript'];
+		for (const segment of transcript.segments) {
+			fallback.push(formatTranscriptLine(segment));
+		}
+		return fallback.join('\n');
 	}
 	return lines.join('\n');
 }
@@ -490,9 +714,30 @@ export function formatMarkdown(
 	recording: Recording,
 	transcript: Transcript | null,
 	summary: Summary | null,
+	chapters?: readonly Chapter[],
 ): string {
 	const speakers = extractSpeakers(transcript);
 	const expandedTitle = expandTitleWithYear(recording.title, recording.createdAt);
+	// Group once and share the result between both sections so the
+	// block ids the chapters list links to match the block ids the
+	// transcript section emits. groupTranscriptByChapters returns [] on
+	// any no-chapters case, which both helpers handle by falling back
+	// to the pre-DD-004 single-callout transcript and skipping the
+	// chapters block entirely.
+	const groups = groupTranscriptByChapters(transcript, chapters);
+	// When chapters exist and there's a transcript to host them, the
+	// mini-TOC renders inside the unified transcript callout so the
+	// whole thing collapses as one block. Only emit the external
+	// chapters callout when there are chapters but NO transcript (a
+	// degenerate but possible shape for recordings whose transcription
+	// failed).
+	const hasTranscript =
+		transcript !== null && transcript.segments.length > 0;
+	const externalChaptersSection =
+		groups.length > 0 && !hasTranscript
+			? formatChaptersCallout(groups)
+			: '';
+	const transcriptSection = formatTranscriptSection(transcript, groups);
 	const parts: string[] = [
 		formatFrontmatter(recording, speakers),
 		'',
@@ -510,9 +755,11 @@ export function formatMarkdown(
 		'',
 		formatSummaryBody(summary),
 		'',
-		formatTranscriptCallout(transcript),
-		'',
 	];
+	if (externalChaptersSection.length > 0) {
+		parts.push(externalChaptersSection, '');
+	}
+	parts.push(transcriptSection, '');
 	return parts.join('\n');
 }
 
@@ -543,6 +790,7 @@ export class NoteWriter {
 		recording: Recording,
 		transcript: Transcript | null,
 		summary: Summary | null,
+		chapters?: readonly Chapter[],
 	): Promise<WriteOutcome> {
 		// Defense-in-depth: refuse to write a note that advertises content
 		// it doesn't have. The ImportModal is responsible for not calling us
@@ -571,7 +819,7 @@ export class NoteWriter {
 		const filename = `${sanitizeFilename(expandedTitle)}.md`;
 		const targetPath =
 			this.outputFolder === '' ? filename : `${this.outputFolder}/${filename}`;
-		const markdown = formatMarkdown(recording, transcript, summary);
+		const markdown = formatMarkdown(recording, transcript, summary, chapters);
 
 		const existing = this.vault.getFileByPath(targetPath);
 		if (existing === null) {
