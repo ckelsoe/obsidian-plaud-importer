@@ -191,6 +191,37 @@ function formatDateYmd(d: Date): string {
 }
 
 /**
+ * Prepend the year from `date` onto a recording title that starts with
+ * Plaud's default MM-DD prefix. Titles that already have a YYYY-MM-DD
+ * prefix or no date prefix at all are returned unchanged.
+ *
+ *   expandTitleWithYear("04-13 Meeting", 2026-04-13)
+ *     === "2026-04-13 Meeting"
+ *   expandTitleWithYear("2026-04-13 Meeting", 2026-04-13)
+ *     === "2026-04-13 Meeting"  (already expanded)
+ *   expandTitleWithYear("Meeting notes", 2026-04-13)
+ *     === "Meeting notes"  (no MM-DD prefix)
+ *
+ * This runs once in writeNote and is used for both the filename (via
+ * sanitizeFilename) and the H1 heading (via formatMarkdown) so the two
+ * stay in sync.
+ */
+export function expandTitleWithYear(title: string, date: Date): string {
+	const trimmed = title.trim();
+	// Already has a full YYYY-MM-DD prefix — don't double-prefix.
+	if (/^\d{4}-\d{2}-\d{2}/.test(trimmed)) {
+		return trimmed;
+	}
+	// Has a MM-DD prefix followed by whitespace or end-of-string — prepend
+	// the year from the recording's createdAt so the title reads as a full
+	// YYYY-MM-DD date followed by the original description.
+	if (/^\d{2}-\d{2}(\s|$)/.test(trimmed)) {
+		return `${date.getFullYear()}-${trimmed}`;
+	}
+	return trimmed;
+}
+
+/**
  * Format a duration (in seconds) as a readable "hours and minutes" string
  * for the `duration` frontmatter field. The accompanying `duration-seconds`
  * field keeps the raw integer so Dataview can do arithmetic.
@@ -371,10 +402,11 @@ export function formatMarkdown(
 	summary: Summary | null,
 ): string {
 	const speakers = extractSpeakers(transcript);
+	const expandedTitle = expandTitleWithYear(recording.title, recording.createdAt);
 	const parts: string[] = [
 		formatFrontmatter(recording, speakers),
 		'',
-		`# ${recording.title}`,
+		`# ${expandedTitle}`,
 		'',
 		'## Summary',
 		'',
@@ -431,7 +463,14 @@ export class NoteWriter {
 
 		await this.ensureFolder(this.outputFolder);
 
-		const filename = `${sanitizeFilename(recording.title)}.md`;
+		// Expand the title with its year if it uses Plaud's MM-DD default
+		// naming — applies to both the filename and the H1 so they stay in
+		// sync. formatMarkdown below calls the same helper.
+		const expandedTitle = expandTitleWithYear(
+			recording.title,
+			recording.createdAt,
+		);
+		const filename = `${sanitizeFilename(expandedTitle)}.md`;
 		const targetPath =
 			this.outputFolder === '' ? filename : `${this.outputFolder}/${filename}`;
 		const markdown = formatMarkdown(recording, transcript, summary);

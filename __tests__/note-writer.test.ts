@@ -1,6 +1,7 @@
 import {
 	NoteWriter,
 	NoteWriterError,
+	expandTitleWithYear,
 	extractPlaudIdFromFrontmatter,
 	extractSpeakers,
 	formatDurationHoursMinutes,
@@ -254,6 +255,70 @@ describe('formatDurationHoursMinutes', () => {
 	});
 });
 
+// expandTitleWithYear -------------------------------------------------------
+
+describe('expandTitleWithYear', () => {
+	const apr14 = new Date(2026, 3, 14); // 2026-04-14 local
+
+	it('prepends the year to a MM-DD-prefixed title', () => {
+		expect(expandTitleWithYear('04-13 Meeting notes', apr14)).toBe(
+			'2026-04-13 Meeting notes',
+		);
+	});
+
+	it('prepends the year to a bare MM-DD title with no body', () => {
+		expect(expandTitleWithYear('04-13', apr14)).toBe('2026-04-13');
+	});
+
+	it('leaves titles that already have a YYYY-MM-DD prefix unchanged', () => {
+		expect(expandTitleWithYear('2025-12-31 New Year Eve', apr14)).toBe(
+			'2025-12-31 New Year Eve',
+		);
+	});
+
+	it('leaves titles without any date prefix unchanged', () => {
+		expect(expandTitleWithYear('Quarterly review', apr14)).toBe(
+			'Quarterly review',
+		);
+	});
+
+	it('does not prefix a title that merely contains digits', () => {
+		// "1-800 customer service" does not start with \d{2}-\d{2}, so it
+		// should pass through unchanged — no year prefix.
+		expect(expandTitleWithYear('1-800 customer service', apr14)).toBe(
+			'1-800 customer service',
+		);
+	});
+
+	it('does not prefix a title with a single-digit "month"', () => {
+		// "4-13 Meeting" starts with \d-\d{2} not \d{2}-\d{2}, so the
+		// pattern doesn't match and the title passes through.
+		expect(expandTitleWithYear('4-13 Meeting', apr14)).toBe('4-13 Meeting');
+	});
+
+	it('does not double-prefix when the title already starts with the same year', () => {
+		expect(expandTitleWithYear('2026-04-13 Done', apr14)).toBe(
+			'2026-04-13 Done',
+		);
+	});
+
+	it('uses the year from the recording date, not the title', () => {
+		// If the user dates a note 12-31 but its createdAt is 2025, the
+		// year from createdAt wins. This is Plaud's own year, not a
+		// user-interpreted one.
+		const dec31_2025 = new Date(2025, 11, 31);
+		expect(expandTitleWithYear('12-31 Year-end review', dec31_2025)).toBe(
+			'2025-12-31 Year-end review',
+		);
+	});
+
+	it('trims leading whitespace before detecting the MM-DD prefix', () => {
+		expect(expandTitleWithYear('  04-13 Padded  ', apr14)).toBe(
+			'2026-04-13 Padded',
+		);
+	});
+});
+
 // formatFrontmatter --------------------------------------------------------
 
 describe('formatFrontmatter', () => {
@@ -359,6 +424,27 @@ describe('formatMarkdown', () => {
 		expect(h1).toBeGreaterThan(fmStart);
 		expect(summaryH2).toBeGreaterThan(h1);
 		expect(callout).toBeGreaterThan(summaryH2);
+	});
+
+	it('expands MM-DD titles with the year from createdAt in the H1', () => {
+		const md = formatMarkdown(
+			makeRecording({ title: '04-13 Client kickoff' }),
+			makeTranscript(),
+			makeSummary(),
+		);
+		// makeRecording() uses createdAt of 2026-04-14 → year 2026
+		expect(md).toContain('# 2026-04-13 Client kickoff');
+		expect(md).not.toMatch(/^# 04-13/m);
+	});
+
+	it('leaves non-MM-DD titles unchanged in the H1', () => {
+		const md = formatMarkdown(
+			makeRecording({ title: 'Quarterly review' }),
+			makeTranscript(),
+			makeSummary(),
+		);
+		expect(md).toContain('# Quarterly review');
+		expect(md).not.toMatch(/# 2026-.*Quarterly review/);
 	});
 
 	it('renders transcript segments as one callout line each with [MM:SS] markers', () => {
@@ -525,6 +611,34 @@ describe('NoteWriter', () => {
 		expect(outcome.status).toBe('created');
 		expect(outcome.path).toBe('Plaud/Meeting - notes - draft.md');
 		expect(vault.files.has('Plaud/Meeting - notes - draft.md')).toBe(true);
+	});
+
+	it('expands MM-DD titles with the year for the filename so files sort chronologically', async () => {
+		const vault = makeFakeVault();
+		const writer = new NoteWriter(vault, { outputFolder: 'Plaud', onDuplicate: 'skip' });
+
+		const outcome = await writer.writeNote(
+			makeRecording({ title: '04-13 Client kickoff' }),
+			makeTranscript(),
+			makeSummary(),
+		);
+
+		// makeRecording's createdAt is 2026-04-14 → year 2026
+		expect(outcome.path).toBe('Plaud/2026-04-13 Client kickoff.md');
+	});
+
+	it('keeps the filename and H1 in sync when both expand', async () => {
+		const vault = makeFakeVault();
+		const writer = new NoteWriter(vault, { outputFolder: 'Plaud', onDuplicate: 'skip' });
+
+		await writer.writeNote(
+			makeRecording({ title: '04-13 Securing a data sandbox' }),
+			makeTranscript(),
+			makeSummary(),
+		);
+
+		const body = vault.files.get('Plaud/2026-04-13 Securing a data sandbox.md') ?? '';
+		expect(body).toContain('# 2026-04-13 Securing a data sandbox');
 	});
 
 	it('writes at vault root when outputFolder is empty', async () => {
