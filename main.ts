@@ -5,7 +5,14 @@ import {
 	PluginSettingTab,
 	SecretComponent,
 	Setting,
+	requestUrl,
+	type RequestUrlResponse,
 } from "obsidian";
+import {
+	ReverseEngineeredPlaudClient,
+	type PlaudHttpFetcher,
+} from "./plaud-client-re";
+import { ImportModal } from "./import-modal";
 
 interface PlaudImporterSettings {
 	secretId: string;
@@ -19,8 +26,44 @@ const DEFAULT_SETTINGS: PlaudImporterSettings = {
 	onDuplicate: "skip",
 };
 
+// Adapt Obsidian's requestUrl to the PlaudHttpFetcher shape the client
+// depends on. Using requestUrl (not fetch) is required to avoid CORS and
+// certificate issues on Electron. `throw: false` lets us map status codes
+// in the client rather than Obsidian's implicit throw.
+const obsidianFetcher: PlaudHttpFetcher = async ({ url, headers }) => {
+	const response = await requestUrl({
+		url,
+		method: "GET",
+		headers: { ...headers },
+		throw: false,
+	});
+	return {
+		status: response.status,
+		json: safeJson(response),
+		text: response.text ?? "",
+	};
+};
+
+// requestUrl's `json` is a getter that parses `text` lazily and throws a
+// SyntaxError on invalid JSON. Catch ONLY SyntaxError and return null — the
+// client will then produce a PlaudParseError with the raw body snippet.
+// Any other exception type is a genuine bug (e.g. an internal Obsidian API
+// change) and should propagate so it can be surfaced loudly instead of
+// silently misclassified as "unexpected shape from Plaud."
+function safeJson(response: RequestUrlResponse): unknown {
+	try {
+		return response.json;
+	} catch (err) {
+		if (err instanceof SyntaxError) {
+			return null;
+		}
+		throw err;
+	}
+}
+
 export default class PlaudImporterPlugin extends Plugin {
 	settings!: PlaudImporterSettings;
+	private client?: ReverseEngineeredPlaudClient;
 
 	async onload() {
 		await this.loadSettings();
@@ -31,20 +74,29 @@ export default class PlaudImporterPlugin extends Plugin {
 			id: "import-recent",
 			name: "Import recent recordings",
 			callback: () => {
-				new Notice("Plaud Importer: not implemented yet.");
+				if (!this.client) {
+					new Notice(
+						"Plaud Importer: still initializing. Try again in a moment.",
+					);
+					return;
+				}
+				new ImportModal(this.app, this.client).open();
 			},
 		});
 
 		this.app.workspace.onLayoutReady(() => {
-			// Real Plaud client construction lands in a follow-up iteration.
-			// When it does, it will read the token via:
-			//   const token = this.app.secretStorage.getSecret(this.settings.secretId);
-			// and construct a ReverseEngineeredPlaudClient if the token is non-null.
+			// Construct the client once. It reads the token fresh on every
+			// API call via the provider, so settings changes take effect
+			// immediately with no reinstantiation.
+			this.client = new ReverseEngineeredPlaudClient(
+				() => this.app.secretStorage.getSecret(this.settings.secretId),
+				obsidianFetcher,
+			);
 		});
 	}
 
 	onunload() {
-		// Nothing to tear down yet.
+		this.client = undefined;
 	}
 
 	async loadSettings() {

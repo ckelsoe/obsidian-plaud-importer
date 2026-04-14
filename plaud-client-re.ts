@@ -59,10 +59,23 @@ export class PlaudApiError extends Error {
 	}
 }
 
+/**
+ * Reason for an auth failure, used by consumers to route users to the right
+ * remediation. `not_configured` means the plugin has no token at all and the
+ * user needs to set one; `token_rejected` means Plaud returned 401 on a call
+ * that did include a token. Keeping this as a machine-readable enum rather
+ * than relying on message-substring matching keeps the UI robust against
+ * message rewording.
+ */
+export type PlaudAuthReason = 'not_configured' | 'token_rejected';
+
 export class PlaudAuthError extends PlaudApiError {
-	constructor(message: string, endpoint?: string) {
+	readonly reason: PlaudAuthReason;
+
+	constructor(reason: PlaudAuthReason, message: string, endpoint?: string) {
 		super(message, 401, endpoint);
 		this.name = 'PlaudAuthError';
+		this.reason = reason;
 	}
 }
 
@@ -187,6 +200,7 @@ export class ReverseEngineeredPlaudClient implements PlaudClient {
 		const rawToken = this.tokenProvider();
 		if (rawToken === null || rawToken.trim().length === 0) {
 			throw new PlaudAuthError(
+				'not_configured',
 				'No Plaud token configured — open Settings → Community Plugins → Plaud Importer to set one',
 				endpoint,
 			);
@@ -216,6 +230,7 @@ export class ReverseEngineeredPlaudClient implements PlaudClient {
 
 		if (response.status === 401) {
 			throw new PlaudAuthError(
+				'token_rejected',
 				`Plaud token rejected by ${endpoint} (401) — token is expired or revoked`,
 				endpoint,
 			);

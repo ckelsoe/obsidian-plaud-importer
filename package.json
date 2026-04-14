@@ -6,7 +6,7 @@
 	"scripts": {
 		"dev": "node esbuild.config.mjs",
 		"build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
-		"lint": "eslint main.ts plaud-client.ts plaud-client-re.ts __tests__/plaud-client-re.test.ts --max-warnings 0",
+		"lint": "eslint main.ts plaud-client.ts plaud-client-re.ts import-modal.ts __tests__/plaud-client-re.test.ts __tests__/import-modal.test.ts --max-warnings 0",
 		"test": "jest --passWithNoTests",
 		"version": "node version-bump.mjs && git add manifest.json versions.json"
 	},

@@ -1,0 +1,218 @@
+import {
+	classifyError,
+	formatDate,
+	formatDuration,
+} from '../import-modal';
+import {
+	PlaudApiError,
+	PlaudAuthError,
+	PlaudParseError,
+} from '../plaud-client-re';
+
+// classifyError --------------------------------------------------------------
+
+describe('classifyError', () => {
+	describe('PlaudAuthError branches (discriminated by reason field)', () => {
+		it('maps reason="not_configured" to the not-configured category', () => {
+			const err = new PlaudAuthError(
+				'not_configured',
+				'No Plaud token configured — open Settings → Community Plugins → Plaud Importer to set one',
+				'/file/simple/web',
+			);
+			const result = classifyError(err);
+			expect(result.category).toBe('not-configured');
+			expect(result.canRetry).toBe(false);
+			expect(result.message).toMatch(/settings/i);
+			expect(result.message).toMatch(/plaud importer/i);
+		});
+
+		it('maps reason="token_rejected" to the token-rejected category', () => {
+			const err = new PlaudAuthError(
+				'token_rejected',
+				'Plaud token rejected by /file/simple/web (401) — token is expired or revoked',
+				'/file/simple/web',
+			);
+			const result = classifyError(err);
+			expect(result.category).toBe('token-rejected');
+			expect(result.canRetry).toBe(false);
+			expect(result.message).toMatch(/expired|revoked/i);
+		});
+
+		it('discriminates by reason field, not by message text (message drift is safe)', () => {
+			// Construct a not-configured error with a completely different
+			// message from the one the client actually uses today. If the
+			// classifier were matching on message substring, this would
+			// silently fall through to token-rejected.
+			const err = new PlaudAuthError(
+				'not_configured',
+				'surprise! totally different wording from what the client writes',
+				'/file/simple/web',
+			);
+			expect(classifyError(err).category).toBe('not-configured');
+		});
+	});
+
+	describe('PlaudParseError branch', () => {
+		it('maps PlaudParseError to the parse-error category (before PlaudApiError)', () => {
+			const err = new PlaudParseError(
+				'data_file_list[3] is missing required fields',
+				'/file/simple/web',
+			);
+			const result = classifyError(err);
+			expect(result.category).toBe('parse-error');
+			expect(result.canRetry).toBe(false);
+			expect(result.message).toMatch(/unexpected shape/i);
+		});
+	});
+
+	describe('PlaudApiError branches', () => {
+		it('maps 429 to rate-limited with retry enabled', () => {
+			const err = new PlaudApiError('rate limited', 429, '/file/simple/web');
+			const result = classifyError(err);
+			expect(result.category).toBe('rate-limited');
+			expect(result.canRetry).toBe(true);
+			expect(result.message).toMatch(/rate.?limit/i);
+		});
+
+		it('maps 500 to server-error with retry enabled', () => {
+			const err = new PlaudApiError('boom', 500, '/file/simple/web');
+			const result = classifyError(err);
+			expect(result.category).toBe('server-error');
+			expect(result.canRetry).toBe(true);
+			expect(result.message).toContain('500');
+		});
+
+		it('maps 503 to server-error', () => {
+			const err = new PlaudApiError('service unavailable', 503, '/file/simple/web');
+			expect(classifyError(err).category).toBe('server-error');
+		});
+
+		it('maps wrapped network errors (no status) to network-error with retry', () => {
+			const err = new PlaudApiError(
+				'Plaud API /file/simple/web network error: ECONNRESET',
+				undefined,
+				'/file/simple/web',
+			);
+			const result = classifyError(err);
+			expect(result.category).toBe('network-error');
+			expect(result.canRetry).toBe(true);
+			expect(result.message).toMatch(/plaud/i);
+		});
+
+		it.each([
+			['400 bad request', 400],
+			['403 forbidden', 403],
+			['404 not found', 404],
+			['418 teapot', 418],
+			['451 unavailable for legal reasons', 451],
+		])('maps non-auth/non-rate-limit 4xx (%s) to api-error with retry disabled', (_label, status) => {
+			const err = new PlaudApiError('plaud said no', status, '/file/simple/web');
+			const result = classifyError(err);
+			expect(result.category).toBe('api-error');
+			expect(result.canRetry).toBe(false);
+			expect(result.message).toContain(String(status));
+			// Must NOT say "Could not reach Plaud.AI" — that would be a lie
+			// (the network reached Plaud just fine, Plaud returned an error).
+			expect(result.message).not.toMatch(/could not reach/i);
+		});
+	});
+
+	describe('non-Plaud errors', () => {
+		it('maps arbitrary Error instances to unknown with retry DISABLED (unknown does not retry-recover)', () => {
+			const result = classifyError(new Error('something bizarre'));
+			expect(result.category).toBe('unknown');
+			expect(result.canRetry).toBe(false);
+			expect(result.message).toContain('something bizarre');
+			expect(result.message).toMatch(/report this/i);
+		});
+
+		it('maps non-Error values to unknown with retry disabled', () => {
+			const result = classifyError('string thrown as error');
+			expect(result.category).toBe('unknown');
+			expect(result.canRetry).toBe(false);
+			expect(result.message).toContain('string thrown');
+		});
+	});
+
+	describe('class-hierarchy precedence', () => {
+		it('classifies PlaudAuthError as auth, not the generic api branch (it extends PlaudApiError)', () => {
+			// PlaudAuthError is a subclass of PlaudApiError with status 401.
+			// Without correct ordering in classifyError, a 401 could fall into
+			// the "4xx api-error" branch. Pin the precedence.
+			const err = new PlaudAuthError(
+				'token_rejected',
+				'Plaud token rejected',
+				'/file/simple/web',
+			);
+			const result = classifyError(err);
+			expect(result.category).not.toBe('api-error');
+			expect(result.category).not.toBe('network-error');
+			expect(result.category).toBe('token-rejected');
+		});
+
+		it('classifies PlaudParseError as parse-error, not network-error', () => {
+			// Same concern — PlaudParseError extends PlaudApiError with no status.
+			const err = new PlaudParseError('shape mismatch', '/file/simple/web');
+			const result = classifyError(err);
+			expect(result.category).toBe('parse-error');
+		});
+	});
+});
+
+// formatDate ---------------------------------------------------------------
+
+describe('formatDate', () => {
+	it('zero-pads months, days, hours, and minutes', () => {
+		// Use a date where each component needs padding.
+		const d = new Date(2026, 0, 5, 9, 7); // 2026-01-05 09:07 local
+		expect(formatDate(d)).toBe('2026-01-05 09:07');
+	});
+
+	it('handles two-digit months and days without padding', () => {
+		const d = new Date(2026, 10, 25, 14, 30); // 2026-11-25 14:30
+		expect(formatDate(d)).toBe('2026-11-25 14:30');
+	});
+
+	it('handles midnight correctly', () => {
+		const d = new Date(2026, 0, 1, 0, 0);
+		expect(formatDate(d)).toBe('2026-01-01 00:00');
+	});
+});
+
+// formatDuration ------------------------------------------------------------
+
+describe('formatDuration', () => {
+	it('omits the hours field when duration is under one hour', () => {
+		expect(formatDuration(0)).toBe('0m 0s');
+		expect(formatDuration(45)).toBe('0m 45s');
+		expect(formatDuration(600)).toBe('10m 0s');
+		expect(formatDuration(3599)).toBe('59m 59s');
+	});
+
+	it('includes the hours field for durations of one hour or more', () => {
+		expect(formatDuration(3600)).toBe('1h 0m 0s');
+		expect(formatDuration(3661)).toBe('1h 1m 1s');
+		expect(formatDuration(7325)).toBe('2h 2m 5s');
+	});
+
+	it('floors fractional seconds', () => {
+		expect(formatDuration(45.9)).toBe('0m 45s');
+		expect(formatDuration(3661.4)).toBe('1h 1m 1s');
+	});
+
+	it('clamps negative durations to zero', () => {
+		expect(formatDuration(-5)).toBe('0m 0s');
+	});
+
+	it.each([
+		['NaN', Number.NaN],
+		['positive Infinity', Number.POSITIVE_INFINITY],
+		['negative Infinity', Number.NEGATIVE_INFINITY],
+	])('returns "0m 0s" for non-finite input (%s) instead of rendering garbage', (_label, value) => {
+		// The parser rejects non-finite durations upstream, but formatDuration
+		// is exported as a standalone helper — a future caller could pass a
+		// hand-constructed Recording and trigger "NaNh NaNm NaNs" in the UI.
+		// Guard here.
+		expect(formatDuration(value)).toBe('0m 0s');
+	});
+});

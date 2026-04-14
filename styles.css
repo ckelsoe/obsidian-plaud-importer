@@ -1,2 +1,95 @@
-/* Plaud Importer — stylesheet placeholder. */
-/* Required asset for Obsidian plugin releases even when empty. */
+/* Plaud Importer — stylesheet */
+
+/* Modal container */
+.plaud-importer-modal .modal-content {
+	max-width: 720px;
+}
+
+/* Intro line under the heading */
+.plaud-importer-intro {
+	color: var(--text-muted);
+	margin-bottom: 1em;
+}
+
+/* Recording list — comfortable layout (two lines per row) */
+.plaud-importer-list {
+	display: flex;
+	flex-direction: column;
+	gap: 0.25em;
+	max-height: 60vh;
+	overflow-y: auto;
+}
+
+.plaud-importer-row {
+	display: flex;
+	align-items: flex-start;
+	gap: 0.75em;
+	padding: 0.6em 0.25em;
+	border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.plaud-importer-row:last-child {
+	border-bottom: none;
+}
+
+.plaud-importer-checkbox {
+	flex-shrink: 0;
+	margin-top: 0.35em;
+}
+
+.plaud-importer-label {
+	flex: 1;
+	min-width: 0;
+}
+
+.plaud-importer-title {
+	font-weight: 600;
+	word-break: break-word;
+	line-height: 1.3;
+}
+
+.plaud-importer-meta {
+	margin-top: 0.25em;
+	font-size: 0.85em;
+	color: var(--text-muted);
+	font-variant-numeric: tabular-nums;
+}
+
+.plaud-importer-sep {
+	opacity: 0.5;
+}
+
+.plaud-importer-flag {
+	display: inline-block;
+	padding: 0 0.35em;
+	margin-right: 0.25em;
+	font-family: var(--font-monospace);
+	font-size: 0.9em;
+	color: var(--text-accent);
+}
+
+/* Loading / empty / error states share a centered layout */
+.plaud-importer-state {
+	padding: 2em 0;
+	text-align: center;
+}
+
+.plaud-importer-loading,
+.plaud-importer-empty {
+	color: var(--text-muted);
+	margin: 0;
+}
+
+.plaud-importer-error-message {
+	color: var(--text-error);
+	margin: 0 0 1em 0;
+	line-height: 1.5;
+}
+
+/* Button row at the bottom of the modal */
+.plaud-importer-buttons {
+	display: flex;
+	gap: 0.5em;
+	justify-content: flex-end;
+	margin-top: 1.25em;
+}
