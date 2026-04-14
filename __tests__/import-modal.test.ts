@@ -2,12 +2,19 @@ import {
 	classifyError,
 	formatDate,
 	formatDuration,
+	formatImportNotice,
+	tallyImportResults,
+	type ImportResult,
+	type ErrorClassification,
 } from '../import-modal';
 import {
 	PlaudApiError,
 	PlaudAuthError,
 	PlaudParseError,
 } from '../plaud-client-re';
+import type { PlaudRecordingId, Recording } from '../plaud-client';
+import type { WriteOutcome } from '../note-writer';
+import { NoteWriterError } from '../note-writer';
 
 // classifyError --------------------------------------------------------------
 
@@ -134,6 +141,44 @@ describe('classifyError', () => {
 		});
 	});
 
+	describe('NoteWriterError branches', () => {
+		it('maps a filename collision error to the write-collision category', () => {
+			const err = new NoteWriterError(
+				'Filename collision at Plaud/Morning standup.md: this note belongs to recording abc, not xyz.',
+			);
+			const result = classifyError(err);
+			expect(result.category).toBe('write-collision');
+			expect(result.canRetry).toBe(false);
+		});
+
+		it('maps an outputFolder traversal error to the config-error category', () => {
+			const err = new NoteWriterError(
+				'Output folder "../escape" contains ".." which would escape the vault — use a vault-relative path',
+			);
+			const result = classifyError(err);
+			expect(result.category).toBe('config-error');
+			expect(result.canRetry).toBe(false);
+			expect(result.message).toMatch(/settings/i);
+		});
+
+		it('maps an invalid-onDuplicate error to the config-error category', () => {
+			const err = new NoteWriterError(
+				"Invalid onDuplicate policy \"bogus\" — expected 'skip' or 'overwrite'",
+			);
+			const result = classifyError(err);
+			expect(result.category).toBe('config-error');
+		});
+
+		it('maps a generic vault-write failure to the write-failed category with retry', () => {
+			const err = new NoteWriterError(
+				'Failed to create Plaud/Meeting.md for recording abc: EACCES permission denied',
+			);
+			const result = classifyError(err);
+			expect(result.category).toBe('write-failed');
+			expect(result.canRetry).toBe(true);
+		});
+	});
+
 	describe('class-hierarchy precedence', () => {
 		it('classifies PlaudAuthError as auth, not the generic api branch (it extends PlaudApiError)', () => {
 			// PlaudAuthError is a subclass of PlaudApiError with status 401.
@@ -214,5 +259,165 @@ describe('formatDuration', () => {
 		// hand-constructed Recording and trigger "NaNh NaNm NaNs" in the UI.
 		// Guard here.
 		expect(formatDuration(value)).toBe('0m 0s');
+	});
+});
+
+// tallyImportResults --------------------------------------------------------
+
+function rec(id: string, title = `rec ${id}`): Recording {
+	return {
+		id: id as PlaudRecordingId,
+		title,
+		createdAt: new Date(2026, 3, 14),
+		durationSeconds: 60,
+		transcriptAvailable: true,
+		summaryAvailable: true,
+	};
+}
+
+function written(id: string, status: WriteOutcome['status']): ImportResult {
+	return {
+		kind: 'written',
+		recording: rec(id),
+		writeOutcome: { status, path: `Plaud/${id}.md` },
+	};
+}
+
+function failed(id: string, reason: string, title?: string): ImportResult {
+	const classification: ErrorClassification = {
+		category: 'unknown',
+		message: reason,
+		canRetry: false,
+	};
+	return {
+		kind: 'failed',
+		recording: rec(id, title),
+		reason,
+		classification,
+		cause: new Error(reason),
+	};
+}
+
+describe('tallyImportResults', () => {
+	it('returns a zeroed tally for an empty list', () => {
+		const tally = tallyImportResults([]);
+		expect(tally.total).toBe(0);
+		expect(tally.created).toBe(0);
+		expect(tally.overwritten).toBe(0);
+		expect(tally.skipped).toBe(0);
+		expect(tally.failed).toBe(0);
+		expect(tally.failures).toEqual([]);
+	});
+
+	it('counts each write status into the correct bucket', () => {
+		const tally = tallyImportResults([
+			written('a', 'created'),
+			written('b', 'created'),
+			written('c', 'overwritten'),
+			written('d', 'skipped'),
+			written('e', 'skipped'),
+			written('f', 'skipped'),
+		]);
+		expect(tally.total).toBe(6);
+		expect(tally.created).toBe(2);
+		expect(tally.overwritten).toBe(1);
+		expect(tally.skipped).toBe(3);
+		expect(tally.failed).toBe(0);
+	});
+
+	it('collects failures in a separate list while counting them', () => {
+		const tally = tallyImportResults([
+			written('a', 'created'),
+			failed('b', 'network error'),
+			failed('c', 'parse error'),
+		]);
+		expect(tally.total).toBe(3);
+		expect(tally.created).toBe(1);
+		expect(tally.failed).toBe(2);
+		expect(tally.failures).toHaveLength(2);
+		expect(tally.failures[0].recording.id).toBe('b');
+		expect(tally.failures[1].recording.id).toBe('c');
+	});
+
+	it('preserves input order when multiple failures are interleaved with successes', () => {
+		const tally = tallyImportResults([
+			failed('1', 'first'),
+			written('2', 'created'),
+			failed('3', 'second'),
+			written('4', 'skipped'),
+			failed('5', 'third'),
+		]);
+		expect(tally.failures.map((f) => f.recording.id)).toEqual(['1', '3', '5']);
+	});
+});
+
+// formatImportNotice --------------------------------------------------------
+
+describe('formatImportNotice', () => {
+	it('reports all-success counts with only the imported number', () => {
+		const tally = tallyImportResults([
+			written('a', 'created'),
+			written('b', 'overwritten'),
+		]);
+		expect(formatImportNotice(tally)).toBe('Plaud Importer: 2 imported.');
+	});
+
+	it('includes a skipped count when any were skipped', () => {
+		const tally = tallyImportResults([
+			written('a', 'created'),
+			written('b', 'skipped'),
+			written('c', 'skipped'),
+		]);
+		expect(formatImportNotice(tally)).toBe(
+			'Plaud Importer: 1 imported, 2 skipped.',
+		);
+	});
+
+	it('includes a failed count when any failed', () => {
+		const tally = tallyImportResults([
+			written('a', 'created'),
+			failed('b', 'oops'),
+		]);
+		expect(formatImportNotice(tally)).toBe(
+			'Plaud Importer: 1 imported, 1 failed.',
+		);
+	});
+
+	it('includes all three count categories when all three are non-zero', () => {
+		const tally = tallyImportResults([
+			written('a', 'created'),
+			written('b', 'overwritten'),
+			written('c', 'skipped'),
+			failed('d', 'x'),
+		]);
+		expect(formatImportNotice(tally)).toBe(
+			'Plaud Importer: 2 imported, 1 skipped, 1 failed.',
+		);
+	});
+
+	it('returns a distinct message for an empty tally', () => {
+		expect(formatImportNotice(tallyImportResults([]))).toBe(
+			'Plaud Importer: nothing to import.',
+		);
+	});
+
+	it('counts "imported" as created + overwritten together', () => {
+		// The Notice doesn't distinguish "freshly created" from
+		// "overwritten on re-import" — both mean "the user got a note
+		// at the end." The expanded summary in the modal body shows
+		// the breakdown.
+		const tally = tallyImportResults([
+			written('a', 'overwritten'),
+			written('b', 'overwritten'),
+			written('c', 'created'),
+		]);
+		expect(formatImportNotice(tally)).toContain('3 imported');
+	});
+
+	it('pluralizes by count but not with irregular grammar', () => {
+		// The helper is terse by design — it says "1 imported" not
+		// "1 recording imported" so pluralization isn't required.
+		const tally = tallyImportResults([written('a', 'created')]);
+		expect(formatImportNotice(tally)).toBe('Plaud Importer: 1 imported.');
 	});
 });

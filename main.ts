@@ -81,7 +81,12 @@ export default class PlaudImporterPlugin extends Plugin {
 					);
 					return;
 				}
-				new ImportModal(this.app, this.client).open();
+				// Snapshot settings at command time so settings changes
+				// between command invocations take effect immediately.
+				new ImportModal(this.app, this.client, {
+					outputFolder: this.settings.outputFolder,
+					onDuplicate: this.settings.onDuplicate,
+				}).open();
 			},
 		});
 

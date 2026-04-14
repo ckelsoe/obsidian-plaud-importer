@@ -93,3 +93,39 @@
 	justify-content: flex-end;
 	margin-top: 1.25em;
 }
+
+/* Post-import summary state */
+.plaud-importer-summary {
+	font-weight: 500;
+	margin: 0.5em 0 1em 0;
+	line-height: 1.5;
+}
+
+.plaud-importer-failures {
+	margin: 0.5em 0 1em 0;
+	padding: 0.5em 0.75em;
+	background: var(--background-secondary);
+	border-left: 3px solid var(--text-error);
+	border-radius: 2px;
+}
+
+.plaud-importer-failures summary {
+	cursor: pointer;
+	color: var(--text-error);
+	font-weight: 500;
+	user-select: none;
+}
+
+.plaud-importer-failures ul {
+	margin: 0.5em 0 0 0;
+	padding-left: 1.25em;
+}
+
+.plaud-importer-failures li {
+	margin-bottom: 0.4em;
+	font-size: 0.9em;
+}
+
+.plaud-importer-failures strong {
+	color: var(--text-normal);
+}

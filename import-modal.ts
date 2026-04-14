@@ -5,6 +5,12 @@ import {
 	PlaudAuthError,
 	PlaudParseError,
 } from './plaud-client-re';
+import {
+	NoteWriter,
+	NoteWriterError,
+	type NoteWriterOptions,
+	type WriteOutcome,
+} from './note-writer';
 
 // -----------------------------------------------------------------------------
 // Pure helpers (exported for unit testing). Keeping them outside the Modal
@@ -20,6 +26,9 @@ export type ErrorCategory =
 	| 'parse-error'
 	| 'api-error'
 	| 'network-error'
+	| 'config-error'
+	| 'write-collision'
+	| 'write-failed'
 	| 'unknown';
 
 export interface ErrorClassification {
@@ -34,6 +43,35 @@ const TOKEN_REJECTED_MESSAGE =
 	'Plaud rejected your token. It may be expired or revoked. Open Settings → Community Plugins → Plaud Importer and re-enter it.';
 
 export function classifyError(err: unknown): ErrorClassification {
+	// NoteWriterError classification must come first — it is not a
+	// PlaudApiError subclass, and different messages map to different
+	// categories (collision vs config vs vault-level write failure).
+	if (err instanceof NoteWriterError) {
+		const msg = err.message;
+		if (msg.toLowerCase().includes('filename collision')) {
+			return {
+				category: 'write-collision',
+				message: msg,
+				canRetry: false,
+			};
+		}
+		if (
+			msg.toLowerCase().includes('invalid ondup') ||
+			msg.toLowerCase().includes('escape the vault') ||
+			msg.toLowerCase().includes('output folder')
+		) {
+			return {
+				category: 'config-error',
+				message: `${msg}. Open Settings → Community Plugins → Plaud Importer to fix it.`,
+				canRetry: false,
+			};
+		}
+		return {
+			category: 'write-failed',
+			message: msg,
+			canRetry: true,
+		};
+	}
 	// PlaudAuthError discriminates via its `reason` field so the UI never has
 	// to match on message text. Both cases are non-retryable at this layer
 	// because Obsidian modals are blocking — the user has to close and fix
@@ -135,11 +173,101 @@ export function formatDuration(seconds: number): string {
 }
 
 // -----------------------------------------------------------------------------
+// Import result tallying — pure helpers, exported for unit testing.
+// -----------------------------------------------------------------------------
+
+export type ImportResult =
+	| {
+			readonly kind: 'written';
+			readonly recording: Recording;
+			readonly writeOutcome: WriteOutcome;
+	  }
+	| {
+			readonly kind: 'failed';
+			readonly recording: Recording;
+			// Short human-readable reason for the failures list. Derived
+			// from the classification so the UI doesn't have to re-run it.
+			readonly reason: string;
+			// Typed classification (category + retryability) so future
+			// consumers can group failures by category, decide whether
+			// to retry, or render category-specific help text.
+			readonly classification: ErrorClassification;
+			// Preserved original value so a future logError pass can
+			// surface the full stack / error class / status in telemetry.
+			readonly cause: unknown;
+	  };
+
+export interface ImportTally {
+	readonly total: number;
+	readonly created: number;
+	readonly overwritten: number;
+	readonly skipped: number;
+	readonly failed: number;
+	readonly failures: readonly ImportResult[];
+}
+
+export function tallyImportResults(results: readonly ImportResult[]): ImportTally {
+	let created = 0;
+	let overwritten = 0;
+	let skipped = 0;
+	let failed = 0;
+	const failures: ImportResult[] = [];
+	for (const r of results) {
+		if (r.kind === 'failed') {
+			failed++;
+			failures.push(r);
+			continue;
+		}
+		switch (r.writeOutcome.status) {
+			case 'created':
+				created++;
+				break;
+			case 'overwritten':
+				overwritten++;
+				break;
+			case 'skipped':
+				skipped++;
+				break;
+		}
+	}
+	return {
+		total: results.length,
+		created,
+		overwritten,
+		skipped,
+		failed,
+		failures,
+	};
+}
+
+/**
+ * Build the one-line Notice text shown after an import batch completes.
+ * The Notice is the only feedback the user sees outside the modal itself,
+ * so it needs to report counts compactly.
+ */
+export function formatImportNotice(tally: ImportTally): string {
+	if (tally.total === 0) {
+		return 'Plaud Importer: nothing to import.';
+	}
+	const imported = tally.created + tally.overwritten;
+	const parts: string[] = [];
+	parts.push(`${imported} imported`);
+	if (tally.skipped > 0) {
+		parts.push(`${tally.skipped} skipped`);
+	}
+	if (tally.failed > 0) {
+		parts.push(`${tally.failed} failed`);
+	}
+	return `Plaud Importer: ${parts.join(', ')}.`;
+}
+
+// -----------------------------------------------------------------------------
 // Modal
 // -----------------------------------------------------------------------------
 
 export class ImportModal extends Modal {
 	private readonly client: PlaudClient;
+	private readonly noteWriterOptions: NoteWriterOptions;
 	private readonly selectedIds = new Set<string>();
 	private importButton: HTMLButtonElement | null = null;
 	private currentRecordings: readonly Recording[] = [];
@@ -148,10 +276,15 @@ export class ImportModal extends Modal {
 	// if it has changed — prevents the "click Retry while slow fetch is
 	// still running" race from overwriting newer state with stale results.
 	private fetchGeneration = 0;
+	// Set by onClose so a running import loop can detect cancellation and
+	// stop writing to the vault without continuing through the rest of the
+	// selected recordings. Checked between iterations in onImportClick.
+	private aborted = false;
 
-	constructor(app: App, client: PlaudClient) {
+	constructor(app: App, client: PlaudClient, noteWriterOptions: NoteWriterOptions) {
 		super(app);
 		this.client = client;
+		this.noteWriterOptions = noteWriterOptions;
 	}
 
 	onOpen(): void {
@@ -167,6 +300,10 @@ export class ImportModal extends Modal {
 	}
 
 	onClose(): void {
+		// Signal any in-flight import loop to stop writing. The loop
+		// checks `this.aborted` between iterations and fires a partial
+		// Notice if it was interrupted.
+		this.aborted = true;
 		this.contentEl.empty();
 		this.selectedIds.clear();
 		this.importButton = null;
@@ -267,7 +404,15 @@ export class ImportModal extends Modal {
 			cls: 'mod-cta',
 		});
 		this.importButton.disabled = true;
-		this.importButton.addEventListener('click', () => this.onImportClick());
+		this.importButton.addEventListener('click', () => {
+			this.onImportClick().catch((err) => {
+				// onImportClick has internal error handling around every
+				// write and the writer construction — this outer catch is
+				// defense-in-depth against a future bug that throws outside
+				// those try/catch blocks.
+				this.renderError(classifyError(err));
+			});
+		});
 
 		const cancelButton = buttonRow.createEl('button', { text: 'Cancel' });
 		cancelButton.addEventListener('click', () => this.close());
@@ -313,19 +458,134 @@ export class ImportModal extends Modal {
 		}
 	}
 
-	private onImportClick(): void {
-		// TODO(commit-4): wire up NoteWriter. This stub exists only so the
-		// modal's checkbox-and-button plumbing can be smoke-tested in a
-		// real vault before the write path is implemented. The Notice text
-		// says "NOT IMPLEMENTED" so that a future refactor (or accidental
-		// revert) can't ship a version where Import appears to succeed but
-		// silently writes nothing.
-		const count = this.selectedIds.size;
-		new Notice(
-			`Plaud Importer: selected ${count} recording${
-				count === 1 ? '' : 's'
-			} — Import is NOT IMPLEMENTED yet (write path lands in the next milestone).`,
+	private async onImportClick(): Promise<void> {
+		const selected = this.currentRecordings.filter((r) =>
+			this.selectedIds.has(r.id),
 		);
-		this.close();
+		if (selected.length === 0) {
+			return;
+		}
+
+		// Construct the writer lazily. A NoteWriterError here means the
+		// user's config is bad ("..", invalid onDuplicate) — surface via
+		// the error state with the config-error classification so the UI
+		// points at Settings rather than saying "unknown error please
+		// report this." Anything else is a real code bug; re-throw so the
+		// outer click handler's .catch picks it up honestly.
+		let writer: NoteWriter;
+		try {
+			writer = new NoteWriter(this.app.vault, this.noteWriterOptions);
+		} catch (err) {
+			if (err instanceof NoteWriterError) {
+				this.renderError(classifyError(err));
+				return;
+			}
+			throw err;
+		}
+
+		// Disable the Import button so rapid double-clicks don't queue a
+		// second run against the same selection.
+		if (this.importButton) {
+			this.importButton.disabled = true;
+			this.importButton.textContent = `Importing 0 of ${selected.length}…`;
+		}
+
+		// Sequential rather than parallel: Plaud does not document a rate
+		// limit, and sequential ordering is cheap insurance against
+		// throttling. A per-recording failure is caught and recorded but
+		// does not stop the batch — this is the "partial success" semantic
+		// users expect for a multi-select import.
+		const results: ImportResult[] = [];
+		for (let i = 0; i < selected.length; i++) {
+			// Bail on mid-import modal close. Fire a partial Notice so
+			// the user sees what was completed before they hit Esc.
+			if (this.aborted) {
+				new Notice(
+					`${formatImportNotice(tallyImportResults(results))} (cancelled at ${i}/${selected.length})`,
+				);
+				return;
+			}
+
+			const recording = selected[i];
+			if (this.importButton) {
+				this.importButton.textContent = `Importing ${i + 1} of ${selected.length}…`;
+			}
+			try {
+				const { transcript, summary } = await this.client.getTranscriptAndSummary(
+					recording.id,
+				);
+				const writeOutcome = await writer.writeNote(recording, transcript, summary);
+				results.push({ kind: 'written', recording, writeOutcome });
+			} catch (err) {
+				// TODO: plumb through a logError(errorIds.IMPORT_RECORDING_FAILED, ...)
+				// call once the plugin has telemetry infrastructure.
+				const classification = classifyError(err);
+				results.push({
+					kind: 'failed',
+					recording,
+					reason: classification.message,
+					classification,
+					cause: err,
+				});
+			}
+		}
+
+		// Final abort check — if the user closed the modal right after
+		// the last write, we still want the partial Notice to fire.
+		if (this.aborted) {
+			new Notice(
+				`${formatImportNotice(tallyImportResults(results))} (cancelled at ${selected.length}/${selected.length})`,
+			);
+			return;
+		}
+
+		this.renderSummary(tallyImportResults(results));
+	}
+
+	private renderSummary(tally: ImportTally): void {
+		// Fire the Notice FIRST so a DOM-render failure cannot eat the
+		// batch result. The modal body render below can throw; the
+		// top-level toast is the last-line-of-defense feedback.
+		new Notice(formatImportNotice(tally));
+
+		const { contentEl } = this;
+		contentEl.empty();
+
+		const imported = tally.created + tally.overwritten;
+		const summaryLine =
+			`${imported} imported (${tally.created} new, ${tally.overwritten} overwritten), ` +
+			`${tally.skipped} skipped, ${tally.failed} failed.`;
+
+		contentEl.createEl('p', {
+			text: summaryLine,
+			cls: 'plaud-importer-summary',
+		});
+
+		if (tally.failures.length > 0) {
+			const details = contentEl.createEl('details', {
+				cls: 'plaud-importer-failures',
+			});
+			details.createEl('summary', {
+				text: `${tally.failures.length} failure${
+					tally.failures.length === 1 ? '' : 's'
+				} — click to expand`,
+			});
+			const list = details.createEl('ul');
+			for (const f of tally.failures) {
+				if (f.kind !== 'failed') {
+					continue;
+				}
+				const li = list.createEl('li');
+				li.createEl('strong', { text: f.recording.title });
+				li.createSpan({ text: ` — ${f.reason}` });
+			}
+		}
+
+		const buttonRow = contentEl.createDiv({ cls: 'plaud-importer-buttons' });
+		const closeButton = buttonRow.createEl('button', {
+			text: 'Done',
+			cls: 'mod-cta',
+		});
+		closeButton.addEventListener('click', () => this.close());
 	}
 }
