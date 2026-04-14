@@ -8,6 +8,7 @@ import {
 import {
 	NoteWriter,
 	NoteWriterError,
+	mergeTagSources,
 	type NoteWriterOptions,
 	type WriteOutcome,
 } from './note-writer';
@@ -810,10 +811,30 @@ export class ImportModal extends Modal {
 				this.importButton.textContent = `Importing ${i + 1} of ${selected.length}…`;
 			}
 			try {
-				const { transcript, summary } = await this.client.getTranscriptAndSummary(
-					recording.id,
+				const { transcript, summary, aiKeywords } =
+					await this.client.getTranscriptAndSummary(recording.id);
+				// DD-004: merge Plaud's AI-generated keyword list (from
+				// /file/detail/) into the recording's tags before the note
+				// is rendered. mergeTagSources owns the namespacing, slug,
+				// and dedup rules; this site just feeds it the two
+				// sources. When both inputs are empty the result is [],
+				// and formatFrontmatter already handles that path by
+				// omitting the tags: key entirely.
+				const mergedTags = mergeTagSources(recording.tags, aiKeywords);
+				const enrichedRecording =
+					mergedTags.length > 0
+						? { ...recording, tags: mergedTags }
+						: recording;
+				const writeOutcome = await writer.writeNote(
+					enrichedRecording,
+					transcript,
+					summary,
 				);
-				const writeOutcome = await writer.writeNote(recording, transcript, summary);
+				// Report the original recording in the result so any
+				// downstream UI that renders the import summary sees the
+				// same object the modal already knows about. The merged
+				// tags only need to exist long enough to land in the
+				// written note's frontmatter.
 				results.push({ kind: 'written', recording, writeOutcome });
 			} catch (err) {
 				// Log the full error object (including stack and any wrapped

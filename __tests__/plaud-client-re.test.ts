@@ -3,6 +3,8 @@ import {
 	PlaudAuthError,
 	PlaudParseError,
 	ReverseEngineeredPlaudClient,
+	findAiKeywords,
+	findNewerSummaryMarkdown,
 	findTransactionPolishLink,
 	type PlaudHttpFetcher,
 	type PlaudHttpRequest,
@@ -1577,8 +1579,10 @@ describe('getTranscriptAndSummary polished-transcript path', () => {
 			'Charles Kelsoe',
 			'Vijay Muniswamy',
 		]);
-		// Summary still comes from /ai/transsumm/ — the polish flow
-		// only overrides the transcript, not the summary source.
+		// This fixture's /file/detail/ response has no auto_sum_note
+		// entry in pre_download_content_list, so the summary falls back
+		// to /ai/transsumm/'s legacy summary. The newer-summary override
+		// path is covered by its own test block below.
 		expect(summary?.text).toContain('Key points');
 		// All three endpoints should have been called.
 		const urls = requests().map((r) => r.url);
@@ -1702,5 +1706,377 @@ describe('getTranscriptAndSummary polished-transcript path', () => {
 		const distinctSpeakers = new Set(transcript?.segments.map((s) => s.speaker));
 		expect(distinctSpeakers).toEqual(new Set(['Charles Kelsoe', 'Vijay Muniswamy']));
 		expect(transcript?.segments).toHaveLength(3);
+	});
+});
+
+// =============================================================================
+// findNewerSummaryMarkdown — DD-004: swap Summary source (2026-04-14)
+// =============================================================================
+
+describe('findNewerSummaryMarkdown', () => {
+	function fileDetailWithSummary(
+		preDownload: unknown[],
+	): Record<string, unknown> {
+		return {
+			status: 0,
+			msg: 'success',
+			data: {
+				file_id: 'abc123',
+				pre_download_content_list: preDownload,
+				extra_data: {},
+			},
+		};
+	}
+
+	function autoSumNoteItem(
+		content: unknown,
+		overrides: Record<string, unknown> = {},
+	): Record<string, unknown> {
+		return {
+			data_type: 'auto_sum_note',
+			data_id: 'source_auto_sum_note:xxx:abc123',
+			data_content: content,
+			...overrides,
+		};
+	}
+
+	it('returns the newer summary markdown when an auto_sum_note entry is present', () => {
+		const md =
+			'**Participants:** Charles Kelsoe, Vijay Muniswamy\n\nKey points...';
+		const raw = fileDetailWithSummary([autoSumNoteItem(md)]);
+		const result = findNewerSummaryMarkdown(raw, '/file/detail/abc123');
+		expect(result).toBe(md);
+	});
+
+	it('trims leading and trailing whitespace', () => {
+		const raw = fileDetailWithSummary([autoSumNoteItem('   # Summary  \n  ')]);
+		const result = findNewerSummaryMarkdown(raw, '/file/detail/abc123');
+		expect(result).toBe('# Summary');
+	});
+
+	it('returns null when pre_download_content_list is absent', () => {
+		const raw = { status: 0, data: { file_id: 'abc' } };
+		expect(findNewerSummaryMarkdown(raw, '/file/detail/abc')).toBeNull();
+	});
+
+	it('returns null when pre_download_content_list is empty', () => {
+		const raw = fileDetailWithSummary([]);
+		expect(findNewerSummaryMarkdown(raw, '/file/detail/abc')).toBeNull();
+	});
+
+	it('returns null when the list has no auto_sum_note entry', () => {
+		const raw = fileDetailWithSummary([
+			{ data_type: 'transaction_polish', data_content: 'nope' },
+		]);
+		expect(findNewerSummaryMarkdown(raw, '/file/detail/abc')).toBeNull();
+	});
+
+	it('returns null when auto_sum_note entry has no data_content string', () => {
+		const raw = fileDetailWithSummary([autoSumNoteItem(null)]);
+		expect(findNewerSummaryMarkdown(raw, '/file/detail/abc')).toBeNull();
+	});
+
+	it('returns null when data_content is present but whitespace only', () => {
+		const raw = fileDetailWithSummary([autoSumNoteItem('   \n  ')]);
+		expect(findNewerSummaryMarkdown(raw, '/file/detail/abc')).toBeNull();
+	});
+
+	it('skips non-object items in the list gracefully', () => {
+		const raw = fileDetailWithSummary([
+			null,
+			'string',
+			42,
+			autoSumNoteItem('real content'),
+		]);
+		expect(findNewerSummaryMarkdown(raw, '/file/detail/abc')).toBe('real content');
+	});
+
+	it('throws PlaudParseError when response body is not an object', () => {
+		expect(() =>
+			findNewerSummaryMarkdown('not an object', '/file/detail/abc'),
+		).toThrow(PlaudParseError);
+	});
+
+	it('throws PlaudParseError when response.data is missing', () => {
+		expect(() =>
+			findNewerSummaryMarkdown({ status: 0 }, '/file/detail/abc'),
+		).toThrow(PlaudParseError);
+	});
+
+	it('throws PlaudParseError when pre_download_content_list is not an array', () => {
+		const raw = {
+			status: 0,
+			data: { pre_download_content_list: 'bogus' },
+		};
+		expect(() =>
+			findNewerSummaryMarkdown(raw, '/file/detail/abc'),
+		).toThrow(PlaudParseError);
+	});
+});
+
+// =============================================================================
+// findAiKeywords — DD-004: AI keywords → tags (2026-04-14)
+// =============================================================================
+
+describe('findAiKeywords', () => {
+	function fileDetailWithKeywords(
+		keywords: unknown,
+	): Record<string, unknown> {
+		return {
+			status: 0,
+			msg: 'success',
+			data: {
+				file_id: 'abc123',
+				extra_data: {
+					aiContentHeader: {
+						keywords,
+					},
+				},
+			},
+		};
+	}
+
+	it('returns the full keyword list when present', () => {
+		const raw = fileDetailWithKeywords([
+			'AI Agent',
+			'Customer Data',
+			'AWS Environment',
+		]);
+		expect(findAiKeywords(raw, '/file/detail/abc')).toEqual([
+			'AI Agent',
+			'Customer Data',
+			'AWS Environment',
+		]);
+	});
+
+	it('trims whitespace and drops empty strings', () => {
+		const raw = fileDetailWithKeywords([
+			'  Good Tag  ',
+			'',
+			'   ',
+			'Another',
+		]);
+		expect(findAiKeywords(raw, '/file/detail/abc')).toEqual([
+			'Good Tag',
+			'Another',
+		]);
+	});
+
+	it('silently drops non-string items so mid-field drift degrades gracefully', () => {
+		const raw = fileDetailWithKeywords([
+			'keep me',
+			42,
+			null,
+			{ label: 'object drift' },
+			'keep me too',
+		]);
+		expect(findAiKeywords(raw, '/file/detail/abc')).toEqual([
+			'keep me',
+			'keep me too',
+		]);
+	});
+
+	it('returns [] when extra_data is absent', () => {
+		const raw = { status: 0, data: { file_id: 'abc' } };
+		expect(findAiKeywords(raw, '/file/detail/abc')).toEqual([]);
+	});
+
+	it('returns [] when aiContentHeader is absent', () => {
+		const raw = { status: 0, data: { extra_data: {} } };
+		expect(findAiKeywords(raw, '/file/detail/abc')).toEqual([]);
+	});
+
+	it('returns [] when keywords field is absent', () => {
+		const raw = {
+			status: 0,
+			data: { extra_data: { aiContentHeader: {} } },
+		};
+		expect(findAiKeywords(raw, '/file/detail/abc')).toEqual([]);
+	});
+
+	it('returns [] when keywords is not an array', () => {
+		const raw = {
+			status: 0,
+			data: { extra_data: { aiContentHeader: { keywords: 'bogus' } } },
+		};
+		expect(findAiKeywords(raw, '/file/detail/abc')).toEqual([]);
+	});
+
+	it('throws PlaudParseError when response body is not an object', () => {
+		expect(() => findAiKeywords('nope', '/file/detail/abc')).toThrow(
+			PlaudParseError,
+		);
+	});
+
+	it('throws PlaudParseError when response.data is missing', () => {
+		expect(() => findAiKeywords({ status: 0 }, '/file/detail/abc')).toThrow(
+			PlaudParseError,
+		);
+	});
+});
+
+// =============================================================================
+// getTranscriptAndSummary — DD-004: newer-summary + keyword propagation
+// =============================================================================
+
+describe('getTranscriptAndSummary DD-004 paths', () => {
+	function fileDetailFull(options: {
+		readonly polishUrl?: string;
+		readonly newerSummary?: string;
+		readonly keywords?: readonly string[];
+	}): Record<string, unknown> {
+		const contentList: unknown[] = [];
+		if (options.polishUrl !== undefined) {
+			contentList.push({
+				data_type: 'transaction_polish',
+				task_status: 1,
+				data_link: options.polishUrl,
+			});
+		}
+		const preDownload: unknown[] = [];
+		if (options.newerSummary !== undefined) {
+			preDownload.push({
+				data_type: 'auto_sum_note',
+				data_content: options.newerSummary,
+			});
+		}
+		const extraData: Record<string, unknown> = {};
+		if (options.keywords !== undefined) {
+			extraData.aiContentHeader = { keywords: options.keywords };
+		}
+		return {
+			status: 0,
+			msg: 'success',
+			data: {
+				file_id: 'abc123',
+				content_list: contentList,
+				pre_download_content_list: preDownload,
+				extra_data: extraData,
+			},
+		};
+	}
+
+	it('prefers the newer auto_sum_note summary over the legacy /ai/transsumm/ summary', async () => {
+		const { fetcher } = routeFetcher({
+			transsumm: ok(transsummEnvelope()), // legacy summary says "Key points..."
+			detail: ok(
+				fileDetailFull({
+					newerSummary:
+						'**Participants:** Charles Kelsoe, Vijay Muniswamy\n\nNewer summary body.',
+				}),
+			),
+		});
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+
+		const result = await client.getTranscriptAndSummary(ID);
+
+		expect(result.summary?.text).toContain('Vijay Muniswamy');
+		expect(result.summary?.text).toContain('Newer summary body.');
+		expect(result.summary?.text).not.toContain('Key points');
+	});
+
+	it('falls back to the legacy summary when /file/detail/ has no auto_sum_note entry', async () => {
+		const { fetcher } = routeFetcher({
+			transsumm: ok(transsummEnvelope()),
+			detail: ok(fileDetailFull({})), // no newerSummary
+		});
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+
+		const result = await client.getTranscriptAndSummary(ID);
+
+		expect(result.summary?.text).toContain('Key points');
+	});
+
+	it('falls back to the legacy summary when /file/detail/ itself throws', async () => {
+		const { fetcher } = routeFetcher({
+			transsumm: ok(transsummEnvelope()),
+			throwOn: 'detail',
+		});
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+
+		const result = await client.getTranscriptAndSummary(ID);
+
+		expect(result.summary?.text).toContain('Key points');
+	});
+
+	it('propagates AI keywords on the result when present', async () => {
+		const { fetcher } = routeFetcher({
+			transsumm: ok(transsummEnvelope()),
+			detail: ok(
+				fileDetailFull({
+					keywords: ['AI Agent', 'Customer Data', 'AWS Environment'],
+				}),
+			),
+		});
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+
+		const result = await client.getTranscriptAndSummary(ID);
+
+		expect(result.aiKeywords).toEqual([
+			'AI Agent',
+			'Customer Data',
+			'AWS Environment',
+		]);
+	});
+
+	it('returns undefined aiKeywords when the keyword list is empty', async () => {
+		const { fetcher } = routeFetcher({
+			transsumm: ok(transsummEnvelope()),
+			detail: ok(fileDetailFull({ keywords: [] })),
+		});
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+
+		const result = await client.getTranscriptAndSummary(ID);
+
+		expect(result.aiKeywords).toBeUndefined();
+	});
+
+	it('returns undefined aiKeywords when /file/detail/ throws', async () => {
+		const { fetcher } = routeFetcher({
+			transsumm: ok(transsummEnvelope()),
+			throwOn: 'detail',
+		});
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+
+		const result = await client.getTranscriptAndSummary(ID);
+
+		expect(result.aiKeywords).toBeUndefined();
+	});
+
+	it('combines all three DD-004 sources in one successful call', async () => {
+		// End-to-end regression: polished transcript + newer summary + keywords
+		// all arrive on the result from a single /file/detail/ round trip.
+		const { fetcher } = routeFetcher({
+			transsumm: ok(transsummEnvelope()),
+			detail: ok(
+				fileDetailFull({
+					polishUrl: 'https://s3/polish?sig=x',
+					newerSummary: '**Participants:** Charles, Vijay\n\nNew body.',
+					keywords: ['Topic A', 'Topic B'],
+				}),
+			),
+			polish: ok([
+				polishedSegment({
+					speaker: 'Charles Kelsoe',
+					original_speaker: 'Speaker 1',
+				}),
+				polishedSegment({
+					start_time: 1000,
+					end_time: 2000,
+					speaker: 'Vijay Muniswamy',
+					original_speaker: 'Speaker 2',
+				}),
+			]),
+		});
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+
+		const result = await client.getTranscriptAndSummary(ID);
+
+		expect(result.transcript?.segments.map((s) => s.speaker)).toEqual([
+			'Charles Kelsoe',
+			'Vijay Muniswamy',
+		]);
+		expect(result.summary?.text).toContain('New body.');
+		expect(result.aiKeywords).toEqual(['Topic A', 'Topic B']);
 	});
 });

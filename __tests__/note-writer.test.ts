@@ -9,6 +9,7 @@ import {
 	formatMarkdown,
 	formatPlaudWebUrl,
 	formatTimestamp,
+	mergeTagSources,
 	sanitizeFilename,
 	type FileLike,
 	type FolderLike,
@@ -1137,5 +1138,131 @@ describe('extractPlaudIdFromFrontmatter', () => {
 		// the extractor must round-trip them.
 		const fm = formatFrontmatter(makeRecording({ id: 'null' as never }), []);
 		expect(extractPlaudIdFromFrontmatter(fm)).toBe('null');
+	});
+});
+
+// ---------------------------------------------------------------------------
+// mergeTagSources — DD-004 (2026-04-14): AI keyword merging rules
+// ---------------------------------------------------------------------------
+
+describe('mergeTagSources', () => {
+	it('returns an empty list when both inputs are empty or undefined', () => {
+		expect(mergeTagSources(undefined, undefined)).toEqual([]);
+		expect(mergeTagSources([], [])).toEqual([]);
+		expect(mergeTagSources(undefined, [])).toEqual([]);
+	});
+
+	it('lowercases base tags and preserves their insertion order', () => {
+		expect(mergeTagSources(['Work', 'Meeting', 'Planning'], undefined)).toEqual([
+			'work',
+			'meeting',
+			'planning',
+		]);
+	});
+
+	it('slugifies AI keywords with plaud/ prefix, lowercase, and dashes', () => {
+		expect(
+			mergeTagSources(undefined, [
+				'AI Agent',
+				'Customer Data',
+				'AWS Environment',
+			]),
+		).toEqual(['plaud/ai-agent', 'plaud/customer-data', 'plaud/aws-environment']);
+	});
+
+	it('collapses multiple whitespace runs into a single dash', () => {
+		expect(mergeTagSources(undefined, ['Hello    World'])).toEqual([
+			'plaud/hello-world',
+		]);
+	});
+
+	it('strips leading and trailing whitespace (and the dashes they would produce)', () => {
+		expect(mergeTagSources(undefined, ['  Leading', 'Trailing  '])).toEqual([
+			'plaud/leading',
+			'plaud/trailing',
+		]);
+	});
+
+	it('drops empty and whitespace-only entries on both sides', () => {
+		expect(mergeTagSources(['', '   ', 'Keep'], ['', '   ', 'Keep Me'])).toEqual([
+			'keep',
+			'plaud/keep-me',
+		]);
+	});
+
+	it('deduplicates base tags case-insensitively, first occurrence wins', () => {
+		expect(mergeTagSources(['Work', 'work', 'WORK'], undefined)).toEqual([
+			'work',
+		]);
+	});
+
+	it('deduplicates AI keywords case-insensitively after slugification', () => {
+		expect(
+			mergeTagSources(undefined, ['AI Agent', 'ai agent', 'AI AGENT']),
+		).toEqual(['plaud/ai-agent']);
+	});
+
+	it('appends AI tags after base tags regardless of input order', () => {
+		const result = mergeTagSources(['manual'], ['AI Topic']);
+		expect(result).toEqual(['manual', 'plaud/ai-topic']);
+	});
+
+	it('does not collapse a base tag with a similarly-named AI tag, because the AI tag has the plaud/ prefix', () => {
+		// A plain `ai-agent` base tag and the AI-derived `plaud/ai-agent`
+		// are distinct strings — the namespace is the whole point of
+		// prefixing. Both should survive the merge.
+		const result = mergeTagSources(['ai-agent'], ['AI Agent']);
+		expect(result).toEqual(['ai-agent', 'plaud/ai-agent']);
+	});
+
+	it('collapses two AI entries that slugify to the same form', () => {
+		// "AI Agent" and "ai   agent" both slugify to plaud/ai-agent.
+		const result = mergeTagSources(undefined, ['AI Agent', 'ai   agent']);
+		expect(result).toEqual(['plaud/ai-agent']);
+	});
+
+	it('preserves a base tag whose lowercased form equals a would-be AI prefix match', () => {
+		// If a curated tag happens to already be `plaud/ai-agent`, the AI
+		// merge must dedup against it and not re-emit a duplicate.
+		const result = mergeTagSources(['plaud/ai-agent'], ['AI Agent']);
+		expect(result).toEqual(['plaud/ai-agent']);
+	});
+
+	it('silently skips non-string entries in either list', () => {
+		// Defense in depth: caller should never pass us numbers, but if
+		// Plaud's format drifts to include non-strings we should drop them
+		// instead of crashing the note writer.
+		const result = mergeTagSources(
+			['real', 42 as unknown as string],
+			['valid', null as unknown as string],
+		);
+		expect(result).toEqual(['real', 'plaud/valid']);
+	});
+
+	it('end-to-end: real-data-shape example from the 2026-04-14 capture', () => {
+		// Base list is empty (filetag_id_list was empty in Charles's test
+		// data) and the 9 AI keywords land as the only tags on the note.
+		const result = mergeTagSources([], [
+			'AI Agent',
+			'Customer Data',
+			'AWS Environment',
+			'Semantic Search',
+			'ImageRight',
+			'Cloud Code',
+			'Roper Architecture',
+			'DevOps',
+			'Workflow Modernization',
+		]);
+		expect(result).toEqual([
+			'plaud/ai-agent',
+			'plaud/customer-data',
+			'plaud/aws-environment',
+			'plaud/semantic-search',
+			'plaud/imageright',
+			'plaud/cloud-code',
+			'plaud/roper-architecture',
+			'plaud/devops',
+			'plaud/workflow-modernization',
+		]);
 	});
 });

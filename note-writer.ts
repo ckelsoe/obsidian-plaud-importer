@@ -320,6 +320,71 @@ function yamlArray(items: readonly string[]): string {
 	return `[${items.map(yamlScalar).join(', ')}]`;
 }
 
+/**
+ * Merge curated base tags with Plaud's AI-generated keywords into a single
+ * deduplicated tag list for a note's `tags:` frontmatter.
+ *
+ * The normalization rules were chosen by Charles on 2026-04-14 after the
+ * DD-004 investigation turned up Plaud's `aiContentHeader.keywords` field:
+ *
+ *  1. **Namespace** — AI keywords are prefixed with `plaud/` so they never
+ *     mingle with user-curated tags in a nested tag search. Base tags keep
+ *     whatever namespace Plaud's list endpoint gave them.
+ *  2. **Slugify** — AI keywords are lowercased, their internal whitespace
+ *     runs are collapsed to single dashes, and leading / trailing dashes
+ *     are stripped. `"AI Agent"` becomes `plaud/ai-agent`.
+ *  3. **Dedup** — both input lists are lowercased for comparison so two
+ *     entries that differ only in case collapse to one. The first
+ *     occurrence wins (base tags before AI tags).
+ *  4. **Ordering** — base tags first in their original insertion order,
+ *     then AI tags appended in Plaud's original insertion order.
+ *
+ * Returns a new frozen-style `readonly string[]`; callers must not mutate.
+ * Empty or whitespace-only entries on either side are dropped before any
+ * other processing — they should never end up in a YAML array.
+ */
+export function mergeTagSources(
+	baseTags: readonly string[] | undefined,
+	aiKeywords: readonly string[] | undefined,
+): readonly string[] {
+	const seen = new Set<string>();
+	const out: string[] = [];
+
+	for (const tag of baseTags ?? []) {
+		if (typeof tag !== 'string') {
+			continue;
+		}
+		const normalized = tag.trim().toLowerCase();
+		if (normalized.length === 0 || seen.has(normalized)) {
+			continue;
+		}
+		seen.add(normalized);
+		out.push(normalized);
+	}
+
+	for (const keyword of aiKeywords ?? []) {
+		if (typeof keyword !== 'string') {
+			continue;
+		}
+		const slug = keyword
+			.trim()
+			.toLowerCase()
+			.replace(/\s+/g, '-')
+			.replace(/^-+|-+$/g, '');
+		if (slug.length === 0) {
+			continue;
+		}
+		const prefixed = `plaud/${slug}`;
+		if (seen.has(prefixed)) {
+			continue;
+		}
+		seen.add(prefixed);
+		out.push(prefixed);
+	}
+
+	return out;
+}
+
 export function formatFrontmatter(
 	recording: Recording,
 	speakers: readonly string[],

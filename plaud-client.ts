@@ -23,6 +23,16 @@ export type PlaudRecordingId = string & { readonly __brand: 'PlaudRecordingId' }
 export interface TranscriptAndSummary {
 	readonly transcript: Transcript | null;
 	readonly summary: Summary | null;
+	/**
+	 * AI-generated keyword tags from Plaud, when the client can reach a
+	 * source that provides them. Populated by the RE client from
+	 * `/file/detail/{id}` → `data.extra_data.aiContentHeader.keywords`,
+	 * left undefined when the field is absent (older recordings, or when
+	 * the detail fetch failed silently). Consumers should merge these into
+	 * the note's tag frontmatter via `mergeTagSources` in note-writer.ts
+	 * so namespacing and dedup rules stay in one place.
+	 */
+	readonly aiKeywords?: readonly string[];
 }
 
 export interface PlaudClient {

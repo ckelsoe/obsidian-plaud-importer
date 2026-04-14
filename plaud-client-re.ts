@@ -213,76 +213,85 @@ export class ReverseEngineeredPlaudClient implements PlaudClient {
 		// Two-step strategy after the 2026-04-14 reverse-engineering pass:
 		//
 		//   1. Call the legacy /ai/transsumm/{id} endpoint to get the raw
-		//      transcript and the AI summary. The raw transcript carries
-		//      Plaud's diarization labels ("Speaker 1", "Speaker 2"), with
-		//      only the account owner's voice auto-mapped to a real name
-		//      via Plaud's voice fingerprinting.
+		//      transcript and the legacy AI summary. The raw transcript
+		//      carries Plaud's diarization labels ("Speaker 1", "Speaker
+		//      2") with only the account owner's voice auto-mapped. The
+		//      legacy summary is a STATIC snapshot taken at generation
+		//      time — even after a user renames speakers in the web app,
+		//      it still says "Speaker 2".
 		//
-		//   2. Call /file/detail/{id} to look for a `transaction_polish`
-		//      content entry. When present, the polish is a separately-
-		//      stored transcript where the user-applied speaker renames
-		//      in Plaud's web app have been persisted (the web app is the
-		//      only place this editing happens; the renames never write
-		//      back to /ai/transsumm/). Fetching the polish's pre-signed
-		//      S3 URL gives us a segment array with the SAME schema as
-		//      /ai/transsumm/, but with `speaker` holding the renamed
-		//      value (e.g., "Vijay Muniswamy") and `original_speaker`
-		//      preserved as the raw diarization label.
+		//   2. Call /file/detail/{id} and extract three fields in one
+		//      pass (see fetchFileDetailBundle):
+		//        a. transaction_polish transcript — user-renamed + smoothed
+		//        b. newer auto_sum_note summary — regenerated with real
+		//           participant names, fixes the "Speaker 2 in Summary"
+		//           issue noted in DD-003's resolution
+		//        c. aiContentHeader.keywords — Plaud's auto-tag guess,
+		//           surfaced into frontmatter via mergeTagSources
 		//
-		// The polish is also "smoothed" (Plaud strips false-start
-		// repetitions and collapses fragmentary segments) so the
-		// generated note quality improves regardless of whether the user
-		// had renamed speakers.
-		//
-		// The polish lookup is best-effort: any failure at /file/detail/
-		// or in the S3 fetch falls back silently to the raw transcript.
-		// This matters because a new recording may not have a polish
-		// generated yet, and older recordings may never have had one.
-		// See dev-docs/deferred-decisions.md DD-003 for the full context.
+		// The bundle lookup is best-effort: any failure at /file/detail/
+		// or in the polish S3 fetch falls back silently to the legacy
+		// transcript and legacy summary. A recording may not have these
+		// fields generated yet, and older recordings may never have had
+		// them. See dev-docs/deferred-decisions.md DD-003 and DD-004.
 
 		const legacy = await this.fetchLegacyTranssumm(id);
 
-		let polishedTranscript: Transcript | null = null;
-		let polishError: unknown = null;
+		let bundle: FileDetailBundle = {
+			polishedTranscript: null,
+			newerSummary: null,
+			aiKeywords: [],
+		};
+		let bundleError: unknown = null;
 		try {
-			polishedTranscript = await this.fetchPolishedTranscript(id);
+			bundle = await this.fetchFileDetailBundle(id);
 		} catch (err) {
-			polishError = err;
+			bundleError = err;
 		}
 
-		const finalTranscript = polishedTranscript ?? legacy.transcript;
+		const finalTranscript = bundle.polishedTranscript ?? legacy.transcript;
+		const finalSummary = bundle.newerSummary ?? legacy.summary;
 
 		if (this.debugLogger?.enabled === true) {
 			this.debugLogger.log({
 				kind: 'parsed',
 				endpoint: '/getTranscriptAndSummary',
-				message: `resolved transcript for ${id}: ${
-					polishedTranscript !== null
-						? `polished (${polishedTranscript.segments.length} segments)`
+				message: `resolved transcript+summary for ${id}: transcript=${
+					bundle.polishedTranscript !== null
+						? `polished (${bundle.polishedTranscript.segments.length} segments)`
 						: legacy.transcript !== null
-							? `raw fallback (${legacy.transcript.segments.length} segments)${polishError ? ` — polish lookup failed: ${polishError instanceof Error ? polishError.message : String(polishError)}` : ' — no polish available'}`
+							? `raw fallback (${legacy.transcript.segments.length} segments)${bundleError ? ` — file-detail lookup failed: ${bundleError instanceof Error ? bundleError.message : String(bundleError)}` : ' — no polish available'}`
 							: 'null (no transcript available from either source)'
-				}`,
+				}, summary=${
+					bundle.newerSummary !== null
+						? `newer (${bundle.newerSummary.text.length} chars)`
+						: legacy.summary !== null
+							? `legacy fallback (${legacy.summary.text.length} chars)`
+							: 'null (no summary available from either source)'
+				}, aiKeywords=${bundle.aiKeywords.length}`,
 				payload: {
-					usedSource: polishedTranscript !== null ? 'transaction_polish' : 'ai/transsumm',
-					polishErrorMessage:
-						polishError instanceof Error ? polishError.message : polishError !== null ? String(polishError) : null,
+					transcriptSource:
+						bundle.polishedTranscript !== null ? 'transaction_polish' : 'ai/transsumm',
+					summarySource:
+						bundle.newerSummary !== null ? 'auto_sum_note' : 'ai/transsumm',
+					bundleErrorMessage:
+						bundleError instanceof Error
+							? bundleError.message
+							: bundleError !== null
+								? String(bundleError)
+								: null,
 					segmentCount: finalTranscript?.segments.length ?? 0,
-					summary:
-						legacy.summary !== null
-							? {
-									textLength: legacy.summary.text.length,
-									textSample: legacy.summary.text.slice(0, 200),
-									sectionCount: legacy.summary.sections?.length ?? 0,
-								}
-							: null,
+					summaryLength: finalSummary?.text.length ?? 0,
+					aiKeywordCount: bundle.aiKeywords.length,
+					aiKeywordSample: bundle.aiKeywords.slice(0, 5),
 				},
 			});
 		}
 
 		return {
 			transcript: finalTranscript,
-			summary: legacy.summary,
+			summary: finalSummary,
+			aiKeywords: bundle.aiKeywords.length > 0 ? bundle.aiKeywords : undefined,
 		};
 	}
 
@@ -307,45 +316,56 @@ export class ReverseEngineeredPlaudClient implements PlaudClient {
 	}
 
 	/**
-	 * Two-step fetch of the polished transcript:
-	 *   1. GET /file/detail/{id} to discover content_list entries.
-	 *   2. Find the `transaction_polish` entry with a successful
-	 *      task_status, read its pre-signed S3 `data_link`, and fetch it
-	 *      authless. The S3 URL has a short expiry (5 minutes) so the
-	 *      follow-up fetch must happen immediately after the /file/detail
-	 *      call — running these back-to-back in the same method keeps the
-	 *      window small without any caching layer.
+	 * Single-trip fetch of `/file/detail/{id}` that pulls every field we
+	 * care about out of one response:
+	 *   - polished transcript (follows the transaction_polish S3 link)
+	 *   - newer AI-generated summary (embedded under
+	 *     `pre_download_content_list[auto_sum_note].data_content`)
+	 *   - AI keyword tags (under `extra_data.aiContentHeader.keywords`)
 	 *
-	 * Returns null when the recording has no polish generated (e.g., a
-	 * brand-new upload that Plaud hasn't processed yet) OR when the
-	 * `transaction_polish` entry exists but reports task_status !== 1
-	 * (in-progress or failed). Throws on any network/parse error so the
-	 * caller can decide whether to fall back or surface.
+	 * The three fields are independent: a recording may have any subset.
+	 * Newer recordings typically have all three; older ones may only have
+	 * the polish (or nothing at all). Callers treat each field as
+	 * best-effort and fall back to the legacy `/ai/transsumm/` response
+	 * for transcript and summary when the bundle lacks them.
+	 *
+	 * Throws on any network / structural-parse error so the caller can
+	 * decide whether to fall back or surface. The two-hop polish fetch
+	 * runs back-to-back with the detail fetch so the 5-minute pre-signed
+	 * S3 URL doesn't expire in between.
 	 */
-	private async fetchPolishedTranscript(
+	private async fetchFileDetailBundle(
 		id: PlaudRecordingId,
-	): Promise<Transcript | null> {
+	): Promise<FileDetailBundle> {
 		const detailEndpoint = `/file/detail/${encodeURIComponent(id)}`;
 		const detailUrl = `${this.baseUrl}${detailEndpoint}`;
 		const rawDetail = await this.fetchJson(detailUrl, detailEndpoint);
+
 		const polishLink = findTransactionPolishLink(rawDetail, detailEndpoint);
-		if (polishLink === null) {
-			return null;
+		const newerSummaryMarkdown = findNewerSummaryMarkdown(rawDetail, detailEndpoint);
+		const aiKeywords = findAiKeywords(rawDetail, detailEndpoint);
+
+		const newerSummary: Summary | null =
+			newerSummaryMarkdown !== null ? { id, text: newerSummaryMarkdown } : null;
+
+		let polishedTranscript: Transcript | null = null;
+		if (polishLink !== null) {
+			// Fetch the pre-signed S3 URL without the Bearer token — it already
+			// carries its own X-Amz-Signature. Synthetic endpoint label for
+			// logging / errors so the origin of the call is obvious in debug
+			// output without leaking the full URL (which contains an AWS
+			// session token query param).
+			const polishEndpoint = `/s3/file_transaction_polish/${encodeURIComponent(id)}`;
+			const rawPolish = await this.fetchJson(polishLink, polishEndpoint, {
+				skipAuth: true,
+			});
+			// The polish file is a bare JSON array of segments (no envelope).
+			// parseTranscriptField handles that shape directly — pass the raw
+			// value as the segments list.
+			polishedTranscript = parseTranscriptField(id, rawPolish, polishEndpoint);
 		}
 
-		// Fetch the pre-signed S3 URL without the Bearer token — it already
-		// carries its own X-Amz-Signature. Use a synthetic endpoint label
-		// for logging / errors so the origin of the call is obvious in
-		// debug output without leaking the full URL (which contains an
-		// AWS session token query param).
-		const polishEndpoint = `/s3/file_transaction_polish/${encodeURIComponent(id)}`;
-		const rawPolish = await this.fetchJson(polishLink, polishEndpoint, {
-			skipAuth: true,
-		});
-		// The polish file is a bare JSON array of segments (no envelope).
-		// parseTranscriptField handles that shape directly — pass the raw
-		// value as the segments list.
-		return parseTranscriptField(id, rawPolish, polishEndpoint);
+		return { polishedTranscript, newerSummary, aiKeywords };
 	}
 
 	private async fetchJson(
@@ -701,6 +721,147 @@ function isRawRecording(value: unknown): value is RawRecording {
  * `data` object, non-array `content_list`, etc.) so the caller can route
  * it through the normal parse-error path.
  */
+/**
+ * Shape returned by `fetchFileDetailBundle` — the three extracts we pull
+ * from a single `/file/detail/{id}` round trip. Keeping them bundled lets
+ * the caller make one fetch and consume all the fields at once instead of
+ * walking the response three times with three independent helpers.
+ */
+export interface FileDetailBundle {
+	readonly polishedTranscript: Transcript | null;
+	readonly newerSummary: Summary | null;
+	readonly aiKeywords: readonly string[];
+}
+
+/**
+ * Walk a raw `/file/detail/{id}` response and return the markdown text of
+ * Plaud's NEWER summary, or null when this recording has no newer summary.
+ *
+ * The newer summary lives at
+ * `data.pre_download_content_list[data_type='auto_sum_note'].data_content`
+ * — embedded directly in the response body (no S3 follow-up). It differs
+ * from the legacy `/ai/transsumm/{id}` summary in two important ways:
+ *  1. Participant names are resolved from Plaud's speaker-rename map, so
+ *     a note reads "Participants: Charles Kelsoe, Vijay Muniswamy" instead
+ *     of "Speaker 2, Speaker 3".
+ *  2. Plaud regenerates it when the user edits speakers in the web app,
+ *     unlike the legacy summary which is a static snapshot.
+ *
+ * Returns null — not an error — when:
+ *  - The response has no `pre_download_content_list` field (older recordings)
+ *  - The list is present but contains no `auto_sum_note` entry
+ *  - The `auto_sum_note` entry has no `data_content` string
+ *
+ * Throws `PlaudParseError` on structurally-invalid responses (missing
+ * `data`, non-array `pre_download_content_list`) so the caller can surface
+ * the bad shape via the normal parse-error path.
+ *
+ * See `dev-docs/deferred-decisions.md` DD-004 for the field inventory.
+ */
+export function findNewerSummaryMarkdown(
+	raw: unknown,
+	endpoint: string,
+): string | null {
+	if (!isRecord(raw)) {
+		throw new PlaudParseError(
+			`Response body for ${endpoint} is not an object`,
+			endpoint,
+		);
+	}
+	const data = raw.data;
+	if (!isRecord(data)) {
+		throw new PlaudParseError(
+			`Response body for ${endpoint} is missing the 'data' object`,
+			endpoint,
+		);
+	}
+	const list = data.pre_download_content_list;
+	if (list === undefined || list === null) {
+		return null;
+	}
+	if (!Array.isArray(list)) {
+		throw new PlaudParseError(
+			`Response body for ${endpoint} has 'pre_download_content_list' that is not an array`,
+			endpoint,
+		);
+	}
+	for (const item of list) {
+		if (!isRecord(item)) {
+			continue;
+		}
+		if (item.data_type !== 'auto_sum_note') {
+			continue;
+		}
+		const content = item.data_content;
+		if (typeof content === 'string' && content.trim().length > 0) {
+			return content.trim();
+		}
+		return null;
+	}
+	return null;
+}
+
+/**
+ * Walk a raw `/file/detail/{id}` response and return the AI-generated
+ * keyword list, or an empty array when absent.
+ *
+ * The keywords live at `data.extra_data.aiContentHeader.keywords` — an
+ * array of short strings like `["AI Agent", "Customer Data", "AWS"]`.
+ * They are Plaud's topical tag guess for the recording, suitable for
+ * merging into the note's `tags:` frontmatter via `mergeTagSources` in
+ * note-writer.ts.
+ *
+ * Returns `[]` — not an error — when any of the optional intermediate
+ * fields are missing (`extra_data`, `aiContentHeader`, `keywords`). This
+ * matches the reality that older recordings and newer failed-generation
+ * recordings legitimately lack this data, and the caller should treat
+ * "no AI tags" as a normal case.
+ *
+ * Non-string items inside the keywords array are silently dropped so a
+ * mid-field format drift (e.g., Plaud starting to emit `{label, score}`
+ * objects) degrades to fewer tags rather than a hard error.
+ *
+ * Throws `PlaudParseError` only on structurally-invalid top-level
+ * responses (missing `data`, non-object response body).
+ */
+export function findAiKeywords(
+	raw: unknown,
+	endpoint: string,
+): readonly string[] {
+	if (!isRecord(raw)) {
+		throw new PlaudParseError(
+			`Response body for ${endpoint} is not an object`,
+			endpoint,
+		);
+	}
+	const data = raw.data;
+	if (!isRecord(data)) {
+		throw new PlaudParseError(
+			`Response body for ${endpoint} is missing the 'data' object`,
+			endpoint,
+		);
+	}
+	const extraData = data.extra_data;
+	if (!isRecord(extraData)) {
+		return [];
+	}
+	const header = extraData.aiContentHeader;
+	if (!isRecord(header)) {
+		return [];
+	}
+	const keywords = header.keywords;
+	if (!Array.isArray(keywords)) {
+		return [];
+	}
+	const out: string[] = [];
+	for (const kw of keywords) {
+		if (typeof kw === 'string' && kw.trim().length > 0) {
+			out.push(kw.trim());
+		}
+	}
+	return out;
+}
+
 export function findTransactionPolishLink(
 	raw: unknown,
 	endpoint: string,
