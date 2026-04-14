@@ -84,6 +84,13 @@
 	color: var(--text-error);
 	margin: 0 0 1em 0;
 	line-height: 1.5;
+	/* Make error text selectable so users can copy it manually even
+	 * without clicking the Copy button. Obsidian's modal chrome often
+	 * inherits user-select: none, which is wrong for error text. */
+	user-select: text;
+	-webkit-user-select: text;
+	white-space: pre-wrap;
+	word-break: break-word;
 }
 
 /* Button row at the bottom of the modal */
@@ -99,6 +106,8 @@
 	font-weight: 500;
 	margin: 0.5em 0 1em 0;
 	line-height: 1.5;
+	user-select: text;
+	-webkit-user-select: text;
 }
 
 .plaud-importer-failures {
@@ -107,6 +116,9 @@
 	background: var(--background-secondary);
 	border-left: 3px solid var(--text-error);
 	border-radius: 2px;
+	/* Let users select any of the text inside the failures panel. */
+	user-select: text;
+	-webkit-user-select: text;
 }
 
 .plaud-importer-failures summary {
@@ -122,10 +134,23 @@
 }
 
 .plaud-importer-failures li {
-	margin-bottom: 0.4em;
+	margin-bottom: 0.6em;
 	font-size: 0.9em;
+	line-height: 1.4;
 }
 
 .plaud-importer-failures strong {
 	color: var(--text-normal);
+}
+
+.plaud-importer-failure-id {
+	font-family: var(--font-monospace);
+	font-size: 0.85em;
+	color: var(--text-muted);
+	opacity: 0.7;
+}
+
+.plaud-importer-copy-failures {
+	margin-top: 0.5em;
+	font-size: 0.85em;
 }

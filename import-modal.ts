@@ -261,6 +261,38 @@ export function formatImportNotice(tally: ImportTally): string {
 	return `Plaud Importer: ${parts.join(', ')}.`;
 }
 
+/**
+ * Format an error classification as a structured block suitable for
+ * pasting into a bug report. Exported so the renderError path and any
+ * future "copy failure details" button in the summary view can share
+ * the same format.
+ */
+export function formatErrorForClipboard(classification: ErrorClassification): string {
+	return [
+		'Plaud Importer error',
+		`Category: ${classification.category}`,
+		`Retryable: ${classification.canRetry}`,
+		'Message:',
+		classification.message,
+	].join('\n');
+}
+
+/**
+ * Copy text to the clipboard and show a brief Notice confirming success.
+ * Falls back gracefully on platforms where the clipboard API is blocked.
+ */
+async function copyToClipboard(text: string): Promise<void> {
+	try {
+		await navigator.clipboard.writeText(text);
+		new Notice('Plaud Importer: error details copied to clipboard.');
+	} catch (err) {
+		console.error('Plaud Importer: clipboard write failed', err);
+		new Notice(
+			'Plaud Importer: could not copy to clipboard — see the developer console (Ctrl+Shift+I) for the full error.',
+		);
+	}
+}
+
 // -----------------------------------------------------------------------------
 // Modal
 // -----------------------------------------------------------------------------
@@ -295,6 +327,7 @@ export class ImportModal extends Modal {
 			// calls renderError internally. This outer catch is purely
 			// defense-in-depth against a future bug that throws outside the
 			// fetch try/catch (e.g., a render function throwing).
+			console.error('Plaud Importer: unexpected error in onOpen/refresh', err);
 			this.renderError(classifyError(err));
 		});
 	}
@@ -332,6 +365,7 @@ export class ImportModal extends Modal {
 			if (generation !== this.fetchGeneration) {
 				return;
 			}
+			console.error('Plaud Importer: listRecordings failed', err);
 			this.renderError(classifyError(err));
 		}
 	}
@@ -368,6 +402,13 @@ export class ImportModal extends Modal {
 			cls: 'plaud-importer-error-message',
 		});
 		const buttonRow = contentEl.createDiv({ cls: 'plaud-importer-buttons' });
+
+		const copyButton = buttonRow.createEl('button', { text: 'Copy error' });
+		copyButton.addEventListener('click', () => {
+			const payload = formatErrorForClipboard(classification);
+			void copyToClipboard(payload);
+		});
+
 		if (classification.canRetry) {
 			const retryButton = buttonRow.createEl('button', {
 				text: 'Retry',
@@ -375,6 +416,7 @@ export class ImportModal extends Modal {
 			});
 			retryButton.addEventListener('click', () => {
 				this.refresh().catch((err) => {
+					console.error('Plaud Importer: retry failed', err);
 					this.renderError(classifyError(err));
 				});
 			});
@@ -410,6 +452,7 @@ export class ImportModal extends Modal {
 				// write and the writer construction — this outer catch is
 				// defense-in-depth against a future bug that throws outside
 				// those try/catch blocks.
+				console.error('Plaud Importer: unexpected error in onImportClick', err);
 				this.renderError(classifyError(err));
 			});
 		});
@@ -477,6 +520,7 @@ export class ImportModal extends Modal {
 			writer = new NoteWriter(this.app.vault, this.noteWriterOptions);
 		} catch (err) {
 			if (err instanceof NoteWriterError) {
+				console.error('Plaud Importer: NoteWriter construction failed', err);
 				this.renderError(classifyError(err));
 				return;
 			}
@@ -517,8 +561,14 @@ export class ImportModal extends Modal {
 				const writeOutcome = await writer.writeNote(recording, transcript, summary);
 				results.push({ kind: 'written', recording, writeOutcome });
 			} catch (err) {
-				// TODO: plumb through a logError(errorIds.IMPORT_RECORDING_FAILED, ...)
+				// Log the full error object (including stack and any wrapped
+				// `cause`) so it's visible in DevTools. TODO: also plumb a
+				// logError(errorIds.IMPORT_RECORDING_FAILED, ...) telemetry
 				// call once the plugin has telemetry infrastructure.
+				console.error(
+					`Plaud Importer: import failed for recording ${recording.id} "${recording.title}"`,
+					err,
+				);
 				const classification = classifyError(err);
 				results.push({
 					kind: 'failed',
@@ -565,10 +615,14 @@ export class ImportModal extends Modal {
 			const details = contentEl.createEl('details', {
 				cls: 'plaud-importer-failures',
 			});
+			// Pre-expand so the user sees the failures without having to
+			// click. The <details> element still provides the collapse
+			// affordance if they want to hide them.
+			details.setAttribute('open', '');
 			details.createEl('summary', {
 				text: `${tally.failures.length} failure${
 					tally.failures.length === 1 ? '' : 's'
-				} — click to expand`,
+				}`,
 			});
 			const list = details.createEl('ul');
 			for (const f of tally.failures) {
@@ -577,8 +631,38 @@ export class ImportModal extends Modal {
 				}
 				const li = list.createEl('li');
 				li.createEl('strong', { text: f.recording.title });
-				li.createSpan({ text: ` — ${f.reason}` });
+				li.createEl('span', {
+					text: ` (${f.recording.id})`,
+					cls: 'plaud-importer-failure-id',
+				});
+				li.createEl('br');
+				li.createSpan({ text: f.reason });
 			}
+
+			// Also offer a one-click Copy-all-failures button for bug
+			// reporting.
+			const copyAllFailures = contentEl.createEl('button', {
+				text: 'Copy all failure details',
+				cls: 'plaud-importer-copy-failures',
+			});
+			copyAllFailures.addEventListener('click', () => {
+				const payload = tally.failures
+					.filter((f): f is ImportResult & { kind: 'failed' } => f.kind === 'failed')
+					.map((f) => {
+						return [
+							`Recording: ${f.recording.title} (${f.recording.id})`,
+							`Category: ${f.classification.category}`,
+							`Retryable: ${f.classification.canRetry}`,
+							`Message: ${f.reason}`,
+						].join('\n');
+					})
+					.join('\n\n---\n\n');
+				void copyToClipboard(
+					`Plaud Importer: ${tally.failures.length} failure${
+						tally.failures.length === 1 ? '' : 's'
+					}\n\n${payload}`,
+				);
+			});
 		}
 
 		const buttonRow = contentEl.createDiv({ cls: 'plaud-importer-buttons' });
