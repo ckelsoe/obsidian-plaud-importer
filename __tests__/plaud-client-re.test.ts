@@ -456,3 +456,659 @@ describe('listRecordings filter validation', () => {
 		).rejects.toBeInstanceOf(PlaudApiError);
 	});
 });
+
+// =============================================================================
+// getTranscriptAndSummary — POST /ai/transsumm/{id}
+// =============================================================================
+
+import type { PlaudRecordingId } from '../plaud-client';
+
+function transsummEnvelope(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+	return {
+		status: 0,
+		msg: 'success',
+		request_id: 'req-abc',
+		data_result: [
+			{
+				start_time: 0,
+				end_time: 4500,
+				content: 'Hello there.',
+				speaker: 'Speaker 1',
+				original_speaker: 'Speaker 1',
+			},
+			{
+				start_time: 4500,
+				end_time: 9000,
+				content: 'How are you doing today?',
+				speaker: 'Speaker 2',
+				original_speaker: 'Speaker 2',
+			},
+		],
+		data_result_summ: JSON.stringify({
+			content: { markdown: '## Key points\n- Greeting exchanged' },
+		}),
+		outline_result: null,
+		...overrides,
+	};
+}
+
+const ID = 'rec-abc-123' as PlaudRecordingId;
+
+// Request shape -------------------------------------------------------------
+
+describe('getTranscriptAndSummary request shape', () => {
+	it('issues POST against /ai/transsumm/{id} with empty JSON body', async () => {
+		const { fetcher, lastRequest } = captureFetcher(ok(transsummEnvelope()));
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+
+		await client.getTranscriptAndSummary(ID);
+
+		const req = lastRequest();
+		expect(req?.method).toBe('POST');
+		expect(req?.url).toBe('https://api.plaud.ai/ai/transsumm/rec-abc-123');
+		expect(req?.body).toBe('{}');
+	});
+
+	it('sends Content-Type: application/json when a body is present', async () => {
+		const { fetcher, lastRequest } = captureFetcher(ok(transsummEnvelope()));
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+
+		await client.getTranscriptAndSummary(ID);
+
+		expect(lastRequest()?.headers['Content-Type']).toBe('application/json');
+	});
+
+	it('still sends Authorization Bearer header', async () => {
+		const { fetcher, lastRequest } = captureFetcher(ok(transsummEnvelope()));
+		const client = new ReverseEngineeredPlaudClient(() => 'my-jwt', fetcher);
+
+		await client.getTranscriptAndSummary(ID);
+
+		expect(lastRequest()?.headers.Authorization).toBe('Bearer my-jwt');
+	});
+
+	it('URL-encodes the recording id', async () => {
+		const { fetcher, lastRequest } = captureFetcher(ok(transsummEnvelope()));
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+
+		await client.getTranscriptAndSummary('id with/slash' as PlaudRecordingId);
+
+		expect(lastRequest()?.url).toBe(
+			'https://api.plaud.ai/ai/transsumm/id%20with%2Fslash',
+		);
+	});
+
+	it('rejects empty id without making a request', async () => {
+		let called = false;
+		const fetcher: PlaudHttpFetcher = async () => {
+			called = true;
+			return ok(transsummEnvelope());
+		};
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+
+		await expect(
+			client.getTranscriptAndSummary('' as PlaudRecordingId),
+		).rejects.toBeInstanceOf(PlaudApiError);
+		expect(called).toBe(false);
+	});
+});
+
+// Happy path response parsing ----------------------------------------------
+
+describe('getTranscriptAndSummary happy path', () => {
+	it('returns both transcript and summary when both are present', async () => {
+		const { fetcher } = captureFetcher(ok(transsummEnvelope()));
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+
+		const result = await client.getTranscriptAndSummary(ID);
+
+		expect(result.transcript).not.toBeNull();
+		expect(result.summary).not.toBeNull();
+		expect(result.transcript?.id).toBe(ID);
+		expect(result.summary?.id).toBe(ID);
+	});
+
+	it('converts transcript timestamps from milliseconds to seconds', async () => {
+		const { fetcher } = captureFetcher(ok(transsummEnvelope()));
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+
+		const { transcript } = await client.getTranscriptAndSummary(ID);
+
+		// First segment: start_time 0 ms → 0 s, end_time 4500 ms → 4.5 s
+		expect(transcript?.segments[0].startSeconds).toBe(0);
+		expect(transcript?.segments[0].endSeconds).toBe(4.5);
+		// Second segment: 4500 ms → 4.5 s, 9000 ms → 9 s
+		expect(transcript?.segments[1].startSeconds).toBe(4.5);
+		expect(transcript?.segments[1].endSeconds).toBe(9);
+	});
+
+	it('maps content → text and preserves speaker', async () => {
+		const { fetcher } = captureFetcher(ok(transsummEnvelope()));
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+
+		const { transcript } = await client.getTranscriptAndSummary(ID);
+
+		expect(transcript?.segments[0].text).toBe('Hello there.');
+		expect(transcript?.segments[0].speaker).toBe('Speaker 1');
+		expect(transcript?.segments[1].text).toBe('How are you doing today?');
+		expect(transcript?.segments[1].speaker).toBe('Speaker 2');
+	});
+
+	it('prefers original_speaker even when speaker is also set (stability across re-transcription)', async () => {
+		// Plaud may rewrite `speaker` when the user edits labels or when
+		// the diarization model changes, but original_speaker is the
+		// stable wire identifier. Prefer original_speaker so imported
+		// notes don't churn when Plaud re-runs transcription.
+		const { fetcher } = captureFetcher(
+			ok(transsummEnvelope({
+				data_result: [
+					{ start_time: 0, end_time: 1000, content: 'foo', speaker: 'Edited Alice', original_speaker: 'Speaker 1' },
+				],
+			})),
+		);
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+
+		const { transcript } = await client.getTranscriptAndSummary(ID);
+
+		expect(transcript?.segments[0].speaker).toBe('Speaker 1');
+	});
+
+	it('falls back to speaker when original_speaker is empty', async () => {
+		const { fetcher } = captureFetcher(
+			ok(transsummEnvelope({
+				data_result: [
+					{ start_time: 0, end_time: 1000, content: 'foo', speaker: 'Speaker 1', original_speaker: '' },
+				],
+			})),
+		);
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+
+		const { transcript } = await client.getTranscriptAndSummary(ID);
+
+		expect(transcript?.segments[0].speaker).toBe('Speaker 1');
+	});
+
+	it('leaves speaker undefined when both speaker and original_speaker are empty', async () => {
+		const { fetcher } = captureFetcher(
+			ok(transsummEnvelope({
+				data_result: [
+					{ start_time: 0, end_time: 1000, content: 'anonymous', speaker: '', original_speaker: '' },
+				],
+			})),
+		);
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+
+		const { transcript } = await client.getTranscriptAndSummary(ID);
+
+		expect(transcript?.segments[0].speaker).toBeUndefined();
+	});
+
+	it('joins all segment text into rawText', async () => {
+		const { fetcher } = captureFetcher(ok(transsummEnvelope()));
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+
+		const { transcript } = await client.getTranscriptAndSummary(ID);
+
+		expect(transcript?.rawText).toBe('Hello there. How are you doing today?');
+	});
+});
+
+// data_result_summ shape variations (the four-shape trap) -------------------
+
+describe('getTranscriptAndSummary summary normalization', () => {
+	it('handles JSON-encoded string with content.markdown (typical case)', async () => {
+		const { fetcher } = captureFetcher(
+			ok(transsummEnvelope({
+				data_result_summ: JSON.stringify({
+					content: { markdown: '## Headline\n- bullet' },
+				}),
+			})),
+		);
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+
+		const { summary } = await client.getTranscriptAndSummary(ID);
+
+		expect(summary?.text).toBe('## Headline\n- bullet');
+	});
+
+	it('handles structured object with content.markdown', async () => {
+		const { fetcher } = captureFetcher(
+			ok(transsummEnvelope({
+				data_result_summ: {
+					content: { markdown: 'Short recording summary' },
+				},
+			})),
+		);
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+
+		const { summary } = await client.getTranscriptAndSummary(ID);
+
+		expect(summary?.text).toBe('Short recording summary');
+	});
+
+	it('handles structured object with content as a direct string', async () => {
+		const { fetcher } = captureFetcher(
+			ok(transsummEnvelope({
+				data_result_summ: { content: 'Direct string content' },
+			})),
+		);
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+
+		const { summary } = await client.getTranscriptAndSummary(ID);
+
+		expect(summary?.text).toBe('Direct string content');
+	});
+
+	it('handles malformed JSON string by treating it as raw markdown', async () => {
+		const { fetcher } = captureFetcher(
+			ok(transsummEnvelope({
+				data_result_summ: 'this is not JSON, just plain markdown',
+			})),
+		);
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+
+		const { summary } = await client.getTranscriptAndSummary(ID);
+
+		expect(summary?.text).toBe('this is not JSON, just plain markdown');
+	});
+
+	it('returns null summary when data_result_summ is null', async () => {
+		const { fetcher } = captureFetcher(
+			ok(transsummEnvelope({ data_result_summ: null })),
+		);
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+
+		const { summary } = await client.getTranscriptAndSummary(ID);
+
+		expect(summary).toBeNull();
+	});
+
+	it('returns null summary when content.markdown is empty after trim', async () => {
+		const { fetcher } = captureFetcher(
+			ok(transsummEnvelope({
+				data_result_summ: { content: { markdown: '   \n\t   ' } },
+			})),
+		);
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+
+		const { summary } = await client.getTranscriptAndSummary(ID);
+
+		expect(summary).toBeNull();
+	});
+
+	it('returns null summary when raw is an empty string', async () => {
+		const { fetcher } = captureFetcher(
+			ok(transsummEnvelope({ data_result_summ: '' })),
+		);
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+
+		const { summary } = await client.getTranscriptAndSummary(ID);
+
+		expect(summary).toBeNull();
+	});
+
+	it('trims surrounding whitespace from extracted markdown', async () => {
+		const { fetcher } = captureFetcher(
+			ok(transsummEnvelope({
+				data_result_summ: { content: { markdown: '   ## title\n- a   ' } },
+			})),
+		);
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+
+		const { summary } = await client.getTranscriptAndSummary(ID);
+
+		expect(summary?.text).toBe('## title\n- a');
+	});
+});
+
+// data_result_summ shape-drift detection (throws loudly on unknown shapes)
+
+describe('getTranscriptAndSummary summary shape-drift detection', () => {
+	it('throws PlaudParseError when a JSON-looking string fails to parse', async () => {
+		// A raw string that begins with `{` is interpreted as an attempt
+		// at structured JSON. A parse failure means Plaud shipped broken
+		// data — don't silently treat it as markdown because the note
+		// would render as literal JSON gibberish.
+		const { fetcher } = captureFetcher(
+			ok(transsummEnvelope({
+				data_result_summ: '{broken: no close brace',
+			})),
+		);
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+
+		await expect(client.getTranscriptAndSummary(ID)).rejects.toBeInstanceOf(
+			PlaudParseError,
+		);
+	});
+
+	it('throws PlaudParseError when JSON-parsed value is not an object', async () => {
+		const { fetcher } = captureFetcher(
+			ok(transsummEnvelope({ data_result_summ: JSON.stringify([1, 2, 3]) })),
+		);
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+
+		await expect(client.getTranscriptAndSummary(ID)).rejects.toBeInstanceOf(
+			PlaudParseError,
+		);
+	});
+
+	it('throws PlaudParseError when content is an object but has no markdown field', async () => {
+		const { fetcher } = captureFetcher(
+			ok(transsummEnvelope({
+				data_result_summ: { content: { html: '<p>unexpected</p>' } },
+			})),
+		);
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+
+		await expect(client.getTranscriptAndSummary(ID)).rejects.toBeInstanceOf(
+			PlaudParseError,
+		);
+	});
+
+	it('throws PlaudParseError when content is neither a string nor an object', async () => {
+		const { fetcher } = captureFetcher(
+			ok(transsummEnvelope({ data_result_summ: { content: 12345 } })),
+		);
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+
+		await expect(client.getTranscriptAndSummary(ID)).rejects.toBeInstanceOf(
+			PlaudParseError,
+		);
+	});
+
+	it('throws PlaudParseError when the outer object has no content field at all', async () => {
+		const { fetcher } = captureFetcher(
+			ok(transsummEnvelope({
+				data_result_summ: { notes: 'wrong-shape', title: 'nope' },
+			})),
+		);
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+
+		await expect(client.getTranscriptAndSummary(ID)).rejects.toBeInstanceOf(
+			PlaudParseError,
+		);
+	});
+});
+
+// Segment validation: backwards timestamps and unit sanity
+
+describe('getTranscriptAndSummary segment validation', () => {
+	it('throws PlaudParseError when end_time is before start_time', async () => {
+		const { fetcher } = captureFetcher(
+			ok(transsummEnvelope({
+				data_result: [
+					{ start_time: 10000, end_time: 5000, content: 'backwards', speaker: '' },
+				],
+			})),
+		);
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+
+		await expect(client.getTranscriptAndSummary(ID)).rejects.toThrow(
+			/end_time.*before.*start_time/,
+		);
+	});
+
+	it('allows end_time equal to start_time (zero-length segment)', async () => {
+		const { fetcher } = captureFetcher(
+			ok(transsummEnvelope({
+				data_result: [
+					{ start_time: 1000, end_time: 1000, content: 'blip', speaker: '' },
+				],
+			})),
+		);
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+
+		const { transcript } = await client.getTranscriptAndSummary(ID);
+		expect(transcript?.segments[0].startSeconds).toBe(1);
+		expect(transcript?.segments[0].endSeconds).toBe(1);
+	});
+
+	it('throws PlaudParseError when start_time exceeds the 24h plausible bound (unit-confusion canary)', async () => {
+		// 25 hours in "seconds" = 90000. If the producer accidentally
+		// sends seconds instead of milliseconds, the first sub-hour
+		// segment would arrive as 3600 — which is plausible as ms
+		// (3.6s) — but anything beyond 24h in ms is 86,400,000 — the
+		// canary fires when a producer sends 30000 as ms (30s) but
+		// actually meant 30 seconds = 30000ms, which is fine.
+		// Genuine bug: producer sends 90000 intending 90s, interpreted
+		// as 90000ms = 90s. Safe.
+		// Real canary case: producer sends value > 24h of ms, meaning
+		// they confused units and sent something like 1744628400000
+		// (a unix millis timestamp, not a segment offset).
+		const { fetcher } = captureFetcher(
+			ok(transsummEnvelope({
+				data_result: [
+					{
+						start_time: 1744628400000, // unix millis masquerading as segment offset
+						end_time: 1744628500000,
+						content: 'confused units',
+						speaker: '',
+					},
+				],
+			})),
+		);
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+
+		await expect(client.getTranscriptAndSummary(ID)).rejects.toThrow(
+			/24h|milliseconds/i,
+		);
+	});
+
+	it('accepts segments up to 24h that are merely long', async () => {
+		// A 23h58m segment is valid even if unlikely.
+		const { fetcher } = captureFetcher(
+			ok(transsummEnvelope({
+				data_result: [
+					{
+						start_time: 86_000_000,
+						end_time: 86_100_000,
+						content: 'late in the day',
+						speaker: '',
+					},
+				],
+			})),
+		);
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+
+		const { transcript } = await client.getTranscriptAndSummary(ID);
+		expect(transcript?.segments).toHaveLength(1);
+	});
+});
+
+// Null-transcript handling --------------------------------------------------
+
+describe('getTranscriptAndSummary missing data', () => {
+	it('returns null transcript when data_result is null', async () => {
+		const { fetcher } = captureFetcher(
+			ok(transsummEnvelope({ data_result: null })),
+		);
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+
+		const { transcript } = await client.getTranscriptAndSummary(ID);
+
+		expect(transcript).toBeNull();
+	});
+
+	it('returns an empty-but-present transcript when data_result is an empty array', async () => {
+		// [] and null carry different wire signals: null means "not yet
+		// processed" (caller should retry or wait), [] means "Plaud
+		// processed this and produced zero segments" (silent audio, etc).
+		// Preserve the distinction so the NoteWriter's advertised-but-null
+		// guard doesn't trip on the processed-but-empty case.
+		const { fetcher } = captureFetcher(
+			ok(transsummEnvelope({ data_result: [] })),
+		);
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+
+		const { transcript } = await client.getTranscriptAndSummary(ID);
+
+		expect(transcript).not.toBeNull();
+		expect(transcript?.segments).toEqual([]);
+		expect(transcript?.rawText).toBe('');
+	});
+
+	it('returns both null when neither transcript nor summary is present', async () => {
+		const { fetcher } = captureFetcher(
+			ok(transsummEnvelope({ data_result: null, data_result_summ: null })),
+		);
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+
+		const result = await client.getTranscriptAndSummary(ID);
+
+		expect(result.transcript).toBeNull();
+		expect(result.summary).toBeNull();
+	});
+});
+
+// Parse errors --------------------------------------------------------------
+
+describe('getTranscriptAndSummary parse errors', () => {
+	it('throws PlaudParseError when response body is not an object', async () => {
+		const { fetcher } = captureFetcher(ok(['not', 'an', 'envelope']));
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+
+		await expect(client.getTranscriptAndSummary(ID)).rejects.toBeInstanceOf(PlaudParseError);
+	});
+
+	it('throws PlaudParseError when data_result is not an array', async () => {
+		const { fetcher } = captureFetcher(
+			ok(transsummEnvelope({ data_result: 'not-an-array' })),
+		);
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+
+		await expect(client.getTranscriptAndSummary(ID)).rejects.toBeInstanceOf(PlaudParseError);
+	});
+
+	it('throws PlaudParseError when a segment is missing required fields', async () => {
+		const { fetcher } = captureFetcher(
+			ok(transsummEnvelope({
+				data_result: [{ start_time: 0, end_time: 1000 /* no content */ }],
+			})),
+		);
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+
+		await expect(client.getTranscriptAndSummary(ID)).rejects.toBeInstanceOf(PlaudParseError);
+	});
+
+	it('throws PlaudParseError when a segment has negative start_time', async () => {
+		const { fetcher } = captureFetcher(
+			ok(transsummEnvelope({
+				data_result: [
+					{ start_time: -1, end_time: 1000, content: 'x', speaker: '' },
+				],
+			})),
+		);
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+
+		await expect(client.getTranscriptAndSummary(ID)).rejects.toBeInstanceOf(PlaudParseError);
+	});
+
+	it('throws PlaudParseError when a segment has NaN end_time', async () => {
+		const { fetcher } = captureFetcher(
+			ok(transsummEnvelope({
+				data_result: [
+					{ start_time: 0, end_time: Number.NaN, content: 'x', speaker: '' },
+				],
+			})),
+		);
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+
+		await expect(client.getTranscriptAndSummary(ID)).rejects.toBeInstanceOf(PlaudParseError);
+	});
+
+	it('includes the segment index in the parse error message', async () => {
+		const { fetcher } = captureFetcher(
+			ok(transsummEnvelope({
+				data_result: [
+					{ start_time: 0, end_time: 1000, content: 'ok', speaker: 'A' },
+					{ start_time: 1000, end_time: 2000 /* missing content */ },
+				],
+			})),
+		);
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+
+		await expect(client.getTranscriptAndSummary(ID)).rejects.toThrow(/\[1\]/);
+	});
+});
+
+// In-band errors and HTTP errors -------------------------------------------
+
+describe('getTranscriptAndSummary error mapping', () => {
+	it('throws PlaudApiError when response has string err_code set', async () => {
+		const { fetcher } = captureFetcher(
+			ok(transsummEnvelope({
+				err_code: 'ai_pipeline_failed',
+				err_msg: 'transcription pipeline returned no data',
+			})),
+		);
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+
+		await expect(client.getTranscriptAndSummary(ID)).rejects.toThrow(
+			/ai_pipeline_failed/,
+		);
+	});
+
+	it('throws PlaudApiError when err_code is a non-zero number', async () => {
+		// Plaud may send err_code as a number (e.g. 4001). Previous
+		// implementation only matched strings and silently dropped
+		// numeric error codes.
+		const { fetcher } = captureFetcher(
+			ok(transsummEnvelope({
+				err_code: 4001,
+				err_msg: 'quota exceeded',
+			})),
+		);
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+
+		await expect(client.getTranscriptAndSummary(ID)).rejects.toThrow(/4001/);
+	});
+
+	it('throws PlaudApiError when status is non-zero even without err_code', async () => {
+		// A missing err_code with status != 0 is still a failure. Plaud's
+		// success sentinel is exactly status: 0.
+		const { fetcher } = captureFetcher(
+			ok(transsummEnvelope({ status: -1, msg: 'pipeline stalled' })),
+		);
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+
+		await expect(client.getTranscriptAndSummary(ID)).rejects.toThrow(
+			/pipeline stalled/,
+		);
+	});
+
+	it('throws PlaudApiError when the status field is missing entirely', async () => {
+		const { fetcher } = captureFetcher(
+			ok({ msg: 'whatever', data_result: null, data_result_summ: null }),
+		);
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+
+		await expect(client.getTranscriptAndSummary(ID)).rejects.toBeInstanceOf(
+			PlaudApiError,
+		);
+	});
+
+	it('throws PlaudAuthError on HTTP 401', async () => {
+		const { fetcher } = captureFetcher(status(401));
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+
+		await expect(client.getTranscriptAndSummary(ID)).rejects.toBeInstanceOf(PlaudAuthError);
+	});
+
+	it('throws PlaudApiError with status 500 on HTTP 500', async () => {
+		const { fetcher } = captureFetcher(status(500));
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+
+		await expect(client.getTranscriptAndSummary(ID)).rejects.toMatchObject({
+			status: 500,
+		});
+	});
+
+	it('wraps a fetcher-thrown network error in PlaudApiError', async () => {
+		const fetcher: PlaudHttpFetcher = async () => {
+			throw new Error('ETIMEDOUT');
+		};
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+
+		await expect(client.getTranscriptAndSummary(ID)).rejects.toBeInstanceOf(PlaudApiError);
+	});
+});

@@ -9,13 +9,14 @@
 // implements and §4.2 for the source research on the endpoint shapes.
 
 import type {
-	AudioRef,
 	PlaudClient,
 	PlaudRecordingId,
 	Recording,
 	RecordingFilter,
 	Summary,
 	Transcript,
+	TranscriptAndSummary,
+	TranscriptSegment,
 } from './plaud-client';
 
 /**
@@ -38,7 +39,9 @@ export type PlaudTokenProvider = () => string | null;
 
 export interface PlaudHttpRequest {
 	readonly url: string;
+	readonly method: 'GET' | 'POST';
 	readonly headers: Readonly<Record<string, string>>;
+	readonly body?: string;
 }
 
 export interface PlaudHttpResponse {
@@ -169,31 +172,28 @@ export class ReverseEngineeredPlaudClient implements PlaudClient {
 		return out;
 	}
 
-	async getTranscript(_id: PlaudRecordingId): Promise<Transcript | null> {
-		throw new PlaudApiError(
-			'ReverseEngineeredPlaudClient.getTranscript is not implemented yet',
-			undefined,
-			'/ai/transsumm/:id',
-		);
+	async getTranscriptAndSummary(id: PlaudRecordingId): Promise<TranscriptAndSummary> {
+		if (id.length === 0) {
+			throw new PlaudApiError(
+				'getTranscriptAndSummary called with empty id',
+				undefined,
+				'/ai/transsumm/:id',
+			);
+		}
+		const endpoint = `/ai/transsumm/${encodeURIComponent(id)}`;
+		const url = `${this.baseUrl}${endpoint}`;
+		// /ai/transsumm/{id} is POST despite carrying no payload — the empty
+		// JSON object body is required. Confirmed against rsteckler/applaud
+		// (server/src/plaud/transcript.ts) which is the canonical RE client.
+		const raw = await this.fetchJson(url, endpoint, { method: 'POST', body: '{}' });
+		return parseTranssummResponse(id, raw, endpoint);
 	}
 
-	async getSummary(_id: PlaudRecordingId): Promise<Summary | null> {
-		throw new PlaudApiError(
-			'ReverseEngineeredPlaudClient.getSummary is not implemented yet',
-			undefined,
-			'/ai/transsumm/:id',
-		);
-	}
-
-	async getAudio(_id: PlaudRecordingId): Promise<AudioRef | null> {
-		throw new PlaudApiError(
-			'ReverseEngineeredPlaudClient.getAudio is not implemented yet',
-			undefined,
-			'/file/audio/:id',
-		);
-	}
-
-	private async fetchJson(url: string, endpoint: string): Promise<unknown> {
+	private async fetchJson(
+		url: string,
+		endpoint: string,
+		options: { method?: 'GET' | 'POST'; body?: string } = {},
+	): Promise<unknown> {
 		// Read the token fresh on every call so that settings changes take
 		// effect immediately. If the user hasn't configured one, surface a
 		// PlaudAuthError the UI can route to the settings tab.
@@ -206,16 +206,24 @@ export class ReverseEngineeredPlaudClient implements PlaudClient {
 			);
 		}
 		const token = rawToken.trim();
+		const method = options.method ?? 'GET';
+
+		const headers: Record<string, string> = {
+			Authorization: `Bearer ${token}`,
+			Accept: 'application/json',
+			'User-Agent': USER_AGENT,
+		};
+		if (options.body !== undefined) {
+			headers['Content-Type'] = 'application/json';
+		}
 
 		let response: PlaudHttpResponse;
 		try {
 			response = await this.fetcher({
 				url,
-				headers: {
-					Authorization: `Bearer ${token}`,
-					Accept: 'application/json',
-					'User-Agent': USER_AGENT,
-				},
+				method,
+				headers,
+				body: options.body,
 			});
 		} catch (err) {
 			// Fetcher itself rejected (DNS, offline, TLS, etc). Wrap so the
@@ -305,6 +313,12 @@ function parseListResponse(raw: unknown, endpoint: string): readonly RawRecordin
 // loudly rather than creating a note dated in the year 6000.
 const MAX_PLAUSIBLE_UNIX_SECONDS = 4102444800; // 2100-01-01 UTC
 
+// Upper bound on a plausible transcript-segment timestamp in milliseconds.
+// A single recording longer than 24h is unheard of; a segment offset
+// greater than 24h almost certainly means the producer sent seconds
+// instead of milliseconds — reject as a unit-confusion canary.
+const MAX_PLAUSIBLE_SEGMENT_MS = 24 * 60 * 60 * 1000; // 24h
+
 function parseRecording(raw: RawRecording, endpoint: string): Recording {
 	if (raw.id.length === 0) {
 		throw new PlaudParseError('Recording has empty id', endpoint);
@@ -387,4 +401,251 @@ function isRawRecording(value: unknown): value is RawRecording {
 		return false;
 	}
 	return true;
+}
+
+// -----------------------------------------------------------------------------
+// /ai/transsumm/{id} parser. The response is flat (no envelope wrapper).
+// Both transcript and summary are independently nullable — a recording can
+// have one without the other depending on Plaud's processing status.
+// -----------------------------------------------------------------------------
+
+function parseTranssummResponse(
+	id: PlaudRecordingId,
+	raw: unknown,
+	endpoint: string,
+): TranscriptAndSummary {
+	if (!isRecord(raw)) {
+		throw new PlaudParseError(
+			`Response body for ${endpoint} is not an object`,
+			endpoint,
+		);
+	}
+
+	// Plaud surfaces in-band failures even on HTTP 200 via err_code/err_msg
+	// and via a non-zero status field. Check all signals — err_code may
+	// arrive as a string OR a number, and a missing/zero err_code with a
+	// non-success status is still a failure. Propagate as a loud error
+	// rather than silently returning null transcripts/summaries.
+	const errCode = raw.err_code;
+	const hasErrCode =
+		(typeof errCode === 'string' && errCode.length > 0) ||
+		(typeof errCode === 'number' && errCode !== 0);
+	// `status: 0` is Plaud's success sentinel. Anything else (including
+	// missing) is suspect. A missing status means we weren't given a
+	// success signal at all — treat as failure.
+	const statusOk = raw.status === 0;
+	if (hasErrCode || !statusOk) {
+		const errMsg =
+			typeof raw.err_msg === 'string' && raw.err_msg.length > 0
+				? raw.err_msg
+				: typeof raw.msg === 'string'
+					? raw.msg
+					: '(no message)';
+		throw new PlaudApiError(
+			`Plaud returned in-band error from ${endpoint}: status=${JSON.stringify(
+				raw.status,
+			)} err_code=${JSON.stringify(errCode)} msg=${errMsg}`,
+			undefined,
+			endpoint,
+		);
+	}
+
+	const transcript = parseTranscriptField(id, raw.data_result, endpoint);
+	const summary = parseSummaryField(id, raw.data_result_summ, endpoint);
+	return { transcript, summary };
+}
+
+function parseTranscriptField(
+	id: PlaudRecordingId,
+	rawSegments: unknown,
+	endpoint: string,
+): Transcript | null {
+	// Distinguish the three wire signals:
+	//   null/undefined   → "not yet processed" — return null so the caller
+	//                      can retry or tell the user to wait.
+	//   empty array []   → "processed but produced zero segments" (silent
+	//                      audio, for example) — return an empty-but-
+	//                      present transcript so NoteWriter doesn't trip
+	//                      the advertised-but-null guard.
+	//   non-empty array  → parse normally.
+	if (rawSegments === null || rawSegments === undefined) {
+		return null;
+	}
+	if (!Array.isArray(rawSegments)) {
+		throw new PlaudParseError(
+			`data_result for ${id} is not an array`,
+			endpoint,
+		);
+	}
+	if (rawSegments.length === 0) {
+		return { id, segments: [], rawText: '' };
+	}
+
+	const segments: TranscriptSegment[] = [];
+	const textParts: string[] = [];
+	for (let i = 0; i < rawSegments.length; i++) {
+		const segment = parseTranscriptSegment(rawSegments[i], i, id, endpoint);
+		segments.push(segment);
+		textParts.push(segment.text);
+	}
+
+	return {
+		id,
+		segments,
+		rawText: textParts.join(' '),
+	};
+}
+
+function parseTranscriptSegment(
+	raw: unknown,
+	index: number,
+	id: PlaudRecordingId,
+	endpoint: string,
+): TranscriptSegment {
+	if (!isRecord(raw)) {
+		throw new PlaudParseError(
+			`data_result[${index}] for ${id} is not an object`,
+			endpoint,
+		);
+	}
+	if (
+		typeof raw.start_time !== 'number' ||
+		typeof raw.end_time !== 'number' ||
+		typeof raw.content !== 'string'
+	) {
+		throw new PlaudParseError(
+			`data_result[${index}] for ${id} is missing required fields (start_time/end_time/content)`,
+			endpoint,
+		);
+	}
+	if (!Number.isFinite(raw.start_time) || raw.start_time < 0) {
+		throw new PlaudParseError(
+			`data_result[${index}] for ${id} has invalid start_time`,
+			endpoint,
+		);
+	}
+	if (!Number.isFinite(raw.end_time) || raw.end_time < 0) {
+		throw new PlaudParseError(
+			`data_result[${index}] for ${id} has invalid end_time`,
+			endpoint,
+		);
+	}
+	if (raw.end_time < raw.start_time) {
+		throw new PlaudParseError(
+			`data_result[${index}] for ${id} has end_time (${raw.end_time}) before start_time (${raw.start_time})`,
+			endpoint,
+		);
+	}
+	if (raw.start_time > MAX_PLAUSIBLE_SEGMENT_MS || raw.end_time > MAX_PLAUSIBLE_SEGMENT_MS) {
+		throw new PlaudParseError(
+			`data_result[${index}] for ${id} has timestamps beyond 24h (start=${raw.start_time}ms end=${raw.end_time}ms) — producer may have sent seconds instead of milliseconds`,
+			endpoint,
+		);
+	}
+
+	// Plaud transmits transcript timestamps in MILLISECONDS (unlike the
+	// list endpoint, which uses unix seconds for recording start_time).
+	// Convert here so the rest of the plugin sees consistent units.
+	const startSeconds = raw.start_time / 1000;
+	const endSeconds = raw.end_time / 1000;
+
+	// Speaker may be empty; prefer original_speaker for stability across
+	// re-transcription runs (Plaud may rewrite `speaker` when the user
+	// edits labels or when the diarization model changes, but
+	// original_speaker is the stable wire identifier). Fall back to
+	// `speaker` only if original_speaker is empty.
+	const speaker = pickNonEmptyString(raw.original_speaker, raw.speaker);
+
+	const segment: TranscriptSegment = speaker !== undefined
+		? { startSeconds, endSeconds, speaker, text: raw.content }
+		: { startSeconds, endSeconds, text: raw.content };
+	return segment;
+}
+
+function pickNonEmptyString(...values: unknown[]): string | undefined {
+	for (const v of values) {
+		if (typeof v === 'string' && v.trim().length > 0) {
+			return v.trim();
+		}
+	}
+	return undefined;
+}
+
+/**
+ * Normalize Plaud's `data_result_summ` to a markdown string, mirroring
+ * applaud's `extractSummaryMarkdown` helper. The field has four documented
+ * shapes:
+ *   1. JSON-encoded string that parses to {content: {markdown: string}}
+ *   2. Structured object {content: {markdown: string}}
+ *   3. Structured object {content: string}
+ *   4. Raw string that is NOT JSON — treat as markdown verbatim
+ *
+ * Any other shape is a silent-failure trap: Plaud may have changed the
+ * wire format and we'd swap null summaries into user vaults without
+ * anyone noticing. Throw PlaudParseError on unknown shapes so the error
+ * surfaces loudly per viability doc §10.
+ */
+function parseSummaryField(
+	id: PlaudRecordingId,
+	rawSumm: unknown,
+	endpoint: string,
+): Summary | null {
+	if (rawSumm === null || rawSumm === undefined) {
+		return null;
+	}
+
+	let obj: unknown = rawSumm;
+	if (typeof rawSumm === 'string') {
+		const trimmed = rawSumm.trim();
+		if (trimmed.length === 0) {
+			return null;
+		}
+		// Only attempt JSON.parse if the string LOOKS structured. A raw
+		// markdown body that happens to start with a non-JSON character
+		// (shape 4) gets returned directly; a string that looks like JSON
+		// but fails to parse is a real error and must surface.
+		if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+			try {
+				obj = JSON.parse(trimmed);
+			} catch (err) {
+				throw new PlaudParseError(
+					`data_result_summ for ${id} looks like JSON but failed to parse: ${
+						err instanceof Error ? err.message : String(err)
+					}`,
+					endpoint,
+				);
+			}
+		} else {
+			return { id, text: trimmed };
+		}
+	}
+
+	if (!isRecord(obj)) {
+		throw new PlaudParseError(
+			`data_result_summ for ${id} has unrecognized shape (${
+				Array.isArray(obj) ? 'array' : typeof obj
+			}) — expected a JSON object with content.markdown or content string`,
+			endpoint,
+		);
+	}
+	const content = obj.content;
+	if (typeof content === 'string') {
+		const text = content.trim();
+		return text.length > 0 ? { id, text } : null;
+	}
+	if (isRecord(content)) {
+		const md = content.markdown;
+		if (typeof md === 'string') {
+			const text = md.trim();
+			return text.length > 0 ? { id, text } : null;
+		}
+		throw new PlaudParseError(
+			`data_result_summ.content for ${id} has keys [${Object.keys(content).join(', ')}] but no markdown string — Plaud format may have changed`,
+			endpoint,
+		);
+	}
+	throw new PlaudParseError(
+		`data_result_summ for ${id} has content field of unexpected type (${typeof content}) — expected string or object with markdown`,
+		endpoint,
+	);
 }

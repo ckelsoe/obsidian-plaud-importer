@@ -10,11 +10,24 @@
  */
 export type PlaudRecordingId = string & { readonly __brand: 'PlaudRecordingId' };
 
+/**
+ * Bundle of derived artifacts for a single recording. Plaud returns the
+ * transcript and summary together in a single POST /ai/transsumm/{id}
+ * response, so fetching them with one method matches the wire protocol and
+ * avoids the temptation to call the same endpoint twice.
+ *
+ * Either field may be null independently: a recording can have a
+ * transcript without an AI summary (or vice versa) depending on Plaud's
+ * processing status.
+ */
+export interface TranscriptAndSummary {
+	readonly transcript: Transcript | null;
+	readonly summary: Summary | null;
+}
+
 export interface PlaudClient {
 	listRecordings(filter?: RecordingFilter): Promise<readonly Recording[]>;
-	getTranscript(id: PlaudRecordingId): Promise<Transcript | null>;
-	getSummary(id: PlaudRecordingId): Promise<Summary | null>;
-	getAudio(id: PlaudRecordingId): Promise<AudioRef | null>;
+	getTranscriptAndSummary(id: PlaudRecordingId): Promise<TranscriptAndSummary>;
 }
 
 export interface RecordingFilter {
@@ -69,13 +82,4 @@ export interface Summary {
 export interface SummarySection {
 	readonly heading: string;
 	readonly body: string;
-}
-
-export type AudioFormat = 'mp3' | 'ogg' | 'wav';
-
-export interface AudioRef {
-	readonly id: PlaudRecordingId;
-	readonly url: string;
-	readonly expiresAt?: Date;
-	readonly format: AudioFormat;
 }

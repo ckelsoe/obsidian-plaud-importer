@@ -30,11 +30,12 @@ const DEFAULT_SETTINGS: PlaudImporterSettings = {
 // depends on. Using requestUrl (not fetch) is required to avoid CORS and
 // certificate issues on Electron. `throw: false` lets us map status codes
 // in the client rather than Obsidian's implicit throw.
-const obsidianFetcher: PlaudHttpFetcher = async ({ url, headers }) => {
+const obsidianFetcher: PlaudHttpFetcher = async ({ url, method, headers, body }) => {
 	const response = await requestUrl({
 		url,
-		method: "GET",
+		method,
 		headers: { ...headers },
+		body,
 		throw: false,
 	});
 	return {
