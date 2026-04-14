@@ -4,6 +4,7 @@ import {
 	expandTitleWithYear,
 	extractPlaudIdFromFrontmatter,
 	extractSpeakers,
+	findTranscriptHeadingLine,
 	formatChaptersCallout,
 	formatDurationHoursMinutes,
 	formatFrontmatter,
@@ -1394,7 +1395,7 @@ describe('formatChaptersCallout', () => {
 		expect(formatChaptersCallout([])).toBe('');
 	});
 
-	it('renders each chapter row as a wiki link to its block id', () => {
+	it('renders each chapter row as a wiki link to the matching H3 heading anchor', () => {
 		const groups: readonly TranscriptChapterGroup[] = [
 			makeGroup({ title: 'Introduction', startSeconds: 0 }, 't-ch-0'),
 			makeGroup({ title: 'Main', startSeconds: 125 }, 't-ch-1'),
@@ -1403,9 +1404,9 @@ describe('formatChaptersCallout', () => {
 		expect(formatChaptersCallout(groups)).toBe(
 			[
 				'> [!note]- Chapters',
-				'> [[#^t-ch-0|**[00:00]** Introduction]]',
-				'> [[#^t-ch-1|**[02:05]** Main]]',
-				'> [[#^t-ch-2|**[10:00]** Conclusion]]',
+				'> [[#00:00 Introduction|**[00:00]** Introduction]]',
+				'> [[#02:05 Main|**[02:05]** Main]]',
+				'> [[#10:00 Conclusion|**[10:00]** Conclusion]]',
 			].join('\n'),
 		);
 	});
@@ -1416,9 +1417,17 @@ describe('formatChaptersCallout', () => {
 			makeGroup({ title: 'Empty', startSeconds: 300 }, null, 0),
 		];
 		const out = formatChaptersCallout(groups);
-		expect(out).toContain('> [[#^t-ch-0|**[00:00]** Linked]]');
+		expect(out).toContain('> [[#00:00 Linked|**[00:00]** Linked]]');
 		expect(out).toContain('> **[05:00]** Empty');
-		expect(out).not.toContain('#^null');
+		expect(out).not.toContain('#null');
+	});
+
+	it('sanitizes wiki-link delimiter characters out of the anchor text', () => {
+		const groups = [
+			makeGroup({ title: 'Main | topic [x] #id', startSeconds: 0 }, 't-ch-0'),
+		];
+		const out = formatChaptersCallout(groups);
+		expect(out).toContain('> [[#00:00 Main - topic -x- -id|**[00:00]** Main | topic [x] #id]]');
 	});
 
 	it('uses h:MM:SS for chapters past the hour mark', () => {
@@ -1434,19 +1443,18 @@ describe('formatChaptersCallout', () => {
 describe('formatTranscriptSection', () => {
 	it('falls back to the single flat transcript callout when groups is empty', () => {
 		const transcript = makeTranscript();
-		const out = formatTranscriptSection(transcript, []);
+		const out = formatTranscriptSection(transcript, [], 4);
 		expect(out).toContain('> [!note]- Transcript');
 		expect(out).toContain('> **[00:00]** Charles: Thanks for making time.');
-		// No inline chapter headings when there are no groups.
 		expect(out).not.toMatch(/> ### /);
 	});
 
 	it('renders a placeholder callout when transcript is null', () => {
-		const out = formatTranscriptSection(null, []);
+		const out = formatTranscriptSection(null, [], 4);
 		expect(out).toBe('> [!note]- Transcript\n> _No transcript available._');
 	});
 
-	it('emits a unified callout with mini-TOC at top and block-id-tagged chapter paragraphs when chapters are present', () => {
+	it('emits #### Transcript and ##### MM:SS Title sub-headings when headerLevel is 4', () => {
 		const segs: TranscriptSegment[] = [
 			{ startSeconds: 0, endSeconds: 5, text: 'hi', speaker: 'A' },
 			{ startSeconds: 60, endSeconds: 65, text: 'mid', speaker: 'B' },
@@ -1466,23 +1474,76 @@ describe('formatTranscriptSection', () => {
 		const out = formatTranscriptSection(
 			{ id: 'abc' as PlaudRecordingId, segments: segs, rawText: '' },
 			groups,
+			4,
 		);
-		// Starts with the collapsed callout header, exactly one.
-		expect(out.match(/> \[!note\]- Transcript/g)).toHaveLength(1);
-		// Mini-TOC is inside the callout.
-		expect(out).toContain('> **Chapters**');
-		expect(out).toContain('> - [[#^t-ch-0|**[00:00]** Intro]]');
-		expect(out).toContain('> - [[#^t-ch-1|**[01:00]** Middle]]');
-		// Horizontal rule separator between TOC and body.
-		expect(out).toContain('> ---');
-		// Chapter paragraphs with block ids at the end.
-		expect(out).toMatch(/> \*\*\[00:00\]\*\* A: hi\n> \^t-ch-0/);
-		expect(out).toMatch(/> \*\*\[01:00\]\*\* B: mid\n> \^t-ch-1/);
-		// Blank `>` separator between chapter paragraphs.
-		expect(out).toContain('> ^t-ch-0\n>\n> **[01:00]**');
+		expect(out).toMatch(/^#### Transcript\n/);
+		expect(out).toContain('##### 00:00 Intro');
+		expect(out).toContain('##### 01:00 Middle');
+		expect(out).toMatch(/##### 00:00 Intro\n\n\*\*\[00:00\]\*\* A: hi/);
+		expect(out).toMatch(/##### 01:00 Middle\n\n\*\*\[01:00\]\*\* B: mid/);
+		expect(out).not.toContain('> [!note]- Transcript');
 	});
 
-	it('uses plain-text TOC rows for chapters with no segments', () => {
+	it('uses H2 wrapping + H3 sub-headings when headerLevel is 2', () => {
+		const segs: TranscriptSegment[] = [
+			{ startSeconds: 0, endSeconds: 5, text: 'hi', speaker: 'A' },
+		];
+		const groups: readonly TranscriptChapterGroup[] = [
+			{
+				chapter: { title: 'Intro', startSeconds: 0 },
+				segments: [segs[0]],
+				blockId: 't-ch-0',
+			},
+		];
+		const out = formatTranscriptSection(
+			{ id: 'abc' as PlaudRecordingId, segments: segs, rawText: '' },
+			groups,
+			2,
+		);
+		expect(out).toMatch(/^## Transcript\n/);
+		expect(out).toContain('### 00:00 Intro');
+	});
+
+	it('clamps child heading level to H6 when wrap is already H6', () => {
+		const segs: TranscriptSegment[] = [
+			{ startSeconds: 0, endSeconds: 5, text: 'hi', speaker: 'A' },
+		];
+		const groups: readonly TranscriptChapterGroup[] = [
+			{
+				chapter: { title: 'Intro', startSeconds: 0 },
+				segments: [segs[0]],
+				blockId: 't-ch-0',
+			},
+		];
+		const out = formatTranscriptSection(
+			{ id: 'abc' as PlaudRecordingId, segments: segs, rawText: '' },
+			groups,
+			6,
+		);
+		expect(out).toMatch(/^###### Transcript\n/);
+		expect(out).toContain('###### 00:00 Intro');
+	});
+
+	it('sanitizes wiki-link delimiter characters out of the chapter sub-heading', () => {
+		const segs: TranscriptSegment[] = [
+			{ startSeconds: 0, endSeconds: 5, text: 'hi', speaker: 'A' },
+		];
+		const groups: readonly TranscriptChapterGroup[] = [
+			{
+				chapter: { title: 'Main | topic [x] #id', startSeconds: 0 },
+				segments: [segs[0]],
+				blockId: 't-ch-0',
+			},
+		];
+		const out = formatTranscriptSection(
+			{ id: 'abc' as PlaudRecordingId, segments: segs, rawText: '' },
+			groups,
+			4,
+		);
+		expect(out).toContain('##### 00:00 Main - topic -x- -id');
+	});
+
+	it('skips groups that have no segments (no sub-heading emitted)', () => {
 		const segs: TranscriptSegment[] = [
 			{ startSeconds: 0, endSeconds: 5, text: 'only', speaker: 'A' },
 		];
@@ -1501,14 +1562,10 @@ describe('formatTranscriptSection', () => {
 		const out = formatTranscriptSection(
 			{ id: 'abc' as PlaudRecordingId, segments: segs, rawText: '' },
 			groups,
+			4,
 		);
-		// Empty chapter shows in the TOC without a wiki link.
-		expect(out).toContain('> - [[#^t-ch-0|**[00:00]** Intro]]');
-		expect(out).toContain('> - **[05:00]** Empty');
-		// No block-id-less wiki link target was emitted.
-		expect(out).not.toContain('#^null');
-		// No paragraph body for the empty chapter.
-		expect(out).not.toContain('^t-ch-1');
+		expect(out).toContain('##### 00:00 Intro');
+		expect(out).not.toContain('##### 05:00 Empty');
 	});
 
 	it('falls back to flat callout if every group is empty', () => {
@@ -1525,12 +1582,11 @@ describe('formatTranscriptSection', () => {
 		const out = formatTranscriptSection(
 			{ id: 'abc' as PlaudRecordingId, segments: segs, rawText: '' },
 			groups,
+			4,
 		);
-		// Should fall back to the single-callout form since the
-		// chaptered renderer has nothing with segments to emit.
 		expect(out).toContain('> [!note]- Transcript');
-		expect(out).toContain('> **[00:00]** A: orphan');
-		expect(out).not.toContain('**Chapters**');
+		expect(out).toContain('orphan');
+		expect(out).not.toMatch(/### /);
 	});
 });
 
@@ -1539,7 +1595,7 @@ describe('formatTranscriptSection', () => {
 // ---------------------------------------------------------------------------
 
 describe('formatMarkdown with chapters', () => {
-	it('renders a single unified Transcript callout containing chapters TOC and segments with block ids', () => {
+	it('renders external [!note]- Chapters callout + #### Transcript (default level) with ##### chapter headings', () => {
 		const recording = makeRecording();
 		const transcript: Transcript = {
 			id: recording.id,
@@ -1559,21 +1615,66 @@ describe('formatMarkdown with chapters', () => {
 		];
 		const md = formatMarkdown(recording, transcript, summary, chapters);
 
-		// No external chapters callout — it's now inside the transcript callout.
-		expect(md).not.toContain('> [!note]- Chapters');
-		// Exactly one [!note]- Transcript block.
-		expect(md.match(/> \[!note\]- Transcript/g)).toHaveLength(1);
-		// Mini-TOC inside the transcript callout with wiki links.
-		expect(md).toContain('> **Chapters**');
-		expect(md).toContain('> - [[#^t-ch-0|**[00:00]** Opening]]');
-		expect(md).toContain('> - [[#^t-ch-1|**[01:00]** Close]]');
-		// Block ids attached to chapter paragraphs.
-		expect(md).toMatch(/> \*\*\[00:00\]\*\* A: hello\n> \^t-ch-0/);
-		expect(md).toMatch(/> \*\*\[01:00\]\*\* B: world\n> \^t-ch-1/);
-		// Ordering: Summary → Transcript callout (no external chapters block).
+		// External chapters callout with wiki links resolving by heading text.
+		expect(md).toContain('> [!note]- Chapters');
+		expect(md).toContain('> [[#00:00 Opening|**[00:00]** Opening]]');
+		expect(md).toContain('> [[#01:00 Close|**[01:00]** Close]]');
+
+		// Default header level 4 → #### Transcript wrap + ##### chapter subs.
+		expect(md).toContain('#### Transcript');
+		expect(md).toContain('##### 00:00 Opening');
+		expect(md).toContain('##### 01:00 Close');
+		expect(md).toMatch(/##### 00:00 Opening\n\n\*\*\[00:00\]\*\* A: hello/);
+		expect(md).toMatch(/##### 01:00 Close\n\n\*\*\[01:00\]\*\* B: world/);
+
+		// No [!note]- Transcript callout wrapper in the chaptered path.
+		expect(md).not.toContain('> [!note]- Transcript');
+
+		// Ordering: Summary → Chapters callout → Transcript wrap.
 		const summaryIdx = md.indexOf('## Summary');
-		const transcriptIdx = md.indexOf('> [!note]- Transcript');
-		expect(summaryIdx).toBeLessThan(transcriptIdx);
+		const chaptersIdx = md.indexOf('> [!note]- Chapters');
+		const transcriptIdx = md.indexOf('#### Transcript');
+		expect(summaryIdx).toBeLessThan(chaptersIdx);
+		expect(chaptersIdx).toBeLessThan(transcriptIdx);
+	});
+
+	it('honors a custom transcriptHeaderLevel setting', () => {
+		const recording = makeRecording();
+		const transcript: Transcript = {
+			id: recording.id,
+			rawText: '',
+			segments: [
+				{ startSeconds: 0, endSeconds: 10, text: 'hi', speaker: 'A' },
+			],
+		};
+		const summary: Summary = { id: recording.id, text: 'body' };
+		const chapters: readonly Chapter[] = [
+			{ title: 'Opening', startSeconds: 0 },
+		];
+		const md = formatMarkdown(recording, transcript, summary, chapters, {
+			transcriptHeaderLevel: 2,
+		});
+		expect(md).toContain('## Transcript');
+		expect(md).toContain('### 00:00 Opening');
+		expect(md).not.toContain('#### Transcript');
+	});
+
+	it('omits the transcript section entirely when includeTranscript is false', () => {
+		const recording = makeRecording();
+		const transcript = makeTranscript();
+		const summary: Summary = { id: recording.id, text: 'body' };
+		const chapters: readonly Chapter[] = [
+			{ title: 'Opening', startSeconds: 0 },
+		];
+		const md = formatMarkdown(recording, transcript, summary, chapters, {
+			includeTranscript: false,
+		});
+		// Chapters callout still present.
+		expect(md).toContain('> [!note]- Chapters');
+		// But no transcript wrap or body.
+		expect(md).not.toContain('#### Transcript');
+		expect(md).not.toContain('##### 00:00 Opening');
+		expect(md).not.toContain('> [!note]- Transcript');
 	});
 
 	it('omits the Chapters section entirely when chapters is undefined', () => {
@@ -1599,5 +1700,149 @@ describe('formatMarkdown with chapters', () => {
 
 		expect(md).not.toContain('> [!note]- Chapters');
 		expect(md).toContain('> [!note]- Transcript');
+	});
+});
+
+// ---------------------------------------------------------------------------
+// findTranscriptHeadingLine — fold-target lookup for auto-fold integration
+// ---------------------------------------------------------------------------
+
+describe('findTranscriptHeadingLine', () => {
+	it('returns the 0-based line index of the wrapping Transcript heading at the given level', () => {
+		const md = [
+			'# Title',
+			'',
+			'## Summary',
+			'',
+			'body',
+			'',
+			'#### Transcript',
+			'',
+			'##### 00:00 Intro',
+			'body',
+		].join('\n');
+		expect(findTranscriptHeadingLine(md, 4)).toBe(6);
+	});
+
+	it('returns null when no wrapping heading matches at the given level', () => {
+		const md = '## Summary\n\nbody\n\n> [!note]- Transcript\n> **[00:00]** A: hi';
+		expect(findTranscriptHeadingLine(md, 4)).toBeNull();
+	});
+
+	it('distinguishes header levels — level 4 misses a level 2 heading', () => {
+		const md = '## Transcript\n### 00:00 Intro\nbody';
+		expect(findTranscriptHeadingLine(md, 4)).toBeNull();
+		expect(findTranscriptHeadingLine(md, 2)).toBe(0);
+	});
+
+	it('does not match chapter sub-headings, only the wrap', () => {
+		const md = '#### Transcript\n##### 05:00 Transcript\nbody';
+		expect(findTranscriptHeadingLine(md, 4)).toBe(0);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// NoteWriter.writeNote.foldInfo — fold metadata surfaced to the caller
+// ---------------------------------------------------------------------------
+
+describe('NoteWriter.writeNote foldInfo', () => {
+	function makeVault(): { vault: VaultLike; created: Map<string, string> } {
+		const created = new Map<string, string>();
+		const vault: VaultLike = {
+			getFileByPath: () => null,
+			getFolderByPath: () => ({ path: '' }),
+			createFolder: async () => undefined,
+			create: async (path, data) => {
+				created.set(path, data);
+				return { path };
+			},
+			read: async () => '',
+			process: async () => '',
+		};
+		return { vault, created };
+	}
+
+	it('surfaces transcriptHeadingLine and totalLines when chapters are present', async () => {
+		const { vault } = makeVault();
+		const writer = new NoteWriter(vault, {
+			outputFolder: '',
+			onDuplicate: 'skip',
+		});
+		const recording = makeRecording();
+		const transcript = makeTranscript();
+		const summary = makeSummary();
+		const chapters: readonly Chapter[] = [
+			{ title: 'Opening', startSeconds: 0 },
+			{ title: 'Close', startSeconds: 14 },
+		];
+
+		const outcome = await writer.writeNote(recording, transcript, summary, chapters);
+
+		expect(outcome.status).toBe('created');
+		if (outcome.status !== 'created') throw new Error('unreachable');
+		expect(outcome.foldInfo).toBeDefined();
+		expect(outcome.foldInfo?.transcriptHeadingLine).toBeGreaterThan(0);
+		expect(outcome.foldInfo?.totalLines).toBeGreaterThan(
+			outcome.foldInfo?.transcriptHeadingLine ?? 0,
+		);
+	});
+
+	it('omits foldInfo when chapters are absent', async () => {
+		const { vault } = makeVault();
+		const writer = new NoteWriter(vault, {
+			outputFolder: '',
+			onDuplicate: 'skip',
+		});
+		const outcome = await writer.writeNote(
+			makeRecording(),
+			makeTranscript(),
+			makeSummary(),
+		);
+		expect(outcome.status).toBe('created');
+		if (outcome.status !== 'created') throw new Error('unreachable');
+		expect(outcome.foldInfo).toBeUndefined();
+	});
+
+	it('omits foldInfo when chapters are present but includeTranscript is false', async () => {
+		const { vault } = makeVault();
+		const writer = new NoteWriter(vault, {
+			outputFolder: '',
+			onDuplicate: 'skip',
+			includeTranscript: false,
+		});
+		const chapters: readonly Chapter[] = [
+			{ title: 'Opening', startSeconds: 0 },
+		];
+		const outcome = await writer.writeNote(
+			makeRecording(),
+			makeTranscript(),
+			makeSummary(),
+			chapters,
+		);
+		expect(outcome.status).toBe('created');
+		if (outcome.status !== 'created') throw new Error('unreachable');
+		expect(outcome.foldInfo).toBeUndefined();
+	});
+
+	it('uses the configured transcriptHeaderLevel to find the fold target', async () => {
+		const { vault } = makeVault();
+		const writer = new NoteWriter(vault, {
+			outputFolder: '',
+			onDuplicate: 'skip',
+			transcriptHeaderLevel: 2,
+		});
+		const chapters: readonly Chapter[] = [
+			{ title: 'Opening', startSeconds: 0 },
+		];
+		const outcome = await writer.writeNote(
+			makeRecording(),
+			makeTranscript(),
+			makeSummary(),
+			chapters,
+		);
+		expect(outcome.status).toBe('created');
+		if (outcome.status !== 'created') throw new Error('unreachable');
+		// With H2 configured, findTranscriptHeadingLine locates `## Transcript`.
+		expect(outcome.foldInfo).toBeDefined();
 	});
 });

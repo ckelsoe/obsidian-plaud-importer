@@ -72,14 +72,63 @@ export interface VaultLike {
 
 export type DuplicatePolicy = 'skip' | 'overwrite';
 
+/**
+ * Markdown heading level. Matches Obsidian's H1-H6 and validates
+ * settings deserialization: any other value is rejected at runtime so
+ * a malformed `data.json` can't produce zero or seven `#` characters.
+ */
+export type HeadingLevel = 1 | 2 | 3 | 4 | 5 | 6;
+
 export interface NoteWriterOptions {
 	readonly outputFolder: string;
 	readonly onDuplicate: DuplicatePolicy;
+	/**
+	 * When false, the writer omits the transcript section entirely
+	 * (no flat callout, no heading-wrapped chaptered form). The
+	 * generated note still contains frontmatter, summary, and the
+	 * chapters list (if available). Defaults to true when the caller
+	 * doesn't supply a value.
+	 */
+	readonly includeTranscript?: boolean;
+	/**
+	 * Markdown heading level used for the wrapping `Transcript`
+	 * heading when chapters are present. Per-chapter sub-headings
+	 * render one level deeper (e.g. `transcriptHeaderLevel: 4` →
+	 * `#### Transcript` + `##### MM:SS Title`). Defaults to 4 when
+	 * the caller doesn't supply a value — deep enough to nest under
+	 * the `## Summary` H2 without colliding with it, and the default
+	 * Obsidian heading fold behavior treats H4 as a natural fold
+	 * point for a "supporting content" section.
+	 */
+	readonly transcriptHeaderLevel?: HeadingLevel;
+}
+
+/**
+ * Fold metadata surfaced by `writeNote` for callers that want to apply
+ * Obsidian fold state after the write. Populated only when the note
+ * was actually written (`created` or `overwritten`) AND the generated
+ * markdown contains a wrapping transcript heading. `transcriptHeadingLine`
+ * is the 0-based line index of the single heading the caller should
+ * fold (the wrapping `Transcript` heading at the configured level);
+ * `totalLines` is the full line count of the rendered markdown needed
+ * to build a complete `FoldInfo` payload for `app.foldManager.save`.
+ */
+export interface WriteFoldInfo {
+	readonly transcriptHeadingLine: number;
+	readonly totalLines: number;
 }
 
 export type WriteOutcome =
-	| { readonly status: 'created'; readonly path: string }
-	| { readonly status: 'overwritten'; readonly path: string }
+	| {
+			readonly status: 'created';
+			readonly path: string;
+			readonly foldInfo?: WriteFoldInfo;
+	  }
+	| {
+			readonly status: 'overwritten';
+			readonly path: string;
+			readonly foldInfo?: WriteFoldInfo;
+	  }
 	| { readonly status: 'skipped'; readonly path: string };
 
 // -----------------------------------------------------------------------------
@@ -547,16 +596,23 @@ export function groupTranscriptByChapters(
 }
 
 /**
- * Standalone chapters callout used in no-transcript edge cases. When a
- * transcript exists, the chapters mini-TOC is emitted INSIDE the
- * unified `[!note]- Transcript` callout instead — see
- * `formatTranscriptSection`. This helper is retained so a recording
- * that has chapters but no transcript still renders something useful,
- * and so tests of the isolated list formatting can exercise it
- * directly.
+ * Render the external `[!note]- Chapters` callout above the transcript.
+ * Each row is an Obsidian wiki link to the matching chapter sub-heading
+ * inside the transcript section — real headings, reliably indexed, so
+ * jumps resolve in every view mode. Rows for chapters with no
+ * transcript segments render as plain text because there's no heading
+ * target. `transcriptHeaderLevel` is accepted for API parity with
+ * `formatTranscriptSection` but the wiki-link text only needs the
+ * heading content (Obsidian resolves the anchor by text match
+ * regardless of level).
+ *
+ * The callout is collapsed by default (`-` suffix) and provides the
+ * always-visible "what's in this recording" TOC that sits above the
+ * transcript.
  */
 export function formatChaptersCallout(
 	groups: readonly TranscriptChapterGroup[],
+	_transcriptHeaderLevel: HeadingLevel = 4,
 ): string {
 	if (groups.length === 0) {
 		return '';
@@ -570,9 +626,17 @@ export function formatChaptersCallout(
 		}
 		const stamp = formatTimestamp(group.chapter.startSeconds);
 		const display = `**[${stamp}]** ${title}`;
-		const row =
-			group.blockId !== null ? `[[#^${group.blockId}|${display}]]` : display;
-		lines.push(`> ${row}`);
+		if (group.blockId === null) {
+			lines.push(`> ${display}`);
+		} else {
+			// Wiki-link target is the exact heading text emitted by
+			// formatTranscriptSection: "MM:SS Title" (with the same
+			// sanitized title). Same generation site in both places to
+			// keep the two from drifting.
+			const sanitizedTitle = title.replace(/[|[\]#]/g, '-');
+			const anchor = `${stamp} ${sanitizedTitle}`;
+			lines.push(`> [[#${anchor}|${display}]]`);
+		}
 		rendered += 1;
 	}
 	if (rendered === 0) {
@@ -582,47 +646,32 @@ export function formatChaptersCallout(
 }
 
 /**
- * Render the transcript section as a single collapsed `[!note]- Transcript`
- * callout. This is the pre-DD-004 flat format when no chapters are
- * available, and a unified chapters-list-plus-segments format when they
- * are — in both cases everything lives in ONE top-level callout so the
- * whole block collapses as one unit.
+ * Render the transcript section.
  *
- * **Chaptered layout (groups non-empty):**
+ * **No chapters** — emit the original collapsed `[!note]- Transcript`
+ * callout (v0.1 behavior). Nothing to jump to, so callout collapse
+ * handles the "don't dominate the note" problem directly.
  *
- * ```
- * > [!note]- Transcript
- * > **Chapters**
- * > - [[#^t-ch-0|**[00:00]** Introduction]]
- * > - [[#^t-ch-1|**[02:05]** Main topic]]
- * >
- * > ---
- * >
- * > **[00:00]** Charles: Thanks for making time.
- * > **[00:14]** Mary: Of course, glad to be here.
- * > ^t-ch-0
- * >
- * > **[02:05]** Charles: So about pricing...
- * > ^t-ch-1
- * ```
+ * **With chapters** — emit a wrapping `Transcript` heading at the
+ * configured `headerLevel` followed by one sub-heading per chapter at
+ * `headerLevel + 1`. Plain-paragraph segment lines live under each
+ * sub-heading. A chapters callout elsewhere in the note links to the
+ * sub-headings via `[[#MM:SS Title]]`. The wrapping heading is the
+ * single fold target — auto-folding it hides every chapter and all
+ * segment bodies in one block, without breaking heading-anchor link
+ * resolution (the wrapping heading's children are still indexed even
+ * while folded).
  *
- * The chapters mini-TOC and its jump targets both live inside the same
- * callout, so collapsing the callout hides the TOC along with the
- * transcript. Expanding reveals the TOC at the top; clicking a row
- * scrolls down to the matching `^t-ch-{idx}` block id.
- *
- * This format bets on Obsidian's block-reference index picking up
- * `^id` markers at the end of paragraphs inside a callout. If that
- * bet fails, the fallback is the `## Transcript` + `### MM:SS Title`
- * heading approach from the previous iteration, at the cost of losing
- * "collapsed by default".
- *
- * Empty groups (chapters with no segments) contribute a plain-text row
- * to the mini-TOC — no block id target, no paragraph.
+ * `headerLevel + 1 > 6` clamps to 6 so a `transcriptHeaderLevel: 6`
+ * setting still produces valid markdown (both wrap and chapter
+ * headings render at H6, collapsing the hierarchy but preserving the
+ * fold target). Empty groups (chapters with no segments) contribute
+ * no sub-heading and no body.
  */
 export function formatTranscriptSection(
 	transcript: Transcript | null,
 	groups: readonly TranscriptChapterGroup[],
+	headerLevel: HeadingLevel,
 ): string {
 	if (!transcript || transcript.segments.length === 0) {
 		return '> [!note]- Transcript\n> _No transcript available._';
@@ -635,63 +684,30 @@ export function formatTranscriptSection(
 		return lines.join('\n');
 	}
 
-	// Chaptered: one callout containing the chapters mini-TOC followed
-	// by the transcript segments bucketed by chapter. Chapters with no
-	// segments appear in the TOC as plain text (no jump target) and
-	// contribute no paragraph downstream so the transcript never shows
-	// empty chapter gaps.
-	const lines: string[] = ['> [!note]- Transcript', '> **Chapters**'];
-	let tocRendered = 0;
-	for (const group of groups) {
-		const title = group.chapter.title.trim();
-		if (title.length === 0) {
-			continue;
-		}
-		const stamp = formatTimestamp(group.chapter.startSeconds);
-		const display = `**[${stamp}]** ${title}`;
-		const row =
-			group.blockId !== null ? `[[#^${group.blockId}|${display}]]` : display;
-		lines.push(`> - ${row}`);
-		tocRendered += 1;
-	}
-	if (tocRendered === 0) {
-		// Every chapter was filtered out — fall back to flat callout so
-		// the user still gets a transcript.
-		const fallback = ['> [!note]- Transcript'];
-		for (const segment of transcript.segments) {
-			fallback.push(formatTranscriptLine(segment));
-		}
-		return fallback.join('\n');
-	}
-
-	// Separator between the mini-TOC and the transcript body. A blank
-	// `>` line, a `---` horizontal rule, and another blank `>` line so
-	// the rule renders inside the callout.
-	lines.push('>');
-	lines.push('> ---');
-	lines.push('>');
-
-	let first = true;
-	let bodyRendered = 0;
+	const wrapPrefix = '#'.repeat(headerLevel);
+	const chapterPrefix = '#'.repeat(Math.min(headerLevel + 1, 6));
+	const lines: string[] = [`${wrapPrefix} Transcript`, ''];
+	let rendered = 0;
 	for (const group of groups) {
 		if (group.blockId === null || group.segments.length === 0) {
 			continue;
 		}
-		if (!first) {
-			// Blank `>` line between chapter paragraphs so Obsidian's
-			// parser treats each chapter's segments as its own paragraph
-			// inside the callout — required for the block id to attach
-			// to the chapter and not the whole callout.
-			lines.push('>');
+		if (rendered > 0) {
+			lines.push('');
 		}
+		const stamp = formatTimestamp(group.chapter.startSeconds);
+		const title = group.chapter.title.trim();
+		const sanitizedTitle = title.replace(/[|[\]#]/g, '-');
+		lines.push(`${chapterPrefix} ${stamp} ${sanitizedTitle}`);
+		lines.push('');
 		for (const segment of group.segments) {
-			lines.push(formatTranscriptLine(segment));
+			lines.push(formatTranscriptBodyLine(segment));
 		}
-		lines.push(`> ^${group.blockId}`);
-		first = false;
-		bodyRendered += 1;
+		rendered += 1;
 	}
-	if (bodyRendered === 0) {
+	if (rendered === 0) {
+		// All groups were empty — fall back to the flat callout so the
+		// note never loses its transcript entirely.
 		const fallback = ['> [!note]- Transcript'];
 		for (const segment of transcript.segments) {
 			fallback.push(formatTranscriptLine(segment));
@@ -699,6 +715,43 @@ export function formatTranscriptSection(
 		return fallback.join('\n');
 	}
 	return lines.join('\n');
+}
+
+/**
+ * Render a single transcript segment as a plain-paragraph markdown line
+ * (no callout `>` prefix). Used by the chaptered path, where segments
+ * live directly under the per-chapter sub-heading. The stamp/speaker/
+ * text layout matches `formatTranscriptLine`'s callout version so the
+ * note looks consistent regardless of which branch rendered it.
+ */
+function formatTranscriptBodyLine(segment: TranscriptSegment): string {
+	const stamp = formatTimestamp(segment.startSeconds);
+	const speaker = segment.speaker?.trim() || 'Unknown';
+	const text = segment.text.replace(/\s+/g, ' ').trim();
+	return `**[${stamp}]** ${speaker}: ${text}`;
+}
+
+/**
+ * Find the 0-based line number of the wrapping `Transcript` heading at
+ * the given level in a rendered markdown string, or `null` when no
+ * such heading exists (no-chapters path, or no transcript at all).
+ *
+ * Used by import-modal.ts to build a single-entry `FoldInfo` payload:
+ * folding this one heading collapses the entire chaptered transcript
+ * while leaving the chapters-list callout above it fully visible.
+ */
+export function findTranscriptHeadingLine(
+	markdown: string,
+	headerLevel: HeadingLevel,
+): number | null {
+	const prefix = `${'#'.repeat(headerLevel)} Transcript`;
+	const lines = markdown.split('\n');
+	for (let i = 0; i < lines.length; i++) {
+		if (lines[i] === prefix) {
+			return i;
+		}
+	}
+	return null;
 }
 
 function formatTranscriptLine(segment: TranscriptSegment): string {
@@ -710,34 +763,33 @@ function formatTranscriptLine(segment: TranscriptSegment): string {
 	return `> **[${stamp}]** ${speaker}: ${text}`;
 }
 
+/**
+ * Render options for `formatMarkdown`. All fields are optional; the
+ * defaults match the pre-settings behavior (transcript included,
+ * wrapping heading at H4).
+ */
+export interface FormatMarkdownOptions {
+	readonly includeTranscript?: boolean;
+	readonly transcriptHeaderLevel?: HeadingLevel;
+}
+
 export function formatMarkdown(
 	recording: Recording,
 	transcript: Transcript | null,
 	summary: Summary | null,
 	chapters?: readonly Chapter[],
+	options: FormatMarkdownOptions = {},
 ): string {
+	const includeTranscript = options.includeTranscript ?? true;
+	const headerLevel: HeadingLevel = options.transcriptHeaderLevel ?? 4;
+
 	const speakers = extractSpeakers(transcript);
 	const expandedTitle = expandTitleWithYear(recording.title, recording.createdAt);
-	// Group once and share the result between both sections so the
-	// block ids the chapters list links to match the block ids the
-	// transcript section emits. groupTranscriptByChapters returns [] on
-	// any no-chapters case, which both helpers handle by falling back
-	// to the pre-DD-004 single-callout transcript and skipping the
-	// chapters block entirely.
 	const groups = groupTranscriptByChapters(transcript, chapters);
-	// When chapters exist and there's a transcript to host them, the
-	// mini-TOC renders inside the unified transcript callout so the
-	// whole thing collapses as one block. Only emit the external
-	// chapters callout when there are chapters but NO transcript (a
-	// degenerate but possible shape for recordings whose transcription
-	// failed).
-	const hasTranscript =
-		transcript !== null && transcript.segments.length > 0;
-	const externalChaptersSection =
-		groups.length > 0 && !hasTranscript
-			? formatChaptersCallout(groups)
-			: '';
-	const transcriptSection = formatTranscriptSection(transcript, groups);
+	const externalChaptersSection = formatChaptersCallout(groups, headerLevel);
+	const transcriptSection = includeTranscript
+		? formatTranscriptSection(transcript, groups, headerLevel)
+		: '';
 	const parts: string[] = [
 		formatFrontmatter(recording, speakers),
 		'',
@@ -759,7 +811,9 @@ export function formatMarkdown(
 	if (externalChaptersSection.length > 0) {
 		parts.push(externalChaptersSection, '');
 	}
-	parts.push(transcriptSection, '');
+	if (transcriptSection.length > 0) {
+		parts.push(transcriptSection, '');
+	}
 	return parts.join('\n');
 }
 
@@ -774,6 +828,7 @@ export class NoteWriter {
 	// safe to concatenate with a filename.
 	private readonly outputFolder: string;
 	private readonly onDuplicate: DuplicatePolicy;
+	private readonly defaultFormatOptions: FormatMarkdownOptions;
 
 	constructor(vault: VaultLike, options: NoteWriterOptions) {
 		if (options.onDuplicate !== 'skip' && options.onDuplicate !== 'overwrite') {
@@ -784,6 +839,10 @@ export class NoteWriter {
 		this.vault = vault;
 		this.outputFolder = normalizeFolderPath(options.outputFolder);
 		this.onDuplicate = options.onDuplicate;
+		this.defaultFormatOptions = {
+			includeTranscript: options.includeTranscript,
+			transcriptHeaderLevel: options.transcriptHeaderLevel,
+		};
 	}
 
 	async writeNote(
@@ -791,6 +850,7 @@ export class NoteWriter {
 		transcript: Transcript | null,
 		summary: Summary | null,
 		chapters?: readonly Chapter[],
+		formatOptions?: FormatMarkdownOptions,
 	): Promise<WriteOutcome> {
 		// Defense-in-depth: refuse to write a note that advertises content
 		// it doesn't have. The ImportModal is responsible for not calling us
@@ -819,7 +879,32 @@ export class NoteWriter {
 		const filename = `${sanitizeFilename(expandedTitle)}.md`;
 		const targetPath =
 			this.outputFolder === '' ? filename : `${this.outputFolder}/${filename}`;
-		const markdown = formatMarkdown(recording, transcript, summary, chapters);
+		const effectiveFormatOptions: FormatMarkdownOptions = {
+			...this.defaultFormatOptions,
+			...formatOptions,
+		};
+		const markdown = formatMarkdown(
+			recording,
+			transcript,
+			summary,
+			chapters,
+			effectiveFormatOptions,
+		);
+
+		// Compute fold metadata once per write. `transcriptHeadingLine`
+		// is null when the markdown lacks a wrapping transcript heading
+		// (no chapters, transcript excluded, or empty-segment fallback)
+		// which the caller should treat as "no fold state to apply".
+		const headerLevel: HeadingLevel =
+			effectiveFormatOptions.transcriptHeaderLevel ?? 4;
+		const transcriptHeadingLine = findTranscriptHeadingLine(markdown, headerLevel);
+		const foldInfo: WriteFoldInfo | undefined =
+			transcriptHeadingLine !== null
+				? {
+						transcriptHeadingLine,
+						totalLines: markdown.split('\n').length,
+					}
+				: undefined;
 
 		const existing = this.vault.getFileByPath(targetPath);
 		if (existing === null) {
@@ -832,7 +917,7 @@ export class NoteWriter {
 					}`,
 				);
 			}
-			return { status: 'created', path: targetPath };
+			return { status: 'created', path: targetPath, foldInfo };
 		}
 
 		// A file already exists at this path. Before honoring the duplicate
@@ -874,7 +959,7 @@ export class NoteWriter {
 				}`,
 			);
 		}
-		return { status: 'overwritten', path: targetPath };
+		return { status: 'overwritten', path: targetPath, foldInfo };
 	}
 
 	/**

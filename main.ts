@@ -20,6 +20,9 @@ interface PlaudImporterSettings {
 	outputFolder: string;
 	onDuplicate: "skip" | "overwrite";
 	debug: boolean;
+	includeTranscript: boolean;
+	foldTranscript: boolean;
+	transcriptHeaderLevel: 1 | 2 | 3 | 4 | 5 | 6;
 }
 
 const DEFAULT_SETTINGS: PlaudImporterSettings = {
@@ -27,6 +30,9 @@ const DEFAULT_SETTINGS: PlaudImporterSettings = {
 	outputFolder: "Plaud",
 	onDuplicate: "skip",
 	debug: false,
+	includeTranscript: true,
+	foldTranscript: true,
+	transcriptHeaderLevel: 4,
 };
 
 // Adapt Obsidian's requestUrl to the PlaudHttpFetcher shape the client
@@ -189,6 +195,9 @@ export default class PlaudImporterPlugin extends Plugin {
 		new ImportModal(this.app, this.client, {
 			outputFolder: this.settings.outputFolder,
 			onDuplicate: this.settings.onDuplicate,
+			includeTranscript: this.settings.includeTranscript,
+			foldTranscript: this.settings.foldTranscript,
+			transcriptHeaderLevel: this.settings.transcriptHeaderLevel,
 		}).open();
 	}
 
@@ -261,6 +270,60 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 						this.plugin.settings.onDuplicate =
 							value as "skip" | "overwrite";
 						await this.plugin.saveSettings();
+					}),
+			);
+
+		containerEl.createEl("h3", { text: "Transcript configuration" });
+
+		new Setting(containerEl)
+			.setName("Include transcript")
+			.setDesc(
+				"Write the full transcript body into each generated note. When off, notes still include the AI summary and the chapters list (if available), but the per-segment transcript is omitted.",
+			)
+			.addToggle((toggle) =>
+				toggle
+					.setValue(this.plugin.settings.includeTranscript)
+					.onChange(async (value) => {
+						this.plugin.settings.includeTranscript = value;
+						await this.plugin.saveSettings();
+					}),
+			);
+
+		new Setting(containerEl)
+			.setName("Fold transcript by default")
+			.setDesc(
+				"Collapse the transcript section when the note is created so it doesn't dominate the view on open. Uses Obsidian's heading fold state — clicking the chevron next to the heading expands it. Turn off if you prefer the transcript always expanded.",
+			)
+			.addToggle((toggle) =>
+				toggle
+					.setValue(this.plugin.settings.foldTranscript)
+					.onChange(async (value) => {
+						this.plugin.settings.foldTranscript = value;
+						await this.plugin.saveSettings();
+					}),
+			);
+
+		new Setting(containerEl)
+			.setName("Transcript heading level")
+			.setDesc(
+				"Markdown heading level for the wrapping 'Transcript' heading. Chapter sub-headings render at one level below (e.g. level 4 → transcript is H4, chapters are H5). This is the heading whose fold state the 'Fold transcript by default' toggle controls.",
+			)
+			.addDropdown((dropdown) =>
+				dropdown
+					.addOption("1", "H1")
+					.addOption("2", "H2")
+					.addOption("3", "H3")
+					.addOption("4", "H4")
+					.addOption("5", "H5")
+					.addOption("6", "H6")
+					.setValue(String(this.plugin.settings.transcriptHeaderLevel))
+					.onChange(async (value) => {
+						const level = Number(value);
+						if (level >= 1 && level <= 6) {
+							this.plugin.settings.transcriptHeaderLevel =
+								level as 1 | 2 | 3 | 4 | 5 | 6;
+							await this.plugin.saveSettings();
+						}
 					}),
 			);
 

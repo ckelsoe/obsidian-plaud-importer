@@ -1,4 +1,4 @@
-import { App, Modal, Notice } from 'obsidian';
+import { App, MarkdownView, Modal, Notice, TFile } from 'obsidian';
 import type { PlaudClient, Recording } from './plaud-client';
 import {
 	PlaudApiError,
@@ -12,6 +12,19 @@ import {
 	type NoteWriterOptions,
 	type WriteOutcome,
 } from './note-writer';
+
+/**
+ * Modal-level options passed to `ImportModal`. Extends
+ * `NoteWriterOptions` with concerns that belong to the post-write
+ * pipeline — specifically whether to auto-fold the transcript wrapping
+ * heading via `app.foldManager.save` after each created/overwritten
+ * note. `foldTranscript` is not a NoteWriter concern (the writer
+ * doesn't touch fold state) so it lives on the modal's options
+ * surface, not inside `NoteWriterOptions`.
+ */
+export interface ImportModalOptions extends NoteWriterOptions {
+	readonly foldTranscript?: boolean;
+}
 
 // -----------------------------------------------------------------------------
 // Pure helpers (exported for unit testing). Keeping them outside the Modal
@@ -376,7 +389,7 @@ export function mergeRecordings(
 
 export class ImportModal extends Modal {
 	private readonly client: PlaudClient;
-	private readonly noteWriterOptions: NoteWriterOptions;
+	private readonly noteWriterOptions: ImportModalOptions;
 	private readonly selectedIds = new Set<string>();
 	private importButton: HTMLButtonElement | null = null;
 	// Mutable accumulator across Load More clicks. Starts empty on each
@@ -415,7 +428,7 @@ export class ImportModal extends Modal {
 	// selected recordings. Checked between iterations in onImportClick.
 	private aborted = false;
 
-	constructor(app: App, client: PlaudClient, noteWriterOptions: NoteWriterOptions) {
+	constructor(app: App, client: PlaudClient, noteWriterOptions: ImportModalOptions) {
 		super(app);
 		this.client = client;
 		this.noteWriterOptions = noteWriterOptions;
@@ -831,6 +844,27 @@ export class ImportModal extends Modal {
 					summary,
 					chapters,
 				);
+				// Auto-fold the wrapping transcript heading in the
+				// generated note so the chaptered transcript renders
+				// collapsed by default. Gated on the user's
+				// `foldTranscript` setting (default on). Uses
+				// Obsidian's internal foldManager.save to persist the
+				// fold state with the file so the next file-open
+				// applies it automatically. Failure here is non-fatal:
+				// a missing foldManager (older Obsidian or API change)
+				// degrades to expanded-by-default without breaking the
+				// import.
+				if (
+					writeOutcome.status !== 'skipped' &&
+					writeOutcome.foldInfo !== undefined &&
+					this.noteWriterOptions.foldTranscript !== false
+				) {
+					await this.applyTranscriptFold(
+						writeOutcome.path,
+						writeOutcome.foldInfo.transcriptHeadingLine,
+						writeOutcome.foldInfo.totalLines,
+					);
+				}
 				// Report the original recording in the result so any
 				// downstream UI that renders the import summary sees the
 				// same object the modal already knows about. The merged
@@ -867,6 +901,72 @@ export class ImportModal extends Modal {
 		}
 
 		this.renderSummary(tallyImportResults(results));
+	}
+
+	/**
+	 * Persist fold state for the wrapping transcript heading in a
+	 * freshly-written note so the chaptered transcript renders
+	 * collapsed by default while the external chapters callout stays
+	 * visible above it. Uses Obsidian's undocumented but stable
+	 * internal `app.foldManager.save` API (type-augmented in
+	 * `types.d.ts`) plus a best-effort same-session apply via the
+	 * active MarkdownView's `applyFoldInfo` when the file happens to
+	 * already be open in a leaf.
+	 *
+	 * Failure is swallowed with a console warning: a missing
+	 * foldManager (older Obsidian) or an applyFoldInfo rejection
+	 * degrades to expanded-by-default, which is unfortunate but never
+	 * breaks the import. This method must never throw into the
+	 * import loop.
+	 */
+	private async applyTranscriptFold(
+		path: string,
+		transcriptHeadingLine: number,
+		totalLines: number,
+	): Promise<void> {
+		try {
+			const file = this.app.vault.getFileByPath(path);
+			if (!(file instanceof TFile)) {
+				return;
+			}
+			const foldInfo = {
+				folds: [
+					{
+						from: transcriptHeadingLine,
+						to: transcriptHeadingLine,
+					},
+				],
+				lines: totalLines,
+			};
+			// Persist the fold state so the next file-open applies it.
+			// The foldManager API is not part of the documented
+			// Obsidian surface — guard its presence at runtime to stay
+			// compatible with future Obsidian versions that might move
+			// or rename it.
+			if (this.app.foldManager && typeof this.app.foldManager.save === 'function') {
+				await this.app.foldManager.save(file, foldInfo);
+			}
+			// Best-effort in-session apply: if the note is already open
+			// in an active MarkdownView, push the fold state into its
+			// current mode right now so the user sees the folds without
+			// having to close and reopen the tab.
+			const leaves = this.app.workspace.getLeavesOfType('markdown');
+			for (const leaf of leaves) {
+				if (
+					leaf.view instanceof MarkdownView &&
+					leaf.view.file?.path === path &&
+					leaf.view.currentMode &&
+					typeof leaf.view.currentMode.applyFoldInfo === 'function'
+				) {
+					leaf.view.currentMode.applyFoldInfo(foldInfo);
+				}
+			}
+		} catch (err) {
+			console.warn(
+				`Plaud Importer: failed to apply transcript fold state for ${path}`,
+				err,
+			);
+		}
 	}
 
 	private renderSummary(tally: ImportTally): void {
