@@ -3,6 +3,7 @@ import {
 	NoteWriterError,
 	extractPlaudIdFromFrontmatter,
 	extractSpeakers,
+	formatDurationHoursMinutes,
 	formatFrontmatter,
 	formatMarkdown,
 	formatTimestamp,
@@ -214,6 +215,45 @@ describe('extractSpeakers', () => {
 	});
 });
 
+// formatDurationHoursMinutes ------------------------------------------------
+
+describe('formatDurationHoursMinutes', () => {
+	it.each([
+		[0, '0s'],
+		[1, '1s'],
+		[45, '45s'],
+		[59, '59s'],
+		[60, '1m'],
+		[90, '2m'],        // rounds to nearest minute (1.5m → 2m)
+		[119, '2m'],
+		[600, '10m'],
+		[1800, '30m'],
+		[3599, '1h'],      // 59m 59s rounds to 60m which pops into 1h
+		[3600, '1h'],
+		[5430, '1h 31m'],  // 1h 30.5m rounds to 1h 31m
+		[7200, '2h'],
+		[7260, '2h 1m'],
+		[36000, '10h'],
+		[93600, '26h'],    // very long (26h)
+	])('formats %d seconds as %s', (input, expected) => {
+		expect(formatDurationHoursMinutes(input)).toBe(expected);
+	});
+
+	it('returns "0s" for negative input', () => {
+		expect(formatDurationHoursMinutes(-10)).toBe('0s');
+	});
+
+	it('returns "0s" for NaN and Infinity', () => {
+		expect(formatDurationHoursMinutes(Number.NaN)).toBe('0s');
+		expect(formatDurationHoursMinutes(Number.POSITIVE_INFINITY)).toBe('0s');
+	});
+
+	it('omits the minutes suffix for whole-hour durations', () => {
+		expect(formatDurationHoursMinutes(3600)).toBe('1h');
+		expect(formatDurationHoursMinutes(7200)).toBe('2h');
+	});
+});
+
 // formatFrontmatter --------------------------------------------------------
 
 describe('formatFrontmatter', () => {
@@ -224,9 +264,40 @@ describe('formatFrontmatter', () => {
 		expect(lines).toContain('plaud-id: abc123');
 		expect(lines).toContain('date: 2026-04-14');
 		expect(lines).toContain('duration-seconds: 600');
+		// The human-readable duration starts with a digit so yamlScalar
+		// force-quotes it (digit-leading values look like numbers to YAML
+		// and must be quoted to parse as strings).
+		expect(lines).toContain('duration: "10m"');
 		expect(lines).toContain('speakers: [Charles, Mary]');
 		expect(lines).toContain('source: plaud');
 		expect(lines[lines.length - 1]).toBe('---');
+	});
+
+	it('includes a human-readable duration field alongside duration-seconds', () => {
+		// 5400s → 90m → 1h 30m (crosses hour boundary)
+		const fm = formatFrontmatter(
+			makeRecording({ durationSeconds: 5400 }),
+			[],
+		);
+		expect(fm).toContain('duration-seconds: 5400');
+		expect(fm).toContain('duration: "1h 30m"');
+	});
+
+	it('formats very short durations as seconds in the duration field', () => {
+		const fm = formatFrontmatter(
+			makeRecording({ durationSeconds: 42 }),
+			[],
+		);
+		expect(fm).toContain('duration-seconds: 42');
+		expect(fm).toContain('duration: "42s"');
+	});
+
+	it('formats whole-hour durations without a trailing 0m', () => {
+		const fm = formatFrontmatter(
+			makeRecording({ durationSeconds: 7200 }),
+			[],
+		);
+		expect(fm).toContain('duration: "2h"');
 	});
 
 	it('omits the speakers line when speakers is empty', () => {

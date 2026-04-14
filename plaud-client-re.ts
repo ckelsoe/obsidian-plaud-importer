@@ -555,18 +555,20 @@ function parseTranscriptSegment(
 		);
 	}
 
-	// Plaud transmits transcript timestamps in MILLISECONDS (unlike the
-	// list endpoint, which uses unix seconds for recording start_time).
-	// Convert here so the rest of the plugin sees consistent units.
+	// Plaud transmits transcript timestamps in milliseconds for transcript
+	// segments (same as the list endpoint's recording start_time — both
+	// fixed in commit 4c after real-API testing).
 	const startSeconds = raw.start_time / 1000;
 	const endSeconds = raw.end_time / 1000;
 
-	// Speaker may be empty; prefer original_speaker for stability across
-	// re-transcription runs (Plaud may rewrite `speaker` when the user
-	// edits labels or when the diarization model changes, but
-	// original_speaker is the stable wire identifier). Fall back to
-	// `speaker` only if original_speaker is empty.
-	const speaker = pickNonEmptyString(raw.original_speaker, raw.speaker);
+	// Prefer the user-editable `speaker` field over `original_speaker`.
+	// Real-API testing on 2026-04-14 showed that `original_speaker` holds
+	// the raw diarization label ("Speaker 1", "Speaker 2") while `speaker`
+	// holds the label the user assigned in Plaud's UI (e.g., "Charles",
+	// "Mary"). An earlier commit flipped this the other way based on an
+	// incorrect agent recommendation that "original_speaker is the stable
+	// wire identifier" — the real semantics are the opposite.
+	const speaker = pickNonEmptyString(raw.speaker, raw.original_speaker);
 
 	const segment: TranscriptSegment = speaker !== undefined
 		? { startSeconds, endSeconds, speaker, text: raw.content }

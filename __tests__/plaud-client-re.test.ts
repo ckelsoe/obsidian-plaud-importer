@@ -612,15 +612,15 @@ describe('getTranscriptAndSummary happy path', () => {
 		expect(transcript?.segments[1].speaker).toBe('Speaker 2');
 	});
 
-	it('prefers original_speaker even when speaker is also set (stability across re-transcription)', async () => {
-		// Plaud may rewrite `speaker` when the user edits labels or when
-		// the diarization model changes, but original_speaker is the
-		// stable wire identifier. Prefer original_speaker so imported
-		// notes don't churn when Plaud re-runs transcription.
+	it('prefers the user-assigned speaker name over the raw diarization label', async () => {
+		// Real-API testing on 2026-04-14 showed that `original_speaker`
+		// holds Plaud's raw diarization output ("Speaker 1", "Speaker 2")
+		// while `speaker` holds the label the user assigned in Plaud's UI
+		// (e.g., "Charles", "Mary"). Prefer the user-edited name.
 		const { fetcher } = captureFetcher(
 			ok(transsummEnvelope({
 				data_result: [
-					{ start_time: 0, end_time: 1000, content: 'foo', speaker: 'Edited Alice', original_speaker: 'Speaker 1' },
+					{ start_time: 0, end_time: 1000, content: 'foo', speaker: 'Charles', original_speaker: 'Speaker 1' },
 				],
 			})),
 		);
@@ -628,14 +628,14 @@ describe('getTranscriptAndSummary happy path', () => {
 
 		const { transcript } = await client.getTranscriptAndSummary(ID);
 
-		expect(transcript?.segments[0].speaker).toBe('Speaker 1');
+		expect(transcript?.segments[0].speaker).toBe('Charles');
 	});
 
-	it('falls back to speaker when original_speaker is empty', async () => {
+	it('falls back to original_speaker when speaker is empty', async () => {
 		const { fetcher } = captureFetcher(
 			ok(transsummEnvelope({
 				data_result: [
-					{ start_time: 0, end_time: 1000, content: 'foo', speaker: 'Speaker 1', original_speaker: '' },
+					{ start_time: 0, end_time: 1000, content: 'foo', speaker: '', original_speaker: 'Speaker 1' },
 				],
 			})),
 		);

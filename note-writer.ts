@@ -190,6 +190,38 @@ function formatDateYmd(d: Date): string {
 	return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
+/**
+ * Format a duration (in seconds) as a readable "hours and minutes" string
+ * for the `duration` frontmatter field. The accompanying `duration-seconds`
+ * field keeps the raw integer so Dataview can do arithmetic.
+ *
+ *   formatDurationHoursMinutes(45)     === "45s"
+ *   formatDurationHoursMinutes(90)     === "2m"
+ *   formatDurationHoursMinutes(600)    === "10m"
+ *   formatDurationHoursMinutes(3600)   === "1h"
+ *   formatDurationHoursMinutes(5430)   === "1h 31m"
+ *   formatDurationHoursMinutes(0)      === "0s"
+ */
+export function formatDurationHoursMinutes(seconds: number): string {
+	if (!Number.isFinite(seconds) || seconds < 0) {
+		return '0s';
+	}
+	const total = Math.round(seconds);
+	if (total < 60) {
+		return `${total}s`;
+	}
+	const totalMinutes = Math.round(total / 60);
+	if (totalMinutes < 60) {
+		return `${totalMinutes}m`;
+	}
+	const h = Math.floor(totalMinutes / 60);
+	const m = totalMinutes - h * 60;
+	if (m === 0) {
+		return `${h}h`;
+	}
+	return `${h}h ${m}m`;
+}
+
 // Reserved YAML tokens that parse as something other than a string if left
 // unquoted. Covers all the common casings a real title/id could match.
 const YAML_RESERVED_TOKENS = new Set([
@@ -250,6 +282,10 @@ export function formatFrontmatter(
 	lines.push(`plaud-id: ${yamlScalar(recording.id)}`);
 	lines.push(`date: ${formatDateYmd(recording.createdAt)}`);
 	lines.push(`duration-seconds: ${duration}`);
+	// Human-readable duration alongside the raw seconds so users can read
+	// it at a glance without the note also pretending to support Dataview
+	// arithmetic on a pre-formatted string.
+	lines.push(`duration: ${yamlScalar(formatDurationHoursMinutes(duration))}`);
 	if (speakers.length > 0) {
 		lines.push(`speakers: ${yamlArray(speakers)}`);
 	}
