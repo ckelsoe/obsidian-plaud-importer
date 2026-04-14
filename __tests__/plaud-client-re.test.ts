@@ -61,24 +61,67 @@ function captureFetcher(response: PlaudHttpResponse): {
 	return { fetcher, lastRequest: () => captured };
 }
 
-// Constructor ---------------------------------------------------------------
+// Token provider semantics -------------------------------------------------
+//
+// The client takes a PlaudTokenProvider function that it calls on every API
+// request. That means: (a) settings changes take effect without reconstructing
+// the client; (b) "not configured yet" is just a provider that returns null —
+// no special construction path; (c) token validation happens at call time,
+// never at construction time.
 
-describe('ReverseEngineeredPlaudClient constructor', () => {
-	const fetcher: PlaudHttpFetcher = async () => ok(listEnvelope([]));
-
-	it('throws when token is empty', () => {
-		expect(() => new ReverseEngineeredPlaudClient('', fetcher)).toThrow(/token is required/);
+describe('token provider semantics', () => {
+	it('does not validate the token at construction time', () => {
+		const fetcher: PlaudHttpFetcher = async () => ok(listEnvelope([]));
+		// None of these should throw — construction is always legal. The
+		// provider is only called when an API call is made.
+		expect(() => new ReverseEngineeredPlaudClient(() => null, fetcher)).not.toThrow();
+		expect(() => new ReverseEngineeredPlaudClient(() => '', fetcher)).not.toThrow();
+		expect(() => new ReverseEngineeredPlaudClient(() => '   ', fetcher)).not.toThrow();
 	});
 
-	it('throws when token is whitespace-only', () => {
-		expect(() => new ReverseEngineeredPlaudClient('   ', fetcher)).toThrow(/token is required/);
+	it('throws PlaudAuthError with a "token configured" message when provider returns null', async () => {
+		const { fetcher } = captureFetcher(ok(listEnvelope([])));
+		const client = new ReverseEngineeredPlaudClient(() => null, fetcher);
+
+		await expect(client.listRecordings()).rejects.toBeInstanceOf(PlaudAuthError);
+		await expect(client.listRecordings()).rejects.toThrow(/no plaud token configured/i);
 	});
 
-	it('trims surrounding whitespace from the token', async () => {
-		const { fetcher: f, lastRequest } = captureFetcher(ok(listEnvelope([])));
-		const client = new ReverseEngineeredPlaudClient('  my-jwt  ', f);
+	it('throws PlaudAuthError when provider returns an empty string', async () => {
+		const { fetcher } = captureFetcher(ok(listEnvelope([])));
+		const client = new ReverseEngineeredPlaudClient(() => '', fetcher);
+
+		await expect(client.listRecordings()).rejects.toBeInstanceOf(PlaudAuthError);
+	});
+
+	it('throws PlaudAuthError when provider returns whitespace-only', async () => {
+		const { fetcher } = captureFetcher(ok(listEnvelope([])));
+		const client = new ReverseEngineeredPlaudClient(() => '   ', fetcher);
+
+		await expect(client.listRecordings()).rejects.toBeInstanceOf(PlaudAuthError);
+	});
+
+	it('trims surrounding whitespace before sending the Authorization header', async () => {
+		const { fetcher, lastRequest } = captureFetcher(ok(listEnvelope([])));
+		const client = new ReverseEngineeredPlaudClient(() => '  my-jwt  ', fetcher);
+
 		await client.listRecordings();
+
 		expect(lastRequest()?.headers.Authorization).toBe('Bearer my-jwt');
+	});
+
+	it('calls the provider on every request (settings changes take effect immediately)', async () => {
+		const { fetcher } = captureFetcher(ok(listEnvelope([])));
+		let currentToken: string | null = 'first-token';
+		const client = new ReverseEngineeredPlaudClient(() => currentToken, fetcher);
+
+		await client.listRecordings();
+		// Simulate the user updating their token in settings.
+		currentToken = 'second-token';
+		await client.listRecordings();
+		// And revoking it entirely.
+		currentToken = null;
+		await expect(client.listRecordings()).rejects.toBeInstanceOf(PlaudAuthError);
 	});
 });
 
@@ -87,7 +130,7 @@ describe('ReverseEngineeredPlaudClient constructor', () => {
 describe('listRecordings happy path', () => {
 	it('returns a normalized Recording for each raw item', async () => {
 		const { fetcher } = captureFetcher(ok(listEnvelope([record()])));
-		const client = new ReverseEngineeredPlaudClient('tok', fetcher);
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
 		const result = await client.listRecordings();
 
@@ -104,7 +147,7 @@ describe('listRecordings happy path', () => {
 
 	it('returns an empty array when the list is empty', async () => {
 		const { fetcher } = captureFetcher(ok(listEnvelope([])));
-		const client = new ReverseEngineeredPlaudClient('tok', fetcher);
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
 		const result = await client.listRecordings();
 
@@ -115,7 +158,7 @@ describe('listRecordings happy path', () => {
 		const { fetcher } = captureFetcher(
 			ok(listEnvelope([record({ filetag_id_list: ['tag-a', 'tag-b'] })])),
 		);
-		const client = new ReverseEngineeredPlaudClient('tok', fetcher);
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
 		const [r] = await client.listRecordings();
 
@@ -124,7 +167,7 @@ describe('listRecordings happy path', () => {
 
 	it('leaves tags undefined when filetag_id_list is missing', async () => {
 		const { fetcher } = captureFetcher(ok(listEnvelope([record()])));
-		const client = new ReverseEngineeredPlaudClient('tok', fetcher);
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
 		const [r] = await client.listRecordings();
 
@@ -137,7 +180,7 @@ describe('listRecordings happy path', () => {
 describe('listRecordings request shape', () => {
 	it('targets /file/simple/web on api.plaud.ai by default', async () => {
 		const { fetcher, lastRequest } = captureFetcher(ok(listEnvelope([])));
-		const client = new ReverseEngineeredPlaudClient('tok', fetcher);
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
 		await client.listRecordings();
 
@@ -147,7 +190,7 @@ describe('listRecordings request shape', () => {
 
 	it('respects a custom baseUrl for region overrides', async () => {
 		const { fetcher, lastRequest } = captureFetcher(ok(listEnvelope([])));
-		const client = new ReverseEngineeredPlaudClient('tok', fetcher, {
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher, {
 			baseUrl: 'https://api-euc1.plaud.ai',
 		});
 
@@ -158,7 +201,7 @@ describe('listRecordings request shape', () => {
 
 	it('sends Authorization: Bearer and standard headers', async () => {
 		const { fetcher, lastRequest } = captureFetcher(ok(listEnvelope([])));
-		const client = new ReverseEngineeredPlaudClient('my-jwt', fetcher);
+		const client = new ReverseEngineeredPlaudClient(() => 'my-jwt', fetcher);
 
 		await client.listRecordings();
 
@@ -170,7 +213,7 @@ describe('listRecordings request shape', () => {
 
 	it('sends the documented query params (skip, limit, is_trash, sort_by, is_desc)', async () => {
 		const { fetcher, lastRequest } = captureFetcher(ok(listEnvelope([])));
-		const client = new ReverseEngineeredPlaudClient('tok', fetcher);
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
 		await client.listRecordings();
 
@@ -184,7 +227,7 @@ describe('listRecordings request shape', () => {
 
 	it('passes a custom limit from the filter into the query string', async () => {
 		const { fetcher, lastRequest } = captureFetcher(ok(listEnvelope([])));
-		const client = new ReverseEngineeredPlaudClient('tok', fetcher);
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
 		await client.listRecordings({ limit: 10 });
 
@@ -206,7 +249,7 @@ describe('listRecordings filter behavior', () => {
 
 	it('filters out recordings with hasTranscript=false when filter.hasTranscript=true', async () => {
 		const { fetcher } = captureFetcher(ok(listEnvelope(threeRecords())));
-		const client = new ReverseEngineeredPlaudClient('tok', fetcher);
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
 		const result = await client.listRecordings({ hasTranscript: true });
 
@@ -215,7 +258,7 @@ describe('listRecordings filter behavior', () => {
 
 	it('filters by since date', async () => {
 		const { fetcher } = captureFetcher(ok(listEnvelope(threeRecords())));
-		const client = new ReverseEngineeredPlaudClient('tok', fetcher);
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
 		// 1720000000 unix seconds = 2024-07-03 11:46:40 UTC
 		const result = await client.listRecordings({ since: new Date(1720000000 * 1000) });
@@ -225,7 +268,7 @@ describe('listRecordings filter behavior', () => {
 
 	it('filters by until date', async () => {
 		const { fetcher } = captureFetcher(ok(listEnvelope(threeRecords())));
-		const client = new ReverseEngineeredPlaudClient('tok', fetcher);
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
 		const result = await client.listRecordings({ until: new Date(1720000000 * 1000) });
 
@@ -238,14 +281,14 @@ describe('listRecordings filter behavior', () => {
 describe('listRecordings HTTP status handling', () => {
 	it('throws PlaudAuthError on HTTP 401', async () => {
 		const { fetcher } = captureFetcher(status(401));
-		const client = new ReverseEngineeredPlaudClient('tok', fetcher);
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
 		await expect(client.listRecordings()).rejects.toBeInstanceOf(PlaudAuthError);
 	});
 
 	it('throws PlaudApiError with status 500 on HTTP 500', async () => {
 		const { fetcher } = captureFetcher(status(500));
-		const client = new ReverseEngineeredPlaudClient('tok', fetcher);
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
 		await expect(client.listRecordings()).rejects.toMatchObject({
 			status: 500,
@@ -254,7 +297,7 @@ describe('listRecordings HTTP status handling', () => {
 
 	it('throws PlaudApiError with status 429 on HTTP 429 (rate limit)', async () => {
 		const { fetcher } = captureFetcher(status(429));
-		const client = new ReverseEngineeredPlaudClient('tok', fetcher);
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
 		await expect(client.listRecordings()).rejects.toMatchObject({
 			status: 429,
@@ -263,14 +306,14 @@ describe('listRecordings HTTP status handling', () => {
 
 	it('throws PlaudApiError on HTTP 503 with the status in the message', async () => {
 		const { fetcher } = captureFetcher(status(503));
-		const client = new ReverseEngineeredPlaudClient('tok', fetcher);
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
 		await expect(client.listRecordings()).rejects.toThrow(/503/);
 	});
 
 	it('treats HTTP 204 as an empty list', async () => {
 		const { fetcher } = captureFetcher({ status: 204, json: null, text: '' });
-		const client = new ReverseEngineeredPlaudClient('tok', fetcher);
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
 		const result = await client.listRecordings();
 		expect(result).toEqual([]);
@@ -282,7 +325,7 @@ describe('listRecordings HTTP status handling', () => {
 			json: null,
 			text: '<html>cloudflare challenge</html>',
 		});
-		const client = new ReverseEngineeredPlaudClient('tok', fetcher);
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
 		await expect(client.listRecordings()).rejects.toBeInstanceOf(PlaudParseError);
 	});
@@ -291,7 +334,7 @@ describe('listRecordings HTTP status handling', () => {
 		const fetcher: PlaudHttpFetcher = async () => {
 			throw new Error('ECONNRESET');
 		};
-		const client = new ReverseEngineeredPlaudClient('tok', fetcher);
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
 		await expect(client.listRecordings()).rejects.toBeInstanceOf(PlaudApiError);
 	});
@@ -302,14 +345,14 @@ describe('listRecordings HTTP status handling', () => {
 describe('listRecordings parse errors', () => {
 	it('throws PlaudParseError when envelope is missing data_file_list', async () => {
 		const { fetcher } = captureFetcher(ok({ status: 0, msg: 'ok' }));
-		const client = new ReverseEngineeredPlaudClient('tok', fetcher);
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
 		await expect(client.listRecordings()).rejects.toBeInstanceOf(PlaudParseError);
 	});
 
 	it('throws PlaudParseError when envelope is an array (not an object)', async () => {
 		const { fetcher } = captureFetcher(ok([]));
-		const client = new ReverseEngineeredPlaudClient('tok', fetcher);
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
 		await expect(client.listRecordings()).rejects.toBeInstanceOf(PlaudParseError);
 	});
@@ -318,7 +361,7 @@ describe('listRecordings parse errors', () => {
 		const { fetcher } = captureFetcher(
 			ok(listEnvelope([{ id: 'abc', filename: 'broken' /* missing rest */ }])),
 		);
-		const client = new ReverseEngineeredPlaudClient('tok', fetcher);
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
 		await expect(client.listRecordings()).rejects.toBeInstanceOf(PlaudParseError);
 	});
@@ -334,7 +377,7 @@ describe('listRecordings parse errors', () => {
 		['empty filename', { filename: '' }],
 	])('rejects records with %s', async (_label, overrides) => {
 		const { fetcher } = captureFetcher(ok(listEnvelope([record(overrides)])));
-		const client = new ReverseEngineeredPlaudClient('tok', fetcher);
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
 		await expect(client.listRecordings()).rejects.toBeInstanceOf(PlaudParseError);
 	});
@@ -346,7 +389,7 @@ describe('listRecordings parse errors', () => {
 		const { fetcher } = captureFetcher(
 			ok(listEnvelope([record({ start_time: 1744628400000 })])),
 		);
-		const client = new ReverseEngineeredPlaudClient('tok', fetcher);
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
 		await expect(client.listRecordings()).rejects.toThrow(/milliseconds/i);
 	});
@@ -365,7 +408,7 @@ describe('listRecordings parse errors', () => {
 				]),
 			),
 		);
-		const client = new ReverseEngineeredPlaudClient('tok', fetcher);
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
 		await expect(client.listRecordings()).rejects.toThrow(/3\/5/);
 	});
@@ -382,7 +425,7 @@ describe('listRecordings parse errors', () => {
 				]),
 			),
 		);
-		const client = new ReverseEngineeredPlaudClient('tok', fetcher);
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
 		await expect(client.listRecordings()).rejects.toBeInstanceOf(PlaudParseError);
 	});
@@ -394,7 +437,7 @@ describe('listRecordings parse errors', () => {
 		const { fetcher } = captureFetcher(
 			ok(listEnvelope([record({ some_new_field_from_plaud: 'whatever' })])),
 		);
-		const client = new ReverseEngineeredPlaudClient('tok', fetcher);
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
 		const result = await client.listRecordings();
 		expect(result).toHaveLength(1);
@@ -406,7 +449,7 @@ describe('listRecordings parse errors', () => {
 describe('listRecordings filter validation', () => {
 	it('throws PlaudApiError when filter.folderId is set (not supported by /file/simple/web)', async () => {
 		const { fetcher } = captureFetcher(ok(listEnvelope([])));
-		const client = new ReverseEngineeredPlaudClient('tok', fetcher);
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
 		await expect(
 			client.listRecordings({ folderId: 'anything' }),

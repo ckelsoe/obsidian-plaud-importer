@@ -26,6 +26,16 @@ import type {
  */
 export type PlaudHttpFetcher = (req: PlaudHttpRequest) => Promise<PlaudHttpResponse>;
 
+/**
+ * Function that returns the currently-configured Plaud token, or null if the
+ * user has not set one. The client calls this on every API request so that
+ * settings changes take effect immediately — no stale-token problem, no
+ * "reinstantiate on save" dance in the plugin. Returning null (or an empty /
+ * whitespace string) produces a PlaudAuthError with a "not configured"
+ * message, which the UI can route to the settings tab.
+ */
+export type PlaudTokenProvider = () => string | null;
+
 export interface PlaudHttpRequest {
 	readonly url: string;
 	readonly headers: Readonly<Record<string, string>>;
@@ -72,15 +82,16 @@ export interface PlaudClientOptions {
 }
 
 export class ReverseEngineeredPlaudClient implements PlaudClient {
-	private readonly token: string;
+	private readonly tokenProvider: PlaudTokenProvider;
 	private readonly fetcher: PlaudHttpFetcher;
 	private readonly baseUrl: string;
 
-	constructor(token: string, fetcher: PlaudHttpFetcher, options: PlaudClientOptions = {}) {
-		if (token.trim().length === 0) {
-			throw new Error('ReverseEngineeredPlaudClient: token is required (got empty or whitespace)');
-		}
-		this.token = token.trim();
+	constructor(
+		tokenProvider: PlaudTokenProvider,
+		fetcher: PlaudHttpFetcher,
+		options: PlaudClientOptions = {},
+	) {
+		this.tokenProvider = tokenProvider;
 		this.fetcher = fetcher;
 		this.baseUrl = options.baseUrl ?? DEFAULT_BASE_URL;
 	}
@@ -170,12 +181,24 @@ export class ReverseEngineeredPlaudClient implements PlaudClient {
 	}
 
 	private async fetchJson(url: string, endpoint: string): Promise<unknown> {
+		// Read the token fresh on every call so that settings changes take
+		// effect immediately. If the user hasn't configured one, surface a
+		// PlaudAuthError the UI can route to the settings tab.
+		const rawToken = this.tokenProvider();
+		if (rawToken === null || rawToken.trim().length === 0) {
+			throw new PlaudAuthError(
+				'No Plaud token configured — open Settings → Community Plugins → Plaud Importer to set one',
+				endpoint,
+			);
+		}
+		const token = rawToken.trim();
+
 		let response: PlaudHttpResponse;
 		try {
 			response = await this.fetcher({
 				url,
 				headers: {
-					Authorization: `Bearer ${this.token}`,
+					Authorization: `Bearer ${token}`,
 					Accept: 'application/json',
 					'User-Agent': USER_AGENT,
 				},
