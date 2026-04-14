@@ -1,0 +1,103 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "18"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type check
+        run: npx tsc --noEmit --skipLibCheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      - name: Validate Obsidian manifest
+        run: |
+          echo "Validating manifest.json..."
+          # Check required fields exist
+          for field in id name version minAppVersion description author; do
+            if ! jq -e ".$field" manifest.json > /dev/null 2>&1; then
+              echo "::error::Missing required field: $field"
+              exit 1
+            fi
+          done
+          # Check version format (semver)
+          VERSION=$(jq -r '.version' manifest.json)
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-.*)?$ ]]; then
+            echo "::error::Invalid version format: $VERSION"
+            exit 1
+          fi
+          # Check versions.json exists and contains current version
+          if [ -f versions.json ]; then
+            if ! jq -e ".[\"$VERSION\"]" versions.json > /dev/null 2>&1; then
+              echo "::warning::Version $VERSION not found in versions.json"
+            fi
+          fi
+          echo "Manifest validation passed"
+
+      - name: Check for deprecated Obsidian API usage
+        run: |
+          echo "Scanning for known deprecated Obsidian APIs..."
+          FOUND=0
+
+          # workspace.activeLeaf — deprecated, use getActiveViewOfType()
+          if grep -n "\.activeLeaf\b" main.ts; then
+            echo "::error::Deprecated API: 'activeLeaf'. Use getActiveViewOfType() or getLeaf() instead."
+            FOUND=1
+          fi
+
+          # MarkdownRenderer.renderMarkdown — deprecated, use MarkdownRenderer.render()
+          if grep -n "renderMarkdown(" main.ts; then
+            echo "::error::Deprecated API: 'renderMarkdown'. Use MarkdownRenderer.render() instead."
+            FOUND=1
+          fi
+
+          # getLeaf() with a boolean argument — deprecated, use getLeaf('tab') etc.
+          if grep -n "getLeaf(true)\|getLeaf(false)" main.ts; then
+            echo "::error::Deprecated API: 'getLeaf(bool)'. Use getLeaf('tab') or getLeaf('split') instead."
+            FOUND=1
+          fi
+
+          # Notice.noticeEl — deprecated, use Notice.messageEl
+          if grep -n "\.noticeEl\b" main.ts; then
+            echo "::error::Deprecated API: 'noticeEl'. Use 'messageEl' instead."
+            FOUND=1
+          fi
+
+          if [ "$FOUND" -eq 0 ]; then
+            echo "No deprecated Obsidian API usage found."
+          else
+            exit 1
+          fi
+
+      - name: Check bundle size
+        run: |
+          SIZE=$(stat -c%s main.js 2>/dev/null || stat -f%z main.js)
+          echo "Bundle size: $SIZE bytes ($(echo "scale=2; $SIZE/1024" | bc) KB)"
+          if [ "$SIZE" -gt 500000 ]; then
+            echo "::warning::Bundle size exceeds 500KB"
+          fi

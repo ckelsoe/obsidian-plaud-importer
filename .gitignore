@@ -1,0 +1,49 @@
+# vscode
+.vscode 
+
+# Intellij
+*.iml
+.idea
+
+# npm
+node_modules
+
+# Build output
+main.js
+
+# Exclude sourcemaps
+*.map
+
+# obsidian
+data.json
+
+# Exclude macOS Finder (System Explorer) View States
+.DS_Store
+
+# AI assistant files
+.claude
+CLAUDE.md
+WARP.md
+
+# Local Obsidian workspace
+.obsidian/
+
+# Screenshots and images (add specific ones to repo if needed)
+Selection_*.png
+*.screenshot.png
+
+# Backup files
+main_backup.ts
+*.backup
+*.bak
+
+# Review files
+GeminiReview.md
+*Review.md
+
+# Temporary files
+*.zip
+*.tmp
+
+# Internal documentation
+internal-docs/
