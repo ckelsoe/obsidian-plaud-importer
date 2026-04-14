@@ -13,17 +13,20 @@ import {
 	type PlaudHttpFetcher,
 } from "./plaud-client-re";
 import { ImportModal } from "./import-modal";
+import { BufferedDebugLogger } from "./debug-logger";
 
 interface PlaudImporterSettings {
 	secretId: string;
 	outputFolder: string;
 	onDuplicate: "skip" | "overwrite";
+	debug: boolean;
 }
 
 const DEFAULT_SETTINGS: PlaudImporterSettings = {
 	secretId: "",
 	outputFolder: "Plaud",
 	onDuplicate: "skip",
+	debug: false,
 };
 
 // Adapt Obsidian's requestUrl to the PlaudHttpFetcher shape the client
@@ -62,31 +65,86 @@ function safeJson(response: RequestUrlResponse): unknown {
 	}
 }
 
+// Clipboard write with a user-visible fallback Notice if the platform
+// blocks the clipboard API. Kept here rather than in a shared util because
+// main.ts is the only caller — import-modal.ts has its own copy for the
+// error-details flow.
+async function copyToClipboard(
+	text: string,
+	onSuccess: () => void,
+): Promise<void> {
+	try {
+		await navigator.clipboard.writeText(text);
+		onSuccess();
+	} catch (err) {
+		console.error("Plaud Importer: clipboard write failed", err);
+		new Notice(
+			"Plaud Importer: could not copy to clipboard — see the developer console (Ctrl+Shift+I) for the full error.",
+		);
+	}
+}
+
 export default class PlaudImporterPlugin extends Plugin {
 	settings!: PlaudImporterSettings;
 	private client?: ReverseEngineeredPlaudClient;
+	// Single logger instance shared by the client and the settings tab.
+	// The `enabled` flag is toggled in place by the settings toggle so
+	// changes take effect immediately without reinstantiating the client.
+	debugLogger!: BufferedDebugLogger;
 
 	async onload() {
 		await this.loadSettings();
+
+		this.debugLogger = new BufferedDebugLogger(this.settings.debug);
 
 		this.addSettingTab(new PlaudImporterSettingsTab(this.app, this));
 
 		this.addCommand({
 			id: "import-recent",
 			name: "Import recent recordings",
+			callback: () => this.launchImportModal("command"),
+		});
+
+		// Ribbon icon on the left rail. Same target as the command: opens
+		// the ImportModal. `audio-lines` is a Lucide icon that visually
+		// matches "audio recording" without being too literal (avoids
+		// `mic` which suggests user-facing recording, and `download`
+		// which is generic). Obsidian automatically cleans up the
+		// ribbon element when the plugin unloads — no manual teardown
+		// needed.
+		this.addRibbonIcon(
+			"audio-lines",
+			"Plaud Importer: Import recordings",
+			() => this.launchImportModal("ribbon"),
+		);
+
+		this.addCommand({
+			id: "debug-copy-log",
+			name: "Debug: copy debug log to clipboard",
 			callback: () => {
-				if (!this.client) {
+				const formatted = this.debugLogger.format();
+				void copyToClipboard(formatted, () => {
+					const count = this.debugLogger.snapshot().length;
 					new Notice(
-						"Plaud Importer: still initializing. Try again in a moment.",
+						`Plaud Importer: copied ${count} debug event${
+							count === 1 ? "" : "s"
+						} to clipboard.`,
 					);
-					return;
-				}
-				// Snapshot settings at command time so settings changes
-				// between command invocations take effect immediately.
-				new ImportModal(this.app, this.client, {
-					outputFolder: this.settings.outputFolder,
-					onDuplicate: this.settings.onDuplicate,
-				}).open();
+				});
+			},
+		});
+
+		this.addCommand({
+			id: "debug-clear-log",
+			name: "Debug: clear debug log",
+			callback: () => {
+				const count = this.debugLogger.snapshot().length;
+				this.debugLogger.clear();
+				new Notice(
+					`Plaud Importer: cleared ${count} debug event${
+						count === 1 ? "" : "s"
+					}.`,
+				);
 			},
 		});
 
@@ -97,12 +155,41 @@ export default class PlaudImporterPlugin extends Plugin {
 			this.client = new ReverseEngineeredPlaudClient(
 				() => this.app.secretStorage.getSecret(this.settings.secretId),
 				obsidianFetcher,
+				{ debugLogger: this.debugLogger },
 			);
 		});
 	}
 
 	onunload() {
 		this.client = undefined;
+	}
+
+	/**
+	 * Common entry point for launching the Plaud import modal. Called
+	 * from both the command palette and the left-rail ribbon icon so
+	 * that initialization guards and debug-log breadcrumbs only live in
+	 * one place. The `source` tag differentiates the two trigger paths
+	 * in the debug log when it's enabled.
+	 */
+	private launchImportModal(source: "command" | "ribbon"): void {
+		if (!this.client) {
+			new Notice(
+				"Plaud Importer: still initializing. Try again in a moment.",
+			);
+			return;
+		}
+		if (this.debugLogger.enabled) {
+			this.debugLogger.log({
+				kind: "note",
+				message: `user invoked 'Import recent recordings' via ${source}`,
+			});
+		}
+		// Snapshot settings at invocation time so changes in the settings
+		// tab take effect on the next click without reinstantiation.
+		new ImportModal(this.app, this.client, {
+			outputFolder: this.settings.outputFolder,
+			onDuplicate: this.settings.onDuplicate,
+		}).open();
 	}
 
 	async loadSettings() {
@@ -174,6 +261,35 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 						this.plugin.settings.onDuplicate =
 							value as "skip" | "overwrite";
 						await this.plugin.saveSettings();
+					}),
+			);
+
+		containerEl.createEl("h3", { text: "Debug" });
+
+		new Setting(containerEl)
+			.setName("Debug logging")
+			.setDesc(
+				"Capture raw API requests, responses, and parsed results into an in-memory buffer and mirror them to the developer console (Ctrl+Shift+I). Authentication headers are NEVER captured. Payloads may contain transcript text, speaker names, and recording metadata — only enable when troubleshooting. Use the 'Plaud Importer: Debug: copy debug log to clipboard' command to export the session.",
+			)
+			.addToggle((toggle) =>
+				toggle
+					.setValue(this.plugin.settings.debug)
+					.onChange(async (value) => {
+						this.plugin.settings.debug = value;
+						// Update the live logger's enabled flag in place so
+						// the change takes effect on the next API call
+						// without having to reinstantiate the client.
+						this.plugin.debugLogger.setEnabled(value);
+						await this.plugin.saveSettings();
+						if (value) {
+							new Notice(
+								"Plaud Importer: debug logging enabled. Run a command to capture events.",
+							);
+						} else {
+							new Notice(
+								"Plaud Importer: debug logging disabled. The buffer is preserved — use the clear command to wipe it.",
+							);
+						}
 					}),
 			);
 	}

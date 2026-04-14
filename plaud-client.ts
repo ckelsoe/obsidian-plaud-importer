@@ -32,6 +32,15 @@ export interface PlaudClient {
 
 export interface RecordingFilter {
 	readonly limit?: number;
+	/**
+	 * Offset into the remote result set, newest-first. Used for page-based
+	 * "load more" in `ImportModal` — the modal asks for
+	 * `{ skip: currentRecordings.length, limit: PAGE_SIZE }` on each Load
+	 * More click. Plaud's `/file/simple/web` endpoint accepts this as the
+	 * `skip` query param; clients that don't support offset pagination must
+	 * reject non-zero values loudly rather than silently ignore them.
+	 */
+	readonly skip?: number;
 	readonly since?: Date;
 	readonly until?: Date;
 	readonly folderId?: string;

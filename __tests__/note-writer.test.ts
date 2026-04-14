@@ -7,6 +7,7 @@ import {
 	formatDurationHoursMinutes,
 	formatFrontmatter,
 	formatMarkdown,
+	formatPlaudWebUrl,
 	formatTimestamp,
 	sanitizeFilename,
 	type FileLike,
@@ -319,6 +320,29 @@ describe('expandTitleWithYear', () => {
 	});
 });
 
+// formatPlaudWebUrl ---------------------------------------------------------
+
+describe('formatPlaudWebUrl', () => {
+	it('builds the canonical web.plaud.ai/file/{id} URL for a real hex ID', () => {
+		expect(formatPlaudWebUrl('4cba85e559d7f7c9058bf71c23d86d2d')).toBe(
+			'https://web.plaud.ai/file/4cba85e559d7f7c9058bf71c23d86d2d',
+		);
+	});
+
+	it('URL-encodes IDs that contain reserved characters (defense-in-depth)', () => {
+		expect(formatPlaudWebUrl('id/with/slash')).toBe(
+			'https://web.plaud.ai/file/id%2Fwith%2Fslash',
+		);
+		expect(formatPlaudWebUrl('id with space')).toBe(
+			'https://web.plaud.ai/file/id%20with%20space',
+		);
+	});
+
+	it('passes through plain alphanumeric IDs without encoding', () => {
+		expect(formatPlaudWebUrl('abc123')).toBe('https://web.plaud.ai/file/abc123');
+	});
+});
+
 // formatFrontmatter --------------------------------------------------------
 
 describe('formatFrontmatter', () => {
@@ -327,6 +351,7 @@ describe('formatFrontmatter', () => {
 		const lines = fm.split('\n');
 		expect(lines[0]).toBe('---');
 		expect(lines).toContain('plaud-id: abc123');
+		expect(lines).toContain('plaud-url: "https://web.plaud.ai/file/abc123"');
 		expect(lines).toContain('date: 2026-04-14');
 		expect(lines).toContain('duration-seconds: 600');
 		// The human-readable duration starts with a digit so yamlScalar
@@ -336,6 +361,15 @@ describe('formatFrontmatter', () => {
 		expect(lines).toContain('speakers: [Charles, Mary]');
 		expect(lines).toContain('source: plaud');
 		expect(lines[lines.length - 1]).toBe('---');
+	});
+
+	it('places plaud-url directly after plaud-id', () => {
+		const fm = formatFrontmatter(makeRecording(), []);
+		const lines = fm.split('\n');
+		const idIdx = lines.findIndex((l) => l.startsWith('plaud-id:'));
+		const urlIdx = lines.findIndex((l) => l.startsWith('plaud-url:'));
+		expect(idIdx).toBeGreaterThan(0);
+		expect(urlIdx).toBe(idIdx + 1);
 	});
 
 	it('includes a human-readable duration field alongside duration-seconds', () => {
@@ -413,17 +447,41 @@ describe('formatFrontmatter', () => {
 // formatMarkdown -----------------------------------------------------------
 
 describe('formatMarkdown', () => {
-	it('produces frontmatter, H1, summary, and transcript callout in order', () => {
+	it('produces frontmatter, H1, open-in-plaud link, summary, and transcript callout in order', () => {
 		const md = formatMarkdown(makeRecording(), makeTranscript(), makeSummary());
 		// Order assertions: find each anchor's index and verify monotonic.
 		const fmStart = md.indexOf('---');
 		const h1 = md.indexOf('# Morning standup');
+		const plaudLink = md.indexOf('[Open in Plaud →](');
 		const summaryH2 = md.indexOf('## Summary');
 		const callout = md.indexOf('> [!note]- Transcript');
 		expect(fmStart).toBeGreaterThanOrEqual(0);
 		expect(h1).toBeGreaterThan(fmStart);
-		expect(summaryH2).toBeGreaterThan(h1);
+		expect(plaudLink).toBeGreaterThan(h1);
+		expect(summaryH2).toBeGreaterThan(plaudLink);
 		expect(callout).toBeGreaterThan(summaryH2);
+	});
+
+	it('puts the Open in Plaud link on its own line directly after the H1 (blank line separator)', () => {
+		const md = formatMarkdown(makeRecording(), makeTranscript(), makeSummary());
+		// A bare regex over the full body ensures the link is exactly on
+		// the line after the H1 with one blank line between them — if a
+		// future change accidentally wraps the link inside the summary
+		// section, this catches it.
+		expect(md).toMatch(
+			/^# Morning standup\n\n\[Open in Plaud →\]\(https:\/\/web\.plaud\.ai\/file\/abc123\)\n/m,
+		);
+	});
+
+	it('builds the Open in Plaud link from formatPlaudWebUrl for the recording ID', () => {
+		const md = formatMarkdown(
+			makeRecording({ id: '4cba85e559d7f7c9058bf71c23d86d2d' as PlaudRecordingId }),
+			makeTranscript(),
+			makeSummary(),
+		);
+		expect(md).toContain(
+			'[Open in Plaud →](https://web.plaud.ai/file/4cba85e559d7f7c9058bf71c23d86d2d)',
+		);
 	});
 
 	it('expands MM-DD titles with the year from createdAt in the H1', () => {

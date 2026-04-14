@@ -18,6 +18,7 @@ import type {
 	TranscriptAndSummary,
 	TranscriptSegment,
 } from './plaud-client';
+import type { DebugLogger } from './debug-logger';
 
 /**
  * Abstract HTTP call shape the client depends on. main.ts adapts Obsidian's
@@ -95,12 +96,22 @@ const DEFAULT_LIMIT = 50;
 
 export interface PlaudClientOptions {
 	readonly baseUrl?: string;
+	/**
+	 * Optional debug logger. When provided, every HTTP request emits a
+	 * `request` event before the call and a `response` event after the
+	 * status/body are read. Authorization headers are NEVER included in
+	 * the logged payload — the client strips them before handing the
+	 * event to the logger. When omitted, debug logging is a no-op with
+	 * zero hot-path cost.
+	 */
+	readonly debugLogger?: DebugLogger;
 }
 
 export class ReverseEngineeredPlaudClient implements PlaudClient {
 	private readonly tokenProvider: PlaudTokenProvider;
 	private readonly fetcher: PlaudHttpFetcher;
 	private readonly baseUrl: string;
+	private readonly debugLogger: DebugLogger | undefined;
 
 	constructor(
 		tokenProvider: PlaudTokenProvider,
@@ -110,6 +121,7 @@ export class ReverseEngineeredPlaudClient implements PlaudClient {
 		this.tokenProvider = tokenProvider;
 		this.fetcher = fetcher;
 		this.baseUrl = options.baseUrl ?? DEFAULT_BASE_URL;
+		this.debugLogger = options.debugLogger;
 	}
 
 	async listRecordings(filter?: RecordingFilter): Promise<readonly Recording[]> {
@@ -125,7 +137,7 @@ export class ReverseEngineeredPlaudClient implements PlaudClient {
 		}
 
 		const params = new URLSearchParams({
-			skip: '0',
+			skip: String(filter?.skip ?? 0),
 			limit: String(filter?.limit ?? DEFAULT_LIMIT),
 			is_trash: '2',
 			sort_by: 'start_time',
@@ -169,6 +181,23 @@ export class ReverseEngineeredPlaudClient implements PlaudClient {
 			);
 		}
 
+		if (this.debugLogger?.enabled === true) {
+			this.debugLogger.log({
+				kind: 'parsed',
+				endpoint,
+				message: `parsed ${out.length} recordings (raw=${list.length})`,
+				payload: out.map((r) => ({
+					id: r.id,
+					title: r.title,
+					createdAt: r.createdAt.toISOString(),
+					durationSeconds: r.durationSeconds,
+					transcriptAvailable: r.transcriptAvailable,
+					summaryAvailable: r.summaryAvailable,
+					tags: r.tags,
+				})),
+			});
+		}
+
 		return out;
 	}
 
@@ -180,6 +209,94 @@ export class ReverseEngineeredPlaudClient implements PlaudClient {
 				'/ai/transsumm/:id',
 			);
 		}
+
+		// Two-step strategy after the 2026-04-14 reverse-engineering pass:
+		//
+		//   1. Call the legacy /ai/transsumm/{id} endpoint to get the raw
+		//      transcript and the AI summary. The raw transcript carries
+		//      Plaud's diarization labels ("Speaker 1", "Speaker 2"), with
+		//      only the account owner's voice auto-mapped to a real name
+		//      via Plaud's voice fingerprinting.
+		//
+		//   2. Call /file/detail/{id} to look for a `transaction_polish`
+		//      content entry. When present, the polish is a separately-
+		//      stored transcript where the user-applied speaker renames
+		//      in Plaud's web app have been persisted (the web app is the
+		//      only place this editing happens; the renames never write
+		//      back to /ai/transsumm/). Fetching the polish's pre-signed
+		//      S3 URL gives us a segment array with the SAME schema as
+		//      /ai/transsumm/, but with `speaker` holding the renamed
+		//      value (e.g., "Vijay Muniswamy") and `original_speaker`
+		//      preserved as the raw diarization label.
+		//
+		// The polish is also "smoothed" (Plaud strips false-start
+		// repetitions and collapses fragmentary segments) so the
+		// generated note quality improves regardless of whether the user
+		// had renamed speakers.
+		//
+		// The polish lookup is best-effort: any failure at /file/detail/
+		// or in the S3 fetch falls back silently to the raw transcript.
+		// This matters because a new recording may not have a polish
+		// generated yet, and older recordings may never have had one.
+		// See dev-docs/deferred-decisions.md DD-003 for the full context.
+
+		const legacy = await this.fetchLegacyTranssumm(id);
+
+		let polishedTranscript: Transcript | null = null;
+		let polishError: unknown = null;
+		try {
+			polishedTranscript = await this.fetchPolishedTranscript(id);
+		} catch (err) {
+			polishError = err;
+		}
+
+		const finalTranscript = polishedTranscript ?? legacy.transcript;
+
+		if (this.debugLogger?.enabled === true) {
+			this.debugLogger.log({
+				kind: 'parsed',
+				endpoint: '/getTranscriptAndSummary',
+				message: `resolved transcript for ${id}: ${
+					polishedTranscript !== null
+						? `polished (${polishedTranscript.segments.length} segments)`
+						: legacy.transcript !== null
+							? `raw fallback (${legacy.transcript.segments.length} segments)${polishError ? ` — polish lookup failed: ${polishError instanceof Error ? polishError.message : String(polishError)}` : ' — no polish available'}`
+							: 'null (no transcript available from either source)'
+				}`,
+				payload: {
+					usedSource: polishedTranscript !== null ? 'transaction_polish' : 'ai/transsumm',
+					polishErrorMessage:
+						polishError instanceof Error ? polishError.message : polishError !== null ? String(polishError) : null,
+					segmentCount: finalTranscript?.segments.length ?? 0,
+					summary:
+						legacy.summary !== null
+							? {
+									textLength: legacy.summary.text.length,
+									textSample: legacy.summary.text.slice(0, 200),
+									sectionCount: legacy.summary.sections?.length ?? 0,
+								}
+							: null,
+				},
+			});
+		}
+
+		return {
+			transcript: finalTranscript,
+			summary: legacy.summary,
+		};
+	}
+
+	/**
+	 * Fetch the raw transcript + summary bundle via the legacy POST
+	 * /ai/transsumm/{id} endpoint. This is the original path the plugin
+	 * has always used. It returns the RAW transcript — speaker renames
+	 * applied in Plaud's web app are NOT visible through this endpoint.
+	 * Callers who want the polished transcript should layer
+	 * fetchPolishedTranscript on top.
+	 */
+	private async fetchLegacyTranssumm(
+		id: PlaudRecordingId,
+	): Promise<TranscriptAndSummary> {
 		const endpoint = `/ai/transsumm/${encodeURIComponent(id)}`;
 		const url = `${this.baseUrl}${endpoint}`;
 		// /ai/transsumm/{id} is POST despite carrying no payload — the empty
@@ -189,32 +306,105 @@ export class ReverseEngineeredPlaudClient implements PlaudClient {
 		return parseTranssummResponse(id, raw, endpoint);
 	}
 
+	/**
+	 * Two-step fetch of the polished transcript:
+	 *   1. GET /file/detail/{id} to discover content_list entries.
+	 *   2. Find the `transaction_polish` entry with a successful
+	 *      task_status, read its pre-signed S3 `data_link`, and fetch it
+	 *      authless. The S3 URL has a short expiry (5 minutes) so the
+	 *      follow-up fetch must happen immediately after the /file/detail
+	 *      call — running these back-to-back in the same method keeps the
+	 *      window small without any caching layer.
+	 *
+	 * Returns null when the recording has no polish generated (e.g., a
+	 * brand-new upload that Plaud hasn't processed yet) OR when the
+	 * `transaction_polish` entry exists but reports task_status !== 1
+	 * (in-progress or failed). Throws on any network/parse error so the
+	 * caller can decide whether to fall back or surface.
+	 */
+	private async fetchPolishedTranscript(
+		id: PlaudRecordingId,
+	): Promise<Transcript | null> {
+		const detailEndpoint = `/file/detail/${encodeURIComponent(id)}`;
+		const detailUrl = `${this.baseUrl}${detailEndpoint}`;
+		const rawDetail = await this.fetchJson(detailUrl, detailEndpoint);
+		const polishLink = findTransactionPolishLink(rawDetail, detailEndpoint);
+		if (polishLink === null) {
+			return null;
+		}
+
+		// Fetch the pre-signed S3 URL without the Bearer token — it already
+		// carries its own X-Amz-Signature. Use a synthetic endpoint label
+		// for logging / errors so the origin of the call is obvious in
+		// debug output without leaking the full URL (which contains an
+		// AWS session token query param).
+		const polishEndpoint = `/s3/file_transaction_polish/${encodeURIComponent(id)}`;
+		const rawPolish = await this.fetchJson(polishLink, polishEndpoint, {
+			skipAuth: true,
+		});
+		// The polish file is a bare JSON array of segments (no envelope).
+		// parseTranscriptField handles that shape directly — pass the raw
+		// value as the segments list.
+		return parseTranscriptField(id, rawPolish, polishEndpoint);
+	}
+
 	private async fetchJson(
 		url: string,
 		endpoint: string,
-		options: { method?: 'GET' | 'POST'; body?: string } = {},
+		options: { method?: 'GET' | 'POST'; body?: string; skipAuth?: boolean } = {},
 	): Promise<unknown> {
-		// Read the token fresh on every call so that settings changes take
-		// effect immediately. If the user hasn't configured one, surface a
-		// PlaudAuthError the UI can route to the settings tab.
-		const rawToken = this.tokenProvider();
-		if (rawToken === null || rawToken.trim().length === 0) {
-			throw new PlaudAuthError(
-				'not_configured',
-				'No Plaud token configured — open Settings → Community Plugins → Plaud Importer to set one',
-				endpoint,
-			);
-		}
-		const token = rawToken.trim();
 		const method = options.method ?? 'GET';
 
 		const headers: Record<string, string> = {
-			Authorization: `Bearer ${token}`,
 			Accept: 'application/json',
 			'User-Agent': USER_AGENT,
 		};
+
+		// `skipAuth` is for fetching pre-signed S3 URLs (e.g., the polished
+		// transcript hosted in the Plaud content storage bucket). Those URLs
+		// carry their own `X-Amz-Signature`, and adding a Bearer token would
+		// be ignored at best and rejected at worst. When skipAuth is true,
+		// we do NOT read the token provider at all — this also means an
+		// authless call never triggers the "no token configured" error.
+		if (options.skipAuth !== true) {
+			// Read the token fresh on every call so that settings changes take
+			// effect immediately. If the user hasn't configured one, surface a
+			// PlaudAuthError the UI can route to the settings tab.
+			const rawToken = this.tokenProvider();
+			if (rawToken === null || rawToken.trim().length === 0) {
+				throw new PlaudAuthError(
+					'not_configured',
+					'No Plaud token configured — open Settings → Community Plugins → Plaud Importer to set one',
+					endpoint,
+				);
+			}
+			const token = rawToken.trim();
+			headers.Authorization = `Bearer ${token}`;
+		}
+
 		if (options.body !== undefined) {
 			headers['Content-Type'] = 'application/json';
+		}
+
+		// Debug instrumentation: emit a `request` event before the call and
+		// a `response` event after. The payload NEVER includes the
+		// Authorization header — we build a scrubbed-headers view here
+		// rather than relying on every call site to remember to redact.
+		if (this.debugLogger?.enabled === true) {
+			this.debugLogger.log({
+				kind: 'request',
+				endpoint,
+				message: `${method} ${endpoint}`,
+				payload: {
+					url,
+					method,
+					body: options.body,
+					// Intentionally NOT logging `headers` — Authorization
+					// lives there. If future diagnostics need non-auth
+					// headers, build a scrubbed subset here rather than
+					// passing the full object.
+				},
+			});
 		}
 
 		let response: PlaudHttpResponse;
@@ -229,11 +419,37 @@ export class ReverseEngineeredPlaudClient implements PlaudClient {
 			// Fetcher itself rejected (DNS, offline, TLS, etc). Wrap so the
 			// caller's error-routing treats it like any other Plaud failure.
 			const cause = err instanceof Error ? err.message : String(err);
+			if (this.debugLogger?.enabled === true) {
+				this.debugLogger.log({
+					kind: 'error',
+					endpoint,
+					message: `${method} ${endpoint} fetcher rejected: ${cause}`,
+				});
+			}
 			throw new PlaudApiError(
 				`Plaud API ${endpoint} network error: ${cause}`,
 				undefined,
 				endpoint,
 			);
+		}
+
+		if (this.debugLogger?.enabled === true) {
+			this.debugLogger.log({
+				kind: 'response',
+				endpoint,
+				message: `${response.status} from ${endpoint}`,
+				payload: {
+					status: response.status,
+					json: response.json,
+					// Only include a short text snippet when JSON parsing
+					// failed (json === null), since the full text body
+					// duplicates json on success and wastes buffer space.
+					textSnippet:
+						response.json === null || response.json === undefined
+							? (response.text ?? '').slice(0, 500)
+							: undefined,
+				},
+			});
 		}
 
 		if (response.status === 401) {
@@ -322,6 +538,13 @@ const MAX_PLAUSIBLE_UNIX_MS = 4102444800000; // 2100-01-01 UTC
 // timestamp instead of a segment offset — reject as a unit-confusion canary.
 const MAX_PLAUSIBLE_SEGMENT_MS = 24 * 60 * 60 * 1000; // 24h
 
+// Upper bound on a plausible recording duration in milliseconds. Plaud
+// Note Pro's hardware battery life caps real-world recordings around
+// 40-44h, so 48h gives comfortable headroom while still catching a
+// regression to unit confusion (e.g., if the producer ever sent unix ms
+// timestamps in the duration field by mistake).
+const MAX_PLAUSIBLE_DURATION_MS = 48 * 60 * 60 * 1000;
+
 function parseRecording(raw: RawRecording, endpoint: string): Recording {
 	if (raw.id.length === 0) {
 		throw new PlaudParseError('Recording has empty id', endpoint);
@@ -332,6 +555,22 @@ function parseRecording(raw: RawRecording, endpoint: string): Recording {
 	if (raw.duration < 0 || !Number.isFinite(raw.duration)) {
 		throw new PlaudParseError(
 			`Recording ${raw.id} has invalid duration (${raw.duration})`,
+			endpoint,
+		);
+	}
+	// Plaud serializes `duration` as MILLISECONDS on /file/simple/web —
+	// same convention as `start_time` / `end_time` / segment timestamps.
+	// Confirmed from real-API capture on 2026-04-14: a 21-minute recording
+	// reported `duration: 1303000` (1303000 ms = 1303 s = 21m 43s). The
+	// initial reverse-engineering assumed seconds and let this field flow
+	// through unchanged, which produced `361h 57m` display values in the
+	// NoteWriter output. Reject any value larger than MAX_PLAUSIBLE_DURATION_MS
+	// loudly as a unit-confusion canary — a future regression sending unix
+	// ms instead of a delta would otherwise silently produce "millennia-
+	// long" durations in notes.
+	if (raw.duration > MAX_PLAUSIBLE_DURATION_MS) {
+		throw new PlaudParseError(
+			`Recording ${raw.id} has duration ${raw.duration}ms which is beyond 48h — probably a unix timestamp instead of a duration delta`,
 			endpoint,
 		);
 	}
@@ -363,7 +602,11 @@ function parseRecording(raw: RawRecording, endpoint: string): Recording {
 		id: raw.id as PlaudRecordingId,
 		title: raw.filename,
 		createdAt: new Date(raw.start_time),
-		durationSeconds: raw.duration,
+		// Convert ms → seconds at the trust boundary so every downstream
+		// consumer (NoteWriter, ImportModal display, Dataview queries)
+		// sees seconds. Matches the segment-timestamp treatment at
+		// parseTranscriptSegment which divides by 1000 for the same reason.
+		durationSeconds: raw.duration / 1000,
 		transcriptAvailable: raw.is_trans,
 		summaryAvailable: raw.is_summary,
 		tags: raw.filetag_id_list,
@@ -421,6 +664,94 @@ function isRawRecording(value: unknown): value is RawRecording {
 // Both transcript and summary are independently nullable — a recording can
 // have one without the other depending on Plaud's processing status.
 // -----------------------------------------------------------------------------
+
+// -----------------------------------------------------------------------------
+// /file/detail/{id} parser. Extracts the `transaction_polish` pre-signed S3
+// URL when present. Pure, exported for unit tests.
+// -----------------------------------------------------------------------------
+
+/**
+ * Walk a raw `/file/detail/{id}` response and return the pre-signed S3 URL
+ * of the polished transcript, or null when the recording has no polish
+ * available.
+ *
+ * The response shape (reverse-engineered 2026-04-14):
+ *
+ *   {
+ *     status: 0, msg: 'success', request_id: '',
+ *     data: {
+ *       file_id, file_name, duration, ...
+ *       content_list: [
+ *         { data_type: 'transaction',        task_status: 1, data_link: 's3://...' },
+ *         { data_type: 'outline',            task_status: 1, data_link: 's3://...' },
+ *         { data_type: 'transaction_polish', task_status: 1, data_link: 's3://...' },
+ *         { data_type: 'auto_sum_note',      task_status: 1, data_link: 's3://...' },
+ *       ],
+ *       extra_data: { has_replaced_speaker: bool, ... },
+ *     }
+ *   }
+ *
+ * Returns null — not an error — when:
+ *  - The response is well-formed but has no `transaction_polish` entry
+ *  - The `transaction_polish` entry exists but `task_status !== 1`
+ *    (in-progress or failed)
+ *  - The entry has no `data_link`
+ *
+ * Throws `PlaudParseError` on a structurally-invalid response (missing
+ * `data` object, non-array `content_list`, etc.) so the caller can route
+ * it through the normal parse-error path.
+ */
+export function findTransactionPolishLink(
+	raw: unknown,
+	endpoint: string,
+): string | null {
+	if (!isRecord(raw)) {
+		throw new PlaudParseError(
+			`Response body for ${endpoint} is not an object`,
+			endpoint,
+		);
+	}
+	const data = raw.data;
+	if (!isRecord(data)) {
+		throw new PlaudParseError(
+			`Response body for ${endpoint} is missing the 'data' object`,
+			endpoint,
+		);
+	}
+	const contentList = data.content_list;
+	if (contentList === undefined || contentList === null) {
+		// content_list absent — recording has no content pipeline entries
+		// yet (e.g., a just-uploaded file). Not an error — just no polish.
+		return null;
+	}
+	if (!Array.isArray(contentList)) {
+		throw new PlaudParseError(
+			`Response body for ${endpoint} has 'content_list' that is not an array`,
+			endpoint,
+		);
+	}
+	for (const item of contentList) {
+		if (!isRecord(item)) {
+			continue;
+		}
+		if (item.data_type !== 'transaction_polish') {
+			continue;
+		}
+		// task_status === 1 means the polish pipeline completed successfully.
+		// Any other value (0 = pending, higher = failure states) means the
+		// polish isn't ready yet — treat like "absent" so the caller falls
+		// back to the raw transcript.
+		if (item.task_status !== 1) {
+			return null;
+		}
+		const link = item.data_link;
+		if (typeof link !== 'string' || link.length === 0) {
+			return null;
+		}
+		return link;
+	}
+	return null;
+}
 
 function parseTranssummResponse(
 	id: PlaudRecordingId,

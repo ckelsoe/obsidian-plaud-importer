@@ -68,6 +68,30 @@
 	color: var(--text-accent);
 }
 
+/* "Load more" button pinned inside the scrollable list container so it
+ * rides along as the user scrolls to the end of the current page. */
+.plaud-importer-load-more {
+	align-self: center;
+	margin: 0.75em 0 0.25em 0;
+	padding: 0.4em 1em;
+	font-size: 0.9em;
+	background: transparent;
+	color: var(--text-muted);
+	border: 1px dashed var(--background-modifier-border);
+	border-radius: 4px;
+	cursor: pointer;
+}
+
+.plaud-importer-load-more:hover:not(:disabled) {
+	color: var(--text-normal);
+	border-color: var(--interactive-accent);
+}
+
+.plaud-importer-load-more:disabled {
+	opacity: 0.6;
+	cursor: default;
+}
+
 /* Loading / empty / error states share a centered layout */
 .plaud-importer-state {
 	padding: 2em 0;

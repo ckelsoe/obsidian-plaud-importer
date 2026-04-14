@@ -166,6 +166,25 @@ export function formatTimestamp(seconds: number): string {
 }
 
 /**
+ * Build the public web-app URL for a Plaud recording. This is the link a
+ * user clicks to open the recording in Plaud's browser UI. The pattern
+ * `https://web.plaud.ai/file/{id}` was confirmed from a live Plaud
+ * session on 2026-04-14 — see `dev-docs/deferred-decisions.md` DD-002
+ * for the stable-ID risk that makes this a tracked deferred decision
+ * rather than a permanent constant.
+ *
+ * The ID is passed through `encodeURIComponent` for defense-in-depth,
+ * matching the same treatment `plaud-client-re.ts` applies to the ID
+ * when building the `/ai/transsumm/{id}` API URL. Real Plaud IDs are
+ * 32-char hex strings that need no encoding, but a future ID format
+ * change (slashes, dots, etc.) would silently produce broken URLs
+ * without this guard.
+ */
+export function formatPlaudWebUrl(recordingId: string): string {
+	return `https://web.plaud.ai/file/${encodeURIComponent(recordingId)}`;
+}
+
+/**
  * Extract the deduplicated, ordered list of distinct speakers from a
  * transcript. First-seen order is preserved so frontmatter reads naturally.
  */
@@ -311,6 +330,12 @@ export function formatFrontmatter(
 
 	const lines: string[] = ['---'];
 	lines.push(`plaud-id: ${yamlScalar(recording.id)}`);
+	// plaud-url is a clickable breadcrumb back to the Plaud web app.
+	// yamlScalar force-quotes it (colons and slashes aren't in the
+	// unquoted allowlist), which is what we want — YAML treats an
+	// unquoted `https://...` scalar as a mapping key + value on some
+	// parsers.
+	lines.push(`plaud-url: ${yamlScalar(formatPlaudWebUrl(recording.id))}`);
 	lines.push(`date: ${formatDateYmd(recording.createdAt)}`);
 	lines.push(`duration-seconds: ${duration}`);
 	// Human-readable duration alongside the raw seconds so users can read
@@ -407,6 +432,14 @@ export function formatMarkdown(
 		formatFrontmatter(recording, speakers),
 		'',
 		`# ${expandedTitle}`,
+		'',
+		// Visible "Open in Plaud" link right under the H1. Duplicates
+		// the plaud-url frontmatter field on purpose: frontmatter is for
+		// Dataview / automation, this line is for the human reading the
+		// note. The raw URL goes unescaped inside the markdown link
+		// target — safe because formatPlaudWebUrl encodes the ID and the
+		// host/path template contains no parentheses.
+		`[Open in Plaud →](${formatPlaudWebUrl(recording.id)})`,
 		'',
 		'## Summary',
 		'',

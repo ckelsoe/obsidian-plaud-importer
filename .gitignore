@@ -31,6 +31,10 @@ WARP.md
 # Screenshots and images (add specific ones to repo if needed)
 Selection_*.png
 *.screenshot.png
+plaud-current.png
+
+# Playwright CLI scratch dir (dead-end detour, kept local only)
+.playwright-cli/
 
 # Backup files
 main_backup.ts

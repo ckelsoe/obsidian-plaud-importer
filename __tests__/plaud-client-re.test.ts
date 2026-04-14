@@ -3,10 +3,15 @@ import {
 	PlaudAuthError,
 	PlaudParseError,
 	ReverseEngineeredPlaudClient,
+	findTransactionPolishLink,
 	type PlaudHttpFetcher,
 	type PlaudHttpRequest,
 	type PlaudHttpResponse,
 } from '../plaud-client-re';
+import {
+	BufferedDebugLogger,
+	type DebugEvent,
+} from '../debug-logger';
 
 // Helpers -------------------------------------------------------------------
 
@@ -25,12 +30,13 @@ function record(overrides: Record<string, unknown> = {}): Record<string, unknown
 		fullname: 'REC_20260414_0900.wav',
 		filesize: 1024,
 		file_md5: 'deadbeef',
-		// Plaud's /file/simple/web returns start_time as unix MILLISECONDS.
-		// Commit 4c corrected this after real-API testing — the initial
-		// assumption was seconds (from stale research notes).
+		// Plaud's /file/simple/web returns start_time as unix MILLISECONDS
+		// and duration as a millisecond delta. Both confirmed from
+		// real-API capture on 2026-04-14 — e.g., a 21-minute recording
+		// came back with `duration: 1303000` (1303000 ms = 1303 s).
 		start_time: 1744628400000, // 2025-04-14 11:00 UTC (unix ms)
 		end_time: 1744629000000,
-		duration: 600,
+		duration: 600000, // 600000 ms = 600 s = 10 minutes
 		version: 1,
 		version_ms: 1744628400000,
 		edit_time: 1744628400,
@@ -55,13 +61,20 @@ function listEnvelope(items: unknown[]): Record<string, unknown> {
 function captureFetcher(response: PlaudHttpResponse): {
 	fetcher: PlaudHttpFetcher;
 	lastRequest: () => PlaudHttpRequest | undefined;
+	firstRequest: () => PlaudHttpRequest | undefined;
+	allRequests: () => readonly PlaudHttpRequest[];
 } {
-	let captured: PlaudHttpRequest | undefined;
+	const captured: PlaudHttpRequest[] = [];
 	const fetcher: PlaudHttpFetcher = async (req) => {
-		captured = req;
+		captured.push(req);
 		return response;
 	};
-	return { fetcher, lastRequest: () => captured };
+	return {
+		fetcher,
+		lastRequest: () => captured[captured.length - 1],
+		firstRequest: () => captured[0],
+		allRequests: () => captured,
+	};
 }
 
 // Token provider semantics -------------------------------------------------
@@ -238,6 +251,17 @@ describe('listRecordings request shape', () => {
 		const url = new URL(lastRequest()?.url ?? '');
 		expect(url.searchParams.get('limit')).toBe('10');
 	});
+
+	it('passes a custom skip from the filter into the query string', async () => {
+		const { fetcher, lastRequest } = captureFetcher(ok(listEnvelope([])));
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+
+		await client.listRecordings({ skip: 20, limit: 10 });
+
+		const url = new URL(lastRequest()?.url ?? '');
+		expect(url.searchParams.get('skip')).toBe('20');
+		expect(url.searchParams.get('limit')).toBe('10');
+	});
 });
 
 // listRecordings — filter behavior ------------------------------------------
@@ -375,6 +399,10 @@ describe('listRecordings parse errors', () => {
 		['negative duration', { duration: -5 }],
 		['NaN duration', { duration: Number.NaN }],
 		['Infinity duration', { duration: Number.POSITIVE_INFINITY }],
+		// 48h + 1 ms in ms — triggers the unit-confusion canary that
+		// catches a future regression where `duration` is accidentally
+		// populated from a unix ms timestamp instead of a delta.
+		['duration beyond 48h', { duration: 48 * 60 * 60 * 1000 + 1 }],
 		['zero start_time', { start_time: 0 }],
 		['negative start_time', { start_time: -100 }],
 		['NaN start_time', { start_time: Number.NaN }],
@@ -385,6 +413,23 @@ describe('listRecordings parse errors', () => {
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
 		await expect(client.listRecordings()).rejects.toBeInstanceOf(PlaudParseError);
+	});
+
+	it('converts the real-API duration (ms) to seconds — regression test for 2026-04-14 unit-confusion bug', async () => {
+		// Real-API capture from 2026-04-14 for a 21m 43s recording came
+		// back with `duration: 1303000`. If this ever regresses to being
+		// stored as-is (milliseconds leaking into the Recording domain
+		// object), a 21-minute meeting shows as "361h 57m" in the
+		// generated note frontmatter.
+		const { fetcher } = captureFetcher(
+			ok(listEnvelope([record({ id: 'real-sample', duration: 1303000 })])),
+		);
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+
+		const result = await client.listRecordings();
+
+		expect(result).toHaveLength(1);
+		expect(result[0].durationSeconds).toBe(1303);
 	});
 
 	it('rejects start_time before year 2000 as likely seconds-mistaken-for-milliseconds', async () => {
@@ -515,43 +560,48 @@ const ID = 'rec-abc-123' as PlaudRecordingId;
 // Request shape -------------------------------------------------------------
 
 describe('getTranscriptAndSummary request shape', () => {
+	// NOTE: as of the 2026-04-14 polished-transcript work, `getTranscriptAndSummary`
+	// makes TWO sequential calls — first POST /ai/transsumm/{id}, then GET
+	// /file/detail/{id} to look for a polish. These tests care about the
+	// transsumm call (the FIRST request), so they use firstRequest() rather
+	// than lastRequest() which would now return the /file/detail/ request.
 	it('issues POST against /ai/transsumm/{id} with empty JSON body', async () => {
-		const { fetcher, lastRequest } = captureFetcher(ok(transsummEnvelope()));
+		const { fetcher, firstRequest } = captureFetcher(ok(transsummEnvelope()));
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
 		await client.getTranscriptAndSummary(ID);
 
-		const req = lastRequest();
+		const req = firstRequest();
 		expect(req?.method).toBe('POST');
 		expect(req?.url).toBe('https://api.plaud.ai/ai/transsumm/rec-abc-123');
 		expect(req?.body).toBe('{}');
 	});
 
 	it('sends Content-Type: application/json when a body is present', async () => {
-		const { fetcher, lastRequest } = captureFetcher(ok(transsummEnvelope()));
+		const { fetcher, firstRequest } = captureFetcher(ok(transsummEnvelope()));
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
 		await client.getTranscriptAndSummary(ID);
 
-		expect(lastRequest()?.headers['Content-Type']).toBe('application/json');
+		expect(firstRequest()?.headers['Content-Type']).toBe('application/json');
 	});
 
 	it('still sends Authorization Bearer header', async () => {
-		const { fetcher, lastRequest } = captureFetcher(ok(transsummEnvelope()));
+		const { fetcher, firstRequest } = captureFetcher(ok(transsummEnvelope()));
 		const client = new ReverseEngineeredPlaudClient(() => 'my-jwt', fetcher);
 
 		await client.getTranscriptAndSummary(ID);
 
-		expect(lastRequest()?.headers.Authorization).toBe('Bearer my-jwt');
+		expect(firstRequest()?.headers.Authorization).toBe('Bearer my-jwt');
 	});
 
 	it('URL-encodes the recording id', async () => {
-		const { fetcher, lastRequest } = captureFetcher(ok(transsummEnvelope()));
+		const { fetcher, firstRequest } = captureFetcher(ok(transsummEnvelope()));
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
 		await client.getTranscriptAndSummary('id with/slash' as PlaudRecordingId);
 
-		expect(lastRequest()?.url).toBe(
+		expect(firstRequest()?.url).toBe(
 			'https://api.plaud.ai/ai/transsumm/id%20with%2Fslash',
 		);
 	});
@@ -1132,5 +1182,525 @@ describe('getTranscriptAndSummary error mapping', () => {
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
 		await expect(client.getTranscriptAndSummary(ID)).rejects.toBeInstanceOf(PlaudApiError);
+	});
+});
+
+// -----------------------------------------------------------------------------
+// Debug logger integration — verify the client emits request/response/parsed
+// events when a debug logger is attached, never leaks Authorization headers,
+// and stays silent when no logger is passed.
+// -----------------------------------------------------------------------------
+
+function silentSink(): (message: string, payload?: unknown) => void {
+	return (): void => {
+		// swallow the live console mirror during tests
+	};
+}
+
+describe('debug logger integration', () => {
+	it('emits request and response events with the endpoint path when a logger is attached', async () => {
+		const { fetcher } = captureFetcher(ok(listEnvelope([])));
+		const logger = new BufferedDebugLogger(true, { consoleSink: silentSink() });
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher, {
+			debugLogger: logger,
+		});
+
+		await client.listRecordings();
+
+		const events = logger.snapshot();
+		expect(events.length).toBeGreaterThanOrEqual(2);
+		const kinds = events.map((e) => e.kind);
+		expect(kinds).toContain('request');
+		expect(kinds).toContain('response');
+
+		const requestEvent = events.find((e) => e.kind === 'request');
+		expect(requestEvent?.endpoint).toBe('/file/simple/web');
+		expect(requestEvent?.message).toMatch(/GET \/file\/simple\/web/);
+
+		const responseEvent = events.find((e) => e.kind === 'response');
+		expect(responseEvent?.endpoint).toBe('/file/simple/web');
+		expect(responseEvent?.message).toMatch(/200/);
+	});
+
+	it('never includes Authorization or any header in the request event payload', async () => {
+		const { fetcher } = captureFetcher(ok(listEnvelope([])));
+		const logger = new BufferedDebugLogger(true, { consoleSink: silentSink() });
+		const client = new ReverseEngineeredPlaudClient(() => 'super-secret-jwt', fetcher, {
+			debugLogger: logger,
+		});
+
+		await client.listRecordings();
+
+		const dump = JSON.stringify(logger.snapshot());
+		// The token must not appear in any captured payload — neither the
+		// raw JWT nor the "Authorization" header name.
+		expect(dump).not.toContain('super-secret-jwt');
+		expect(dump).not.toContain('Authorization');
+		expect(dump).not.toContain('Bearer ');
+	});
+
+	it('emits a parsed event with a summarized recording list after successful listRecordings', async () => {
+		const { fetcher } = captureFetcher(ok(listEnvelope([record({ id: 'r1' })])));
+		const logger = new BufferedDebugLogger(true, { consoleSink: silentSink() });
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher, {
+			debugLogger: logger,
+		});
+
+		await client.listRecordings();
+
+		const parsed = logger.snapshot().find((e: DebugEvent) => e.kind === 'parsed');
+		expect(parsed).toBeDefined();
+		expect(parsed?.endpoint).toBe('/file/simple/web');
+		expect(parsed?.message).toMatch(/parsed 1 recordings/);
+		expect(parsed?.payload).toEqual([
+			expect.objectContaining({
+				id: 'r1',
+				title: 'Morning standup',
+				durationSeconds: 600,
+				transcriptAvailable: true,
+				summaryAvailable: true,
+			}),
+		]);
+	});
+
+	it('emits a parsed event after getTranscriptAndSummary with the resolved segment count', async () => {
+		const { fetcher } = captureFetcher(
+			ok({
+				err_code: '',
+				status: 0,
+				data_result: [
+					{ start_time: 0, end_time: 1000, content: 'hello', speaker: 'Charles' },
+				],
+				data_result_summ: JSON.stringify({ content: { markdown: 'Meeting summary.' } }),
+			}),
+		);
+		const logger = new BufferedDebugLogger(true, { consoleSink: silentSink() });
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher, {
+			debugLogger: logger,
+		});
+
+		await client.getTranscriptAndSummary('rec-abc-123' as unknown as Parameters<typeof client.getTranscriptAndSummary>[0]);
+
+		// After the 2026-04-14 polished-transcript work, the parsed event
+		// is emitted by the higher-level getTranscriptAndSummary wrapper
+		// (not fetchLegacyTranssumm), so the endpoint label is the synthetic
+		// `/getTranscriptAndSummary` marker. The test here asserts on the
+		// segment-count payload rather than the endpoint label since that
+		// is what downstream consumers actually care about.
+		const parsed = logger
+			.snapshot()
+			.find(
+				(e: DebugEvent) =>
+					e.kind === 'parsed' && typeof e.message === 'string' && e.message.includes('segments'),
+			);
+		expect(parsed).toBeDefined();
+		expect(parsed?.message).toMatch(/raw fallback \(1 segments\)/);
+	});
+
+	it('emits an error event when the fetcher rejects', async () => {
+		const fetcher: PlaudHttpFetcher = async () => {
+			throw new Error('ETIMEDOUT');
+		};
+		const logger = new BufferedDebugLogger(true, { consoleSink: silentSink() });
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher, {
+			debugLogger: logger,
+		});
+
+		await expect(client.listRecordings()).rejects.toBeInstanceOf(PlaudApiError);
+
+		const errorEvent = logger.snapshot().find((e: DebugEvent) => e.kind === 'error');
+		expect(errorEvent).toBeDefined();
+		expect(errorEvent?.message).toMatch(/ETIMEDOUT/);
+	});
+
+	it('does not capture any events when no logger is passed (zero-cost when debug is off)', async () => {
+		const { fetcher } = captureFetcher(ok(listEnvelope([])));
+		// Construct without `debugLogger` — the client's hot path must
+		// handle this case without touching any logger method.
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+
+		// The mere absence of a throw proves no logger method was called.
+		await expect(client.listRecordings()).resolves.toBeDefined();
+	});
+
+	it('does not emit events when a logger is attached but enabled=false', async () => {
+		const { fetcher } = captureFetcher(ok(listEnvelope([])));
+		const logger = new BufferedDebugLogger(false, { consoleSink: silentSink() });
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher, {
+			debugLogger: logger,
+		});
+
+		await client.listRecordings();
+
+		expect(logger.snapshot()).toEqual([]);
+	});
+});
+
+// =============================================================================
+// findTransactionPolishLink — pure helper for walking /file/detail/ response
+// =============================================================================
+
+describe('findTransactionPolishLink', () => {
+	function fileDetail(contentList: unknown[]): Record<string, unknown> {
+		return {
+			status: 0,
+			msg: 'success',
+			request_id: 'req-xyz',
+			data: {
+				file_id: 'abc123',
+				file_name: 'Meeting',
+				duration: 1303000,
+				content_list: contentList,
+				extra_data: {},
+			},
+		};
+	}
+
+	function polishItem(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+		return {
+			data_id: 'source_transaction_polish:xxx:abc123',
+			data_type: 'transaction_polish',
+			task_status: 1,
+			err_code: '',
+			err_msg: '',
+			data_link: 'https://s3.amazonaws.com/polished.json?X-Amz-Signature=fake',
+			extra: {},
+			...overrides,
+		};
+	}
+
+	function transactionItem(): Record<string, unknown> {
+		return {
+			data_id: 'source_transaction:xxx:abc123',
+			data_type: 'transaction',
+			task_status: 1,
+			data_link: 'https://s3.amazonaws.com/raw.json.gz?X-Amz-Signature=fake',
+		};
+	}
+
+	it('returns the polish data_link when a successful transaction_polish entry exists', () => {
+		const raw = fileDetail([transactionItem(), polishItem()]);
+		const link = findTransactionPolishLink(raw, '/file/detail/abc123');
+		expect(link).toBe('https://s3.amazonaws.com/polished.json?X-Amz-Signature=fake');
+	});
+
+	it('returns null when content_list has no transaction_polish entry', () => {
+		const raw = fileDetail([transactionItem()]);
+		const link = findTransactionPolishLink(raw, '/file/detail/abc123');
+		expect(link).toBeNull();
+	});
+
+	it('returns null when content_list is absent entirely (never-polished recording)', () => {
+		const raw = { status: 0, data: { file_id: 'abc123' } };
+		const link = findTransactionPolishLink(raw, '/file/detail/abc123');
+		expect(link).toBeNull();
+	});
+
+	it('returns null when task_status for the polish entry is not 1 (still processing)', () => {
+		const raw = fileDetail([polishItem({ task_status: 0 })]);
+		const link = findTransactionPolishLink(raw, '/file/detail/abc123');
+		expect(link).toBeNull();
+	});
+
+	it('returns null when task_status for the polish entry indicates failure (>1)', () => {
+		const raw = fileDetail([polishItem({ task_status: 2 })]);
+		const link = findTransactionPolishLink(raw, '/file/detail/abc123');
+		expect(link).toBeNull();
+	});
+
+	it('returns null when the polish entry has no data_link', () => {
+		const raw = fileDetail([polishItem({ data_link: '' })]);
+		const link = findTransactionPolishLink(raw, '/file/detail/abc123');
+		expect(link).toBeNull();
+	});
+
+	it('returns null when data_link is not a string', () => {
+		const raw = fileDetail([polishItem({ data_link: null })]);
+		const link = findTransactionPolishLink(raw, '/file/detail/abc123');
+		expect(link).toBeNull();
+	});
+
+	it('throws PlaudParseError when the response body is not an object', () => {
+		expect(() =>
+			findTransactionPolishLink('not an object', '/file/detail/abc123'),
+		).toThrow(PlaudParseError);
+	});
+
+	it('throws PlaudParseError when response.data is missing', () => {
+		expect(() =>
+			findTransactionPolishLink({ status: 0 }, '/file/detail/abc123'),
+		).toThrow(PlaudParseError);
+	});
+
+	it('throws PlaudParseError when content_list is present but not an array', () => {
+		const raw = { status: 0, data: { content_list: 'bogus' } };
+		expect(() =>
+			findTransactionPolishLink(raw, '/file/detail/abc123'),
+		).toThrow(PlaudParseError);
+	});
+
+	it('picks the polish entry regardless of position in content_list', () => {
+		// Real responses have 4+ items: transaction, outline, transaction_polish,
+		// auto_sum_note. The polish may not be at a fixed index, so the finder
+		// must scan by data_type rather than relying on position.
+		const raw = fileDetail([
+			transactionItem(),
+			{ data_type: 'outline', task_status: 1, data_link: 'https://s3/outline' },
+			polishItem({ data_link: 'https://s3/polish-at-idx-2' }),
+			{ data_type: 'auto_sum_note', task_status: 1, data_link: 'https://s3/sum' },
+		]);
+		const link = findTransactionPolishLink(raw, '/file/detail/abc123');
+		expect(link).toBe('https://s3/polish-at-idx-2');
+	});
+
+	it('skips non-object items in content_list gracefully', () => {
+		const raw = fileDetail([null, 'string', 42, polishItem()]);
+		const link = findTransactionPolishLink(raw, '/file/detail/abc123');
+		expect(link).toBe('https://s3.amazonaws.com/polished.json?X-Amz-Signature=fake');
+	});
+});
+
+// =============================================================================
+// getTranscriptAndSummary — polished-transcript path (2026-04-14 feature)
+// =============================================================================
+
+/**
+ * Route requests to different canned responses based on the URL path.
+ * Needed because the polished-transcript flow now makes up to three
+ * calls per recording: POST /ai/transsumm/{id}, GET /file/detail/{id},
+ * and GET <S3 URL>. Each test case specifies which response goes to
+ * which path.
+ */
+function routeFetcher(routes: {
+	readonly transsumm?: PlaudHttpResponse;
+	readonly detail?: PlaudHttpResponse;
+	readonly polish?: PlaudHttpResponse;
+	readonly throwOn?: 'transsumm' | 'detail' | 'polish';
+}): {
+	fetcher: PlaudHttpFetcher;
+	requests: () => readonly PlaudHttpRequest[];
+} {
+	const captured: PlaudHttpRequest[] = [];
+	const defaultResponse: PlaudHttpResponse = { status: 404, json: null, text: '' };
+	const fetcher: PlaudHttpFetcher = async (req) => {
+		captured.push(req);
+		if (req.url.includes('/ai/transsumm/')) {
+			if (routes.throwOn === 'transsumm') throw new Error('synthetic transsumm failure');
+			return routes.transsumm ?? defaultResponse;
+		}
+		if (req.url.includes('/file/detail/')) {
+			if (routes.throwOn === 'detail') throw new Error('synthetic detail failure');
+			return routes.detail ?? defaultResponse;
+		}
+		// Anything else is assumed to be the S3 pre-signed polish URL.
+		if (routes.throwOn === 'polish') throw new Error('synthetic polish failure');
+		return routes.polish ?? defaultResponse;
+	};
+	return { fetcher, requests: () => captured };
+}
+
+function polishedSegment(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+	return {
+		start_time: 0,
+		end_time: 1000,
+		content: 'Hey Charles. How you doing?',
+		speaker: 'Charles Kelsoe',
+		original_speaker: 'Speaker 1',
+		...overrides,
+	};
+}
+
+function fileDetailWithPolishUrl(polishUrl: string): Record<string, unknown> {
+	return {
+		status: 0,
+		msg: 'success',
+		request_id: '',
+		data: {
+			file_id: 'abc123',
+			file_name: 'Meeting',
+			duration: 1303000,
+			content_list: [
+				{
+					data_type: 'transaction',
+					task_status: 1,
+					data_link: 'https://s3/raw.json.gz?sig=x',
+				},
+				{
+					data_type: 'outline',
+					task_status: 1,
+					data_link: 'https://s3/outline?sig=x',
+				},
+				{
+					data_type: 'transaction_polish',
+					task_status: 1,
+					data_link: polishUrl,
+				},
+				{
+					data_type: 'auto_sum_note',
+					task_status: 1,
+					data_link: 'https://s3/sum?sig=x',
+				},
+			],
+			extra_data: { has_replaced_speaker: true },
+		},
+	};
+}
+
+describe('getTranscriptAndSummary polished-transcript path', () => {
+	it('uses the polished transcript (with real speaker names) when available', async () => {
+		const { fetcher, requests } = routeFetcher({
+			transsumm: ok(transsummEnvelope()),
+			detail: ok(fileDetailWithPolishUrl('https://s3/polish?sig=x')),
+			polish: ok([
+				polishedSegment({
+					speaker: 'Charles Kelsoe',
+					original_speaker: 'Speaker 1',
+					content: 'Hey.',
+				}),
+				polishedSegment({
+					start_time: 1000,
+					end_time: 2000,
+					speaker: 'Vijay Muniswamy',
+					original_speaker: 'Speaker 2',
+					content: 'Hi Charles.',
+				}),
+			]),
+		});
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+
+		const { transcript, summary } = await client.getTranscriptAndSummary(ID);
+
+		// Polished path must be used — speaker names come from the
+		// polish file, NOT the raw transsumm response.
+		expect(transcript).not.toBeNull();
+		expect(transcript?.segments.map((s) => s.speaker)).toEqual([
+			'Charles Kelsoe',
+			'Vijay Muniswamy',
+		]);
+		// Summary still comes from /ai/transsumm/ — the polish flow
+		// only overrides the transcript, not the summary source.
+		expect(summary?.text).toContain('Key points');
+		// All three endpoints should have been called.
+		const urls = requests().map((r) => r.url);
+		expect(urls.some((u) => u.includes('/ai/transsumm/'))).toBe(true);
+		expect(urls.some((u) => u.includes('/file/detail/'))).toBe(true);
+		expect(urls.some((u) => u.includes('/polish'))).toBe(true);
+	});
+
+	it('fetches the pre-signed S3 URL WITHOUT Authorization (skipAuth)', async () => {
+		const { fetcher, requests } = routeFetcher({
+			transsumm: ok(transsummEnvelope()),
+			detail: ok(fileDetailWithPolishUrl('https://s3/polish?sig=x')),
+			polish: ok([polishedSegment()]),
+		});
+		const client = new ReverseEngineeredPlaudClient(() => 'super-secret-jwt', fetcher);
+
+		await client.getTranscriptAndSummary(ID);
+
+		const polishReq = requests().find((r) => r.url.includes('/polish'));
+		expect(polishReq).toBeDefined();
+		// The S3 request MUST NOT carry the Bearer token — S3 pre-signed
+		// URLs already authenticate via the query string and adding a
+		// Bearer would be a cross-service credential leak.
+		expect(polishReq?.headers.Authorization).toBeUndefined();
+		// But the other two requests (api.plaud.ai) MUST still carry it.
+		const authedUrls = requests()
+			.filter((r) => r.headers.Authorization !== undefined)
+			.map((r) => r.url);
+		expect(authedUrls.some((u) => u.includes('/ai/transsumm/'))).toBe(true);
+		expect(authedUrls.some((u) => u.includes('/file/detail/'))).toBe(true);
+	});
+
+	it('falls back to the raw /ai/transsumm/ transcript when /file/detail/ has no polish entry', async () => {
+		const { fetcher } = routeFetcher({
+			transsumm: ok(transsummEnvelope()), // has Speaker 1 / Speaker 2
+			detail: ok({
+				status: 0,
+				msg: 'success',
+				data: { file_id: 'abc', content_list: [] }, // empty content_list
+			}),
+		});
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+
+		const { transcript } = await client.getTranscriptAndSummary(ID);
+
+		expect(transcript?.segments.map((s) => s.speaker)).toEqual(['Speaker 1', 'Speaker 2']);
+	});
+
+	it('falls back to the raw transcript when /file/detail/ itself fails', async () => {
+		const { fetcher } = routeFetcher({
+			transsumm: ok(transsummEnvelope()),
+			throwOn: 'detail',
+		});
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+
+		// Must not throw — /file/detail/ failure is non-fatal for the
+		// overall call. Raw transcript becomes the result.
+		const { transcript } = await client.getTranscriptAndSummary(ID);
+		expect(transcript).not.toBeNull();
+		expect(transcript?.segments.map((s) => s.speaker)).toEqual(['Speaker 1', 'Speaker 2']);
+	});
+
+	it('falls back to the raw transcript when the S3 polish fetch fails', async () => {
+		const { fetcher } = routeFetcher({
+			transsumm: ok(transsummEnvelope()),
+			detail: ok(fileDetailWithPolishUrl('https://s3/polish?sig=x')),
+			throwOn: 'polish',
+		});
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+
+		const { transcript } = await client.getTranscriptAndSummary(ID);
+		expect(transcript?.segments.map((s) => s.speaker)).toEqual(['Speaker 1', 'Speaker 2']);
+	});
+
+	it('propagates a raw /ai/transsumm/ failure (legacy errors are still fatal)', async () => {
+		// The polish path is best-effort and swallowed on failure, but
+		// /ai/transsumm/ is still the authoritative source for the summary
+		// (and the fallback transcript), so errors there MUST still reach
+		// the caller.
+		const { fetcher } = routeFetcher({
+			throwOn: 'transsumm',
+			detail: ok(fileDetailWithPolishUrl('https://s3/polish?sig=x')),
+		});
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+
+		await expect(client.getTranscriptAndSummary(ID)).rejects.toBeInstanceOf(PlaudApiError);
+	});
+
+	it('regression test: real-data 2026-04-14 case (3 raw voices collapsed to 2 real people)', async () => {
+		// Reproduces the real-data case from the 2026-04-14 reverse-engineering:
+		// Plaud's diarization detected 3 voices (Speaker 1/2/3) but the user
+		// in the web app renamed Speaker 2 AND Speaker 3 both to "Vijay Muniswamy".
+		// The polish file reflects that N→1 collapse, so the resulting
+		// transcript has only 2 distinct speakers.
+		const { fetcher } = routeFetcher({
+			transsumm: ok(transsummEnvelope()),
+			detail: ok(fileDetailWithPolishUrl('https://s3/polish?sig=x')),
+			polish: ok([
+				polishedSegment({
+					speaker: 'Charles Kelsoe',
+					original_speaker: 'Speaker 1',
+				}),
+				polishedSegment({
+					start_time: 1000,
+					end_time: 2000,
+					speaker: 'Vijay Muniswamy',
+					original_speaker: 'Speaker 2',
+				}),
+				polishedSegment({
+					start_time: 2000,
+					end_time: 3000,
+					speaker: 'Vijay Muniswamy',
+					original_speaker: 'Speaker 3',
+				}),
+			]),
+		});
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+
+		const { transcript } = await client.getTranscriptAndSummary(ID);
+
+		const distinctSpeakers = new Set(transcript?.segments.map((s) => s.speaker));
+		expect(distinctSpeakers).toEqual(new Set(['Charles Kelsoe', 'Vijay Muniswamy']));
+		expect(transcript?.segments).toHaveLength(3);
 	});
 });

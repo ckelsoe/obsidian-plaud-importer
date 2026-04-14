@@ -305,6 +305,71 @@ async function copyToClipboard(text: string): Promise<void> {
 }
 
 // -----------------------------------------------------------------------------
+// Progressive paging helpers
+// -----------------------------------------------------------------------------
+
+/**
+ * Number of recordings fetched per "Load more" click. Kept small so the
+ * first render is cheap and the user can stop scrolling early if they
+ * already see the meeting they want. Tune by feel — there is no hard cap
+ * from Plaud's side.
+ */
+export const PAGE_SIZE = 10;
+
+/**
+ * Merge a freshly-fetched page into the accumulator that backs the modal
+ * list, and decide whether more pages probably exist.
+ *
+ * Background:
+ * - Plaud's `/file/simple/web` endpoint supports offset pagination via the
+ *   `skip` and `limit` query params, but it does NOT report the total
+ *   count of recordings, nor does it return an explicit "end of stream"
+ *   marker. So we can only *infer* "no more recordings" from the batch
+ *   size that came back.
+ * - Recordings can be uploaded to Plaud while the modal is open. That
+ *   means a naive `[...existing, ...incoming]` can produce duplicates: if
+ *   a new recording is uploaded between page 1 and page 2, Plaud's newest-
+ *   first sort will shift page 2 down by one, and the first row of the new
+ *   page will be a repeat of the last row of the previous page.
+ *
+ * TODO (Charles): this stub is a minimal "make it compile" implementation.
+ * It ignores dedupe, trusts Plaud's ordering, and uses a very forgiving
+ * end-of-stream rule. Replace it with your own strategy — three decisions
+ * to make, each user-visible:
+ *
+ *   1. **Dedupe.** Build a `Set<PlaudRecordingId>` of existing IDs and
+ *      filter `incoming` against it? Simple and defensive. Skipping this
+ *      means a single mid-session upload produces a visible duplicate row.
+ *
+ *   2. **Ordering.** Append `incoming` after `existing` (trusting Plaud's
+ *      newest-first sort), or re-sort the combined list by
+ *      `createdAt` desc? Re-sorting is more robust against mid-session
+ *      uploads pushing a fresh recording into the middle of the list, but
+ *      costs an O(n log n) pass on every Load More click.
+ *
+ *   3. **hasMore.** Is end-of-stream `incoming.length < pageSize` (ends one
+ *      fetch early but never over-fetches), or `incoming.length === 0`
+ *      (costs one empty trailing fetch but guarantees we never hide the
+ *      button prematurely)? The former is cheaper; the latter is safer if
+ *      Plaud ever returns a partial page mid-stream for any reason.
+ *
+ * Keeping this as a pure, exported function means you can write a focused
+ * unit test for it in `__tests__/import-modal.test.ts` — highly recommended
+ * once you've picked your strategy, since this is exactly the kind of
+ * merging logic where off-by-one bugs love to hide.
+ */
+export function mergeRecordings(
+	existing: readonly Recording[],
+	incoming: readonly Recording[],
+	pageSize: number,
+): { readonly merged: readonly Recording[]; readonly hasMore: boolean } {
+	// Placeholder implementation — see the TODO in the JSDoc above.
+	const merged = [...existing, ...incoming];
+	const hasMore = incoming.length > 0;
+	return { merged, hasMore };
+}
+
+// -----------------------------------------------------------------------------
 // Modal
 // -----------------------------------------------------------------------------
 
@@ -313,11 +378,36 @@ export class ImportModal extends Modal {
 	private readonly noteWriterOptions: NoteWriterOptions;
 	private readonly selectedIds = new Set<string>();
 	private importButton: HTMLButtonElement | null = null;
-	private currentRecordings: readonly Recording[] = [];
+	// Mutable accumulator across Load More clicks. Starts empty on each
+	// refresh() (first open or Retry), then grows as loadMore() appends
+	// new pages via mergeRecordings().
+	private currentRecordings: Recording[] = [];
+	// Live reference to the list container DOM node so loadMore() can
+	// append new rows incrementally without re-rendering the whole list
+	// (which would flash, reset scroll position, and throw away the
+	// checkbox DOM state for rows the user is still looking at).
+	private listEl: HTMLElement | null = null;
+	// The "Load more" button, or null when the list has no more pages
+	// (hasMore === false) or the list isn't currently rendered.
+	private loadMoreButton: HTMLButtonElement | null = null;
+	// Intro line ("N recordings available…") — updated in place after
+	// each successful loadMore() so the count stays accurate.
+	private introEl: HTMLElement | null = null;
+	// Whether Plaud probably has more recordings beyond what we've fetched.
+	// Set from mergeRecordings() on every page. When false, the Load More
+	// button is removed.
+	private hasMore = false;
+	// Guard against re-entry from rapid Load More clicks — the button is
+	// also disabled while this is true, but this belt-and-suspenders guard
+	// also prevents an in-flight fetch from being duplicated by keyboard
+	// activation.
+	private loadingMore = false;
 	// Monotonic counter that increments on every refresh() call. Each
 	// in-flight fetch captures the current value and bails before rendering
 	// if it has changed — prevents the "click Retry while slow fetch is
 	// still running" race from overwriting newer state with stale results.
+	// loadMore() reads this value without incrementing so a fresh refresh()
+	// during a Load More fetch invalidates the in-flight page.
 	private fetchGeneration = 0;
 	// Set by onClose so a running import loop can detect cancellation and
 	// stop writing to the vault without continuing through the rest of the
@@ -352,25 +442,44 @@ export class ImportModal extends Modal {
 		this.selectedIds.clear();
 		this.importButton = null;
 		this.currentRecordings = [];
+		this.listEl = null;
+		this.loadMoreButton = null;
+		this.introEl = null;
+		this.hasMore = false;
+		this.loadingMore = false;
 	}
 
 	private async refresh(): Promise<void> {
+		// Full reset on every refresh — this covers both the initial open
+		// and the error-state Retry click. Any pending Load More from a
+		// previous render is invalidated via the generation bump below.
 		this.selectedIds.clear();
 		this.importButton = null;
+		this.listEl = null;
+		this.loadMoreButton = null;
+		this.introEl = null;
+		this.currentRecordings = [];
+		this.hasMore = false;
+		this.loadingMore = false;
 		const generation = ++this.fetchGeneration;
 		this.renderLoading();
 		try {
-			const recordings = await this.client.listRecordings({ limit: 10 });
+			const recordings = await this.client.listRecordings({
+				skip: 0,
+				limit: PAGE_SIZE,
+			});
 			if (generation !== this.fetchGeneration) {
 				// A newer refresh() started while we were waiting. Drop the
 				// stale result on the floor.
 				return;
 			}
-			this.currentRecordings = recordings;
-			if (recordings.length === 0) {
+			const { merged, hasMore } = mergeRecordings([], recordings, PAGE_SIZE);
+			this.currentRecordings = [...merged];
+			this.hasMore = hasMore;
+			if (this.currentRecordings.length === 0) {
 				this.renderEmpty();
 			} else {
-				this.renderList(recordings);
+				this.renderList();
 			}
 		} catch (err) {
 			if (generation !== this.fetchGeneration) {
@@ -378,6 +487,75 @@ export class ImportModal extends Modal {
 			}
 			console.error('Plaud Importer: listRecordings failed', err);
 			this.renderError(classifyError(err));
+		}
+	}
+
+	private async loadMore(): Promise<void> {
+		// Re-entry guard: fast double-clicks or keyboard activations can
+		// fire the click handler twice before the button is visually
+		// disabled. The flag is the source of truth; the disabled state
+		// is just visual feedback.
+		if (this.loadingMore || !this.hasMore) {
+			return;
+		}
+		this.loadingMore = true;
+		const generation = this.fetchGeneration;
+		const skip = this.currentRecordings.length;
+
+		const button = this.loadMoreButton;
+		if (button !== null) {
+			button.disabled = true;
+			button.textContent = 'Loading more…';
+		}
+
+		try {
+			const incoming = await this.client.listRecordings({
+				skip,
+				limit: PAGE_SIZE,
+			});
+			if (generation !== this.fetchGeneration) {
+				// A refresh() fired while we were waiting — the list has
+				// been torn down. Drop the stale page.
+				return;
+			}
+			const { merged, hasMore } = mergeRecordings(
+				this.currentRecordings,
+				incoming,
+				PAGE_SIZE,
+			);
+			// Figure out which rows are actually new so we can append only
+			// those instead of re-rendering the whole list. Uses ID equality
+			// against the pre-merge accumulator — this is correct regardless
+			// of how mergeRecordings handles dedupe, because we're comparing
+			// the post-merge list to what was on screen before.
+			const existingIds = new Set(this.currentRecordings.map((r) => r.id));
+			const newRows = merged.filter((r) => !existingIds.has(r.id));
+			this.currentRecordings = [...merged];
+			this.hasMore = hasMore;
+
+			if (this.listEl !== null) {
+				for (const rec of newRows) {
+					this.renderRow(this.listEl, rec);
+				}
+			}
+			this.updateIntroCount();
+			this.updateLoadMoreButton();
+		} catch (err) {
+			if (generation !== this.fetchGeneration) {
+				return;
+			}
+			console.error('Plaud Importer: loadMore failed', err);
+			// Show a Notice rather than tearing down the list — the user
+			// still has their selections and their already-loaded pages,
+			// and losing them on a transient network blip would be rude.
+			const classification = classifyError(err);
+			new Notice(`Plaud Importer: could not load more — ${classification.message}`);
+			if (button !== null) {
+				button.disabled = false;
+				button.textContent = 'Load more recordings';
+			}
+		} finally {
+			this.loadingMore = false;
 		}
 	}
 
@@ -436,20 +614,20 @@ export class ImportModal extends Modal {
 		closeButton.addEventListener('click', () => this.close());
 	}
 
-	private renderList(records: readonly Recording[]): void {
+	private renderList(): void {
 		const { contentEl } = this;
 		contentEl.empty();
-		contentEl.createEl('p', {
-			text: `${records.length} recording${
-				records.length === 1 ? '' : 's'
-			} available. Select which to import.`,
+		this.introEl = contentEl.createEl('p', {
 			cls: 'plaud-importer-intro',
 		});
+		this.updateIntroCount();
 
 		const listEl = contentEl.createDiv({ cls: 'plaud-importer-list' });
-		for (const rec of records) {
+		this.listEl = listEl;
+		for (const rec of this.currentRecordings) {
 			this.renderRow(listEl, rec);
 		}
+		this.updateLoadMoreButton();
 
 		const buttonRow = contentEl.createDiv({ cls: 'plaud-importer-buttons' });
 		this.importButton = buttonRow.createEl('button', {
@@ -473,12 +651,26 @@ export class ImportModal extends Modal {
 	}
 
 	private renderRow(listEl: HTMLElement, rec: Recording): void {
+		// createDiv appends to the end of listEl. If the Load More button
+		// is currently the last child (because we already rendered at
+		// least one page), we need to move the new row in front of it
+		// so the button stays visually anchored to the bottom of the list.
+		// insertBefore is a no-op for node position when the node is
+		// already in the target location, and otherwise moves it — exactly
+		// what we want either way.
 		const row = listEl.createDiv({ cls: 'plaud-importer-row' });
+		if (this.loadMoreButton !== null && this.loadMoreButton.parentElement === listEl) {
+			listEl.insertBefore(row, this.loadMoreButton);
+		}
 
 		const checkbox = row.createEl('input', {
 			type: 'checkbox',
 			cls: 'plaud-importer-checkbox',
 		});
+		// Initialize from selectedIds so a mid-stream re-render (or a
+		// future incremental render that reuses rows) reflects the
+		// user's current selection instead of always starting unchecked.
+		checkbox.checked = this.selectedIds.has(rec.id);
 		checkbox.addEventListener('change', () => {
 			if (checkbox.checked) {
 				this.selectedIds.add(rec.id);
@@ -509,6 +701,58 @@ export class ImportModal extends Modal {
 	private updateImportButtonState(): void {
 		if (this.importButton) {
 			this.importButton.disabled = this.selectedIds.size === 0;
+		}
+	}
+
+	private updateIntroCount(): void {
+		if (this.introEl === null) {
+			return;
+		}
+		const n = this.currentRecordings.length;
+		const suffix = this.hasMore ? ' (scroll for more)' : '';
+		this.introEl.setText(
+			`${n} recording${n === 1 ? '' : 's'} loaded${suffix}. Select which to import.`,
+		);
+	}
+
+	private updateLoadMoreButton(): void {
+		if (this.listEl === null) {
+			return;
+		}
+		if (!this.hasMore) {
+			// No more pages — remove the button if it exists. We don't
+			// just hide it so that subsequent renderRow calls don't need
+			// to worry about a ghost element still being the last child.
+			if (this.loadMoreButton !== null) {
+				this.loadMoreButton.remove();
+				this.loadMoreButton = null;
+			}
+			return;
+		}
+		if (this.loadMoreButton === null) {
+			const button = this.listEl.createEl('button', {
+				text: 'Load more recordings',
+				cls: 'plaud-importer-load-more',
+			});
+			button.addEventListener('click', () => {
+				this.loadMore().catch((err) => {
+					// loadMore has its own error handling for the fetch
+					// path — this outer catch is defense-in-depth against
+					// a future bug that throws synchronously.
+					console.error('Plaud Importer: unexpected error in loadMore', err);
+					new Notice(
+						'Plaud Importer: could not load more — see the developer console for details.',
+					);
+				});
+			});
+			this.loadMoreButton = button;
+		} else {
+			// Re-seat the button as the last child in case new rows were
+			// appended after it somehow (e.g., insertBefore was skipped
+			// because loadMoreButton was null at the moment of the append).
+			this.listEl.appendChild(this.loadMoreButton);
+			this.loadMoreButton.disabled = false;
+			this.loadMoreButton.textContent = 'Load more recordings';
 		}
 	}
 
