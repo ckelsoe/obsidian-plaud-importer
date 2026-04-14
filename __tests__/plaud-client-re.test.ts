@@ -1081,28 +1081,32 @@ describe('getTranscriptAndSummary error mapping', () => {
 		await expect(client.getTranscriptAndSummary(ID)).rejects.toThrow(/4001/);
 	});
 
-	it('throws PlaudApiError when status is non-zero even without err_code', async () => {
-		// A missing err_code with status != 0 is still a failure. Plaud's
-		// success sentinel is exactly status: 0.
+	it('accepts non-zero status values when err_code is empty (real-API observation)', async () => {
+		// Real-API testing on 2026-04-14 showed Plaud returning
+		// `status: 1, err_code: "", msg: "success"` on legitimate
+		// success responses. The status field is apparently NOT a
+		// 0=success signal — err_code is the only reliable failure
+		// discriminator. Pin this so a future refactor doesn't
+		// reintroduce the "status must be 0" assumption.
 		const { fetcher } = captureFetcher(
-			ok(transsummEnvelope({ status: -1, msg: 'pipeline stalled' })),
+			ok(transsummEnvelope({ status: 1, msg: 'success', err_code: '' })),
 		);
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
-		await expect(client.getTranscriptAndSummary(ID)).rejects.toThrow(
-			/pipeline stalled/,
-		);
+		const result = await client.getTranscriptAndSummary(ID);
+		expect(result.transcript).not.toBeNull();
+		expect(result.summary).not.toBeNull();
 	});
 
-	it('throws PlaudApiError when the status field is missing entirely', async () => {
+	it('accepts a missing status field when err_code is absent', async () => {
 		const { fetcher } = captureFetcher(
-			ok({ msg: 'whatever', data_result: null, data_result_summ: null }),
+			ok({ msg: 'ok', data_result: null, data_result_summ: null }),
 		);
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
-		await expect(client.getTranscriptAndSummary(ID)).rejects.toBeInstanceOf(
-			PlaudApiError,
-		);
+		const result = await client.getTranscriptAndSummary(ID);
+		expect(result.transcript).toBeNull();
+		expect(result.summary).toBeNull();
 	});
 
 	it('throws PlaudAuthError on HTTP 401', async () => {

@@ -434,20 +434,19 @@ function parseTranssummResponse(
 		);
 	}
 
-	// Plaud surfaces in-band failures even on HTTP 200 via err_code/err_msg
-	// and via a non-zero status field. Check all signals — err_code may
-	// arrive as a string OR a number, and a missing/zero err_code with a
-	// non-success status is still a failure. Propagate as a loud error
-	// rather than silently returning null transcripts/summaries.
+	// Plaud surfaces in-band failures via a non-empty err_code field.
+	// Historical note: commit 4b tried to also require `status === 0` as
+	// a success sentinel, but real-API testing on 2026-04-14 showed Plaud
+	// returning `status: 1, err_code: "", msg: "success"` on legitimate
+	// success responses — the status field is apparently not a 0=success
+	// signal at all. err_code is the only reliable failure discriminator,
+	// so trust it alone and let the parsers handle null data_result /
+	// data_result_summ as the "no data yet" signal downstream.
 	const errCode = raw.err_code;
 	const hasErrCode =
 		(typeof errCode === 'string' && errCode.length > 0) ||
 		(typeof errCode === 'number' && errCode !== 0);
-	// `status: 0` is Plaud's success sentinel. Anything else (including
-	// missing) is suspect. A missing status means we weren't given a
-	// success signal at all — treat as failure.
-	const statusOk = raw.status === 0;
-	if (hasErrCode || !statusOk) {
+	if (hasErrCode) {
 		const errMsg =
 			typeof raw.err_msg === 'string' && raw.err_msg.length > 0
 				? raw.err_msg
@@ -455,9 +454,9 @@ function parseTranssummResponse(
 					? raw.msg
 					: '(no message)';
 		throw new PlaudApiError(
-			`Plaud returned in-band error from ${endpoint}: status=${JSON.stringify(
-				raw.status,
-			)} err_code=${JSON.stringify(errCode)} msg=${errMsg}`,
+			`Plaud returned in-band error from ${endpoint}: err_code=${JSON.stringify(
+				errCode,
+			)} msg=${errMsg}`,
 			undefined,
 			endpoint,
 		);

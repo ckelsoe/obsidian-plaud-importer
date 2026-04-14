@@ -106,6 +106,24 @@ describe('classifyError', () => {
 			expect(result.message).toMatch(/plaud/i);
 		});
 
+		it('maps in-band errors (no status, "in-band error" in message) to api-error not network-error', () => {
+			// When Plaud returns a failure envelope on HTTP 200 (err_code
+			// set), the client throws a PlaudApiError with no status and a
+			// message containing "in-band error from". Classifying this as
+			// network-error would lie to the user with "Could not reach
+			// Plaud.AI" — we reached them fine, they returned a failure.
+			const err = new PlaudApiError(
+				'Plaud returned in-band error from /ai/transsumm/abc: err_code="ai_pipeline_failed" msg=transcription stalled',
+				undefined,
+				'/ai/transsumm/abc',
+			);
+			const result = classifyError(err);
+			expect(result.category).toBe('api-error');
+			expect(result.canRetry).toBe(true);
+			expect(result.message).not.toMatch(/could not reach/i);
+			expect(result.message).toContain('ai_pipeline_failed');
+		});
+
 		it.each([
 			['400 bad request', 400],
 			['403 forbidden', 403],

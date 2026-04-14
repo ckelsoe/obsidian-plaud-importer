@@ -126,7 +126,18 @@ export function classifyError(err: unknown): ErrorClassification {
 				canRetry: false,
 			};
 		}
-		// No status (fetcher threw) — genuine network-layer failure.
+		// No status. Two sub-cases distinguished by message text:
+		//   1. In-band error (Plaud returned a failure envelope on HTTP
+		//      200) → api-error, message says Plaud-side failure.
+		//   2. Fetcher threw (DNS, TLS, offline) → network-error with a
+		//      "could not reach" prefix.
+		if (err.message.includes('in-band error from')) {
+			return {
+				category: 'api-error',
+				message: err.message,
+				canRetry: true,
+			};
+		}
 		return {
 			category: 'network-error',
 			message: `Could not reach Plaud.AI: ${err.message}`,
