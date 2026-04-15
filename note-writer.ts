@@ -733,8 +733,6 @@ export function formatTranscriptSection(
 		if (rendered > 0) {
 			lines.push('');
 		}
-		const stamp = formatTimestamp(group.chapter.startSeconds);
-		const title = group.chapter.title.trim();
 		const headingText = chapterHeadingText(group.chapter);
 		lines.push(`${chapterPrefix} ${headingText}`);
 		lines.push('');
