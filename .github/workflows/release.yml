@@ -36,8 +36,15 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           tag="${GITHUB_REF#refs/tags/}"
-          
-          gh release create "$tag" \
-            --title="Release $tag" \
-            --generate-notes \
-            main.js manifest.json styles.css
+
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "Release $tag already exists. Uploading/overwriting assets."
+            gh release upload "$tag" \
+              --clobber \
+              main.js manifest.json styles.css
+          else
+            gh release create "$tag" \
+              --title="Release $tag" \
+              --generate-notes \
+              main.js manifest.json styles.css
+          fi
