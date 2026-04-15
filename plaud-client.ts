@@ -24,6 +24,13 @@ export interface TranscriptAndSummary {
 	readonly transcript: Transcript | null;
 	readonly summary: Summary | null;
 	/**
+	 * Optional map of relative Plaud asset paths to pre-signed download URLs
+	 * returned by `/ai/transsumm/{id}` (for example `download_link_map`).
+	 * Used by attachment import to resolve `picture_link` entries to real image
+	 * bytes instead of HTML wrapper pages.
+	 */
+	readonly nestedAssetLinks?: Readonly<Record<string, string>>;
+	/**
 	 * AI-generated keyword tags from Plaud, when the client can reach a
 	 * source that provides them. Populated by the RE client from
 	 * `/file/detail/{id}` → `data.extra_data.aiContentHeader.keywords`,
@@ -46,6 +53,18 @@ export interface TranscriptAndSummary {
 	 * Charles can inspect and we can widen the parser in a follow-up.
 	 */
 	readonly chapters?: readonly Chapter[];
+	/**
+	 * Downloadable asset references discovered from `/file/detail/{id}`.
+	 * These are typically pre-signed URLs (short-lived) for supplemental
+	 * artifacts such as screenshots or other generated media.
+	 *
+	 * The RE client treats this as best-effort discovery: unknown data types
+	 * with a `data_link` URL are surfaced, while known transcript/summary
+	 * pipeline entries stay excluded. Import-time consumers should download
+	 * these immediately and persist them into the vault, because pre-signed
+	 * links expire quickly.
+	 */
+	readonly attachments?: readonly AttachmentAsset[];
 }
 
 /**
@@ -62,6 +81,26 @@ export interface Chapter {
 	readonly title: string;
 	readonly startSeconds: number;
 	readonly endSeconds?: number;
+}
+
+export interface AttachmentAsset {
+	/**
+	 * Plaud's raw `data_type` discriminator from `/file/detail/{id}`.
+	 * Useful for diagnostics and fallback naming when no filename is present.
+	 */
+	readonly dataType: string;
+	/**
+	 * Download URL, usually pre-signed S3.
+	 */
+	readonly url: string;
+	/**
+	 * Optional human-readable name from Plaud metadata if present.
+	 */
+	readonly name?: string;
+	/**
+	 * Optional MIME type hint from Plaud metadata if present.
+	 */
+	readonly mimeType?: string;
 }
 
 export interface PlaudClient {

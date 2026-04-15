@@ -4,15 +4,19 @@ Import meeting summaries, transcripts, and attachments from [Plaud.AI](https://w
 
 ## Status
 
-**v0.1.0 — scaffold.** The plugin registers a settings tab and an `Import recent recordings` command, but the Plaud client itself is not yet implemented. Invoking the command produces a "not implemented yet" notice.
+**v0.1.x - active development build.** The reverse-engineered Plaud client, import modal, transcript/summary note generation, and test-vault deployment workflow are in place. Remaining deferred items are tracked in `dev-docs/deferred-decisions.md` (mainly pagination strategy and optional fetch optimizations).
 
 See [`dev-docs/00-viability-findings.md`](https://github.com/ckelsoe/obsidian-development/blob/main/dev-docs/00-viability-findings.md) in the parent workspace for the design decisions driving this plugin.
 
-## What it will do (once client lands)
+## Current behavior (2026-04-15)
+
+Transcript/chapter rendering is now considered complete for this phase: generated notes use a heading-based `Transcript` section (level configurable in settings), include an inline chapter index with jump links into the transcript, render per-chapter `Back to Chapters` links, and place a horizontal rule directly above the transcript area.
+
+## What it does today
 
 - List recent recordings from your Plaud.AI account
 - Let you choose which to pull via a modal
-- Create one markdown note per recording in a configurable output folder, with frontmatter metadata, the Plaud AI-generated summary, and the full transcript inside a collapsible callout
+- Create one markdown note per recording in a configurable output folder, with frontmatter metadata, Plaud AI-generated summary, and heading-based transcript/chapter navigation
 - Handle duplicate recordings per your selected strategy (`skip` or `overwrite`)
 - Downstream AI processing (Claude Code, Codex, etc.) can then operate on the imported notes to extract details, link related meetings, and enrich context
 

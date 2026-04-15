@@ -4,6 +4,7 @@ import {
 	PlaudParseError,
 	ReverseEngineeredPlaudClient,
 	findAiKeywords,
+	findAttachmentAssets,
 	findNewerSummaryMarkdown,
 	findOutlineLink,
 	findTransactionPolishLink,
@@ -1918,6 +1919,182 @@ describe('findAiKeywords', () => {
 });
 
 // =============================================================================
+// findAttachmentAssets — supplemental downloadable assets from /file/detail
+// =============================================================================
+
+describe('findAttachmentAssets', () => {
+	function fileDetailWithAssets(
+		contentList: unknown,
+		preDownloadList?: unknown,
+	): Record<string, unknown> {
+		return {
+			status: 0,
+			msg: 'success',
+			data: {
+				file_id: 'abc123',
+				content_list: contentList,
+				pre_download_content_list: preDownloadList,
+			},
+		};
+	}
+
+	it('returns unknown data_type entries with data_link URLs', () => {
+		const raw = fileDetailWithAssets([
+			{ data_type: 'transaction', task_status: 1, data_link: 'https://s3/raw' },
+			{ data_type: 'transaction_polish', task_status: 1, data_link: 'https://s3/polish' },
+			{
+				data_type: 'screenshot',
+				task_status: 1,
+				data_link: 'https://s3/shot1.png?sig=x',
+				file_name: 'screenshot-1',
+				mime_type: 'image/png',
+			},
+		]);
+		expect(findAttachmentAssets(raw, '/file/detail/abc')).toEqual([
+			{
+				dataType: 'screenshot',
+				url: 'https://s3/shot1.png?sig=x',
+				name: 'screenshot-1',
+				mimeType: 'image/png',
+			},
+		]);
+	});
+
+	it('collects from both content_list and pre_download_content_list', () => {
+		const raw = fileDetailWithAssets(
+			[
+				{ data_type: 'slide_image', task_status: 1, data_link: 'https://s3/a.png' },
+			],
+			[
+				{ data_type: 'screen_capture', task_status: 1, data_link: 'https://s3/b.png' },
+			],
+		);
+		expect(findAttachmentAssets(raw, '/file/detail/abc')).toEqual([
+			{ dataType: 'slide_image', url: 'https://s3/a.png', name: undefined, mimeType: undefined },
+			{ dataType: 'screen_capture', url: 'https://s3/b.png', name: undefined, mimeType: undefined },
+		]);
+	});
+
+	it('drops entries that are not task_status=1 when task_status is present', () => {
+		const raw = fileDetailWithAssets([
+			{ data_type: 'screenshot', task_status: 0, data_link: 'https://s3/not-ready' },
+			{ data_type: 'screenshot', task_status: 2, data_link: 'https://s3/failed' },
+			{ data_type: 'screenshot', task_status: 1, data_link: 'https://s3/ready' },
+		]);
+		expect(findAttachmentAssets(raw, '/file/detail/abc')).toEqual([
+			{ dataType: 'screenshot', url: 'https://s3/ready', name: undefined, mimeType: undefined },
+		]);
+	});
+
+	it('deduplicates repeated URLs', () => {
+		const raw = fileDetailWithAssets([
+			{ data_type: 'screenshot', task_status: 1, data_link: 'https://s3/a' },
+			{ data_type: 'screen_capture', task_status: 1, data_link: 'https://s3/a' },
+		]);
+		expect(findAttachmentAssets(raw, '/file/detail/abc')).toEqual([
+			{ dataType: 'screenshot', url: 'https://s3/a', name: undefined, mimeType: undefined },
+		]);
+	});
+
+	it('extracts attachment URLs from data_content when data_link is absent', () => {
+		const raw = fileDetailWithAssets([
+			{
+				data_type: 'mindmap_asset',
+				task_status: 1,
+				file_name: 'mindmap',
+				data_content: {
+					url: 'https://cdn.example.com/mindmap-1.png?sig=x',
+				},
+			},
+			{
+				data_type: 'card_asset',
+				task_status: 1,
+				file_name: 'card',
+				data_content: JSON.stringify({
+					picture_link: 'https://cdn.example.com/card-1.png?sig=x',
+				}),
+			},
+		]);
+		expect(findAttachmentAssets(raw, '/file/detail/abc')).toEqual([
+			{
+				dataType: 'mindmap_asset',
+				url: 'https://cdn.example.com/mindmap-1.png?sig=x',
+				name: 'mindmap',
+				mimeType: undefined,
+			},
+			{
+				dataType: 'card_asset',
+				url: 'https://cdn.example.com/card-1.png?sig=x',
+				name: 'card',
+				mimeType: undefined,
+			},
+		]);
+	});
+
+	it('keeps relative permanent paths discovered in data_content', () => {
+		const raw = fileDetailWithAssets([
+			{
+				data_type: 'mindmap_asset',
+				task_status: 1,
+				data_content: {
+					file_path: 'permanent/abc123/mindmap/result.png',
+				},
+			},
+		]);
+		expect(findAttachmentAssets(raw, '/file/detail/abc')).toEqual([
+			{
+				dataType: 'mindmap_asset',
+				url: 'permanent/abc123/mindmap/result.png',
+				name: undefined,
+				mimeType: undefined,
+			},
+		]);
+	});
+
+	it('collects attachment links from download_link_map and infers card/mindmap types', () => {
+		const raw = {
+			status: 0,
+			msg: 'success',
+			data: {
+				file_id: 'abc123',
+				content_list: [],
+				pre_download_content_list: [],
+				download_link_map: {
+					'permanent/abc/mindmap/result.png': 'https://cdn.example.com/mindmap.png?sig=x',
+					'permanent/abc/card/result.png': 'https://cdn.example.com/card.png?sig=x',
+				},
+			},
+		};
+		expect(findAttachmentAssets(raw, '/file/detail/abc')).toEqual([
+			{
+				dataType: 'mindmap',
+				url: 'https://cdn.example.com/mindmap.png?sig=x',
+				name: 'result.png',
+				mimeType: undefined,
+			},
+			{
+				dataType: 'card',
+				url: 'https://cdn.example.com/card.png?sig=x',
+				name: 'result.png',
+				mimeType: undefined,
+			},
+		]);
+	});
+
+	it('throws PlaudParseError when response body is not an object', () => {
+		expect(() => findAttachmentAssets('nope', '/file/detail/abc')).toThrow(
+			PlaudParseError,
+		);
+	});
+
+	it('throws PlaudParseError when response.data is missing', () => {
+		expect(() => findAttachmentAssets({ status: 0 }, '/file/detail/abc')).toThrow(
+			PlaudParseError,
+		);
+	});
+});
+
+// =============================================================================
 // getTranscriptAndSummary — DD-004: newer-summary + keyword propagation
 // =============================================================================
 
@@ -1927,6 +2104,12 @@ describe('getTranscriptAndSummary DD-004 paths', () => {
 		readonly outlineUrl?: string;
 		readonly newerSummary?: string;
 		readonly keywords?: readonly string[];
+		readonly attachments?: ReadonlyArray<{
+			readonly dataType: string;
+			readonly url: string;
+			readonly name?: string;
+			readonly mimeType?: string;
+		}>;
 	}): Record<string, unknown> {
 		const contentList: unknown[] = [];
 		if (options.polishUrl !== undefined) {
@@ -1941,6 +2124,15 @@ describe('getTranscriptAndSummary DD-004 paths', () => {
 				data_type: 'outline',
 				task_status: 1,
 				data_link: options.outlineUrl,
+			});
+		}
+		for (const attachment of options.attachments ?? []) {
+			contentList.push({
+				data_type: attachment.dataType,
+				task_status: 1,
+				data_link: attachment.url,
+				file_name: attachment.name,
+				mime_type: attachment.mimeType,
 			});
 		}
 		const preDownload: unknown[] = [];
@@ -2113,6 +2305,48 @@ describe('getTranscriptAndSummary DD-004 paths', () => {
 		const result = await client.getTranscriptAndSummary(ID);
 
 		expect(result.chapters).toBeUndefined();
+	});
+
+	it('propagates supplemental attachment assets discovered from /file/detail/', async () => {
+		const { fetcher } = routeFetcher({
+			transsumm: ok(transsummEnvelope()),
+			detail: ok(
+				fileDetailFull({
+					attachments: [
+						{
+							dataType: 'screenshot',
+							url: 'https://s3/screens/1.png?sig=x',
+							name: 'screen-1',
+							mimeType: 'image/png',
+						},
+						{
+							dataType: 'slide_image',
+							url: 'https://s3/screens/2.jpg?sig=x',
+							name: 'slide-2',
+							mimeType: 'image/jpeg',
+						},
+					],
+				}),
+			),
+		});
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+
+		const result = await client.getTranscriptAndSummary(ID);
+
+		expect(result.attachments).toEqual([
+			{
+				dataType: 'screenshot',
+				url: 'https://s3/screens/1.png?sig=x',
+				name: 'screen-1',
+				mimeType: 'image/png',
+			},
+			{
+				dataType: 'slide_image',
+				url: 'https://s3/screens/2.jpg?sig=x',
+				name: 'slide-2',
+				mimeType: 'image/jpeg',
+			},
+		]);
 	});
 
 	it('combines all three DD-004 sources in one successful call', async () => {

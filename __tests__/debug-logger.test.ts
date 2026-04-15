@@ -211,6 +211,16 @@ describe('BufferedDebugLogger.format', () => {
 		expect(out).toContain('Authorization headers are never captured');
 	});
 
+	it('includes optional header lines in the exported debug header', () => {
+		const logger = new BufferedDebugLogger(true, {
+			now: fakeClock(),
+			consoleSink: silentSink(),
+			headerLines: ['Plugin version: 0.1.1'],
+		});
+		const out = logger.format();
+		expect(out).toContain('Plugin version: 0.1.1');
+	});
+
 	it('produces a snapshot that is a defensive copy (mutating it does not affect future snapshots)', () => {
 		const logger = new BufferedDebugLogger(true, { consoleSink: silentSink() });
 		logger.log({ kind: 'note', message: 'one' });

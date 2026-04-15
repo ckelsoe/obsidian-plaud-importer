@@ -9,6 +9,7 @@
 // implements and §4.2 for the source research on the endpoint shapes.
 
 import type {
+	AttachmentAsset,
 	Chapter,
 	PlaudClient,
 	PlaudRecordingId,
@@ -243,6 +244,10 @@ export class ReverseEngineeredPlaudClient implements PlaudClient {
 			newerSummary: null,
 			aiKeywords: [],
 			chapters: [],
+			attachments: [],
+			nestedAssetLinks: {},
+			detailDataTypes: [],
+			attachmentDataTypes: [],
 		};
 		let bundleError: unknown = null;
 		try {
@@ -287,6 +292,9 @@ export class ReverseEngineeredPlaudClient implements PlaudClient {
 					aiKeywordCount: bundle.aiKeywords.length,
 					aiKeywordSample: bundle.aiKeywords.slice(0, 5),
 					chapterCount: bundle.chapters.length,
+					attachmentCount: bundle.attachments.length,
+					attachmentDataTypes: bundle.attachmentDataTypes,
+					detailDataTypes: bundle.detailDataTypes,
 				},
 			});
 		}
@@ -294,8 +302,14 @@ export class ReverseEngineeredPlaudClient implements PlaudClient {
 		return {
 			transcript: finalTranscript,
 			summary: finalSummary,
+			nestedAssetLinks:
+				Object.keys(bundle.nestedAssetLinks).length > 0
+					? bundle.nestedAssetLinks
+					: legacy.nestedAssetLinks,
 			aiKeywords: bundle.aiKeywords.length > 0 ? bundle.aiKeywords : undefined,
 			chapters: bundle.chapters.length > 0 ? bundle.chapters : undefined,
+			attachments:
+				bundle.attachments.length > 0 ? bundle.attachments : undefined,
 		};
 	}
 
@@ -350,6 +364,12 @@ export class ReverseEngineeredPlaudClient implements PlaudClient {
 		const outlineLink = findOutlineLink(rawDetail, detailEndpoint);
 		const newerSummaryMarkdown = findNewerSummaryMarkdown(rawDetail, detailEndpoint);
 		const aiKeywords = findAiKeywords(rawDetail, detailEndpoint);
+		const attachments = findAttachmentAssets(rawDetail, detailEndpoint);
+		const nestedAssetLinks = findNestedAssetLinks(rawDetail, detailEndpoint);
+		const detailDataTypes = collectDetailDataTypes(rawDetail);
+		const attachmentDataTypes = [
+			...new Set(attachments.map((asset) => asset.dataType)),
+		];
 
 		const newerSummary: Summary | null =
 			newerSummaryMarkdown !== null ? { id, text: newerSummaryMarkdown } : null;
@@ -402,7 +422,34 @@ export class ReverseEngineeredPlaudClient implements PlaudClient {
 			}
 		}
 
-		return { polishedTranscript, newerSummary, aiKeywords, chapters };
+		if (this.debugLogger?.enabled === true) {
+			this.debugLogger.log({
+				kind: 'parsed',
+				endpoint: detailEndpoint,
+				message: `file/detail inventory for ${id}: dataTypes=${detailDataTypes.length}, attachments=${attachments.length}`,
+				payload: {
+					detailDataTypes,
+					attachmentDataTypes,
+					attachments: attachments.map((asset) => ({
+						dataType: asset.dataType,
+						name: asset.name,
+						mimeType: asset.mimeType,
+						url: asset.url,
+					})),
+				},
+			});
+		}
+
+		return {
+			polishedTranscript,
+			newerSummary,
+			aiKeywords,
+			chapters,
+			attachments,
+			nestedAssetLinks,
+			detailDataTypes,
+			attachmentDataTypes,
+		};
 	}
 
 	private async fetchJson(
@@ -770,6 +817,10 @@ export interface FileDetailBundle {
 	readonly newerSummary: Summary | null;
 	readonly aiKeywords: readonly string[];
 	readonly chapters: readonly Chapter[];
+	readonly attachments: readonly AttachmentAsset[];
+	readonly nestedAssetLinks: Readonly<Record<string, string>>;
+	readonly detailDataTypes: readonly string[];
+	readonly attachmentDataTypes: readonly string[];
 }
 
 /**
@@ -955,6 +1006,305 @@ export function findOutlineLink(
 		return link;
 	}
 	return null;
+}
+
+/**
+ * Discover downloadable supplemental assets from `/file/detail/{id}`.
+ *
+ * We scan both `content_list` and `pre_download_content_list` for entries
+ * with a `data_link` URL, skip known transcript/summary pipeline types, and
+ * surface everything else as an attachment candidate.
+ */
+export function findAttachmentAssets(
+	raw: unknown,
+	endpoint: string,
+): readonly AttachmentAsset[] {
+	if (!isRecord(raw)) {
+		throw new PlaudParseError(
+			`Response body for ${endpoint} is not an object`,
+			endpoint,
+		);
+	}
+	const data = raw.data;
+	if (!isRecord(data)) {
+		throw new PlaudParseError(
+			`Response body for ${endpoint} is missing the 'data' object`,
+			endpoint,
+		);
+	}
+
+	const out: AttachmentAsset[] = [];
+	const seenUrls = new Set<string>();
+	const excludedTypes = new Set([
+		'transaction',
+		'transaction_polish',
+		'outline',
+		'auto_sum_note',
+	]);
+
+	const collectFrom = (list: unknown): void => {
+		if (!Array.isArray(list)) {
+			return;
+		}
+		for (const item of list) {
+			if (!isRecord(item)) {
+				continue;
+			}
+			const dataType = pickNonEmptyString(item.data_type);
+			if (dataType === undefined || excludedTypes.has(dataType)) {
+				continue;
+			}
+			if (item.task_status !== undefined && item.task_status !== 1) {
+				continue;
+			}
+			const urls = [
+				...collectAttachmentUrls(item.data_link),
+				...collectAttachmentUrls(item.data_content),
+			];
+			for (const url of urls) {
+				if (seenUrls.has(url)) {
+					continue;
+				}
+				seenUrls.add(url);
+				out.push({
+					dataType,
+					url,
+					name: pickNonEmptyString(
+						item.file_name,
+						item.filename,
+						item.data_name,
+						item.name,
+						item.title,
+					),
+					mimeType: pickNonEmptyString(
+						item.mime_type,
+						item.content_type,
+						item.file_type,
+					),
+				});
+			}
+		}
+	};
+
+	collectFrom(data.content_list);
+	collectFrom(data.pre_download_content_list);
+	collectFromMappedLinks(data.download_link_map);
+	collectFromMappedLinks(data.download_path_mapping);
+	return out;
+
+	function collectFromMappedLinks(map: unknown): void {
+		if (!isRecord(map)) {
+			return;
+		}
+		for (const [pathKey, rawUrl] of Object.entries(map)) {
+			if (typeof rawUrl !== 'string') {
+				continue;
+			}
+			const url = rawUrl.trim();
+			if (!looksLikeAttachmentUrl(url) || seenUrls.has(url)) {
+				continue;
+			}
+			seenUrls.add(url);
+			out.push({
+				dataType: inferAttachmentDataTypeFromPath(pathKey),
+				url,
+				name: basenameLike(pathKey),
+				mimeType: undefined,
+			});
+		}
+	}
+}
+
+function collectAttachmentUrls(value: unknown): readonly string[] {
+	const out: string[] = [];
+	const seen = new Set<string>();
+	const add = (candidate: string): void => {
+		const trimmed = candidate.trim();
+		if (trimmed.length === 0 || !looksLikeAttachmentUrl(trimmed)) {
+			return;
+		}
+		if (seen.has(trimmed)) {
+			return;
+		}
+		seen.add(trimmed);
+		out.push(trimmed);
+	};
+	const walk = (cursor: unknown): void => {
+		if (cursor === null || cursor === undefined) {
+			return;
+		}
+		if (typeof cursor === 'string') {
+			const trimmed = cursor.trim();
+			if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+				try {
+					walk(JSON.parse(trimmed));
+					return;
+				} catch {
+					// If it's not valid JSON, still treat as a potential URL/path.
+				}
+			}
+			add(trimmed);
+			return;
+		}
+		if (Array.isArray(cursor)) {
+			for (const item of cursor) {
+				walk(item);
+			}
+			return;
+		}
+		if (!isRecord(cursor)) {
+			return;
+		}
+		for (const [key, nested] of Object.entries(cursor)) {
+			if (
+				key === 'data_link' ||
+				key === 'download_link' ||
+				key === 'picture_link' ||
+				key === 'url' ||
+				key === 'href' ||
+				key === 'path' ||
+				key === 'file_path'
+			) {
+				if (typeof nested === 'string') {
+					add(nested);
+					continue;
+				}
+			}
+			walk(nested);
+		}
+	};
+	walk(value);
+	return out;
+}
+
+function looksLikeAttachmentUrl(value: string): boolean {
+	const lower = value.toLowerCase();
+	if (lower.startsWith('http://') || lower.startsWith('https://')) {
+		return true;
+	}
+	if (value.startsWith('/')) {
+		return true;
+	}
+	if (lower.startsWith('permanent/') || lower.includes('/permanent/')) {
+		return true;
+	}
+	if (
+		/\.(png|jpe?g|gif|webp|bmp|svg|json|html|pdf|txt)(\?|$)/i.test(value)
+	) {
+		return true;
+	}
+	if (lower.includes('mindmap') || lower.includes('card')) {
+		return true;
+	}
+	return false;
+}
+
+function inferAttachmentDataTypeFromPath(path: string): string {
+	const lower = path.toLowerCase();
+	if (
+		lower.includes('mindmap') ||
+		lower.includes('mind-map') ||
+		lower.includes('mind_map')
+	) {
+		return 'mindmap';
+	}
+	if (lower.includes('card')) {
+		return 'card';
+	}
+	return 'mapped_asset';
+}
+
+function basenameLike(path: string): string | undefined {
+	const normalized = path.trim().replace(/\\/g, '/');
+	if (normalized.length === 0) {
+		return undefined;
+	}
+	const slash = normalized.lastIndexOf('/');
+	const base = slash >= 0 ? normalized.slice(slash + 1) : normalized;
+	const clean = base.trim();
+	return clean.length > 0 ? clean : undefined;
+}
+
+/**
+ * Extract Plaud nested-asset signed URLs from `/file/detail/{id}`.
+ *
+ * We currently observe two maps in the wild:
+ * - `download_link_map`
+ * - `download_path_mapping`
+ *
+ * Both map relative asset paths (for example `permanent/.../mark/foo.png`)
+ * to pre-signed S3 URLs.
+ */
+export function findNestedAssetLinks(
+	raw: unknown,
+	endpoint: string,
+): Readonly<Record<string, string>> {
+	if (!isRecord(raw)) {
+		throw new PlaudParseError(
+			`Response body for ${endpoint} is not an object`,
+			endpoint,
+		);
+	}
+	const data = raw.data;
+	if (!isRecord(data)) {
+		throw new PlaudParseError(
+			`Response body for ${endpoint} is missing the 'data' object`,
+			endpoint,
+		);
+	}
+
+	const out: Record<string, string> = {};
+	const mergeMap = (candidate: unknown): void => {
+		if (!isRecord(candidate)) {
+			return;
+		}
+		for (const [rawKey, rawValue] of Object.entries(candidate)) {
+			if (typeof rawValue !== 'string') {
+				continue;
+			}
+			const key = rawKey.trim().replace(/^\/+/, '');
+			const value = rawValue.trim();
+			if (key.length === 0 || value.length === 0) {
+				continue;
+			}
+			out[key] = value;
+		}
+	};
+
+	mergeMap(data.download_link_map);
+	mergeMap(data.download_path_mapping);
+	return out;
+}
+
+function collectDetailDataTypes(raw: unknown): readonly string[] {
+	if (!isRecord(raw)) {
+		return [];
+	}
+	const data = raw.data;
+	if (!isRecord(data)) {
+		return [];
+	}
+	const out: string[] = [];
+	const seen = new Set<string>();
+	const collectFrom = (list: unknown): void => {
+		if (!Array.isArray(list)) {
+			return;
+		}
+		for (const item of list) {
+			if (!isRecord(item)) {
+				continue;
+			}
+			const dataType = pickNonEmptyString(item.data_type);
+			if (dataType === undefined || seen.has(dataType)) {
+				continue;
+			}
+			seen.add(dataType);
+			out.push(dataType);
+		}
+	};
+	collectFrom(data.content_list);
+	collectFrom(data.pre_download_content_list);
+	return out;
 }
 
 /**

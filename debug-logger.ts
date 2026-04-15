@@ -75,7 +75,7 @@ export interface DebugLogger {
  * plus user-click notes — 50 events comfortably covers 20+ recordings
  * without growing the plugin's memory footprint past a few MB.
  */
-export const DEFAULT_MAX_EVENTS = 50;
+export const DEFAULT_MAX_EVENTS = 250;
 
 /**
  * In-memory ring-buffer implementation of `DebugLogger`. The buffer is a
@@ -93,6 +93,9 @@ export class BufferedDebugLogger implements DebugLogger {
 	// Wall-clock provider is injected so tests can pin timestamps. Defaults
 	// to `Date.now()` in production; tests pass a counter-based fake.
 	private readonly now: () => Date;
+	// Optional static lines injected into the formatted header so exported
+	// debug sessions can be tied to a concrete plugin build/version.
+	private readonly headerLines: readonly string[];
 	// Sink for the live DevTools mirror. Defaults to `console.log` so the
 	// plugin can tail events in Obsidian's developer console; tests pass
 	// a no-op to keep Jest output clean.
@@ -103,12 +106,14 @@ export class BufferedDebugLogger implements DebugLogger {
 		options: {
 			readonly maxEvents?: number;
 			readonly now?: () => Date;
+			readonly headerLines?: readonly string[];
 			readonly consoleSink?: (message: string, payload?: unknown) => void;
 		} = {},
 	) {
 		this._enabled = enabled;
 		this.maxEvents = options.maxEvents ?? DEFAULT_MAX_EVENTS;
 		this.now = options.now ?? ((): Date => new Date());
+		this.headerLines = options.headerLines ?? [];
 		this.consoleSink =
 			options.consoleSink ??
 			((message, payload): void => {
@@ -168,6 +173,7 @@ export class BufferedDebugLogger implements DebugLogger {
 			'=== Plaud Importer debug session ===',
 			`Generated: ${this.now().toISOString()}`,
 			`Events: ${snap.length}`,
+			...this.headerLines,
 			'Authorization headers are never captured. Payloads may contain',
 			'transcript text, speaker names, and recording metadata.',
 			'',

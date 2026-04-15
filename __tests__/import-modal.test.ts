@@ -3,6 +3,7 @@ import {
 	formatDate,
 	formatDuration,
 	formatImportNotice,
+	mergeRecordings,
 	tallyImportResults,
 	type ImportResult,
 	type ErrorClassification,
@@ -277,6 +278,37 @@ describe('formatDuration', () => {
 		// hand-constructed Recording and trigger "NaNh NaNm NaNs" in the UI.
 		// Guard here.
 		expect(formatDuration(value)).toBe('0m 0s');
+	});
+});
+
+// mergeRecordings -----------------------------------------------------------
+
+describe('mergeRecordings', () => {
+	it('appends incoming rows while preserving existing order', () => {
+		const existing = [rec('a'), rec('b')];
+		const incoming = [rec('c'), rec('d')];
+		const merged = mergeRecordings(existing, incoming, 10);
+		expect(merged.merged.map((r) => r.id)).toEqual(['a', 'b', 'c', 'd']);
+		expect(merged.hasMore).toBe(false);
+	});
+
+	it('dedupes incoming ids already present in existing rows', () => {
+		const existing = [rec('a'), rec('b')];
+		const incoming = [rec('b'), rec('c'), rec('a')];
+		const merged = mergeRecordings(existing, incoming, 10);
+		expect(merged.merged.map((r) => r.id)).toEqual(['a', 'b', 'c']);
+	});
+
+	it('reports hasMore=true when page is full', () => {
+		const incoming = Array.from({ length: 10 }, (_, i) => rec(String(i + 1)));
+		const merged = mergeRecordings([], incoming, 10);
+		expect(merged.hasMore).toBe(true);
+	});
+
+	it('reports hasMore=false when page is partial', () => {
+		const incoming = Array.from({ length: 3 }, (_, i) => rec(String(i + 1)));
+		const merged = mergeRecordings([], incoming, 10);
+		expect(merged.hasMore).toBe(false);
 	});
 });
 

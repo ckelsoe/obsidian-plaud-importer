@@ -68,13 +68,24 @@
 	color: var(--text-accent);
 }
 
-/* "Load more" button pinned inside the scrollable list container so it
- * rides along as the user scrolls to the end of the current page. */
-.plaud-importer-load-more {
-	align-self: center;
-	margin: 0.75em 0 0.25em 0;
-	padding: 0.4em 1em;
-	font-size: 0.9em;
+/* Progressive loading footer that lives at the bottom of the list. */
+.plaud-importer-progress {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 0.75em;
+	padding: 0.75em 0.25em 0.25em 0.25em;
+}
+
+.plaud-importer-progress-text {
+	font-size: 0.85em;
+	color: var(--text-muted);
+}
+
+.plaud-importer-progress-action {
+	flex-shrink: 0;
+	padding: 0.35em 0.8em;
+	font-size: 0.85em;
 	background: transparent;
 	color: var(--text-muted);
 	border: 1px dashed var(--background-modifier-border);
@@ -82,14 +93,19 @@
 	cursor: pointer;
 }
 
-.plaud-importer-load-more:hover:not(:disabled) {
+.plaud-importer-progress-action:hover:not(:disabled) {
 	color: var(--text-normal);
 	border-color: var(--interactive-accent);
 }
 
-.plaud-importer-load-more:disabled {
+.plaud-importer-progress-action:disabled {
 	opacity: 0.6;
 	cursor: default;
+}
+
+.plaud-importer-sentinel {
+	height: 1px;
+	width: 100%;
 }
 
 /* Loading / empty / error states share a centered layout */

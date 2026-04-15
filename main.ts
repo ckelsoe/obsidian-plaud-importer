@@ -21,6 +21,10 @@ interface PlaudImporterSettings {
 	onDuplicate: "skip" | "overwrite";
 	debug: boolean;
 	includeTranscript: boolean;
+	defaultIncludeSummary: boolean;
+	defaultIncludeAttachments: boolean;
+	defaultIncludeMindmap: boolean;
+	defaultIncludeCard: boolean;
 	foldTranscript: boolean;
 	transcriptHeaderLevel: 1 | 2 | 3 | 4 | 5 | 6;
 }
@@ -31,6 +35,10 @@ const DEFAULT_SETTINGS: PlaudImporterSettings = {
 	onDuplicate: "skip",
 	debug: false,
 	includeTranscript: true,
+	defaultIncludeSummary: true,
+	defaultIncludeAttachments: true,
+	defaultIncludeMindmap: true,
+	defaultIncludeCard: true,
 	foldTranscript: true,
 	transcriptHeaderLevel: 4,
 };
@@ -101,7 +109,9 @@ export default class PlaudImporterPlugin extends Plugin {
 	async onload() {
 		await this.loadSettings();
 
-		this.debugLogger = new BufferedDebugLogger(this.settings.debug);
+		this.debugLogger = new BufferedDebugLogger(this.settings.debug, {
+			headerLines: [`Plugin version: ${this.manifest.version}`],
+		});
 
 		this.addSettingTab(new PlaudImporterSettingsTab(this.app, this));
 
@@ -196,8 +206,18 @@ export default class PlaudImporterPlugin extends Plugin {
 			outputFolder: this.settings.outputFolder,
 			onDuplicate: this.settings.onDuplicate,
 			includeTranscript: this.settings.includeTranscript,
+			includeSummary: this.settings.defaultIncludeSummary,
 			foldTranscript: this.settings.foldTranscript,
 			transcriptHeaderLevel: this.settings.transcriptHeaderLevel,
+			defaultIncludeSummary: this.settings.defaultIncludeSummary,
+			defaultIncludeAttachments: this.settings.defaultIncludeAttachments,
+			defaultIncludeMindmap: this.settings.defaultIncludeMindmap,
+			defaultIncludeCard: this.settings.defaultIncludeCard,
+			debugLogger: this.debugLogger,
+			getAuthToken: () =>
+				this.settings.secretId.length > 0
+					? this.app.secretStorage.getSecret(this.settings.secretId)
+					: null,
 		}).open();
 	}
 
@@ -273,12 +293,12 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 					}),
 			);
 
-		containerEl.createEl("h3", { text: "Transcript configuration" });
+		containerEl.createEl("h3", { text: "Default artifact selection" });
 
 		new Setting(containerEl)
-			.setName("Include transcript")
+			.setName("Transcript")
 			.setDesc(
-				"Write the full transcript body into each generated note. When off, notes still include the AI summary and the chapters list (if available), but the per-segment transcript is omitted.",
+				"Checked by default in import actions. You can override in 'Review artifacts first'.",
 			)
 			.addToggle((toggle) =>
 				toggle
@@ -288,6 +308,64 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 						await this.plugin.saveSettings();
 					}),
 			);
+
+		new Setting(containerEl)
+			.setName("Summary")
+			.setDesc(
+				"Checked by default in import actions. You can override in 'Review artifacts first'.",
+			)
+			.addToggle((toggle) =>
+				toggle
+					.setValue(this.plugin.settings.defaultIncludeSummary)
+					.onChange(async (value) => {
+						this.plugin.settings.defaultIncludeSummary = value;
+						await this.plugin.saveSettings();
+					}),
+			);
+
+		new Setting(containerEl)
+			.setName("Attachments")
+			.setDesc(
+				"Checked by default in import actions when attachments are available.",
+			)
+			.addToggle((toggle) =>
+				toggle
+					.setValue(this.plugin.settings.defaultIncludeAttachments)
+					.onChange(async (value) => {
+						this.plugin.settings.defaultIncludeAttachments = value;
+						await this.plugin.saveSettings();
+					}),
+			);
+
+		new Setting(containerEl)
+			.setName("Mindmap")
+			.setDesc(
+				"Checked by default in import actions when a mindmap artifact is available.",
+			)
+			.addToggle((toggle) =>
+				toggle
+					.setValue(this.plugin.settings.defaultIncludeMindmap)
+					.onChange(async (value) => {
+						this.plugin.settings.defaultIncludeMindmap = value;
+						await this.plugin.saveSettings();
+					}),
+			);
+
+		new Setting(containerEl)
+			.setName("Card")
+			.setDesc(
+				"Checked by default in import actions when a card artifact is available.",
+			)
+			.addToggle((toggle) =>
+				toggle
+					.setValue(this.plugin.settings.defaultIncludeCard)
+					.onChange(async (value) => {
+						this.plugin.settings.defaultIncludeCard = value;
+						await this.plugin.saveSettings();
+					}),
+			);
+
+		containerEl.createEl("h3", { text: "Transcript rendering" });
 
 		new Setting(containerEl)
 			.setName("Fold transcript by default")

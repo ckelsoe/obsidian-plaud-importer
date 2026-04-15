@@ -5,7 +5,7 @@ import {
 	extractPlaudIdFromFrontmatter,
 	extractSpeakers,
 	findTranscriptHeadingLine,
-	formatChaptersCallout,
+	formatChapterIndexSection,
 	formatDurationHoursMinutes,
 	formatFrontmatter,
 	formatMarkdown,
@@ -581,6 +581,24 @@ describe('formatMarkdown', () => {
 		const md = formatMarkdown(makeRecording(), makeTranscript(), makeSummary());
 		expect(md).toContain('- Mary wants to revisit pricing');
 		expect(md).toContain('- Charles to draft three options');
+	});
+
+	it('strips a leading markdown heading from summary text', () => {
+		const summary = makeSummary({
+			text: '# Strategic Realignment\n\nFirst normal paragraph.\n\nSecond paragraph.',
+		});
+		const md = formatMarkdown(makeRecording(), makeTranscript(), summary);
+		expect(md).toContain('## Summary\n\nFirst normal paragraph.');
+		expect(md).not.toContain('## Summary\n\n# Strategic Realignment');
+	});
+
+	it('converts dashed summary separators to thematic breaks without setext-heading side effects', () => {
+		const summary = makeSummary({
+			text: 'First paragraph.\n------------\n## Next section',
+		});
+		const md = formatMarkdown(makeRecording(), makeTranscript(), summary);
+		expect(md).toContain('First paragraph.\n***\n## Next section');
+		expect(md).not.toContain('First paragraph.\n------------');
 	});
 
 	it('handles an empty transcript segments array with a placeholder', () => {
@@ -1370,10 +1388,10 @@ describe('groupTranscriptByChapters', () => {
 });
 
 // ---------------------------------------------------------------------------
-// formatChaptersCallout — linked chapters list
+// formatChapterIndexSection — linked chapters list
 // ---------------------------------------------------------------------------
 
-describe('formatChaptersCallout', () => {
+describe('formatChapterIndexSection', () => {
 	function makeGroup(
 		chapter: Chapter,
 		blockId: string | null,
@@ -1392,21 +1410,24 @@ describe('formatChaptersCallout', () => {
 	}
 
 	it('returns empty string for empty groups', () => {
-		expect(formatChaptersCallout([])).toBe('');
+		expect(formatChapterIndexSection([])).toBe('');
 	});
 
-	it('renders each chapter row as a wiki link to the matching H3 heading anchor', () => {
+	it('renders each chapter row as a bullet wiki link and attaches the ^plaud-chapters block id', () => {
 		const groups: readonly TranscriptChapterGroup[] = [
 			makeGroup({ title: 'Introduction', startSeconds: 0 }, 't-ch-0'),
 			makeGroup({ title: 'Main', startSeconds: 125 }, 't-ch-1'),
 			makeGroup({ title: 'Conclusion', startSeconds: 600 }, 't-ch-2'),
 		];
-		expect(formatChaptersCallout(groups)).toBe(
+		expect(formatChapterIndexSection(groups)).toBe(
 			[
-				'> [!note]- Chapters',
-				'> [[#00:00 Introduction|**[00:00]** Introduction]]',
-				'> [[#02:05 Main|**[02:05]** Main]]',
-				'> [[#10:00 Conclusion|**[10:00]** Conclusion]]',
+				'##### Chapters',
+				'',
+				'- [[#00:00 Introduction|**[00:00]** Introduction]]',
+				'- [[#02:05 Main|**[02:05]** Main]]',
+				'- [[#10:00 Conclusion|**[10:00]** Conclusion]]',
+				'',
+				'^plaud-chapters',
 			].join('\n'),
 		);
 	});
@@ -1416,9 +1437,9 @@ describe('formatChaptersCallout', () => {
 			makeGroup({ title: 'Linked', startSeconds: 0 }, 't-ch-0'),
 			makeGroup({ title: 'Empty', startSeconds: 300 }, null, 0),
 		];
-		const out = formatChaptersCallout(groups);
-		expect(out).toContain('> [[#00:00 Linked|**[00:00]** Linked]]');
-		expect(out).toContain('> **[05:00]** Empty');
+		const out = formatChapterIndexSection(groups);
+		expect(out).toContain('- [[#00:00 Linked|**[00:00]** Linked]]');
+		expect(out).toContain('- **[05:00]** Empty');
 		expect(out).not.toContain('#null');
 	});
 
@@ -1426,13 +1447,13 @@ describe('formatChaptersCallout', () => {
 		const groups = [
 			makeGroup({ title: 'Main | topic [x] #id', startSeconds: 0 }, 't-ch-0'),
 		];
-		const out = formatChaptersCallout(groups);
-		expect(out).toContain('> [[#00:00 Main - topic -x- -id|**[00:00]** Main | topic [x] #id]]');
+		const out = formatChapterIndexSection(groups);
+		expect(out).toContain('- [[#00:00 Main - topic -x- -id|**[00:00]** Main | topic [x] #id]]');
 	});
 
 	it('uses h:MM:SS for chapters past the hour mark', () => {
 		const groups = [makeGroup({ title: 'Late', startSeconds: 3700 }, 't-ch-0')];
-		expect(formatChaptersCallout(groups)).toContain('**[1:01:40]** Late');
+		expect(formatChapterIndexSection(groups)).toContain('**[1:01:40]** Late');
 	});
 });
 
@@ -1477,10 +1498,12 @@ describe('formatTranscriptSection', () => {
 			4,
 		);
 		expect(out).toMatch(/^#### Transcript\n/);
+		expect(out).toContain('##### Chapters');
 		expect(out).toContain('##### 00:00 Intro');
 		expect(out).toContain('##### 01:00 Middle');
-		expect(out).toMatch(/##### 00:00 Intro\n\n\*\*\[00:00\]\*\* A: hi/);
-		expect(out).toMatch(/##### 01:00 Middle\n\n\*\*\[01:00\]\*\* B: mid/);
+		expect(out).toContain('[[#^plaud-chapters|Back to Chapters]]');
+		expect(out).toMatch(/##### 00:00 Intro\n\n\[\[#\^plaud-chapters\|Back to Chapters\]\]\n\n\*\*\[00:00\]\*\* A: hi/);
+		expect(out).toMatch(/##### 01:00 Middle\n\n\[\[#\^plaud-chapters\|Back to Chapters\]\]\n\n\*\*\[01:00\]\*\* B: mid/);
 		expect(out).not.toContain('> [!note]- Transcript');
 	});
 
@@ -1595,7 +1618,7 @@ describe('formatTranscriptSection', () => {
 // ---------------------------------------------------------------------------
 
 describe('formatMarkdown with chapters', () => {
-	it('renders external [!note]- Chapters callout + #### Transcript (default level) with ##### chapter headings', () => {
+	it('renders a Transcript heading with inline Chapters index and chapter sections', () => {
 		const recording = makeRecording();
 		const transcript: Transcript = {
 			id: recording.id,
@@ -1615,27 +1638,30 @@ describe('formatMarkdown with chapters', () => {
 		];
 		const md = formatMarkdown(recording, transcript, summary, chapters);
 
-		// External chapters callout with wiki links resolving by heading text.
-		expect(md).toContain('> [!note]- Chapters');
-		expect(md).toContain('> [[#00:00 Opening|**[00:00]** Opening]]');
-		expect(md).toContain('> [[#01:00 Close|**[01:00]** Close]]');
+		// Inline chapter index under Transcript.
+		expect(md).toContain('##### Chapters');
+		expect(md).toContain('- [[#00:00 Opening|**[00:00]** Opening]]');
+		expect(md).toContain('- [[#01:00 Close|**[01:00]** Close]]');
 
 		// Default header level 4 → #### Transcript wrap + ##### chapter subs.
 		expect(md).toContain('#### Transcript');
 		expect(md).toContain('##### 00:00 Opening');
 		expect(md).toContain('##### 01:00 Close');
-		expect(md).toMatch(/##### 00:00 Opening\n\n\*\*\[00:00\]\*\* A: hello/);
-		expect(md).toMatch(/##### 01:00 Close\n\n\*\*\[01:00\]\*\* B: world/);
+		// Each chapter section contains a quick return link to the index.
+		expect(md).toMatch(/##### 00:00 Opening\n\n\[\[#\^plaud-chapters\|Back to Chapters\]\]\n\n\*\*\[00:00\]\*\* A: hello/);
+		expect(md).toMatch(/##### 01:00 Close\n\n\[\[#\^plaud-chapters\|Back to Chapters\]\]\n\n\*\*\[01:00\]\*\* B: world/);
+		// Chapters index carries the ^plaud-chapters block id.
+		expect(md).toContain('^plaud-chapters');
+		// Horizontal rule separates summary from transcript area.
+		expect(md).toContain('## Summary\n\nSummary body goes here.\n\n---\n\n#### Transcript');
 
 		// No [!note]- Transcript callout wrapper in the chaptered path.
 		expect(md).not.toContain('> [!note]- Transcript');
 
-		// Ordering: Summary → Chapters callout → Transcript wrap.
+		// Ordering: Summary → Transcript wrap.
 		const summaryIdx = md.indexOf('## Summary');
-		const chaptersIdx = md.indexOf('> [!note]- Chapters');
 		const transcriptIdx = md.indexOf('#### Transcript');
-		expect(summaryIdx).toBeLessThan(chaptersIdx);
-		expect(chaptersIdx).toBeLessThan(transcriptIdx);
+		expect(summaryIdx).toBeLessThan(transcriptIdx);
 	});
 
 	it('honors a custom transcriptHeaderLevel setting', () => {
@@ -1669,9 +1695,7 @@ describe('formatMarkdown with chapters', () => {
 		const md = formatMarkdown(recording, transcript, summary, chapters, {
 			includeTranscript: false,
 		});
-		// Chapters callout still present.
-		expect(md).toContain('> [!note]- Chapters');
-		// But no transcript wrap or body.
+		// No transcript wrap or body.
 		expect(md).not.toContain('#### Transcript');
 		expect(md).not.toContain('##### 00:00 Opening');
 		expect(md).not.toContain('> [!note]- Transcript');
@@ -1684,7 +1708,7 @@ describe('formatMarkdown with chapters', () => {
 
 		const md = formatMarkdown(recording, transcript, summary);
 
-		expect(md).not.toContain('> [!note]- Chapters');
+		expect(md).not.toContain('##### Chapters');
 		expect(md).toContain('> [!note]- Transcript');
 		expect(md.indexOf('## Summary')).toBeLessThan(
 			md.indexOf('> [!note]- Transcript'),
@@ -1698,7 +1722,7 @@ describe('formatMarkdown with chapters', () => {
 
 		const md = formatMarkdown(recording, transcript, summary, []);
 
-		expect(md).not.toContain('> [!note]- Chapters');
+		expect(md).not.toContain('##### Chapters');
 		expect(md).toContain('> [!note]- Transcript');
 	});
 });
@@ -1745,6 +1769,17 @@ describe('findTranscriptHeadingLine', () => {
 // NoteWriter.writeNote.foldInfo — fold metadata surfaced to the caller
 // ---------------------------------------------------------------------------
 
+type WriteNoteOutcome = Awaited<ReturnType<NoteWriter['writeNote']>>;
+type CreatedWriteOutcome = Extract<WriteNoteOutcome, { status: 'created' }>;
+
+function expectCreatedOutcome(outcome: WriteNoteOutcome): CreatedWriteOutcome {
+	expect(outcome.status).toBe('created');
+	if (outcome.status !== 'created') {
+		throw new Error('Expected created outcome');
+	}
+	return outcome;
+}
+
 describe('NoteWriter.writeNote foldInfo', () => {
 	function makeVault(): { vault: VaultLike; created: Map<string, string> } {
 		const created = new Map<string, string>();
@@ -1777,13 +1812,11 @@ describe('NoteWriter.writeNote foldInfo', () => {
 		];
 
 		const outcome = await writer.writeNote(recording, transcript, summary, chapters);
-
-		expect(outcome.status).toBe('created');
-		if (outcome.status !== 'created') throw new Error('unreachable');
-		expect(outcome.foldInfo).toBeDefined();
-		expect(outcome.foldInfo?.transcriptHeadingLine).toBeGreaterThan(0);
-		expect(outcome.foldInfo?.totalLines).toBeGreaterThan(
-			outcome.foldInfo?.transcriptHeadingLine ?? 0,
+		const created = expectCreatedOutcome(outcome);
+		expect(created.foldInfo).toBeDefined();
+		expect(created.foldInfo?.transcriptHeadingLine).toBeGreaterThan(0);
+		expect(created.foldInfo?.totalLines).toBeGreaterThan(
+			created.foldInfo?.transcriptHeadingLine ?? 0,
 		);
 	});
 
@@ -1798,9 +1831,8 @@ describe('NoteWriter.writeNote foldInfo', () => {
 			makeTranscript(),
 			makeSummary(),
 		);
-		expect(outcome.status).toBe('created');
-		if (outcome.status !== 'created') throw new Error('unreachable');
-		expect(outcome.foldInfo).toBeUndefined();
+		const created = expectCreatedOutcome(outcome);
+		expect(created.foldInfo).toBeUndefined();
 	});
 
 	it('omits foldInfo when chapters are present but includeTranscript is false', async () => {
@@ -1819,9 +1851,8 @@ describe('NoteWriter.writeNote foldInfo', () => {
 			makeSummary(),
 			chapters,
 		);
-		expect(outcome.status).toBe('created');
-		if (outcome.status !== 'created') throw new Error('unreachable');
-		expect(outcome.foldInfo).toBeUndefined();
+		const created = expectCreatedOutcome(outcome);
+		expect(created.foldInfo).toBeUndefined();
 	});
 
 	it('uses the configured transcriptHeaderLevel to find the fold target', async () => {
@@ -1840,9 +1871,8 @@ describe('NoteWriter.writeNote foldInfo', () => {
 			makeSummary(),
 			chapters,
 		);
-		expect(outcome.status).toBe('created');
-		if (outcome.status !== 'created') throw new Error('unreachable');
+		const created = expectCreatedOutcome(outcome);
 		// With H2 configured, findTranscriptHeadingLine locates `## Transcript`.
-		expect(outcome.foldInfo).toBeDefined();
+		expect(created.foldInfo).toBeDefined();
 	});
 });
