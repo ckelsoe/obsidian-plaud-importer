@@ -2,6 +2,10 @@
 
 All notable changes to Plaud Importer will be documented in this file.
 
+## 0.2.5 — 2026-04-21
+
+- New **Show ribbon icon** setting — on by default. Toggle off to hide the left-rail icon and launch imports only from the command palette. The icon appears/disappears live on toggle, no plugin reload needed.
+
 ## 0.2.4 — 2026-04-21
 
 Token capture is now a one-liner.

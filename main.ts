@@ -19,6 +19,7 @@ interface PlaudImporterSettings {
 	secretId: string;
 	outputFolder: string;
 	onDuplicate: "skip" | "overwrite" | "prompt";
+	showRibbonIcon: boolean;
 	debug: boolean;
 	includeTranscript: boolean;
 	defaultIncludeSummary: boolean;
@@ -33,6 +34,7 @@ const DEFAULT_SETTINGS: PlaudImporterSettings = {
 	secretId: "",
 	outputFolder: "Plaud",
 	onDuplicate: "prompt",
+	showRibbonIcon: true,
 	debug: false,
 	includeTranscript: true,
 	defaultIncludeSummary: true,
@@ -105,6 +107,10 @@ export default class PlaudImporterPlugin extends Plugin {
 	// The `enabled` flag is toggled in place by the settings toggle so
 	// changes take effect immediately without reinstantiating the client.
 	debugLogger!: BufferedDebugLogger;
+	// Live reference to the ribbon icon element so the settings toggle
+	// can add or remove it without reloading the plugin. Null when the
+	// icon is currently hidden per the user's preference.
+	private ribbonIconEl: HTMLElement | null = null;
 
 	async onload() {
 		await this.loadSettings();
@@ -121,18 +127,11 @@ export default class PlaudImporterPlugin extends Plugin {
 			callback: () => this.launchImportModal("command"),
 		});
 
-		// Ribbon icon on the left rail. Same target as the command: opens
-		// the ImportModal. `audio-lines` is a Lucide icon that visually
-		// matches "audio recording" without being too literal (avoids
-		// `mic` which suggests user-facing recording, and `download`
-		// which is generic). Obsidian automatically cleans up the
-		// ribbon element when the plugin unloads — no manual teardown
-		// needed.
-		this.addRibbonIcon(
-			"audio-lines",
-			"Plaud Importer: Import recordings",
-			() => this.launchImportModal("ribbon"),
-		);
+		// Render the left-rail ribbon icon only when the user has opted
+		// in via settings. updateRibbonIcon() is idempotent and is also
+		// called from the settings toggle so enabling/disabling takes
+		// effect without reloading the plugin.
+		this.updateRibbonIcon();
 
 		this.addCommand({
 			id: "debug-copy-log",
@@ -178,6 +177,34 @@ export default class PlaudImporterPlugin extends Plugin {
 
 	onunload() {
 		this.client = undefined;
+		// Obsidian auto-detaches ribbon icons on unload; clear our
+		// reference so a subsequent onload starts from a known state.
+		this.ribbonIconEl = null;
+	}
+
+	/**
+	 * Add or remove the left-rail ribbon icon based on the current
+	 * setting. Safe to call repeatedly — no-ops when the DOM state
+	 * already matches the setting. `audio-lines` is a Lucide icon that
+	 * visually matches "audio recording" without suggesting user-facing
+	 * recording (`mic`) or being generic (`download`).
+	 */
+	updateRibbonIcon(): void {
+		if (this.settings.showRibbonIcon) {
+			if (this.ribbonIconEl !== null) {
+				return;
+			}
+			this.ribbonIconEl = this.addRibbonIcon(
+				"audio-lines",
+				"Plaud Importer: Import recordings",
+				() => this.launchImportModal("ribbon"),
+			);
+			return;
+		}
+		if (this.ribbonIconEl !== null) {
+			this.ribbonIconEl.detach();
+			this.ribbonIconEl = null;
+		}
 	}
 
 	/**
@@ -291,6 +318,21 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 						this.plugin.settings.onDuplicate =
 							value as "skip" | "overwrite" | "prompt";
 						await this.plugin.saveSettings();
+					}),
+			);
+
+		new Setting(containerEl)
+			.setName("Show ribbon icon")
+			.setDesc(
+				"Display the Plaud Importer icon in Obsidian's left rail. Turn off if you prefer to launch imports only from the command palette.",
+			)
+			.addToggle((toggle) =>
+				toggle
+					.setValue(this.plugin.settings.showRibbonIcon)
+					.onChange(async (value) => {
+						this.plugin.settings.showRibbonIcon = value;
+						await this.plugin.saveSettings();
+						this.plugin.updateRibbonIcon();
 					}),
 			);
 

@@ -1,6 +1,6 @@
 {
 	"name": "obsidian-plaud-importer",
-	"version": "0.2.4",
+	"version": "0.2.5",
 	"description": "Import meeting summaries, transcripts, and attachments from Plaud.AI into an Obsidian vault.",
 	"main": "main.js",
 	"scripts": {
