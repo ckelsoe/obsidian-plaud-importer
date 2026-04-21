@@ -2,6 +2,11 @@
 
 All notable changes to Plaud Importer will be documented in this file.
 
+## 0.2.6 — 2026-04-21
+
+- New **Ribbon icon** setting — curated dropdown of 12 Lucide icons (audio-lines, mic, headphones, podcast, radio, tape, notebook-pen, captions, users-round, volume-2, mic-vocal, file-audio-2). Live preview next to the dropdown shows the selected icon; change takes effect on the ribbon immediately with no reload
+- Default remains the existing audio-lines waveform. Future versions may replace the curated list with a searchable full-Lucide picker; the stored setting is already a raw Lucide ID so no migration will be needed
+
 ## 0.2.5 — 2026-04-21
 
 - New **Show ribbon icon** setting — on by default. Toggle off to hide the left-rail icon and launch imports only from the command palette. The icon appears/disappears live on toggle, no plugin reload needed.

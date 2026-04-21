@@ -6,6 +6,7 @@ import {
 	SecretComponent,
 	Setting,
 	requestUrl,
+	setIcon,
 	type RequestUrlResponse,
 } from "obsidian";
 import {
@@ -15,11 +16,48 @@ import {
 import { ImportModal } from "./import-modal";
 import { BufferedDebugLogger } from "./debug-logger";
 
+// Curated list of Lucide icon IDs offered in the "Ribbon icon" setting.
+// Each entry is a valid Lucide ID bundled with Obsidian's icon set. This
+// list is intentionally short for now — a future upgrade can swap the
+// dropdown for a full searchable picker without changing the settings
+// schema (the stored value is a plain Lucide ID either way).
+const RIBBON_ICON_CHOICES: ReadonlyArray<{ id: string; label: string }> = [
+	{ id: "audio-lines", label: "Audio waveform (default)" },
+	{ id: "mic", label: "Microphone" },
+	{ id: "mic-vocal", label: "Vocal mic" },
+	{ id: "headphones", label: "Headphones" },
+	{ id: "file-audio-2", label: "Audio file" },
+	{ id: "podcast", label: "Podcast" },
+	{ id: "radio", label: "Radio" },
+	{ id: "tape", label: "Cassette tape" },
+	{ id: "volume-2", label: "Speaker" },
+	{ id: "notebook-pen", label: "Notebook" },
+	{ id: "captions", label: "Captions" },
+	{ id: "users-round", label: "Meeting participants" },
+];
+const DEFAULT_RIBBON_ICON = "audio-lines";
+
+/**
+ * Coerce a stored ribbon icon ID to a known-good value. Protects against
+ * a hand-edited `data.json` or a setting left over from a future build
+ * that drops an icon from the curated list — either would render an
+ * empty ribbon slot otherwise.
+ */
+function resolveRibbonIconId(stored: string | undefined): string {
+	if (typeof stored !== "string" || stored.length === 0) {
+		return DEFAULT_RIBBON_ICON;
+	}
+	return RIBBON_ICON_CHOICES.some((choice) => choice.id === stored)
+		? stored
+		: DEFAULT_RIBBON_ICON;
+}
+
 interface PlaudImporterSettings {
 	secretId: string;
 	outputFolder: string;
 	onDuplicate: "skip" | "overwrite" | "prompt";
 	showRibbonIcon: boolean;
+	ribbonIcon: string;
 	debug: boolean;
 	includeTranscript: boolean;
 	defaultIncludeSummary: boolean;
@@ -35,6 +73,7 @@ const DEFAULT_SETTINGS: PlaudImporterSettings = {
 	outputFolder: "Plaud",
 	onDuplicate: "prompt",
 	showRibbonIcon: true,
+	ribbonIcon: DEFAULT_RIBBON_ICON,
 	debug: false,
 	includeTranscript: true,
 	defaultIncludeSummary: true,
@@ -111,6 +150,10 @@ export default class PlaudImporterPlugin extends Plugin {
 	// can add or remove it without reloading the plugin. Null when the
 	// icon is currently hidden per the user's preference.
 	private ribbonIconEl: HTMLElement | null = null;
+	// The Lucide icon ID currently rendered on `ribbonIconEl`. Tracked
+	// separately from the setting so updateRibbonIcon() knows when a
+	// pure icon swap requires detach + re-add vs. a no-op.
+	private ribbonIconId: string | null = null;
 
 	async onload() {
 		await this.loadSettings();
@@ -178,33 +221,40 @@ export default class PlaudImporterPlugin extends Plugin {
 	onunload() {
 		this.client = undefined;
 		// Obsidian auto-detaches ribbon icons on unload; clear our
-		// reference so a subsequent onload starts from a known state.
+		// state so a subsequent onload starts from a known baseline.
 		this.ribbonIconEl = null;
+		this.ribbonIconId = null;
 	}
 
 	/**
-	 * Add or remove the left-rail ribbon icon based on the current
-	 * setting. Safe to call repeatedly — no-ops when the DOM state
-	 * already matches the setting. `audio-lines` is a Lucide icon that
-	 * visually matches "audio recording" without suggesting user-facing
-	 * recording (`mic`) or being generic (`download`).
+	 * Add, remove, or swap the left-rail ribbon icon based on the
+	 * current settings. Safe to call repeatedly — no-ops when the DOM
+	 * state already matches the setting. An icon ID change triggers a
+	 * detach + re-add cycle since Obsidian has no "change icon in
+	 * place" API on the ribbon element.
 	 */
 	updateRibbonIcon(): void {
-		if (this.settings.showRibbonIcon) {
+		if (!this.settings.showRibbonIcon) {
 			if (this.ribbonIconEl !== null) {
-				return;
+				this.ribbonIconEl.detach();
+				this.ribbonIconEl = null;
+				this.ribbonIconId = null;
 			}
-			this.ribbonIconEl = this.addRibbonIcon(
-				"audio-lines",
-				"Plaud Importer: Import recordings",
-				() => this.launchImportModal("ribbon"),
-			);
+			return;
+		}
+		const desiredId = resolveRibbonIconId(this.settings.ribbonIcon);
+		if (this.ribbonIconEl !== null && this.ribbonIconId === desiredId) {
 			return;
 		}
 		if (this.ribbonIconEl !== null) {
 			this.ribbonIconEl.detach();
-			this.ribbonIconEl = null;
 		}
+		this.ribbonIconEl = this.addRibbonIcon(
+			desiredId,
+			"Plaud Importer: Import recordings",
+			() => this.launchImportModal("ribbon"),
+		);
+		this.ribbonIconId = desiredId;
 	}
 
 	/**
@@ -335,6 +385,33 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 						this.plugin.updateRibbonIcon();
 					}),
 			);
+
+		// Ribbon icon picker + live preview. The preview element is
+		// rendered via Obsidian's setIcon() helper, which swaps the SVG
+		// in place every time the dropdown value changes so the user
+		// can see the icon before saving.
+		const iconSetting = new Setting(containerEl)
+			.setName("Ribbon icon")
+			.setDesc(
+				"Which icon to display in the left rail. Only applies when 'Show ribbon icon' is on.",
+			);
+		const previewEl = iconSetting.controlEl.createDiv({
+			cls: "plaud-importer-ribbon-preview",
+		});
+		setIcon(previewEl, resolveRibbonIconId(this.plugin.settings.ribbonIcon));
+		iconSetting.addDropdown((dropdown) => {
+			for (const choice of RIBBON_ICON_CHOICES) {
+				dropdown.addOption(choice.id, choice.label);
+			}
+			dropdown
+				.setValue(resolveRibbonIconId(this.plugin.settings.ribbonIcon))
+				.onChange(async (value) => {
+					this.plugin.settings.ribbonIcon = value;
+					await this.plugin.saveSettings();
+					setIcon(previewEl, resolveRibbonIconId(value));
+					this.plugin.updateRibbonIcon();
+				});
+		});
 
 		containerEl.createEl("h3", { text: "Default artifact selection" });
 

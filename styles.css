@@ -107,6 +107,21 @@
 	display: none;
 }
 
+.plaud-importer-ribbon-preview {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 1.8em;
+	height: 1.8em;
+	margin-right: 0.5em;
+	color: var(--text-muted);
+}
+
+.plaud-importer-ribbon-preview svg {
+	width: 1.2em;
+	height: 1.2em;
+}
+
 .plaud-importer-sentinel {
 	height: 1px;
 	width: 100%;
