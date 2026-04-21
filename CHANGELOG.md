@@ -2,6 +2,13 @@
 
 All notable changes to Plaud Importer will be documented in this file.
 
+## 0.2.1 — 2026-04-21
+
+Duplicate prompt modal polish.
+
+- Button row wraps (`flex-wrap`) so buttons no longer overflow the modal width on narrow widths
+- "Overwrite all remaining" / "Skip all remaining" buttons are hidden when only one recording is selected — the escalation is meaningless for a single-item import
+
 ## 0.2.0 — 2026-04-21
 
 Duplicate handling: new "Ask each time" policy.

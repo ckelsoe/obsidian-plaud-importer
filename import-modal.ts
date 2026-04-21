@@ -629,6 +629,7 @@ export type DuplicateDecisionChoice =
 class DuplicateDecisionModal extends Modal {
 	private readonly recordingTitle: string;
 	private readonly targetPath: string;
+	private readonly showBatchOptions: boolean;
 	private readonly onDone: (choice: DuplicateDecisionChoice) => void;
 	private resolved = false;
 
@@ -636,11 +637,13 @@ class DuplicateDecisionModal extends Modal {
 		app: App,
 		recordingTitle: string,
 		targetPath: string,
+		showBatchOptions: boolean,
 		onDone: (choice: DuplicateDecisionChoice) => void,
 	) {
 		super(app);
 		this.recordingTitle = recordingTitle;
 		this.targetPath = targetPath;
+		this.showBatchOptions = showBatchOptions;
 		this.onDone = onDone;
 	}
 
@@ -670,8 +673,13 @@ class DuplicateDecisionModal extends Modal {
 		};
 		addButton('Overwrite', 'mod-warning', 'overwrite');
 		addButton('Skip', 'mod-cta', 'skip');
-		addButton('Overwrite all remaining', 'mod-warning', 'overwrite-all');
-		addButton('Skip all remaining', '', 'skip-all');
+		// "All remaining" escalations only make sense when more than
+		// one duplicate could still arrive in this batch. For a single-
+		// item import they are pure visual noise.
+		if (this.showBatchOptions) {
+			addButton('Overwrite all remaining', 'mod-warning', 'overwrite-all');
+			addButton('Skip all remaining', '', 'skip-all');
+		}
 		addButton('Cancel import', '', 'cancel');
 	}
 
@@ -755,6 +763,11 @@ export class ImportModal extends Modal {
 	// every onImportClick invocation so decisions do not leak between
 	// import runs.
 	private stickyDuplicateDecision: 'overwrite' | 'skip' | null = null;
+	// Number of recordings in the current import batch. Consulted by the
+	// per-file duplicate prompt to decide whether to render the
+	// "all remaining" escalation buttons — they are hidden for
+	// single-item imports where the option is meaningless.
+	private currentBatchSize = 0;
 
 	constructor(app: App, client: PlaudClient, noteWriterOptions: ImportModalOptions) {
 		super(app);
@@ -1484,6 +1497,7 @@ export class ImportModal extends Modal {
 		// this batch. Only 'prompt' mode consumes this field, but
 		// resetting unconditionally keeps the invariant simple.
 		this.stickyDuplicateDecision = null;
+		this.currentBatchSize = selected.length;
 
 		// Construct the writer lazily. A NoteWriterError here means the
 		// user's config is bad ("..", invalid onDuplicate) — surface via
@@ -1710,7 +1724,11 @@ export class ImportModal extends Modal {
 		if (this.stickyDuplicateDecision !== null) {
 			return this.stickyDuplicateDecision;
 		}
-		const choice = await this.askDuplicateDecision(ctx.recordingTitle, ctx.targetPath);
+		const choice = await this.askDuplicateDecision(
+			ctx.recordingTitle,
+			ctx.targetPath,
+			this.currentBatchSize > 1,
+		);
 		switch (choice) {
 			case 'overwrite':
 				return 'overwrite';
@@ -1732,12 +1750,14 @@ export class ImportModal extends Modal {
 	private askDuplicateDecision(
 		recordingTitle: string,
 		targetPath: string,
+		showBatchOptions: boolean,
 	): Promise<DuplicateDecisionChoice> {
 		return new Promise((resolve) => {
 			const modal = new DuplicateDecisionModal(
 				this.app,
 				recordingTitle,
 				targetPath,
+				showBatchOptions,
 				resolve,
 			);
 			modal.open();

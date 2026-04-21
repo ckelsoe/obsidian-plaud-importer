@@ -136,9 +136,14 @@
 /* Button row at the bottom of the modal */
 .plaud-importer-buttons {
 	display: flex;
+	flex-wrap: wrap;
 	gap: 0.5em;
 	justify-content: flex-end;
 	margin-top: 1.25em;
+}
+
+.plaud-importer-buttons > button {
+	flex: 0 0 auto;
 }
 
 /* Post-import summary state */
