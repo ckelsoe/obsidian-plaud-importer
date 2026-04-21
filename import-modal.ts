@@ -673,14 +673,16 @@ class DuplicateDecisionModal extends Modal {
 		};
 		addButton('Overwrite', 'mod-warning', 'overwrite');
 		addButton('Skip', 'mod-cta', 'skip');
-		// "All remaining" escalations only make sense when more than
-		// one duplicate could still arrive in this batch. For a single-
-		// item import they are pure visual noise.
+		// "All remaining" and "Cancel import" only make sense when more
+		// than one duplicate could still arrive in this batch. For a
+		// single-item import Skip and Cancel are functionally identical
+		// (both leave the existing note untouched), so rendering both
+		// is user-hostile — hide the escalation set entirely.
 		if (this.showBatchOptions) {
 			addButton('Overwrite all remaining', 'mod-warning', 'overwrite-all');
 			addButton('Skip all remaining', '', 'skip-all');
+			addButton('Cancel import', '', 'cancel');
 		}
-		addButton('Cancel import', '', 'cancel');
 	}
 
 	onClose(): void {

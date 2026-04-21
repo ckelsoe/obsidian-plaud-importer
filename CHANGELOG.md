@@ -2,6 +2,10 @@
 
 All notable changes to Plaud Importer will be documented in this file.
 
+## 0.2.2 — 2026-04-21
+
+- Duplicate prompt hides "Cancel import" for single-item imports — Skip and Cancel are functionally identical for one recording, so showing both was redundant. Multi-item batches still get the full escalation set.
+
 ## 0.2.1 — 2026-04-21
 
 Duplicate prompt modal polish.
