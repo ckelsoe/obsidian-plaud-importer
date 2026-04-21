@@ -18,7 +18,7 @@ import { BufferedDebugLogger } from "./debug-logger";
 interface PlaudImporterSettings {
 	secretId: string;
 	outputFolder: string;
-	onDuplicate: "skip" | "overwrite";
+	onDuplicate: "skip" | "overwrite" | "prompt";
 	debug: boolean;
 	includeTranscript: boolean;
 	defaultIncludeSummary: boolean;
@@ -32,7 +32,7 @@ interface PlaudImporterSettings {
 const DEFAULT_SETTINGS: PlaudImporterSettings = {
 	secretId: "",
 	outputFolder: "Plaud",
-	onDuplicate: "skip",
+	onDuplicate: "prompt",
 	debug: false,
 	includeTranscript: true,
 	defaultIncludeSummary: true,
@@ -285,10 +285,11 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 				dropdown
 					.addOption("skip", "Skip")
 					.addOption("overwrite", "Overwrite")
+					.addOption("prompt", "Ask each time")
 					.setValue(this.plugin.settings.onDuplicate)
 					.onChange(async (value) => {
 						this.plugin.settings.onDuplicate =
-							value as "skip" | "overwrite";
+							value as "skip" | "overwrite" | "prompt";
 						await this.plugin.saveSettings();
 					}),
 			);

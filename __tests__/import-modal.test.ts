@@ -182,7 +182,7 @@ describe('classifyError', () => {
 
 		it('maps an invalid-onDuplicate error to the config-error category', () => {
 			const err = new NoteWriterError(
-				"Invalid onDuplicate policy \"bogus\" — expected 'skip' or 'overwrite'",
+				"Invalid onDuplicate policy \"bogus\" — expected 'skip', 'overwrite', or 'prompt'",
 			);
 			const result = classifyError(err);
 			expect(result.category).toBe('config-error');

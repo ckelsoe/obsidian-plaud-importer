@@ -1,6 +1,7 @@
 import {
 	NoteWriter,
 	NoteWriterError,
+	NoteWriterCancelledError,
 	expandTitleWithYear,
 	extractPlaudIdFromFrontmatter,
 	extractSpeakers,
@@ -781,6 +782,89 @@ describe('NoteWriter', () => {
 		expect(vault.overwrittenPaths).toContain('Plaud/Morning standup.md');
 		expect(vault.files.get('Plaud/Morning standup.md')).toContain('# Morning standup');
 		expect(vault.files.get('Plaud/Morning standup.md')).not.toBe('existing content');
+	});
+
+	describe('prompt policy', () => {
+		it('invokes the callback with the target context when a same-id duplicate exists', async () => {
+			const vault = makeFakeVault();
+			vault.files.set('Plaud/Morning standup.md', '---\nplaud-id: abc123\n---\n');
+			const received: Array<{
+				recordingId: string;
+				recordingTitle: string;
+				targetPath: string;
+			}> = [];
+			const writer = new NoteWriter(vault, {
+				outputFolder: 'Plaud',
+				onDuplicate: 'prompt',
+				promptOnDuplicate: async (ctx) => {
+					received.push({
+						recordingId: ctx.recordingId,
+						recordingTitle: ctx.recordingTitle,
+						targetPath: ctx.targetPath,
+					});
+					return 'overwrite';
+				},
+			});
+
+			const outcome = await writer.writeNote(makeRecording(), makeTranscript(), makeSummary());
+
+			expect(outcome.status).toBe('overwritten');
+			expect(received).toEqual([
+				{
+					recordingId: 'abc123',
+					recordingTitle: 'Morning standup',
+					targetPath: 'Plaud/Morning standup.md',
+				},
+			]);
+		});
+
+		it('skips the write when the callback returns skip', async () => {
+			const vault = makeFakeVault();
+			vault.files.set('Plaud/Morning standup.md', '---\nplaud-id: abc123\n---\noriginal');
+			const writer = new NoteWriter(vault, {
+				outputFolder: 'Plaud',
+				onDuplicate: 'prompt',
+				promptOnDuplicate: async () => 'skip',
+			});
+
+			const outcome = await writer.writeNote(makeRecording(), makeTranscript(), makeSummary());
+
+			expect(outcome.status).toBe('skipped');
+			expect(vault.overwrittenPaths).toEqual([]);
+			expect(vault.files.get('Plaud/Morning standup.md')).toBe(
+				'---\nplaud-id: abc123\n---\noriginal',
+			);
+		});
+
+		it('throws NoteWriterCancelledError when the callback returns cancel', async () => {
+			const vault = makeFakeVault();
+			vault.files.set('Plaud/Morning standup.md', '---\nplaud-id: abc123\n---\n');
+			const writer = new NoteWriter(vault, {
+				outputFolder: 'Plaud',
+				onDuplicate: 'prompt',
+				promptOnDuplicate: async () => 'cancel',
+			});
+
+			await expect(
+				writer.writeNote(makeRecording(), makeTranscript(), makeSummary()),
+			).rejects.toThrow(NoteWriterCancelledError);
+			expect(vault.overwrittenPaths).toEqual([]);
+		});
+
+		it('does not invoke the callback when the file does not exist yet', async () => {
+			const vault = makeFakeVault();
+			const promptSpy = jest.fn(async () => 'overwrite' as const);
+			const writer = new NoteWriter(vault, {
+				outputFolder: 'Plaud',
+				onDuplicate: 'prompt',
+				promptOnDuplicate: promptSpy,
+			});
+
+			const outcome = await writer.writeNote(makeRecording(), makeTranscript(), makeSummary());
+
+			expect(outcome.status).toBe('created');
+			expect(promptSpy).not.toHaveBeenCalled();
+		});
 	});
 
 	it('returns the created status when the file is new', async () => {

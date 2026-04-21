@@ -23,7 +23,9 @@ import {
 import {
 	NoteWriter,
 	NoteWriterError,
+	NoteWriterCancelledError,
 	type DuplicatePolicy,
+	type DuplicatePromptCallback,
 	mergeTagSources,
 	findTranscriptHeadingLine,
 	type NoteWriterOptions,
@@ -611,6 +613,76 @@ class OverwriteConfirmationModal extends Modal {
 	}
 }
 
+/**
+ * Five-button per-duplicate prompt used when the user has chosen "Ask
+ * each time" duplicate handling. The last three buttons (overwrite-all,
+ * skip-all, cancel) escalate the decision: the caller uses them to
+ * short-circuit subsequent duplicates in the same batch.
+ */
+export type DuplicateDecisionChoice =
+	| 'overwrite'
+	| 'skip'
+	| 'overwrite-all'
+	| 'skip-all'
+	| 'cancel';
+
+class DuplicateDecisionModal extends Modal {
+	private readonly recordingTitle: string;
+	private readonly targetPath: string;
+	private readonly onDone: (choice: DuplicateDecisionChoice) => void;
+	private resolved = false;
+
+	constructor(
+		app: App,
+		recordingTitle: string,
+		targetPath: string,
+		onDone: (choice: DuplicateDecisionChoice) => void,
+	) {
+		super(app);
+		this.recordingTitle = recordingTitle;
+		this.targetPath = targetPath;
+		this.onDone = onDone;
+	}
+
+	onOpen(): void {
+		this.setTitle('Existing note found — overwrite?');
+		const { contentEl } = this;
+		contentEl.empty();
+		contentEl.createEl('p', {
+			text: `A note for "${this.recordingTitle}" already exists at:`,
+		});
+		contentEl.createEl('p', { text: this.targetPath, cls: 'plaud-importer-mono' });
+		const warning = contentEl.createEl('p', { cls: 'mod-warning' });
+		warning.createEl('strong', { text: 'Warning: ' });
+		warning.appendText(
+			'Continuing with overwrite will replace the existing note content and clear its matching -assets folder. Any manual edits to that note or its imported attachments will be lost.',
+		);
+		contentEl.createEl('p', { text: 'Choose how to handle this note:' });
+
+		const buttonRow = contentEl.createDiv({ cls: 'plaud-importer-buttons' });
+		const addButton = (text: string, cls: string, choice: DuplicateDecisionChoice): void => {
+			const btn = buttonRow.createEl('button', { text, cls });
+			btn.addEventListener('click', () => {
+				this.resolved = true;
+				this.onDone(choice);
+				this.close();
+			});
+		};
+		addButton('Overwrite', 'mod-warning', 'overwrite');
+		addButton('Skip', 'mod-cta', 'skip');
+		addButton('Overwrite all remaining', 'mod-warning', 'overwrite-all');
+		addButton('Skip all remaining', '', 'skip-all');
+		addButton('Cancel import', '', 'cancel');
+	}
+
+	onClose(): void {
+		this.contentEl.empty();
+		if (!this.resolved) {
+			this.onDone('cancel');
+		}
+	}
+}
+
 // -----------------------------------------------------------------------------
 // Modal
 // -----------------------------------------------------------------------------
@@ -676,6 +748,13 @@ export class ImportModal extends Modal {
 	// stop writing to the vault without continuing through the rest of the
 	// selected recordings. Checked between iterations in onImportClick.
 	private aborted = false;
+	// Sticky choice for the "Ask each time" duplicate policy. Set when
+	// the user picks "Overwrite all remaining" or "Skip all remaining"
+	// from the per-file prompt, so subsequent duplicates in the same
+	// batch resolve without re-prompting. Reset to null at the start of
+	// every onImportClick invocation so decisions do not leak between
+	// import runs.
+	private stickyDuplicateDecision: 'overwrite' | 'skip' | null = null;
 
 	constructor(app: App, client: PlaudClient, noteWriterOptions: ImportModalOptions) {
 		super(app);
@@ -1401,6 +1480,11 @@ export class ImportModal extends Modal {
 			return;
 		}
 
+		// Reset sticky state so choices from a prior run do not leak into
+		// this batch. Only 'prompt' mode consumes this field, but
+		// resetting unconditionally keeps the invariant simple.
+		this.stickyDuplicateDecision = null;
+
 		// Construct the writer lazily. A NoteWriterError here means the
 		// user's config is bad ("..", invalid onDuplicate) — surface via
 		// the error state with the config-error classification so the UI
@@ -1412,6 +1496,8 @@ export class ImportModal extends Modal {
 			writer = new NoteWriter(this.app.vault, {
 				...this.noteWriterOptions,
 				onDuplicate: duplicatePolicy,
+				promptOnDuplicate:
+					duplicatePolicy === 'prompt' ? this.handleDuplicatePrompt : undefined,
 			});
 		} catch (err) {
 			if (err instanceof NoteWriterError) {
@@ -1550,6 +1636,16 @@ export class ImportModal extends Modal {
 				// written note's frontmatter.
 				results.push({ kind: 'written', recording, writeOutcome });
 			} catch (err) {
+				// User cancelled the per-file duplicate prompt. Break the
+				// loop without recording a failure — the current recording
+				// was not written, but the cancellation is user-intent,
+				// not an error condition worth classifying.
+				if (err instanceof NoteWriterCancelledError) {
+					new Notice(
+						`${formatImportNotice(tallyImportResults(results))} (cancelled at ${i}/${selected.length})`,
+					);
+					return;
+				}
 				// Log the full error object (including stack and any wrapped
 				// `cause`) so it's visible in DevTools. TODO: also plumb a
 				// logError(errorIds.IMPORT_RECORDING_FAILED, ...) telemetry
@@ -1584,6 +1680,8 @@ export class ImportModal extends Modal {
 	private async resolveDuplicatePolicyForImport(
 		selectedCount: number,
 	): Promise<DuplicatePolicy | null> {
+		// 'skip' and 'prompt' do not require a batch-level confirmation.
+		// 'prompt' defers the decision to each duplicate at write time.
 		if (this.noteWriterOptions.onDuplicate !== 'overwrite') {
 			return this.noteWriterOptions.onDuplicate;
 		}
@@ -1596,6 +1694,54 @@ export class ImportModal extends Modal {
 			return 'skip';
 		}
 		return 'overwrite';
+	}
+
+	/**
+	 * Callback handed to NoteWriter when the duplicate policy is
+	 * 'prompt'. Honors the sticky decision first so "Overwrite all
+	 * remaining" / "Skip all remaining" short-circuits subsequent
+	 * prompts in the same batch. Cancel bubbles back as 'cancel' which
+	 * the writer translates into NoteWriterCancelledError.
+	 */
+	private readonly handleDuplicatePrompt: DuplicatePromptCallback = async (ctx) => {
+		if (this.aborted) {
+			return 'cancel';
+		}
+		if (this.stickyDuplicateDecision !== null) {
+			return this.stickyDuplicateDecision;
+		}
+		const choice = await this.askDuplicateDecision(ctx.recordingTitle, ctx.targetPath);
+		switch (choice) {
+			case 'overwrite':
+				return 'overwrite';
+			case 'skip':
+				return 'skip';
+			case 'overwrite-all':
+				this.stickyDuplicateDecision = 'overwrite';
+				new Notice('Plaud Importer: overwriting all remaining duplicates in this run.');
+				return 'overwrite';
+			case 'skip-all':
+				this.stickyDuplicateDecision = 'skip';
+				new Notice('Plaud Importer: skipping all remaining duplicates in this run.');
+				return 'skip';
+			case 'cancel':
+				return 'cancel';
+		}
+	};
+
+	private askDuplicateDecision(
+		recordingTitle: string,
+		targetPath: string,
+	): Promise<DuplicateDecisionChoice> {
+		return new Promise((resolve) => {
+			const modal = new DuplicateDecisionModal(
+				this.app,
+				recordingTitle,
+				targetPath,
+				resolve,
+			);
+			modal.open();
+		});
 	}
 
 	private promptOverwriteConfirmation(

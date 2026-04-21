@@ -70,7 +70,42 @@ export interface VaultLike {
 	process(file: FileLike, fn: (data: string) => string): Promise<string>;
 }
 
-export type DuplicatePolicy = 'skip' | 'overwrite';
+export type DuplicatePolicy = 'skip' | 'overwrite' | 'prompt';
+
+/**
+ * Context passed to the prompt callback when a same-recording duplicate
+ * is encountered. Intentionally minimal: the callback's job is to ask
+ * the user a yes/no/cancel question, not to render recording metadata.
+ */
+export interface DuplicatePromptContext {
+	readonly recordingId: string;
+	readonly recordingTitle: string;
+	readonly targetPath: string;
+}
+
+/**
+ * Decision returned by the prompt callback. Sticky "apply to all"
+ * escalation lives at the caller layer — from the writer's point of
+ * view each call either overwrites this file, skips this file, or
+ * aborts the whole batch.
+ */
+export type DuplicatePromptDecision = 'overwrite' | 'skip' | 'cancel';
+
+export type DuplicatePromptCallback = (
+	context: DuplicatePromptContext,
+) => Promise<DuplicatePromptDecision>;
+
+/**
+ * Thrown when the user cancels an in-progress import from the per-file
+ * duplicate prompt. Distinct from NoteWriterError so callers can break
+ * the batch loop without treating it as a write failure.
+ */
+export class NoteWriterCancelledError extends Error {
+	constructor(message = 'Import cancelled by user from duplicate prompt') {
+		super(message);
+		this.name = 'NoteWriterCancelledError';
+	}
+}
 
 /**
  * Markdown heading level. Matches Obsidian's H1-H6 and validates
@@ -82,6 +117,13 @@ export type HeadingLevel = 1 | 2 | 3 | 4 | 5 | 6;
 export interface NoteWriterOptions {
 	readonly outputFolder: string;
 	readonly onDuplicate: DuplicatePolicy;
+	/**
+	 * Required when `onDuplicate === 'prompt'`. Invoked per duplicate
+	 * same-recording match so the caller can ask the user what to do.
+	 * Ignored for 'skip' and 'overwrite'. Construction throws if the
+	 * policy is 'prompt' but this callback is missing.
+	 */
+	readonly promptOnDuplicate?: DuplicatePromptCallback;
 	/**
 	 * When false, the writer omits the transcript section entirely
 	 * (no flat callout, no heading-wrapped chaptered form). The
@@ -868,17 +910,28 @@ export class NoteWriter {
 	// safe to concatenate with a filename.
 	private readonly outputFolder: string;
 	private readonly onDuplicate: DuplicatePolicy;
+	private readonly promptOnDuplicate?: DuplicatePromptCallback;
 	private readonly defaultFormatOptions: FormatMarkdownOptions;
 
 	constructor(vault: VaultLike, options: NoteWriterOptions) {
-		if (options.onDuplicate !== 'skip' && options.onDuplicate !== 'overwrite') {
+		if (
+			options.onDuplicate !== 'skip' &&
+			options.onDuplicate !== 'overwrite' &&
+			options.onDuplicate !== 'prompt'
+		) {
 			throw new NoteWriterError(
-				`Invalid onDuplicate policy "${String(options.onDuplicate)}" — expected 'skip' or 'overwrite'`,
+				`Invalid onDuplicate policy "${String(options.onDuplicate)}" — expected 'skip', 'overwrite', or 'prompt'`,
+			);
+		}
+		if (options.onDuplicate === 'prompt' && typeof options.promptOnDuplicate !== 'function') {
+			throw new NoteWriterError(
+				"Invalid onDuplicate policy 'prompt' — a promptOnDuplicate callback is required",
 			);
 		}
 		this.vault = vault;
 		this.outputFolder = normalizeFolderPath(options.outputFolder);
 		this.onDuplicate = options.onDuplicate;
+		this.promptOnDuplicate = options.promptOnDuplicate;
 		this.defaultFormatOptions = {
 			includeTranscript: options.includeTranscript,
 			includeSummary: options.includeSummary,
@@ -987,10 +1040,37 @@ export class NoteWriter {
 			return { status: 'skipped', path: targetPath };
 		}
 
-		// onDuplicate === 'overwrite' — use process so the write is atomic
-		// and respects any other plugin's read-modify-write of the same file.
-		// The callback ignores the previous content by design: we are
-		// replacing the entire file with our regenerated markdown.
+		// Resolve prompt-mode into a concrete action. 'skip' short-circuits,
+		// 'cancel' throws, anything else falls through to the overwrite path
+		// shared with onDuplicate === 'overwrite'.
+		if (this.onDuplicate === 'prompt') {
+			if (!this.promptOnDuplicate) {
+				throw new NoteWriterError(
+					'promptOnDuplicate callback missing at write time — this is a plugin bug',
+				);
+			}
+			const decision = await this.promptOnDuplicate({
+				recordingId: recording.id,
+				recordingTitle: recording.title,
+				targetPath,
+			});
+			if (decision === 'cancel') {
+				throw new NoteWriterCancelledError();
+			}
+			if (decision !== 'overwrite' && decision !== 'skip') {
+				throw new NoteWriterError(
+					`promptOnDuplicate returned invalid decision "${String(decision)}"`,
+				);
+			}
+			if (decision === 'skip') {
+				return { status: 'skipped', path: targetPath };
+			}
+		}
+
+		// Overwrite path — use process so the write is atomic and
+		// respects any other plugin's read-modify-write of the same
+		// file. The callback ignores the previous content by design: we
+		// are replacing the entire file with our regenerated markdown.
 		try {
 			await this.vault.process(existing, () => markdown);
 		} catch (cause) {
