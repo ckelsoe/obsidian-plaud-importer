@@ -1,20 +1,20 @@
 # Plaud Importer
 
-> ## ⚠️ Early Alpha — Use at Your Own Risk
+> ## ⚠️ Early Alpha
 >
-> **This plugin is in early alpha and under active development.** Expect bugs, breaking changes between releases, incomplete features, and rough edges. It talks to an **undocumented, reverse-engineered Plaud web API** that Plaud can change or break at any time without notice.
+> **This plugin is in early alpha and under active development.** Expect bugs, UI changes between releases, and occasional rough edges. It talks to an **undocumented, reverse-engineered Plaud web API** that Plaud can change at any time.
 >
-> **Before you install:**
-> - **Back up your vault.** The plugin writes notes and downloads attachments; a bug could overwrite or duplicate files. Don't point it at a production vault until you've tested in a throwaway one.
-> - **Treat imported data as untrusted** until you've spot-checked it against the Plaud web app.
-> - **Your Plaud token is stored via Obsidian's `SecretStorage`** (per-vault, not synced). Revoke and re-issue it if anything looks off.
-> - Features described below may regress or change shape release to release while the API is still being characterized.
+> **What this plugin does and doesn't do:**
+> - It **adds new notes and attachments** under the output folder you configure — it does not scan, modify, or delete existing vault content outside that folder.
+> - Imported content is **Plaud's own data** (your recordings, Plaud's AI summary and transcript). The plugin renders it into a note with frontmatter and headings; it does not rewrite or reinterpret the transcript or summary text.
+> - When a note already exists at the target path, behavior follows your **Duplicate handling** setting (Skip / Overwrite / Ask) — overwrites only happen when you choose them.
+> - Your Plaud token is stored via Obsidian's `SecretStorage` (per-vault, not synced).
 >
-> **No warranty. No guarantees. You accept all risk by installing this plugin.**
+> No warranty — use at your own risk, and you may want to test in a non-critical vault first.
 >
 > ### Please report issues
 >
-> Bug reports are the single biggest help right now — every reproducible issue tightens the plugin. If something breaks, behaves oddly, or doesn't match what Plaud shows on the web:
+> Bug reports are the single biggest help right now. If something breaks, behaves oddly, or doesn't match what Plaud shows on the web:
 >
 > 1. **File a GitHub issue** at [ckelsoe/obsidian-plaud-importer/issues](https://github.com/ckelsoe/obsidian-plaud-importer/issues).
 > 2. Include your **Obsidian version**, **plugin version**, **OS**, and **steps to reproduce**.
