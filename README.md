@@ -1,5 +1,28 @@
 # Plaud Importer
 
+> ## ⚠️ Early Alpha — Use at Your Own Risk
+>
+> **This plugin is in early alpha and under active development.** Expect bugs, breaking changes between releases, incomplete features, and rough edges. It talks to an **undocumented, reverse-engineered Plaud web API** that Plaud can change or break at any time without notice.
+>
+> **Before you install:**
+> - **Back up your vault.** The plugin writes notes and downloads attachments; a bug could overwrite or duplicate files. Don't point it at a production vault until you've tested in a throwaway one.
+> - **Treat imported data as untrusted** until you've spot-checked it against the Plaud web app.
+> - **Your Plaud token is stored via Obsidian's `SecretStorage`** (per-vault, not synced). Revoke and re-issue it if anything looks off.
+> - Features described below may regress or change shape release to release while the API is still being characterized.
+>
+> **No warranty. No guarantees. You accept all risk by installing this plugin.**
+>
+> ### Please report issues
+>
+> Bug reports are the single biggest help right now — every reproducible issue tightens the plugin. If something breaks, behaves oddly, or doesn't match what Plaud shows on the web:
+>
+> 1. **File a GitHub issue** at [ckelsoe/obsidian-plaud-importer/issues](https://github.com/ckelsoe/obsidian-plaud-importer/issues).
+> 2. Include your **Obsidian version**, **plugin version**, **OS**, and **steps to reproduce**.
+> 3. Enable **Debug log** in plugin settings, reproduce the issue, and paste the captured request/response trace (auth headers are redacted automatically).
+> 4. Attach a screenshot or the generated note if the output looks wrong.
+>
+> Feature requests and API-shape observations are welcome too — open an issue or discussion.
+
 Import meeting recordings, AI summaries, transcripts, and attachments from [Plaud.AI](https://www.plaud.ai/) into your Obsidian vault as markdown notes.
 
 Each recording becomes a single note with frontmatter metadata, a Plaud-generated summary, and a heading-based transcript section with chapter navigation. Images, mind-maps, and other Plaud artifacts land in a matching `-assets` folder next to the note.
