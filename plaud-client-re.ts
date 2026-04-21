@@ -482,7 +482,12 @@ export class ReverseEngineeredPlaudClient implements PlaudClient {
 					endpoint,
 				);
 			}
-			const token = rawToken.trim();
+			// Plaud's web app stores the token in localStorage as
+			// `bearer eyJ…`, so a user who copies the value verbatim
+			// would otherwise double-prefix to `Bearer bearer eyJ…` and
+			// get rejected. Strip any leading `bearer ` (case-insensitive)
+			// before we prepend our own capitalized scheme token.
+			const token = rawToken.trim().replace(/^bearer\s+/i, '');
 			headers.Authorization = `Bearer ${token}`;
 		}
 

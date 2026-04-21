@@ -51,26 +51,16 @@ Open **Settings → Community plugins → Plaud Importer** and configure:
 
 ### Plaud token
 
-The plugin authenticates against Plaud using your web session JWT. Store it via the built-in `SecretComponent`.
+The plugin authenticates against Plaud using your web session token. Capture it once:
 
-**Easiest method — DevTools Console** (works in Edge, Chrome, Firefox, any Chromium browser regardless of which sidebar labels their storage inspector uses):
-
-1. Sign in to [web.plaud.ai](https://web.plaud.ai) in a browser.
-2. Press **F12** to open DevTools.
-3. Click the **Console** tab.
-4. Paste this and press Enter:
+1. Sign in to [web.plaud.ai](https://web.plaud.ai) in your browser.
+2. Press **F12** to open DevTools and click the **Console** tab.
+3. Paste this and press Enter (Edge/Chrome may make you type `allow pasting` once before it accepts pasted code):
    ```js
-   copy(localStorage.getItem('token'))
+   copy(localStorage.getItem('tokenstr'))
    ```
-   If `copy()` is unavailable, run `localStorage.getItem('token')` and copy the returned string manually (don't include the surrounding quotes).
-5. In Obsidian settings, click the secret field, pick **Create new secret**, paste the token, and save.
-
-**Alternative method — storage inspector:**
-
-- **Edge / Chrome**: DevTools → **Application** tab → in the left sidebar expand **Storage** → **Local storage** → `https://web.plaud.ai` → copy the value of the `token` key. (Some Edge versions show this as **Application** → **Local storage** directly, without the Storage wrapper.)
-- **Firefox**: DevTools → **Storage** tab → **Local Storage** → `https://web.plaud.ai` → copy the value of the `token` key.
-
-The token is a long JWT that starts with `eyJ…`.
+   Your token is now on the clipboard. The value looks like `bearer eyJhbGci…` — the plugin normalizes the `bearer ` prefix internally, so paste exactly what you copied without editing it.
+4. In Obsidian: **Settings → Community plugins → Plaud Importer**. Click the Plaud token field, choose **Create new secret**, paste, and save.
 
 The token is stored in Obsidian's per-vault secret storage. It is **never written to `data.json`** and does not travel through Obsidian Sync. Switching vaults requires re-entering the token.
 

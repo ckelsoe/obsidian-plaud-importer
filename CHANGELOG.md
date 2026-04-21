@@ -2,6 +2,13 @@
 
 All notable changes to Plaud Importer will be documented in this file.
 
+## 0.2.4 — 2026-04-21
+
+Token capture is now a one-liner.
+
+- Client strips any leading `bearer ` prefix from the stored token before prepending its own `Bearer ` scheme, so users can paste the raw `tokenstr` value from `web.plaud.ai` local storage verbatim without editing the `bearer ` prefix out first
+- README token-capture section reduced to four steps: open DevTools Console, run one `copy()` line, paste into the Obsidian secret field, save
+
 ## 0.2.3 — 2026-04-21
 
 Submission-readiness pass.
