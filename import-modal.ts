@@ -1240,10 +1240,9 @@ export class ImportModal extends Modal {
 		this.progressEl = progressEl;
 		this.progressTextEl = progressEl.createDiv({ cls: 'plaud-importer-progress-text' });
 		this.progressActionButton = progressEl.createEl('button', {
-			cls: 'plaud-importer-progress-action',
+			cls: 'plaud-importer-progress-action plaud-importer-hidden',
 		});
 		this.progressActionButton.textContent = 'Load more recordings';
-		this.progressActionButton.style.display = 'none';
 		this.progressActionButton.addEventListener('click', () => {
 			this.onProgressActionClick();
 		});
@@ -1305,11 +1304,11 @@ export class ImportModal extends Modal {
 			return;
 		}
 		if (label === null) {
-			this.progressActionButton.style.display = 'none';
+			this.progressActionButton.toggleClass('plaud-importer-hidden', true);
 			this.progressActionButton.disabled = false;
 			return;
 		}
-		this.progressActionButton.style.display = '';
+		this.progressActionButton.toggleClass('plaud-importer-hidden', false);
 		this.progressActionButton.textContent = label;
 		this.progressActionButton.disabled = false;
 	}

@@ -103,6 +103,10 @@
 	cursor: default;
 }
 
+.plaud-importer-hidden {
+	display: none;
+}
+
 .plaud-importer-sentinel {
 	height: 1px;
 	width: 100%;
