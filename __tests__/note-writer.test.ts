@@ -16,6 +16,7 @@ import {
 	groupTranscriptByChapters,
 	mergeTagSources,
 	sanitizeFilename,
+	substitutePlaudPlaceholders,
 	type FileLike,
 	type FolderLike,
 	type TranscriptChapterGroup,
@@ -451,6 +452,69 @@ describe('formatFrontmatter', () => {
 		const fm = formatFrontmatter(makeRecording(), []);
 		expect(fm).toContain('source: plaud');
 	});
+
+	// Summary extras emit conditional plaud-* lines. Each line appears
+	// only when the corresponding extra is present on Summary; missing
+	// extras produce no output, so older recordings stay clean.
+
+	it('omits all plaud-* extras lines when summary is undefined', () => {
+		const fm = formatFrontmatter(makeRecording(), []);
+		expect(fm).not.toMatch(/plaud-headline:/);
+		expect(fm).not.toMatch(/plaud-category:/);
+		expect(fm).not.toMatch(/plaud-language:/);
+		expect(fm).not.toMatch(/plaud-template:/);
+		expect(fm).not.toMatch(/plaud-model:/);
+		expect(fm).not.toMatch(/plaud-note-id:/);
+		expect(fm).not.toMatch(/plaud-summary-id:/);
+		expect(fm).not.toMatch(/plaud-summary-version:/);
+	});
+
+	it('omits all plaud-* extras lines when summary has only id+text', () => {
+		const fm = formatFrontmatter(makeRecording(), [], makeSummary());
+		expect(fm).not.toMatch(/plaud-headline:/);
+		expect(fm).not.toMatch(/plaud-template:/);
+	});
+
+	it('emits exactly the extras lines for fields present on Summary', () => {
+		const fm = formatFrontmatter(
+			makeRecording(),
+			[],
+			makeSummary({
+				headline: 'Q2 Planning',
+				category: 'ai-meeting',
+				language: 'en',
+				template: 'ai-meeting',
+				model: 'azure-sweden-central-gpt-5',
+				noteId: 'note-abc',
+				summaryId: 'sum-xyz',
+				version: '3',
+			}),
+		);
+		// yamlScalar leaves `Q2 Planning` unquoted because the pattern
+		// allows letters / digits / spaces. `azure-sweden-central-gpt-5`
+		// is also pattern-safe (hyphens allowed). `"3"` gets quoted only
+		// because it leads with a digit.
+		expect(fm).toContain('plaud-headline: Q2 Planning');
+		expect(fm).toContain('plaud-category: ai-meeting');
+		expect(fm).toContain('plaud-language: en');
+		expect(fm).toContain('plaud-template: ai-meeting');
+		expect(fm).toContain('plaud-model: azure-sweden-central-gpt-5');
+		expect(fm).toContain('plaud-note-id: note-abc');
+		expect(fm).toContain('plaud-summary-id: sum-xyz');
+		expect(fm).toContain('plaud-summary-version: "3"');
+	});
+
+	it('emits partial extras and omits the rest', () => {
+		const fm = formatFrontmatter(
+			makeRecording(),
+			[],
+			makeSummary({ template: 'lecture', language: 'en' }),
+		);
+		expect(fm).toContain('plaud-template: lecture');
+		expect(fm).toContain('plaud-language: en');
+		expect(fm).not.toMatch(/plaud-headline:/);
+		expect(fm).not.toMatch(/plaud-model:/);
+	});
 });
 
 // formatMarkdown -----------------------------------------------------------
@@ -480,6 +544,25 @@ describe('formatMarkdown', () => {
 		expect(md).toMatch(
 			/^# Morning standup\n\n\[Open in Plaud →\]\(https:\/\/web\.plaud\.ai\/file\/abc123\)\n/m,
 		);
+	});
+
+	it('appends an AI Suggestions section after Summary when present', () => {
+		const md = formatMarkdown(
+			makeRecording(),
+			makeTranscript(),
+			makeSummary({ aiSuggestion: 'Follow up with the team on action items.' }),
+		);
+		const summaryH2 = md.indexOf('## Summary');
+		const aiSuggestionsH2 = md.indexOf('## AI Suggestions');
+		const callout = md.indexOf('> [!note]- Transcript');
+		expect(aiSuggestionsH2).toBeGreaterThan(summaryH2);
+		expect(aiSuggestionsH2).toBeLessThan(callout);
+		expect(md).toContain('Follow up with the team on action items.');
+	});
+
+	it('omits the AI Suggestions section when summary lacks aiSuggestion', () => {
+		const md = formatMarkdown(makeRecording(), makeTranscript(), makeSummary());
+		expect(md).not.toContain('## AI Suggestions');
 	});
 
 	it('builds the Open in Plaud link from formatPlaudWebUrl for the recording ID', () => {
@@ -1694,6 +1777,120 @@ describe('formatTranscriptSection', () => {
 		expect(out).toContain('> [!note]- Transcript');
 		expect(out).toContain('orphan');
 		expect(out).not.toMatch(/### /);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// substitutePlaudPlaceholders — fills in `$[audio_start_time]` etc.
+// ---------------------------------------------------------------------------
+
+describe('substitutePlaudPlaceholders', () => {
+	const rec = makeRecording({
+		title: 'Q2 Planning',
+		// 2026-05-13 14:04:22 local — explicit local-time constructor so
+		// the test isn't timezone-dependent.
+		createdAt: new Date(2026, 4, 13, 14, 4, 22),
+		durationSeconds: 600,
+	});
+	const transcript: Transcript = {
+		id: rec.id,
+		rawText: '',
+		segments: [
+			{ startSeconds: 0, endSeconds: 5, speaker: 'Charles', text: 'hi' },
+			{ startSeconds: 5, endSeconds: 10, speaker: 'Mary', text: 'hello' },
+		],
+	};
+
+	it('substitutes $[audio_start_time] with YYYY-MM-DD HH:MM:SS local time', () => {
+		const out = substitutePlaudPlaceholders(
+			'Date & Time:  $[audio_start_time]',
+			rec,
+			transcript,
+		);
+		expect(out).toBe('Date & Time:  2026-05-13 14:04:22');
+	});
+
+	it('substitutes $[audio_title] with the recording title', () => {
+		const out = substitutePlaudPlaceholders('Title: $[audio_title]', rec, transcript);
+		expect(out).toBe('Title: Q2 Planning');
+	});
+
+	it('substitutes $[audio_duration] with the human-readable duration', () => {
+		const out = substitutePlaudPlaceholders(
+			'Duration: $[audio_duration]',
+			rec,
+			transcript,
+		);
+		expect(out).toBe('Duration: 10m');
+	});
+
+	it('substitutes $[speakers] with a comma-separated speaker list', () => {
+		const out = substitutePlaudPlaceholders('Speakers: $[speakers]', rec, transcript);
+		expect(out).toBe('Speakers: Charles, Mary');
+	});
+
+	it('leaves $[speakers] untouched when the transcript has no speakers', () => {
+		const noSpeakers: Transcript = {
+			id: rec.id,
+			rawText: '',
+			segments: [{ startSeconds: 0, endSeconds: 5, text: 'hi' }],
+		};
+		const out = substitutePlaudPlaceholders('Speakers: $[speakers]', rec, noSpeakers);
+		expect(out).toBe('Speakers: $[speakers]');
+	});
+
+	it('leaves unknown placeholders untouched (forward compatibility)', () => {
+		const out = substitutePlaudPlaceholders(
+			'Mystery: $[future_field] vs Title: $[audio_title]',
+			rec,
+			transcript,
+		);
+		expect(out).toBe('Mystery: $[future_field] vs Title: Q2 Planning');
+	});
+
+	it('substitutes every occurrence (global, not just first)', () => {
+		const out = substitutePlaudPlaceholders(
+			'$[audio_start_time] / $[audio_start_time]',
+			rec,
+			transcript,
+		);
+		expect(out).toBe('2026-05-13 14:04:22 / 2026-05-13 14:04:22');
+	});
+
+	it('returns text unchanged when no placeholders are present', () => {
+		expect(substitutePlaudPlaceholders('No tokens here', rec, transcript)).toBe(
+			'No tokens here',
+		);
+	});
+
+	it('returns an empty string unchanged without recursing into the regex', () => {
+		expect(substitutePlaudPlaceholders('', rec, transcript)).toBe('');
+	});
+});
+
+describe('formatMarkdown — placeholder substitution end-to-end', () => {
+	it('substitutes $[audio_start_time] inside the Summary body', () => {
+		const rec = makeRecording({
+			createdAt: new Date(2026, 4, 13, 14, 4, 22),
+		});
+		const transcript = makeTranscript();
+		const summary = makeSummary({
+			text: '> Date & Time:  $[audio_start_time]\n> Location: [Insert Location]',
+		});
+		const md = formatMarkdown(rec, transcript, summary);
+		expect(md).toContain('Date & Time:  2026-05-13 14:04:22');
+		expect(md).not.toContain('$[audio_start_time]');
+	});
+
+	it('substitutes $[audio_start_time] inside the AI Suggestions body', () => {
+		const rec = makeRecording({
+			createdAt: new Date(2026, 4, 13, 14, 4, 22),
+		});
+		const summary = makeSummary({
+			aiSuggestion: 'Follow up on items from $[audio_start_time].',
+		});
+		const md = formatMarkdown(rec, makeTranscript(), summary);
+		expect(md).toContain('Follow up on items from 2026-05-13 14:04:22.');
 	});
 });
 

@@ -7,6 +7,8 @@ on:
 
 permissions:
   contents: write
+  id-token: write
+  attestations: write
 
 env:
   PLUGIN_NAME: plaud-importer
@@ -17,34 +19,64 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+
       - name: Use Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "18"
+          node-version: "20"
           cache: "npm"
 
+      - name: Install dependencies
+        run: npm ci
+
       - name: Test
-        run: |
-          npm install
-          npm test
+        run: npm test
 
       - name: Build plugin
         run: npm run build
+
+      - name: Generate artifact attestation
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            main.js
+            manifest.json
+            styles.css
+
+      - name: VirusTotal scan of release artifacts
+        uses: crazy-max/ghaction-virustotal@v4
+        with:
+          vt_api_key: ${{ secrets.VT_API_KEY }}
+          files: |
+            main.js
+            manifest.json
+            styles.css
+
+      - name: Extract release notes from CHANGELOG
+        id: notes
+        run: |
+          tag="${GITHUB_REF#refs/tags/}"
+          awk -v ver="$tag" '
+            $0 ~ "^## \\[" ver "\\]" { in_section=1; next }
+            in_section && /^## \[/ { exit }
+            in_section { print }
+          ' CHANGELOG.md > release-notes.md
+          echo "Extracted release notes:"
+          cat release-notes.md
 
       - name: Create release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           tag="${GITHUB_REF#refs/tags/}"
-
-          if gh release view "$tag" >/dev/null 2>&1; then
-            echo "Release $tag already exists. Uploading/overwriting assets."
-            gh release upload "$tag" \
-              --clobber \
+          if [ -s release-notes.md ]; then
+            gh release create "$tag" \
+              --title="$tag" \
+              --notes-file release-notes.md \
               main.js manifest.json styles.css
           else
             gh release create "$tag" \
-              --title="Release $tag" \
+              --title="$tag" \
               --generate-notes \
               main.js manifest.json styles.css
           fi

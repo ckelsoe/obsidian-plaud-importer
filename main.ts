@@ -251,7 +251,7 @@ export default class PlaudImporterPlugin extends Plugin {
 		}
 		this.ribbonIconEl = this.addRibbonIcon(
 			desiredId,
-			"Plaud Importer: Import recordings",
+			"Plaud importer: Import recordings",
 			() => this.launchImportModal("ribbon"),
 		);
 		this.ribbonIconId = desiredId;
@@ -267,7 +267,7 @@ export default class PlaudImporterPlugin extends Plugin {
 	private launchImportModal(source: "command" | "ribbon"): void {
 		if (!this.client) {
 			new Notice(
-				"Plaud Importer: still initializing. Try again in a moment.",
+				"Plaud importer: Still initializing. Try again in a moment.",
 			);
 			return;
 		}
@@ -299,11 +299,8 @@ export default class PlaudImporterPlugin extends Plugin {
 	}
 
 	async loadSettings() {
-		this.settings = Object.assign(
-			{},
-			DEFAULT_SETTINGS,
-			await this.loadData(),
-		);
+		const stored = (await this.loadData()) as Partial<PlaudImporterSettings> | null;
+		this.settings = Object.assign({}, DEFAULT_SETTINGS, stored ?? {});
 	}
 
 	async saveSettings() {
@@ -374,7 +371,7 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 		new Setting(containerEl)
 			.setName("Show ribbon icon")
 			.setDesc(
-				"Display the Plaud Importer icon in Obsidian's left rail. Turn off if you prefer to launch imports only from the command palette.",
+				"Display the plaud importer icon in Obsidian's left rail. Turn off if you prefer to launch imports only from the command palette.",
 			)
 			.addToggle((toggle) =>
 				toggle
@@ -393,7 +390,7 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 		const iconSetting = new Setting(containerEl)
 			.setName("Ribbon icon")
 			.setDesc(
-				"Which icon to display in the left rail. Only applies when 'Show ribbon icon' is on.",
+				"Which icon to display in the left rail. Only applies when 'show ribbon icon' is on.",
 			);
 		const previewEl = iconSetting.controlEl.createDiv({
 			cls: "plaud-importer-ribbon-preview",
@@ -413,12 +410,12 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 				});
 		});
 
-		containerEl.createEl("h3", { text: "Default artifact selection" });
+		new Setting(containerEl).setName("Default artifact selection").setHeading();
 
 		new Setting(containerEl)
 			.setName("Transcript")
 			.setDesc(
-				"Checked by default in import actions. You can override in 'Review artifacts first'.",
+				"Checked by default in import actions. You can override in 'review artifacts first'.",
 			)
 			.addToggle((toggle) =>
 				toggle
@@ -432,7 +429,7 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 		new Setting(containerEl)
 			.setName("Summary")
 			.setDesc(
-				"Checked by default in import actions. You can override in 'Review artifacts first'.",
+				"Checked by default in import actions. You can override in 'review artifacts first'.",
 			)
 			.addToggle((toggle) =>
 				toggle
@@ -485,7 +482,7 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 					}),
 			);
 
-		containerEl.createEl("h3", { text: "Transcript rendering" });
+		new Setting(containerEl).setName("Transcript rendering").setHeading();
 
 		new Setting(containerEl)
 			.setName("Fold transcript by default")
@@ -504,7 +501,7 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 		new Setting(containerEl)
 			.setName("Transcript heading level")
 			.setDesc(
-				"Markdown heading level for the wrapping 'Transcript' heading. Chapter sub-headings render at one level below (e.g. level 4 → transcript is H4, chapters are H5). This is the heading whose fold state the 'Fold transcript by default' toggle controls.",
+				"Markdown heading level for the wrapping 'transcript' heading. Chapter sub-headings render at one level below (e.g. Level 4 → transcript is h4, chapters are h5). This is the heading whose fold state the 'fold transcript by default' toggle controls.",
 			)
 			.addDropdown((dropdown) =>
 				dropdown
@@ -525,7 +522,7 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 					}),
 			);
 
-		containerEl.createEl("h3", { text: "Debug" });
+		new Setting(containerEl).setName("Debug").setHeading();
 
 		new Setting(containerEl)
 			.setName("Debug logging")
@@ -544,11 +541,11 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 						await this.plugin.saveSettings();
 						if (value) {
 							new Notice(
-								"Plaud Importer: debug logging enabled. Run a command to capture events.",
+								"Plaud importer: Debug logging enabled. Run a command to capture events.",
 							);
 						} else {
 							new Notice(
-								"Plaud Importer: debug logging disabled. The buffer is preserved — use the clear command to wipe it.",
+								"Plaud importer: Debug logging disabled. The buffer is preserved — use the clear command to wipe it.",
 							);
 						}
 					}),

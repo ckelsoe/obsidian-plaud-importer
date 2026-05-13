@@ -726,7 +726,7 @@ describe('getTranscriptAndSummary happy path', () => {
 	});
 });
 
-// data_result_summ shape variations (the four-shape trap) -------------------
+// data_result_summ shape variations (the five-shape trap) -------------------
 
 describe('getTranscriptAndSummary summary normalization', () => {
 	it('handles JSON-encoded string with content.markdown (typical case)', async () => {
@@ -831,6 +831,262 @@ describe('getTranscriptAndSummary summary normalization', () => {
 		const { summary } = await client.getTranscriptAndSummary(ID);
 
 		expect(summary?.text).toBe('## title\n- a');
+	});
+
+	// Shape 5 — flat GPT-5 schema rolled out by Plaud around 2026-05.
+	// Top-level `markdown` is the canonical rendered output; `summary` is a
+	// fallback when `markdown` is absent. The `content` wrapper is gone.
+
+	it('handles flat GPT-5 schema with top-level markdown', async () => {
+		const { fetcher } = captureFetcher(
+			ok(transsummEnvelope({
+				data_result_summ: {
+					markdown: '## Action items\n- ship it',
+					summary: '## Action items\n- ship it',
+					first_summary: 'pre-edit raw',
+					endpoint: 'azure-sweden-central-gpt-5',
+					header: { category: 'ai-meeting', headline: 'Test' },
+				},
+			})),
+		);
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+
+		const { summary } = await client.getTranscriptAndSummary(ID);
+
+		expect(summary?.text).toBe('## Action items\n- ship it');
+	});
+
+	it('falls back to flat top-level summary when markdown is absent', async () => {
+		const { fetcher } = captureFetcher(
+			ok(transsummEnvelope({
+				data_result_summ: {
+					summary: '## Fallback path',
+					first_summary: 'noisy raw output',
+					endpoint: 'azure-sweden-central-gpt-5',
+				},
+			})),
+		);
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+
+		const { summary } = await client.getTranscriptAndSummary(ID);
+
+		expect(summary?.text).toBe('## Fallback path');
+	});
+
+	it('returns null when flat markdown is empty after trim', async () => {
+		const { fetcher } = captureFetcher(
+			ok(transsummEnvelope({
+				data_result_summ: {
+					markdown: '   \n\t   ',
+					endpoint: 'azure-sweden-central-gpt-5',
+				},
+			})),
+		);
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+
+		const { summary } = await client.getTranscriptAndSummary(ID);
+
+		expect(summary).toBeNull();
+	});
+
+	it('prefers flat markdown over first_summary when both present', async () => {
+		// first_summary is the pre-persona-edit raw output; markdown is the
+		// canonical post-processed rendering. We must NOT pick first_summary.
+		const { fetcher } = captureFetcher(
+			ok(transsummEnvelope({
+				data_result_summ: {
+					first_summary: 'RAW — DO NOT USE',
+					markdown: 'CANONICAL',
+					summary: 'CANONICAL',
+				},
+			})),
+		);
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+
+		const { summary } = await client.getTranscriptAndSummary(ID);
+
+		expect(summary?.text).toBe('CANONICAL');
+	});
+});
+
+// Summary extras — flat GPT-5 schema (shape 5) surfaces extra metadata
+// alongside the markdown. The parser must pull each known extra as
+// best-effort and never blow up when a field is missing or wrong-typed.
+
+describe('getTranscriptAndSummary summary extras (flat schema)', () => {
+	it('extracts all known extras from a complete flat envelope', async () => {
+		const { fetcher } = captureFetcher(
+			ok(transsummEnvelope({
+				data_result_summ: {
+					markdown: '## body',
+					summary: '## body',
+					first_summary: 'raw',
+					ai_suggestion: 'Consider following up with the team on action items.',
+					endpoint: 'azure-sweden-central-gpt-5',
+					model: 'gpt-5-2025-08',
+					language: 'en',
+					note_id: 'note-abc',
+					summary_id: 'sum-xyz',
+					version: 3,
+					summ_type: 'ai-meeting',
+					select_prompt_type: 'meeting',
+					header: { category: 'ai-meeting', headline: 'Q2 Planning' },
+				},
+			})),
+		);
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+
+		const { summary } = await client.getTranscriptAndSummary(ID);
+
+		expect(summary?.text).toBe('## body');
+		expect(summary?.aiSuggestion).toBe('Consider following up with the team on action items.');
+		expect(summary?.language).toBe('en');
+		expect(summary?.template).toBe('ai-meeting');
+		expect(summary?.model).toBe('gpt-5-2025-08');
+		expect(summary?.noteId).toBe('note-abc');
+		expect(summary?.summaryId).toBe('sum-xyz');
+		expect(summary?.version).toBe('3');
+		expect(summary?.headline).toBe('Q2 Planning');
+		expect(summary?.category).toBe('ai-meeting');
+	});
+
+	it('falls back to endpoint when model field is absent', async () => {
+		const { fetcher } = captureFetcher(
+			ok(transsummEnvelope({
+				data_result_summ: {
+					markdown: '## body',
+					endpoint: 'azure-sweden-central-gpt-5',
+				},
+			})),
+		);
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+
+		const { summary } = await client.getTranscriptAndSummary(ID);
+
+		expect(summary?.model).toBe('azure-sweden-central-gpt-5');
+	});
+
+	it('falls back to select_prompt_type when summ_type is absent', async () => {
+		const { fetcher } = captureFetcher(
+			ok(transsummEnvelope({
+				data_result_summ: {
+					markdown: '## body',
+					select_prompt_type: 'lecture',
+				},
+			})),
+		);
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+
+		const { summary } = await client.getTranscriptAndSummary(ID);
+
+		expect(summary?.template).toBe('lecture');
+	});
+
+	it('returns Summary with only id+text when no extras are present', async () => {
+		const { fetcher } = captureFetcher(
+			ok(transsummEnvelope({
+				data_result_summ: { markdown: '## just the body' },
+			})),
+		);
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+
+		const { summary } = await client.getTranscriptAndSummary(ID);
+
+		expect(summary?.text).toBe('## just the body');
+		expect(summary?.aiSuggestion).toBeUndefined();
+		expect(summary?.headline).toBeUndefined();
+		expect(summary?.category).toBeUndefined();
+		expect(summary?.language).toBeUndefined();
+		expect(summary?.template).toBeUndefined();
+		expect(summary?.model).toBeUndefined();
+		expect(summary?.noteId).toBeUndefined();
+		expect(summary?.summaryId).toBeUndefined();
+		expect(summary?.version).toBeUndefined();
+	});
+
+	it('silently drops extras that are not strings (no throw)', async () => {
+		// Plaud could ship a field as a number, null, array, or object
+		// where we expect a string. The parser must NOT throw — it must
+		// just leave that field undefined and continue.
+		const { fetcher } = captureFetcher(
+			ok(transsummEnvelope({
+				data_result_summ: {
+					markdown: '## body',
+					ai_suggestion: 42,
+					language: null,
+					summ_type: ['array', 'not', 'string'],
+					note_id: { nested: 'object' },
+					header: 'string-not-object',
+				},
+			})),
+		);
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+
+		const { summary } = await client.getTranscriptAndSummary(ID);
+
+		expect(summary?.text).toBe('## body');
+		expect(summary?.aiSuggestion).toBeUndefined();
+		expect(summary?.language).toBeUndefined();
+		expect(summary?.template).toBeUndefined();
+		expect(summary?.noteId).toBeUndefined();
+		expect(summary?.headline).toBeUndefined();
+		expect(summary?.category).toBeUndefined();
+	});
+
+	it('silently drops empty-string extras after trim', async () => {
+		const { fetcher } = captureFetcher(
+			ok(transsummEnvelope({
+				data_result_summ: {
+					markdown: '## body',
+					ai_suggestion: '   \n\t   ',
+					language: '',
+				},
+			})),
+		);
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+
+		const { summary } = await client.getTranscriptAndSummary(ID);
+
+		expect(summary?.aiSuggestion).toBeUndefined();
+		expect(summary?.language).toBeUndefined();
+	});
+
+	it('ignores unknown extra keys without breaking', async () => {
+		// Forward-compatibility: a future Plaud release that adds a brand
+		// new top-level field must not break the parser.
+		const { fetcher } = captureFetcher(
+			ok(transsummEnvelope({
+				data_result_summ: {
+					markdown: '## body',
+					ai_suggestion: 'do the thing',
+					some_future_field: 'whatever',
+					another_new_thing: { deeply: { nested: true } },
+				},
+			})),
+		);
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+
+		const { summary } = await client.getTranscriptAndSummary(ID);
+
+		expect(summary?.text).toBe('## body');
+		expect(summary?.aiSuggestion).toBe('do the thing');
+	});
+
+	it('does not extract extras when using legacy nested content shape', async () => {
+		// Shape 2 envelopes have no peer fields alongside `content`, so
+		// extras stay undefined — but the parser must still not blow up.
+		const { fetcher } = captureFetcher(
+			ok(transsummEnvelope({
+				data_result_summ: { content: { markdown: '## legacy body' } },
+			})),
+		);
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+
+		const { summary } = await client.getTranscriptAndSummary(ID);
+
+		expect(summary?.text).toBe('## legacy body');
+		expect(summary?.aiSuggestion).toBeUndefined();
+		expect(summary?.headline).toBeUndefined();
 	});
 });
 

@@ -267,7 +267,7 @@ export class ReverseEngineeredPlaudClient implements PlaudClient {
 					bundle.polishedTranscript !== null
 						? `polished (${bundle.polishedTranscript.segments.length} segments)`
 						: legacy.transcript !== null
-							? `raw fallback (${legacy.transcript.segments.length} segments)${bundleError ? ` — file-detail lookup failed: ${bundleError instanceof Error ? bundleError.message : String(bundleError)}` : ' — no polish available'}`
+							? `raw fallback (${legacy.transcript.segments.length} segments)${bundleError ? ` — file-detail lookup failed: ${describeUnknownError(bundleError)}` : ' — no polish available'}`
 							: 'null (no transcript available from either source)'
 				}, summary=${
 					bundle.newerSummary !== null
@@ -282,11 +282,7 @@ export class ReverseEngineeredPlaudClient implements PlaudClient {
 					summarySource:
 						bundle.newerSummary !== null ? 'auto_sum_note' : 'ai/transsumm',
 					bundleErrorMessage:
-						bundleError instanceof Error
-							? bundleError.message
-							: bundleError !== null
-								? String(bundleError)
-								: null,
+						bundleError !== null ? describeUnknownError(bundleError) : null,
 					segmentCount: finalTranscript?.segments.length ?? 0,
 					summaryLength: finalSummary?.text.length ?? 0,
 					aiKeywordCount: bundle.aiKeywords.length,
@@ -746,6 +742,25 @@ function matchesFilter(recording: Recording, filter?: RecordingFilter): boolean 
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+// Human-readable description of an unknown error value for diagnostic
+// strings. Avoids `String(err)` which produces "[object Object]" for
+// non-Error rejections (rare but possible when third-party code
+// rejects with a plain object).
+function describeUnknownError(err: unknown): string {
+	if (err instanceof Error) return err.message;
+	if (typeof err === 'string') return err;
+	if (err === null || err === undefined) return String(err);
+	if (typeof err === 'number' || typeof err === 'boolean') return String(err);
+	try {
+		const json = JSON.stringify(err);
+		if (json !== undefined) return json;
+	} catch {
+		// Fall through to constructor-name fallback.
+	}
+	const ctor = (err as { constructor?: { name?: string } })?.constructor?.name;
+	return ctor ? `[object ${ctor}]` : 'unknown error';
 }
 
 function isRawRecording(value: unknown): value is RawRecording {
@@ -1680,12 +1695,19 @@ function pickNonEmptyString(...values: unknown[]): string | undefined {
 
 /**
  * Normalize Plaud's `data_result_summ` to a markdown string, mirroring
- * applaud's `extractSummaryMarkdown` helper. The field has four documented
+ * applaud's `extractSummaryMarkdown` helper. The field has five documented
  * shapes:
  *   1. JSON-encoded string that parses to {content: {markdown: string}}
  *   2. Structured object {content: {markdown: string}}
  *   3. Structured object {content: string}
  *   4. Raw string that is NOT JSON — treat as markdown verbatim
+ *   5. Flat GPT-5 schema (rolled out 2026-05): top-level {markdown: string,
+ *      summary: string, first_summary: string, header, form, ...}. The
+ *      `content` wrapper is gone. Prefer top-level `markdown` (canonical
+ *      rendered output); fall back to `summary` if absent. Skip
+ *      `first_summary` — that field is the pre-edit raw GPT output and is
+ *      usually a near-duplicate of `summary` but without persona / form
+ *      normalization applied.
  *
  * Any other shape is a silent-failure trap: Plaud may have changed the
  * wire format and we'd swap null summaries into user vaults without
@@ -1723,7 +1745,7 @@ function parseSummaryField(
 				);
 			}
 		} else {
-			return { id, text: trimmed };
+			return buildSummary(id, trimmed, undefined);
 		}
 	}
 
@@ -1738,21 +1760,121 @@ function parseSummaryField(
 	const content = obj.content;
 	if (typeof content === 'string') {
 		const text = content.trim();
-		return text.length > 0 ? { id, text } : null;
+		return text.length > 0 ? buildSummary(id, text, obj) : null;
 	}
 	if (isRecord(content)) {
 		const md = content.markdown;
 		if (typeof md === 'string') {
 			const text = md.trim();
-			return text.length > 0 ? { id, text } : null;
+			return text.length > 0 ? buildSummary(id, text, obj) : null;
 		}
 		throw new PlaudParseError(
-			`data_result_summ.content for ${id} has keys [${Object.keys(content).join(', ')}] but no markdown string — Plaud format may have changed`,
+			`data_result_summ.content for ${id} has keys [${Object.keys(content).join(', ')}] but no markdown string — Plaud format may have changed. Sample: ${summarizeShape(content)}`,
 			endpoint,
 		);
 	}
+
+	// Shape 5: flat GPT-5 schema. No `content` wrapper; markdown lives at
+	// the top level. Try `markdown` first (canonical); if that key is
+	// present but its value trims to empty, treat it as "no summary yet"
+	// (return null) — same semantic as legacy content.markdown trimming
+	// to empty. Only when `markdown` is wholly absent do we try
+	// `summary` as a fallback shape.
+	if (content === undefined) {
+		const flatMarkdown = obj.markdown;
+		if (typeof flatMarkdown === 'string') {
+			const text = flatMarkdown.trim();
+			return text.length > 0 ? buildSummary(id, text, obj) : null;
+		}
+		const flatSummary = obj.summary;
+		if (typeof flatSummary === 'string') {
+			const text = flatSummary.trim();
+			return text.length > 0 ? buildSummary(id, text, obj) : null;
+		}
+	}
+
 	throw new PlaudParseError(
-		`data_result_summ for ${id} has content field of unexpected type (${typeof content}) — expected string or object with markdown`,
+		`data_result_summ for ${id} has content field of unexpected type (${typeof content}) — expected string or object with markdown. Outer keys: [${Object.keys(obj).join(', ')}]. Sample: ${summarizeShape(obj)}`,
 		endpoint,
 	);
+}
+
+// Build a Summary, layering any optional extras pulled from the outer
+// envelope. The extras are best-effort: every field is soft-guarded with
+// `typeof === 'string'` + non-empty trim, and missing or wrong-typed
+// fields are silently dropped. Never throws — extras must never be
+// load-bearing for the import to succeed. Open to new unknown keys: any
+// novel field Plaud adds is ignored without breaking.
+function buildSummary(
+	id: PlaudRecordingId,
+	text: string,
+	envelope: unknown,
+): Summary {
+	if (!isRecord(envelope)) {
+		return { id, text };
+	}
+
+	const aiSuggestion = pickNonEmptyString(envelope.ai_suggestion);
+	const language = pickNonEmptyString(envelope.language);
+	const template = pickNonEmptyString(
+		envelope.summ_type,
+		envelope.select_prompt_type,
+	);
+	const model = pickNonEmptyString(envelope.model, envelope.endpoint);
+	const noteId = pickNonEmptyString(envelope.note_id);
+	const summaryId = pickNonEmptyString(envelope.summary_id);
+
+	// `version` may arrive as either a string or a number. Coerce numbers
+	// to strings so the frontmatter emitter has a single shape to deal
+	// with; ignore anything that isn't string/number/finite.
+	const rawVersion = envelope.version;
+	let version: string | undefined;
+	if (typeof rawVersion === 'string' && rawVersion.trim().length > 0) {
+		version = rawVersion.trim();
+	} else if (typeof rawVersion === 'number' && Number.isFinite(rawVersion)) {
+		version = String(rawVersion);
+	}
+
+	let headline: string | undefined;
+	let category: string | undefined;
+	const header = envelope.header;
+	if (isRecord(header)) {
+		headline = pickNonEmptyString(header.headline);
+		category = pickNonEmptyString(header.category);
+	}
+
+	const summary: Summary = {
+		id,
+		text,
+		...(aiSuggestion !== undefined && { aiSuggestion }),
+		...(language !== undefined && { language }),
+		...(template !== undefined && { template }),
+		...(model !== undefined && { model }),
+		...(noteId !== undefined && { noteId }),
+		...(summaryId !== undefined && { summaryId }),
+		...(version !== undefined && { version }),
+		...(headline !== undefined && { headline }),
+		...(category !== undefined && { category }),
+	};
+	return summary;
+}
+
+// Bounded JSON sample for shape-drift diagnostics. Strips token-like
+// values (any string that looks like a JWT or > 64 chars) so an exported
+// error message can never accidentally leak credentials, and caps total
+// length to 400 chars to keep the user-facing notice readable.
+function summarizeShape(value: unknown): string {
+	try {
+		const json = JSON.stringify(value, (_key, v: unknown) => {
+			if (typeof v === 'string') {
+				if (v.length > 120) return `[string:${v.length}chars]`;
+				if (/^(bearer\s+)?ey[A-Za-z0-9_-]+\./i.test(v)) return '[redacted-token]';
+			}
+			return v;
+		});
+		if (json === undefined) return '(unserializable)';
+		return json.length > 400 ? `${json.slice(0, 400)}…` : json;
+	} catch {
+		return '(serialize-failed)';
+	}
 }

@@ -33,12 +33,14 @@ Each recording becomes a single note with frontmatter metadata, a Plaud-generate
 - **Lets you pick which to import** via checkboxes — single or multi-select.
 - **Per-recording artifact selection** — before a multi-import you can tick/untick transcript, summary, attachments, mindmap, and card independently.
 - **Writes one markdown note per recording** with:
-  - YAML frontmatter (Plaud ID, date, duration, speakers, tags, Plaud web URL)
+  - YAML frontmatter (Plaud ID, date, duration, speakers, tags, Plaud web URL) plus a layered set of optional fields surfaced from Plaud's flat GPT-5 schema (`plaud-headline`, `plaud-category`, `plaud-language`, `plaud-template`, `plaud-model`, `plaud-note-id`, `plaud-summary-id`, `plaud-summary-version`) — emitted only when present, never load-bearing.
   - Plaud's AI summary
+  - An `AI Suggestions` section pulled from Plaud's `ai_suggestion` field when the response includes one (separate from the main summary)
   - An inline chapter index with jump-links into the transcript
   - A heading-based transcript section with per-chapter `Back to Chapters` links
   - An `Open in Plaud` link under the H1 for quick round-tripping
 - **Downloads attachments** (images, mind-map PNGs, card PNGs, other files) into a `<note-name>-assets/` folder and references them from the note.
+- **"Imported" badge in the recording list** — each row whose `plaud-id` already exists in your output folder shows an Imported pill. Click it to open the existing note. Re-importing is still possible and honors your duplicate-handling setting.
 - **Duplicate handling** is configurable — Skip, Overwrite, or Ask each time. "Ask each time" prompts per file with an explicit warning that the existing note body AND its `-assets` folder will be replaced; in a multi-select import you can escalate to "Overwrite all remaining" / "Skip all remaining" or cancel the batch.
 - **Transcript folding** — imported notes open with the transcript section collapsed by default so the summary is what you see first. Toggleable in settings.
 - **Debug log** — opt-in in-memory buffer of API requests/responses for troubleshooting; auth headers are never captured.
@@ -110,11 +112,11 @@ What the "Review artifacts first" checklist starts with when you begin a multi-i
 
 ### Debug logging
 
-Off by default. When on, captures API request/response metadata and parsed results into an in-memory buffer for troubleshooting. Auth headers are stripped. Payloads may contain transcript text, speaker names, and recording metadata, so only enable when you are preparing a bug report. Use the command **Plaud Importer: Debug: copy debug log to clipboard** to export the session.
+Off by default. When on, captures API request/response metadata and parsed results into an in-memory buffer for troubleshooting. Auth headers are stripped. Payloads may contain transcript text, speaker names, and recording metadata, so only enable when you are preparing a bug report. Use the command **Plaud importer: Debug: copy debug log to clipboard** to export the session.
 
 ## Using it
 
-1. Click the **audio-lines** ribbon icon on the left rail, or run the command **Plaud Importer: Import recent recordings**.
+1. Click the **audio-lines** ribbon icon on the left rail, or run the command **Plaud importer: Import recordings**.
 2. Scroll the recording list to load older pages (handled automatically as you scroll).
 3. Tick the recordings you want.
 4. Click **Import N recordings** (or **Review artifacts first** to uncheck specific artifacts for this batch).
@@ -170,7 +172,30 @@ npm test                 # jest
 npm run version          # bump version in manifest.json + versions.json
 ```
 
-Releases are cut by pushing a semver tag — a GitHub Actions workflow builds and uploads `main.js`, `manifest.json`, and `styles.css` to the release.
+### Obsidian marketplace scorecard
+
+This project uses [`eslint-plugin-obsidianmd`](https://github.com/obsidianmd/eslint-plugin-obsidianmd) (recommended ruleset) wired into `npm run lint` so marketplace-scorecard violations block the build. Rules currently enforced include sentence case for UI strings, `Setting.setHeading()` over manual `<h*>` elements, `FileManager.trashFile()` over `Vault.delete()`, no `as any`, and several others. Run `npm run lint` before pushing.
+
+CI runs on every push and pull request via `.github/workflows/ci.yml`: type check, lint, tests, build, manifest validation, deprecated Obsidian API scan, bundle-size warning, OSV-Scanner against `package-lock.json`, and (on PRs) GitHub Dependency Review. A weekly cron re-runs the OSV scan so newly disclosed advisories surface even on quiet weeks.
+
+### Releases
+
+Releases are tag-driven only. Pushing a semver tag (e.g. `0.3.0`) triggers `.github/workflows/release.yml`, which:
+
+1. Installs deps with `npm ci`, runs tests, runs the production build.
+2. Generates a **SLSA build provenance attestation** for `main.js`, `manifest.json`, and `styles.css` via `actions/attest-build-provenance@v2`.
+3. Scans the three release artifacts with **VirusTotal** (`crazy-max/ghaction-virustotal@v4`, requires the `VT_API_KEY` repository secret).
+4. Extracts release notes from `CHANGELOG.md` (the section matching the tag) and creates a GitHub release with the three artifacts attached.
+
+Do not run `gh release create` from the local CLI — the local path skips attestation and the VirusTotal scan, which the workspace process requires.
+
+After the release workflow finishes, verify provenance with:
+
+```bash
+gh attestation verify main.js --owner ckelsoe
+gh attestation verify manifest.json --owner ckelsoe
+gh attestation verify styles.css --owner ckelsoe
+```
 
 ## License
 

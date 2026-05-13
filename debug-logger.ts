@@ -117,9 +117,15 @@ export class BufferedDebugLogger implements DebugLogger {
 		this.consoleSink =
 			options.consoleSink ??
 			((message, payload): void => {
+				// Mirror to DevTools is the explicit purpose of this sink —
+				// the obsidianmd no-console rule fires here because it can't
+				// tell the debug-logger console mirror from accidental
+				// production logging.
 				if (payload === undefined) {
+					// eslint-disable-next-line obsidianmd/rule-custom-message
 					console.log(message);
 				} else {
+					// eslint-disable-next-line obsidianmd/rule-custom-message
 					console.log(message, payload);
 				}
 			});
@@ -194,15 +200,36 @@ export class BufferedDebugLogger implements DebugLogger {
 			try {
 				payloadText = JSON.stringify(event.payload, null, 2);
 				if (payloadText === undefined) {
-					payloadText = `(non-serializable: ${String(event.payload)})`;
+					payloadText = `(non-serializable: ${describeNonString(event.payload)})`;
 				}
 			} catch (err) {
-				payloadText = `(non-serializable: ${err instanceof Error ? err.message : String(err)})`;
+				payloadText = `(non-serializable: ${err instanceof Error ? err.message : describeNonString(err)})`;
 			}
 			return `${headerLine}\n${payloadText}`;
 		});
 		return `${header}${blocks.join('\n\n')}\n\n=== End debug session ===\n`;
 	}
+}
+
+// Stringify an unknown value for human-readable diagnostics without
+// triggering @typescript-eslint/no-base-to-string. `String(value)` on
+// an object produces the literal "[object Object]" which is useless;
+// constructor names + JSON.stringify is more informative.
+function describeNonString(value: unknown): string {
+	if (value === null) return 'null';
+	if (value === undefined) return 'undefined';
+	if (typeof value === 'string') return value;
+	if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'bigint') {
+		return String(value);
+	}
+	try {
+		const json = JSON.stringify(value);
+		if (json !== undefined) return json;
+	} catch {
+		// Fall through to the constructor-name fallback below.
+	}
+	const ctor = (value as { constructor?: { name?: string } })?.constructor?.name;
+	return ctor ? `[object ${ctor}]` : 'unknown value';
 }
 
 /**

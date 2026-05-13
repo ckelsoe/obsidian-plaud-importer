@@ -409,7 +409,7 @@ describe('formatImportNotice', () => {
 			written('a', 'created'),
 			written('b', 'overwritten'),
 		]);
-		expect(formatImportNotice(tally)).toBe('Plaud Importer: 2 imported.');
+		expect(formatImportNotice(tally)).toBe('Plaud importer: 2 imported.');
 	});
 
 	it('includes a skipped count when any were skipped', () => {
@@ -419,7 +419,7 @@ describe('formatImportNotice', () => {
 			written('c', 'skipped'),
 		]);
 		expect(formatImportNotice(tally)).toBe(
-			'Plaud Importer: 1 imported, 2 skipped.',
+			'Plaud importer: 1 imported, 2 skipped.',
 		);
 	});
 
@@ -429,7 +429,7 @@ describe('formatImportNotice', () => {
 			failed('b', 'oops'),
 		]);
 		expect(formatImportNotice(tally)).toBe(
-			'Plaud Importer: 1 imported, 1 failed.',
+			'Plaud importer: 1 imported, 1 failed.',
 		);
 	});
 
@@ -441,13 +441,13 @@ describe('formatImportNotice', () => {
 			failed('d', 'x'),
 		]);
 		expect(formatImportNotice(tally)).toBe(
-			'Plaud Importer: 2 imported, 1 skipped, 1 failed.',
+			'Plaud importer: 2 imported, 1 skipped, 1 failed.',
 		);
 	});
 
 	it('returns a distinct message for an empty tally', () => {
 		expect(formatImportNotice(tallyImportResults([]))).toBe(
-			'Plaud Importer: nothing to import.',
+			'Plaud importer: nothing to import.',
 		);
 	});
 
@@ -468,6 +468,6 @@ describe('formatImportNotice', () => {
 		// The helper is terse by design — it says "1 imported" not
 		// "1 recording imported" so pluralization isn't required.
 		const tally = tallyImportResults([written('a', 'created')]);
-		expect(formatImportNotice(tally)).toBe('Plaud Importer: 1 imported.');
+		expect(formatImportNotice(tally)).toBe('Plaud importer: 1 imported.');
 	});
 });

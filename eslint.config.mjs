@@ -1,16 +1,19 @@
 import eslint from "@eslint/js";
 import tseslint from "@typescript-eslint/eslint-plugin";
 import tsparser from "@typescript-eslint/parser";
+import obsidianmd from "eslint-plugin-obsidianmd";
 import globals from "globals";
 
 export default [
 	eslint.configs.recommended,
+	...obsidianmd.configs.recommended,
 	{
 		files: ["**/*.ts"],
 		languageOptions: {
 			parser: tsparser,
 			parserOptions: {
 				sourceType: "module",
+				project: "./tsconfig.json",
 			},
 			globals: {
 				...globals.node,
@@ -30,7 +33,7 @@ export default [
 		},
 	},
 	{
-		files: ["**/__tests__/**/*.ts"],
+		files: ["__tests__/**/*.ts"],
 		languageOptions: {
 			globals: {
 				...globals.jest,
@@ -38,6 +41,15 @@ export default [
 		},
 	},
 	{
-		ignores: ["main.js", "node_modules/**", "*.mjs"],
+		ignores: [
+			"main.js",
+			"node_modules/**",
+			"*.mjs",
+			"*.js",
+			"*.json",
+			"*.md",
+			"LICENSE",
+			"styles.css",
+		],
 	},
 ];

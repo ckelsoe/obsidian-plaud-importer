@@ -282,6 +282,61 @@ export function formatPlaudWebUrl(recordingId: string): string {
 }
 
 /**
+ * Substitute Plaud's template placeholders inside a markdown body. Plaud's
+ * summary templates contain tokens like `$[audio_start_time]` that the
+ * Plaud web UI replaces with concrete values on the client before
+ * rendering. Their API returns the RAW template body, so without this
+ * substitution our notes would show literal `$[audio_start_time]` text
+ * where a date should be.
+ *
+ * Known placeholders (filled in from the recording / transcript we
+ * already have on hand):
+ *   $[audio_start_time]  → "YYYY-MM-DD HH:MM:SS" in local time
+ *   $[audio_title]       → recording.title
+ *   $[audio_duration]    → human-readable duration
+ *   $[speakers]          → comma-separated speaker list
+ *
+ * Unknown placeholders are left untouched so user notes are never
+ * silently mangled by a regex on a token we don't have data for. New
+ * tokens Plaud adds in future templates show through verbatim and a
+ * follow-up can wire them in once we know what they should resolve to.
+ */
+export function substitutePlaudPlaceholders(
+	markdown: string,
+	recording: Recording,
+	transcript: Transcript | null,
+): string {
+	if (markdown.length === 0) return markdown;
+	return markdown.replace(/\$\[([a-z0-9_]+)\]/g, (match, key: string) => {
+		switch (key) {
+			case 'audio_start_time':
+				return formatLocalDateTime(recording.createdAt);
+			case 'audio_title':
+				return recording.title;
+			case 'audio_duration':
+				return formatDurationHoursMinutes(recording.durationSeconds);
+			case 'speakers': {
+				const speakers = extractSpeakers(transcript);
+				return speakers.length > 0 ? speakers.join(', ') : match;
+			}
+			default:
+				return match;
+		}
+	});
+}
+
+/**
+ * Local-time "YYYY-MM-DD HH:MM:SS" formatter that matches the wall-clock
+ * format Plaud's own UI uses (e.g. `2026-05-13 14:04:22`). Local time so
+ * the rendered note reads naturally for the user who recorded it; this
+ * matches what they see on web.plaud.ai.
+ */
+function formatLocalDateTime(d: Date): string {
+	const pad = (n: number): string => String(n).padStart(2, '0');
+	return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
+/**
  * Extract the deduplicated, ordered list of distinct speakers from a
  * transcript. First-seen order is preserved so frontmatter reads naturally.
  */
@@ -485,6 +540,7 @@ export function mergeTagSources(
 export function formatFrontmatter(
 	recording: Recording,
 	speakers: readonly string[],
+	summary?: Summary | null,
 ): string {
 	const duration = Number.isFinite(recording.durationSeconds)
 		? Math.max(0, Math.floor(recording.durationSeconds))
@@ -511,6 +567,31 @@ export function formatFrontmatter(
 		lines.push(`tags: ${yamlArray(recording.tags)}`);
 	}
 	lines.push('source: plaud');
+
+	// Optional Plaud summary extras. Each line is emitted only when the
+	// corresponding field is present on the Summary. Missing summary or
+	// missing fields produces no output — frontmatter stays clean for
+	// recordings that pre-date the flat GPT-5 schema and for any future
+	// Plaud shape that drops one of these fields. Add new known extras
+	// here without changing any other call site.
+	if (summary) {
+		const extras: ReadonlyArray<readonly [string, string | undefined]> = [
+			['plaud-headline', summary.headline],
+			['plaud-category', summary.category],
+			['plaud-language', summary.language],
+			['plaud-template', summary.template],
+			['plaud-model', summary.model],
+			['plaud-note-id', summary.noteId],
+			['plaud-summary-id', summary.summaryId],
+			['plaud-summary-version', summary.version],
+		];
+		for (const [key, value] of extras) {
+			if (value !== undefined) {
+				lines.push(`${key}: ${yamlScalar(value)}`);
+			}
+		}
+	}
+
 	lines.push('---');
 	return lines.join('\n');
 }
@@ -877,7 +958,7 @@ export function formatMarkdown(
 		? formatTranscriptSection(transcript, groups, headerLevel)
 		: '';
 	const parts: string[] = [
-		formatFrontmatter(recording, speakers),
+		formatFrontmatter(recording, speakers, summary),
 		'',
 		`# ${expandedTitle}`,
 		'',
@@ -891,7 +972,22 @@ export function formatMarkdown(
 		'',
 	];
 	if (includeSummary) {
-		parts.push('## Summary', '', formatSummaryBody(summary), '');
+		const renderedSummary: Summary | null =
+			summary !== null
+				? {
+						...summary,
+						text: substitutePlaudPlaceholders(summary.text, recording, transcript),
+					}
+				: null;
+		parts.push('## Summary', '', formatSummaryBody(renderedSummary), '');
+		if (renderedSummary?.aiSuggestion) {
+			const renderedSuggestion = substitutePlaudPlaceholders(
+				renderedSummary.aiSuggestion,
+				recording,
+				transcript,
+			).trim();
+			parts.push('## AI Suggestions', '', renderedSuggestion, '');
+		}
 	}
 	if (transcriptSection.length > 0) {
 		parts.push('---', '', transcriptSection, '');

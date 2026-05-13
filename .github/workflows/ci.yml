@@ -5,6 +5,12 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  schedule:
+    # Weekly OSV re-scan so new advisories surface even when no code changes
+    - cron: "0 12 * * 1"
+
+permissions:
+  contents: read
 
 jobs:
   check:
@@ -17,7 +23,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "18"
+          node-version: "20"
           cache: "npm"
 
       - name: Install dependencies
@@ -63,27 +69,28 @@ jobs:
         run: |
           echo "Scanning for known deprecated Obsidian APIs..."
           FOUND=0
+          SOURCES="main.ts import-modal.ts note-writer.ts plaud-client-re.ts vault-index.ts debug-logger.ts"
 
           # workspace.activeLeaf — deprecated, use getActiveViewOfType()
-          if grep -n "\.activeLeaf\b" main.ts; then
+          if grep -n "\.activeLeaf\b" $SOURCES; then
             echo "::error::Deprecated API: 'activeLeaf'. Use getActiveViewOfType() or getLeaf() instead."
             FOUND=1
           fi
 
           # MarkdownRenderer.renderMarkdown — deprecated, use MarkdownRenderer.render()
-          if grep -n "renderMarkdown(" main.ts; then
+          if grep -n "renderMarkdown(" $SOURCES; then
             echo "::error::Deprecated API: 'renderMarkdown'. Use MarkdownRenderer.render() instead."
             FOUND=1
           fi
 
           # getLeaf() with a boolean argument — deprecated, use getLeaf('tab') etc.
-          if grep -n "getLeaf(true)\|getLeaf(false)" main.ts; then
+          if grep -n "getLeaf(true)\|getLeaf(false)" $SOURCES; then
             echo "::error::Deprecated API: 'getLeaf(bool)'. Use getLeaf('tab') or getLeaf('split') instead."
             FOUND=1
           fi
 
           # Notice.noticeEl — deprecated, use Notice.messageEl
-          if grep -n "\.noticeEl\b" main.ts; then
+          if grep -n "\.noticeEl\b" $SOURCES; then
             echo "::error::Deprecated API: 'noticeEl'. Use 'messageEl' instead."
             FOUND=1
           fi
@@ -101,3 +108,32 @@ jobs:
           if [ "$SIZE" -gt 500000 ]; then
             echo "::warning::Bundle size exceeds 500KB"
           fi
+
+  osv-scan:
+    name: OSV Scanner
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run OSV-Scanner
+        uses: google/osv-scanner-action/osv-scanner-action@v2.0.3
+        with:
+          scan-args: |-
+            --lockfile=package-lock.json
+            --recursive
+
+  dependency-review:
+    name: Dependency Review
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/dependency-review-action@v4
+        with:
+          fail-on-severity: high
+          comment-summary-in-pr: on-failure

@@ -2,6 +2,37 @@
 
 All notable changes to Plaud Importer will be documented in this file.
 
+## [0.3.0] - 2026-05-13
+
+Plaud GPT-5 schema support, richer note output, vault-aware import UI, and a full Obsidian scorecard compliance pass.
+
+### Plaud API compatibility
+
+- Parse Plaud's new flat GPT-5 `data_result_summ` shape. Plaud rolled out a new summarizer (`endpoint: "azure-sweden-central-gpt-5"`) that returns markdown at the top level instead of nested under `content`. Imports against the new schema were failing with "Plaud returned data in an unexpected shape"; they now succeed. Legacy nested-content shapes 1 through 4 stay supported as fallbacks
+- Substitute Plaud's template placeholders before writing the note. Plaud's web UI replaces tokens like `$[audio_start_time]`, `$[audio_title]`, `$[audio_duration]`, and `$[speakers]` client side; their API returns the raw template, so previously a literal `$[audio_start_time]` showed up in the rendered summary. The substitution is forward compatible: unknown future tokens pass through verbatim
+- Better diagnostics on shape drift. When Plaud changes the wire format in a way the parser cannot recognize, the surfaced error now includes the actual top-level keys and a redacted JSON sample so a bug report has enough detail to fix forward without enabling debug mode
+
+### Richer note output
+
+- Imported notes now surface Plaud's GPT-5 metadata fields in frontmatter when present: `plaud-headline`, `plaud-category`, `plaud-language`, `plaud-template`, `plaud-model`, `plaud-note-id`, `plaud-summary-id`, `plaud-summary-version`. Every field is optional; missing values produce no line so older recordings stay clean
+- New `## AI Suggestions` section appended after `## Summary` when Plaud returns an `ai_suggestion` value. This is a separate field on Plaud's side that holds follow-up recommendations distinct from the main summary
+
+### Import modal: "Imported" badge
+
+- Each row in the recording list whose `plaud-id` already exists in the configured output folder now shows an "Imported" pill next to the title. Click the pill to open the existing note. The badge is purely informational: re-importing remains possible and honors the configured duplicate handling policy (skip / overwrite / ask)
+- The scan uses Obsidian's `metadataCache` (no file reads) and is rebuilt after every successful import so the badge appears live without reopening the modal
+
+### Obsidian scorecard compliance
+
+- Wired in `eslint-plugin-obsidianmd@^0.3.0` (recommended ruleset) so marketplace scorecard violations block `npm run lint`. Fixed all 33 findings surfaced on first run: 15 sentence-case fixes across UI strings and notices, three settings tab headings migrated to `Setting.setHeading()`, two `Vault.delete()` calls migrated to `FileManager.trashFile()`, and several type-safety fixes (`no-unsafe-assignment`, `no-unsafe-return`, `no-base-to-string`, `no-floating-promises`)
+- CI workflow expanded: Node 20 (was 18), top-level `permissions: contents: read`, weekly OSV-Scanner re-run via cron, OSV-Scanner job over the lockfile, GitHub Dependency Review on PRs (`fail-on-severity: high`)
+- Release workflow expanded: SLSA build provenance attestation over `main.js`, `manifest.json`, `styles.css` via `actions/attest-build-provenance@v2`; VirusTotal scan of the three artifacts via `crazy-max/ghaction-virustotal@v4` (requires `VT_API_KEY` secret); `npm ci` instead of `npm install`; CHANGELOG-extracted release notes attached to the GitHub release
+- README expanded: documents the scorecard linter integration, the SLSA + VirusTotal release pipeline, the new GPT-5 frontmatter extras, the imported badge, and the AI Suggestions section
+
+### Compatibility
+
+- No breaking changes. Existing notes are not modified by this release. Reimporting a recording produces a richer note (new frontmatter keys, AI Suggestions section, substituted placeholders) without disturbing fields that were already correct
+
 ## 0.2.6 — 2026-04-21
 
 - New **Ribbon icon** setting — curated dropdown of 12 Lucide icons (audio-lines, mic, headphones, podcast, radio, tape, notebook-pen, captions, users-round, volume-2, mic-vocal, file-audio-2). Live preview next to the dropdown shows the selected icon; change takes effect on the ribbon immediately with no reload

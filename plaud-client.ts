@@ -164,6 +164,26 @@ export interface Summary {
 	readonly id: PlaudRecordingId;
 	readonly text: string;
 	readonly sections?: readonly SummarySection[];
+	/**
+	 * Optional extras surfaced by Plaud's flat GPT-5 schema (shape 5 of
+	 * `data_result_summ`, rolled out 2026-05). Every field is best-effort:
+	 * the parser pulls them with soft `typeof === 'string'` guards and
+	 * drops anything missing or wrong-shaped. None of these fields are
+	 * load-bearing for the import; their job is to surface useful Plaud
+	 * metadata into the note's frontmatter (and the body for
+	 * `aiSuggestion`) without ever blowing up when a future shape change
+	 * removes or renames a field. New unknown top-level keys are silently
+	 * ignored — extension is open, breakage is closed.
+	 */
+	readonly headline?: string;
+	readonly category?: string;
+	readonly language?: string;
+	readonly template?: string;
+	readonly model?: string;
+	readonly aiSuggestion?: string;
+	readonly noteId?: string;
+	readonly summaryId?: string;
+	readonly version?: string;
 }
 
 export interface SummarySection {

@@ -33,6 +33,7 @@ import {
 	type WriteOutcome,
 } from './note-writer';
 import type { DebugLogger } from './debug-logger';
+import { buildPlaudIdIndex, type ImportedRecord } from './vault-index';
 
 /**
  * Modal-level options passed to `ImportModal`. Extends
@@ -312,7 +313,7 @@ export function tallyImportResults(results: readonly ImportResult[]): ImportTall
  */
 export function formatImportNotice(tally: ImportTally): string {
 	if (tally.total === 0) {
-		return 'Plaud Importer: nothing to import.';
+		return 'Plaud importer: nothing to import.';
 	}
 	const imported = tally.created + tally.overwritten;
 	const parts: string[] = [];
@@ -323,7 +324,7 @@ export function formatImportNotice(tally: ImportTally): string {
 	if (tally.failed > 0) {
 		parts.push(`${tally.failed} failed`);
 	}
-	return `Plaud Importer: ${parts.join(', ')}.`;
+	return `Plaud importer: ${parts.join(', ')}.`;
 }
 
 /**
@@ -349,11 +350,11 @@ export function formatErrorForClipboard(classification: ErrorClassification): st
 async function copyToClipboard(text: string): Promise<void> {
 	try {
 		await navigator.clipboard.writeText(text);
-		new Notice('Plaud Importer: error details copied to clipboard.');
+		new Notice('Plaud importer: error details copied to clipboard.');
 	} catch (err) {
-		console.error('Plaud Importer: clipboard write failed', err);
+		console.error('Plaud importer: clipboard write failed', err);
 		new Notice(
-			'Plaud Importer: could not copy to clipboard — see the developer console (Ctrl+Shift+I) for the full error.',
+			'Plaud importer: could not copy to clipboard — see the developer console (Ctrl+Shift+I) for the full error.',
 		);
 	}
 }
@@ -770,6 +771,12 @@ export class ImportModal extends Modal {
 	// "all remaining" escalation buttons — they are hidden for
 	// single-item imports where the option is meaningless.
 	private currentBatchSize = 0;
+	// Index of plaud-ids already present in the configured output folder.
+	// Built once per refresh() and refreshed after each successful import
+	// so the badge state stays accurate without re-scanning the vault on
+	// every render. Empty map when no notes match — never null so callers
+	// can `.has()` without guarding.
+	private importedIndex: Map<PlaudRecordingId, ImportedRecord> = new Map();
 
 	constructor(app: App, client: PlaudClient, noteWriterOptions: ImportModalOptions) {
 		super(app);
@@ -779,13 +786,13 @@ export class ImportModal extends Modal {
 
 	onOpen(): void {
 		this.modalEl.addClass('plaud-importer-modal');
-		this.setTitle('Import Plaud recordings');
+		this.setTitle('Import plaud recordings');
 		this.refresh().catch((err) => {
 			// refresh() has its own try/catch around the fetch and always
 			// calls renderError internally. This outer catch is purely
 			// defense-in-depth against a future bug that throws outside the
 			// fetch try/catch (e.g., a render function throwing).
-			console.error('Plaud Importer: unexpected error in onOpen/refresh', err);
+			console.error('Plaud importer: unexpected error in onOpen/refresh', err);
 			this.renderError(classifyError(err));
 		});
 	}
@@ -844,6 +851,11 @@ export class ImportModal extends Modal {
 		this.listInteractionHandler = null;
 		this.preparingCustomization = false;
 		this.artifactCache.clear();
+		// Snapshot which recordings already have a note in the vault so
+		// every row rendered below can render the "imported" badge.
+		// Refreshed again after each successful write so re-entering the
+		// modal isn't required to see new badges.
+		this.refreshImportedIndex();
 		const generation = ++this.fetchGeneration;
 		this.renderLoading();
 		try {
@@ -868,7 +880,7 @@ export class ImportModal extends Modal {
 			if (generation !== this.fetchGeneration) {
 				return;
 			}
-			console.error('Plaud Importer: listRecordings failed', err);
+			console.error('Plaud importer: listRecordings failed', err);
 			this.renderError(classifyError(err));
 		}
 	}
@@ -933,12 +945,12 @@ export class ImportModal extends Modal {
 			if (generation !== this.fetchGeneration) {
 				return;
 			}
-			console.error('Plaud Importer: loadMore failed', err);
+			console.error('Plaud importer: loadMore failed', err);
 			// Show a Notice rather than tearing down the list — the user
 			// still has their selections and their already-loaded pages,
 			// and losing them on a transient network blip would be rude.
 			const classification = classifyError(err);
-			new Notice(`Plaud Importer: could not load more — ${classification.message}`);
+			new Notice(`Plaud importer: could not load more — ${classification.message}`);
 			this.loadMoreErrorMessage = classification.message;
 			this.updateProgressUi();
 		} finally {
@@ -952,7 +964,7 @@ export class ImportModal extends Modal {
 		contentEl.empty();
 		const box = contentEl.createDiv({ cls: 'plaud-importer-state' });
 		box.createEl('p', {
-			text: 'Loading recordings from Plaud.AI…',
+			text: 'Loading recordings from plaud.ai…',
 			cls: 'plaud-importer-loading',
 		});
 	}
@@ -993,7 +1005,7 @@ export class ImportModal extends Modal {
 			});
 			retryButton.addEventListener('click', () => {
 				this.refresh().catch((err) => {
-					console.error('Plaud Importer: retry failed', err);
+					console.error('Plaud importer: retry failed', err);
 					this.renderError(classifyError(err));
 				});
 			});
@@ -1032,7 +1044,7 @@ export class ImportModal extends Modal {
 				// write and the writer construction — this outer catch is
 				// defense-in-depth against a future bug that throws outside
 				// those try/catch blocks.
-				console.error('Plaud Importer: unexpected error in onImportClick', err);
+				console.error('Plaud importer: unexpected error in onImportClick', err);
 				this.renderError(classifyError(err));
 			});
 		});
@@ -1043,8 +1055,8 @@ export class ImportModal extends Modal {
 		customizeButton.disabled = this.selectedIds.size === 0 || this.preparingCustomization;
 		customizeButton.addEventListener('click', () => {
 			this.beginCustomizationFlow().catch((err) => {
-				console.error('Plaud Importer: customization preflight failed', err);
-				new Notice('Plaud Importer: could not inspect artifacts.');
+				console.error('Plaud importer: customization preflight failed', err);
+				new Notice('Plaud importer: could not inspect artifacts.');
 			});
 		});
 
@@ -1078,12 +1090,70 @@ export class ImportModal extends Modal {
 		});
 
 		const labelWrap = row.createDiv({ cls: 'plaud-importer-label' });
-		labelWrap.createDiv({ text: rec.title, cls: 'plaud-importer-title' });
+		const titleRow = labelWrap.createDiv({ cls: 'plaud-importer-title-row' });
+		titleRow.createDiv({ text: rec.title, cls: 'plaud-importer-title' });
+
+		const existing = this.importedIndex.get(rec.id);
+		if (existing !== undefined) {
+			this.renderImportedBadge(titleRow, existing);
+		}
 
 		const meta = labelWrap.createDiv({ cls: 'plaud-importer-meta' });
 		meta.createSpan({ text: formatDate(rec.createdAt) });
 		meta.createSpan({ text: '  ·  ', cls: 'plaud-importer-sep' });
 		meta.createSpan({ text: formatDuration(rec.durationSeconds) });
+	}
+
+	// Refresh the vault index from scratch. Cheap — Obsidian's
+	// metadataCache returns parsed frontmatter without re-reading file
+	// bytes. Called at modal open (inside refresh()) and after every
+	// successful write so badge state stays accurate without forcing
+	// the user to close and reopen the modal.
+	private refreshImportedIndex(): void {
+		this.importedIndex = buildPlaudIdIndex(
+			this.app,
+			this.noteWriterOptions.outputFolder,
+		);
+	}
+
+	// Update or insert a single row's badge state after a successful
+	// import. Cheaper than a full re-render for the common "user
+	// imports one recording then imports another" path. The existing
+	// row stays where it is; we just append a badge to its title row.
+	private updateRowBadge(recId: PlaudRecordingId): void {
+		this.refreshImportedIndex();
+		if (this.listEl === null) return;
+		const rows = this.listEl.querySelectorAll('.plaud-importer-row');
+		const existing = this.importedIndex.get(recId);
+		if (existing === undefined) return;
+		// Match by checkbox value isn't reliable — checkboxes don't
+		// carry the id today. Iterate and find the row whose title
+		// matches the recording by reading from currentRecordings.
+		const idx = this.currentRecordings.findIndex((r) => r.id === recId);
+		if (idx === -1 || idx >= rows.length) return;
+		const row = rows[idx] as HTMLElement;
+		const titleRow = row.querySelector('.plaud-importer-title-row');
+		if (titleRow === null) return;
+		const existingBadge = titleRow.querySelector('.plaud-importer-imported-badge');
+		if (existingBadge !== null) return;
+		this.renderImportedBadge(titleRow as HTMLElement, existing);
+	}
+
+	private renderImportedBadge(parent: HTMLElement, record: ImportedRecord): void {
+		const badge = parent.createEl('a', {
+			cls: 'plaud-importer-imported-badge',
+			text: 'Imported',
+			href: '#',
+			attr: {
+				'aria-label': `Open existing note at ${record.path}`,
+				title: `Already imported — click to open ${record.path}`,
+			},
+		});
+		badge.addEventListener('click', (evt) => {
+			evt.preventDefault();
+			evt.stopPropagation();
+			void this.app.workspace.openLinkText(record.path, '', false);
+		});
 	}
 
 	private updateImportButtonState(): void {
@@ -1112,7 +1182,7 @@ export class ImportModal extends Modal {
 		}
 		this.preparingCustomization = true;
 		this.updateImportButtonState();
-		new Notice('Plaud Importer: checking available artifacts...');
+		new Notice('Plaud importer: checking available artifacts...');
 		try {
 			const selected = this.currentRecordings.filter((r) => this.selectedIds.has(r.id));
 			for (const recording of selected) {
@@ -1135,7 +1205,7 @@ export class ImportModal extends Modal {
 			await this.onImportClick(selection);
 		} catch (err) {
 			const classification = classifyError(err);
-			new Notice(`Plaud Importer: could not inspect artifacts — ${classification.message}`);
+			new Notice(`Plaud importer: could not inspect artifacts — ${classification.message}`);
 		} finally {
 			this.preparingCustomization = false;
 			this.updateImportButtonState();
@@ -1255,8 +1325,8 @@ export class ImportModal extends Modal {
 		this.userStartedScrolling = true;
 		this.startPrefetchIfNeeded();
 		void this.loadMore(trigger).catch((err) => {
-			console.error('Plaud Importer: unexpected error in loadMore', err);
-			new Notice('Plaud Importer: could not load more — see the developer console.');
+			console.error('Plaud importer: unexpected error in loadMore', err);
+			new Notice('Plaud importer: could not load more — see the developer console.');
 		});
 	}
 
@@ -1348,7 +1418,7 @@ export class ImportModal extends Modal {
 				if (generation !== this.fetchGeneration) {
 					return;
 				}
-				console.warn('Plaud Importer: next-page prefetch failed', err);
+				console.warn('Plaud importer: next-page prefetch failed', err);
 				// Prefetch failures are intentionally silent; regular loadMore
 				// still handles user-visible error messages.
 			})
@@ -1440,7 +1510,7 @@ export class ImportModal extends Modal {
 		}
 		this.lastAutoLoadAt = now;
 		void this.loadMore('auto').catch((err) => {
-			console.error('Plaud Importer: unexpected auto-load error', err);
+			console.error('Plaud importer: unexpected auto-load error', err);
 		});
 	}
 
@@ -1516,7 +1586,7 @@ export class ImportModal extends Modal {
 			});
 		} catch (err) {
 			if (err instanceof NoteWriterError) {
-				console.error('Plaud Importer: NoteWriter construction failed', err);
+				console.error('Plaud importer: NoteWriter construction failed', err);
 				this.renderError(classifyError(err));
 				return;
 			}
@@ -1600,6 +1670,13 @@ export class ImportModal extends Modal {
 					attachmentCount: mergedAttachments.length,
 					summaryLinkedAttachmentCount: summaryLinkedAttachments.length,
 				});
+				// Refresh the badge for this row when the write produced a
+				// note (created or overwritten). 'skipped' means the file
+				// already existed and we honored the duplicate policy —
+				// the badge is already there, no work to do.
+				if (writeOutcome.status === 'created' || writeOutcome.status === 'overwritten') {
+					this.updateRowBadge(recording.id);
+				}
 				if (
 					(
 						selection.includeAttachments ||
@@ -1666,7 +1743,7 @@ export class ImportModal extends Modal {
 				// logError(errorIds.IMPORT_RECORDING_FAILED, ...) telemetry
 				// call once the plugin has telemetry infrastructure.
 				console.error(
-					`Plaud Importer: import failed for recording ${recording.id} "${recording.title}"`,
+					`Plaud importer: import failed for recording ${recording.id} "${recording.title}"`,
 					err,
 				);
 				const classification = classifyError(err);
@@ -1705,7 +1782,7 @@ export class ImportModal extends Modal {
 			return null;
 		}
 		if (choice === 'skip') {
-			new Notice('Plaud Importer: using "skip existing" for this import run.');
+			new Notice('Plaud importer: using "skip existing" for this import run.');
 			return 'skip';
 		}
 		return 'overwrite';
@@ -1737,11 +1814,11 @@ export class ImportModal extends Modal {
 				return 'skip';
 			case 'overwrite-all':
 				this.stickyDuplicateDecision = 'overwrite';
-				new Notice('Plaud Importer: overwriting all remaining duplicates in this run.');
+				new Notice('Plaud importer: overwriting all remaining duplicates in this run.');
 				return 'overwrite';
 			case 'skip-all':
 				this.stickyDuplicateDecision = 'skip';
-				new Notice('Plaud Importer: skipping all remaining duplicates in this run.');
+				new Notice('Plaud importer: skipping all remaining duplicates in this run.');
 				return 'skip';
 			case 'cancel':
 				return 'cancel';
@@ -1837,7 +1914,7 @@ export class ImportModal extends Modal {
 			}
 		} catch (err) {
 			console.warn(
-				`Plaud Importer: failed to apply transcript fold state for ${path}`,
+				`Plaud importer: failed to apply transcript fold state for ${path}`,
 				err,
 			);
 		}
@@ -2157,7 +2234,7 @@ export class ImportModal extends Modal {
 			}
 			if (!imported) {
 				console.warn(
-					`Plaud Importer: failed to import attachment for ${notePath}`,
+					`Plaud importer: failed to import attachment for ${notePath}`,
 					asset,
 				);
 			}
@@ -2286,12 +2363,12 @@ export class ImportModal extends Modal {
 		const children = [...folder.children];
 		for (const child of children) {
 			if (child instanceof TFile) {
-				await this.app.vault.delete(child);
+				await this.app.fileManager.trashFile(child);
 				continue;
 			}
 			if (child instanceof TFolder) {
 				await this.clearAttachmentFolder(child);
-				await this.app.vault.delete(child, true);
+				await this.app.fileManager.trashFile(child);
 			}
 		}
 	}
@@ -2994,7 +3071,7 @@ export class ImportModal extends Modal {
 					})
 					.join('\n\n---\n\n');
 				void copyToClipboard(
-					`Plaud Importer: ${tally.failures.length} failure${
+					`Plaud importer: ${tally.failures.length} failure${
 						tally.failures.length === 1 ? '' : 's'
 					}\n\n${payload}`,
 				);
