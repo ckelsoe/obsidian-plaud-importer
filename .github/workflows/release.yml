@@ -12,6 +12,8 @@ permissions:
 
 env:
   PLUGIN_NAME: plaud-importer
+  # Opt into Node.js 24 for JavaScript actions (see ci.yml note).
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
   build:

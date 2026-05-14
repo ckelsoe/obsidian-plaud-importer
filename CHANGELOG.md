@@ -2,6 +2,13 @@
 
 All notable changes to Plaud Importer will be documented in this file.
 
+## [0.3.1] - 2026-05-13
+
+Small follow-up to 0.3.0 covering one CI deprecation warning and one UX polish item.
+
+- Settings tab now ends with a footer line showing the installed plugin version and links to the GitHub repo and issue tracker. Matches the format used by the reference plugin obsidian-shell-path-copy
+- CI and release workflows opt into Node.js 24 for JavaScript actions via `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24=true`. Silences the deprecation warning GitHub emits for `actions/checkout@v4` and `actions/setup-node@v4` ahead of the forced default flip on 2026-06-02 and Node 20 removal on 2026-09-16
+
 ## [0.3.0] - 2026-05-13
 
 Plaud GPT-5 schema support, richer note output, vault-aware import UI, and a full Obsidian scorecard compliance pass.

@@ -12,6 +12,14 @@ on:
 permissions:
   contents: read
 
+# Opt into Node.js 24 for JavaScript actions before GitHub forces it
+# (default flip 2026-06-02, Node 20 removed from runners 2026-09-16).
+# Without this, every run emits a deprecation warning for
+# actions/checkout@v4 and actions/setup-node@v4. See
+# https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 jobs:
   check:
     runs-on: ubuntu-latest

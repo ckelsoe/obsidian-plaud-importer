@@ -73,6 +73,11 @@
 	text-decoration: none;
 }
 
+.plaud-importer-footer {
+	text-align: center;
+	opacity: 0.8;
+}
+
 .plaud-importer-meta {
 	margin-top: 0.25em;
 	font-size: 0.85em;

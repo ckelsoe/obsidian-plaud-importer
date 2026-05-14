@@ -550,5 +550,31 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 						}
 					}),
 			);
+
+		// Footer with version + support links (matches the
+		// obsidian-shell-path-copy reference plugin's settings tab).
+		containerEl.createEl("br");
+		containerEl.createEl("br");
+
+		const footerDiv = containerEl.createDiv({
+			cls: "setting-item-description plaud-importer-footer",
+		});
+
+		const manifestVersion = this.plugin.manifest.version || "0.0.0";
+		footerDiv.createSpan({ text: `Version ${manifestVersion} | ` });
+
+		const createExternalLink = (text: string, url: string): HTMLAnchorElement =>
+			footerDiv.createEl("a", {
+				text,
+				href: url,
+				attr: { target: "_blank", rel: "noopener" },
+			});
+
+		createExternalLink("GitHub", "https://github.com/ckelsoe/obsidian-plaud-importer");
+		footerDiv.createSpan({ text: " | " });
+		createExternalLink(
+			"Report Issues",
+			"https://github.com/ckelsoe/obsidian-plaud-importer/issues",
+		);
 	}
 }
