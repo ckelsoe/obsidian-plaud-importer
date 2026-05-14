@@ -159,43 +159,9 @@ Please report bugs and feature requests at [github.com/ckelsoe/obsidian-plaud-im
 - Your plugin version (shown in Community plugins)
 - The debug log if reproducible (strip anything sensitive)
 
-## Development
+## Contributing
 
-This plugin is part of the [`obsidian-development`](https://github.com/ckelsoe/obsidian-development) workspace.
-
-```bash
-npm install              # install deps
-npm run dev              # start watch-mode build
-npm run build            # type-check + production build
-npm run lint             # eslint (zero warnings allowed)
-npm test                 # jest
-npm run version          # bump version in manifest.json + versions.json
-```
-
-### Obsidian marketplace scorecard
-
-This project uses [`eslint-plugin-obsidianmd`](https://github.com/obsidianmd/eslint-plugin-obsidianmd) (recommended ruleset) wired into `npm run lint` so marketplace-scorecard violations block the build. Rules currently enforced include sentence case for UI strings, `Setting.setHeading()` over manual `<h*>` elements, `FileManager.trashFile()` over `Vault.delete()`, no `as any`, and several others. Run `npm run lint` before pushing.
-
-CI runs on every push and pull request via `.github/workflows/ci.yml`: type check, lint, tests, build, manifest validation, deprecated Obsidian API scan, bundle-size warning, OSV-Scanner against `package-lock.json`, and (on PRs) GitHub Dependency Review. A weekly cron re-runs the OSV scan so newly disclosed advisories surface even on quiet weeks.
-
-### Releases
-
-Releases are tag-driven only. Pushing a semver tag (e.g. `0.3.0`) triggers `.github/workflows/release.yml`, which:
-
-1. Installs deps with `npm ci`, runs tests, runs the production build.
-2. Generates a **SLSA build provenance attestation** for `main.js`, `manifest.json`, and `styles.css` via `actions/attest-build-provenance@v2`.
-3. Scans the three release artifacts with **VirusTotal** (`crazy-max/ghaction-virustotal@v4`, requires the `VT_API_KEY` repository secret).
-4. Extracts release notes from `CHANGELOG.md` (the section matching the tag) and creates a GitHub release with the three artifacts attached.
-
-Do not run `gh release create` from the local CLI — the local path skips attestation and the VirusTotal scan, which the workspace process requires.
-
-After the release workflow finishes, verify provenance with:
-
-```bash
-gh attestation verify main.js --owner ckelsoe
-gh attestation verify manifest.json --owner ckelsoe
-gh attestation verify styles.css --owner ckelsoe
-```
+See [`CONTRIBUTING.md`](./CONTRIBUTING.md) for local build and test instructions.
 
 ## License
 
