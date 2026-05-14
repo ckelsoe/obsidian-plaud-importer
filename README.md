@@ -124,7 +124,9 @@ Off by default. When on, captures API request/response metadata and parsed resul
 
 ## Plaud API status
 
-⚠️ **This plugin currently uses Plaud's undocumented web API** — specifically the endpoints `/file/simple/web`, `/file/detail/`, `/ai/transsumm/`, and related asset URLs under `api.plaud.ai`. These endpoints are not officially published or supported by Plaud, and were discovered via open-source reverse-engineering projects ([`rsteckler/applaud`](https://github.com/rsteckler/applaud), [`JamesStuder/Plaud_API`](https://github.com/JamesStuder/Plaud_API)).
+⚠️ **This plugin currently uses Plaud's undocumented web API** under `api.plaud.ai`. The endpoints in use are `GET /file/simple/web` for listing recordings, `POST /ai/transsumm/{id}` for transcript and legacy summary retrieval, and `GET /file/detail/{id}` for the richer detail bundle (polish-revision summaries, AI keywords, mindmap and card attachments, and AI suggestions). None of these are officially published or supported by Plaud.
+
+The listing and `/ai/transsumm/{id}` endpoints were informed by prior community work, most directly [`rsteckler/applaud`](https://github.com/rsteckler/applaud), with cross-validation against [`JamesStuder/Plaud_API`](https://github.com/JamesStuder/Plaud_API). Those projects established that the data was reachable from a logged-in web session and gave a useful starting point for the auth and listing flow. The richer `/file/detail/{id}` surface used by this plugin (the `transaction_polish` polish-revision summary, `auto_sum_note`, `ai_suggestion`, the GPT-5 frontmatter schema fields, and the pre-signed S3 URLs for mindmap, card, and attachment assets), along with the encoding quirks (millisecond timestamps on the listing endpoint, the empty-JSON `POST` body shape on `/ai/transsumm/{id}`), were verified and extended through direct inspection of live Plaud responses during this plugin's development.
 
 What this means for you:
 
@@ -169,4 +171,6 @@ MIT — see [`LICENSE`](./LICENSE).
 
 ## Acknowledgments
 
-Inspired by [`rsteckler/applaud`](https://github.com/rsteckler/applaud) and [`JamesStuder/Plaud_API`](https://github.com/JamesStuder/Plaud_API), which demonstrated that the required data can be pulled from Plaud's web API today. Thanks to [Obsidian](https://obsidian.md/) for the `SecretStorage` and `SecretComponent` APIs that make storing the Plaud token securely a non-issue.
+Inspired by prior community work on Plaud's web API. [`rsteckler/applaud`](https://github.com/rsteckler/applaud) and [`JamesStuder/Plaud_API`](https://github.com/JamesStuder/Plaud_API) demonstrated that recordings, transcripts, and summaries are reachable from a logged-in web session, and gave this plugin a head start on the listing and transcript-retrieval flow. The richer detail-bundle surface (polish-revision summaries, AI keywords, mindmap and attachment asset URLs, AI suggestions, GPT-5 schema fields) and the response-shape and timing quirks were worked out by inspecting live Plaud responses during this plugin's development.
+
+Thanks to [Obsidian](https://obsidian.md/) for the `SecretStorage` and `SecretComponent` APIs that make storing the Plaud token securely a non-issue.
