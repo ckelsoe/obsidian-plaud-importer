@@ -145,6 +145,8 @@ Per Obsidian's [developer policies](https://docs.obsidian.md/Developer+policies)
 - **Secret handling** — the Plaud token is stored via Obsidian's `SecretStorage` API (per-vault, not synced), referenced by a secret ID in `data.json` rather than the token itself.
 - **Vault writes** — all file writes go through the Obsidian `Vault` API (`Vault.create`, `Vault.process`). No direct filesystem access.
 
+See [PRIVACY.md](./PRIVACY.md) for the full privacy policy and liability disclaimer, and [SECURITY.md](./SECURITY.md) for the security policy. The plugin is provided "AS IS" with no warranty (see [LICENSE](./LICENSE)); it is not affiliated with or endorsed by Plaud.AI, and you use it at your own risk.
+
 ## Troubleshooting
 
 - **"No Plaud token configured"** — re-check the Plaud token dropdown in settings. If your token expired, follow the [Plaud token](#plaud-token) steps again.

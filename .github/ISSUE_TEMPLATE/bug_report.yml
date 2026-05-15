@@ -1,0 +1,71 @@
+name: Bug report
+description: Report something that is not working as expected.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug. Bug reports are the single biggest help right now.
+
+        **Before you post, read this:**
+
+        - Everything you write or attach here is **public**.
+        - **Never paste your Plaud token** (the `bearer eyJ...` value) into this issue. It is a full web-session credential.
+        - The debug log redacts auth headers automatically, but it **may still contain transcript text, speaker names, and recording metadata**. Review it and redact anything sensitive before pasting.
+        - Redact screenshots and generated notes the same way.
+        - You post this information at your own discretion. See the [privacy policy](https://github.com/ckelsoe/obsidian-plaud-importer/blob/main/PRIVACY.md).
+
+        Security vulnerabilities must **not** be filed here. See [SECURITY.md](https://github.com/ckelsoe/obsidian-plaud-importer/blob/main/SECURITY.md).
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Describe the bug and what you expected instead. If Plaud's web view shows something different, say so.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: List the exact steps that trigger the bug.
+    validations:
+      required: true
+  - type: textarea
+    id: debug-log
+    attributes:
+      label: Debug log (optional)
+      description: Enable Debug log in plugin settings, reproduce the issue, then paste the captured trace here. Redact sensitive content first.
+      render: text
+    validations:
+      required: false
+  - type: input
+    id: obsidian-version
+    attributes:
+      label: Obsidian version
+    validations:
+      required: true
+  - type: input
+    id: plugin-version
+    attributes:
+      label: Plugin version
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Windows
+        - macOS
+        - Linux
+    validations:
+      required: true
+  - type: checkboxes
+    id: confirm
+    attributes:
+      label: Confirmation
+      options:
+        - label: I have NOT included my Plaud token anywhere in this report.
+          required: true
+        - label: I have reviewed any debug log, screenshot, or note for sensitive content and redacted as needed.
+          required: true

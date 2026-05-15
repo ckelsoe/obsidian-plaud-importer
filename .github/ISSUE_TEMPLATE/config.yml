@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability (do not file publicly)
+    url: https://github.com/ckelsoe/obsidian-plaud-importer/blob/main/SECURITY.md
+    about: Report security issues privately by email. Do not open a public issue.
+  - name: Privacy policy
+    url: https://github.com/ckelsoe/obsidian-plaud-importer/blob/main/PRIVACY.md
+    about: What data the plugin does and does not handle.
