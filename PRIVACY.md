@@ -59,4 +59,4 @@ This policy may be updated as the plugin evolves. Material changes will be noted
 
 ## Contact
 
-Questions about this policy: support@kelsoe.com
+Questions about this policy: open an issue at [github.com/ckelsoe/obsidian-plaud-importer/issues](https://github.com/ckelsoe/obsidian-plaud-importer/issues). Do not use a public issue for security vulnerabilities; see [SECURITY.md](./SECURITY.md) for the private reporting channel.

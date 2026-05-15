@@ -11,15 +11,17 @@ Plaud Importer is in early alpha. Only the latest released version receives secu
 
 ## Reporting a Vulnerability
 
-If you discover a security vulnerability in Plaud Importer, please report it responsibly:
+If you discover a security vulnerability in Plaud Importer, please report it **privately** so it can be fixed before public disclosure:
 
-1. **DO NOT** create a public GitHub issue for security vulnerabilities.
-2. Email the details to the maintainer at: support@kelsoe.com
+1. **DO NOT** open a public GitHub issue for security vulnerabilities.
+2. Open the repository's **Security** tab and click **Report a vulnerability**, or use this direct link: <https://github.com/ckelsoe/obsidian-plaud-importer/security/advisories/new>
 3. Include:
    - Description of the vulnerability
    - Steps to reproduce
    - Potential impact
    - Suggested fix (if any)
+
+Reports submitted through GitHub private vulnerability reporting are visible only to you and the maintainer until an advisory is published.
 
 ### What to expect
 
