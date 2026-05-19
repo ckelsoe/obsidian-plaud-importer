@@ -12,26 +12,18 @@ on:
 permissions:
   contents: read
 
-# Opt into Node.js 24 for JavaScript actions before GitHub forces it
-# (default flip 2026-06-02, Node 20 removed from runners 2026-09-16).
-# Without this, every run emits a deprecation warning for
-# actions/checkout@v4 and actions/setup-node@v4. See
-# https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
-
 jobs:
   check:
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
-          node-version: "20"
+          node-version: "22"
           cache: "npm"
 
       - name: Install dependencies
@@ -124,7 +116,7 @@ jobs:
       contents: read
       security-events: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Run OSV-Scanner
         uses: google/osv-scanner-action/osv-scanner-action@v2.0.3
         with:
@@ -140,7 +132,7 @@ jobs:
       contents: read
       pull-requests: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: actions/dependency-review-action@v4
         with:
           fail-on-severity: high
