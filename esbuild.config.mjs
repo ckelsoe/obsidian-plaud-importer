@@ -1,5 +1,7 @@
 import esbuild from "esbuild";
 import process from "process";
+import fs from "node:fs/promises";
+import path from "node:path";
 import builtins from "builtin-modules";
 
 const banner =
@@ -10,6 +12,50 @@ if you want to view the source, please visit the github repository of this plugi
 `;
 
 const prod = (process.argv[2] === "production");
+
+// Auto-copy build artifacts into the workspace test vault so reloading Obsidian
+// picks up changes without a manual copy step. Skips silently if the test vault
+// or the plugin's folder under it does not exist (e.g., on CI).
+const TEST_VAULT_PLUGINS_DIR = path.resolve(
+	process.cwd(),
+	"..",
+	"..",
+	"obs-test-vault",
+	".obsidian",
+	"plugins",
+);
+
+const copyToTestVaultPlugin = {
+	name: "copy-to-test-vault",
+	setup(build) {
+		build.onEnd(async (result) => {
+			if (result.errors.length > 0) return;
+			try {
+				const manifestText = await fs.readFile(
+					path.join(process.cwd(), "manifest.json"),
+					"utf8",
+				);
+				const manifest = JSON.parse(manifestText);
+				const targetDir = path.join(TEST_VAULT_PLUGINS_DIR, manifest.id);
+				try {
+					await fs.access(targetDir);
+				} catch {
+					return;
+				}
+				for (const f of ["main.js", "manifest.json", "styles.css"]) {
+					try {
+						await fs.copyFile(path.join(process.cwd(), f), path.join(targetDir, f));
+					} catch (e) {
+						if (e.code !== "ENOENT") throw e;
+					}
+				}
+				console.log(`[copy-to-test-vault] Synced to ${targetDir}`);
+			} catch (e) {
+				console.warn(`[copy-to-test-vault] Skipped: ${e.message}`);
+			}
+		});
+	},
+};
 
 const context = await esbuild.context({
 	banner: {
@@ -39,6 +85,7 @@ const context = await esbuild.context({
 	treeShaking: true,
 	outfile: "main.js",
 	minify: prod,
+	plugins: [copyToTestVaultPlugin],
 });
 
 if (prod) {
