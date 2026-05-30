@@ -44,6 +44,7 @@ export default [
 		ignores: [
 			"main.js",
 			"node_modules/**",
+			"scripts/**",
 			"*.mjs",
 			"*.js",
 			"*.json",
