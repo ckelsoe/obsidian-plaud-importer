@@ -33,10 +33,8 @@ declare module 'obsidian' {
      * it automatically; `load` reads it back.
      */
     interface FoldManager {
-        // eslint-disable-next-line no-undef
-        load(file: TFile): Promise<FoldInfo>;
-        // eslint-disable-next-line no-undef
-        save(file: TFile, foldInfo: FoldInfo): Promise<void>;
+        load(file: import('obsidian').TFile): Promise<FoldInfo>;
+        save(file: import('obsidian').TFile, foldInfo: FoldInfo): Promise<void>;
     }
 
     interface App {

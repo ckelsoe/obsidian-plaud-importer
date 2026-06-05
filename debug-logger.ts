@@ -117,16 +117,15 @@ export class BufferedDebugLogger implements DebugLogger {
 		this.consoleSink =
 			options.consoleSink ??
 			((message, payload): void => {
-				// Mirror to DevTools is the explicit purpose of this sink —
-				// the obsidianmd no-console rule fires here because it can't
-				// tell the debug-logger console mirror from accidental
-				// production logging.
+				// Mirror to DevTools is the explicit purpose of this sink, gated
+				// behind the user's debug setting. Uses console.debug (not
+				// console.log) to satisfy the obsidianmd no-console rule; the
+				// in-memory buffer is the primary capture path, so verbose-level
+				// console output is acceptable as a secondary mirror.
 				if (payload === undefined) {
-					// eslint-disable-next-line obsidianmd/rule-custom-message
-					console.log(message);
+					console.debug(message);
 				} else {
-					// eslint-disable-next-line obsidianmd/rule-custom-message
-					console.log(message, payload);
+					console.debug(message, payload);
 				}
 			});
 	}

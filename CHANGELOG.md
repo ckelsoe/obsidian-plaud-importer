@@ -2,6 +2,11 @@
 
 All notable changes to Plaud Importer will be documented in this file.
 
+## [0.4.1] - 2026-06-05
+
+### Fixed
+- Cleared developer-dashboard scan findings by removing suppressed lint rules instead of disabling them. The debug logger's console mirror now uses `console.debug` instead of `console.log` (drops two `obsidianmd/no-console` disables); the in-memory buffer remains the primary capture path. The `types.d.ts` fold-manager augmentation references `TFile` via an inline import, dropping two `no-undef` disables. No runtime behavior changed.
+
 ## [0.4.0] - 2026-06-05
 
 ### Changed
