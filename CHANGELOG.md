@@ -2,6 +2,13 @@
 
 All notable changes to Plaud Importer will be documented in this file.
 
+## [0.4.0] - 2026-06-05
+
+### Changed
+
+- Requires Obsidian 1.13.0 or later. Obsidian keeps serving 0.3.1 to vaults on older versions, so nothing breaks for them.
+- Settings migrated to Obsidian's declarative settings API. The output folder, duplicate handling, artifact-selection toggles, transcript-rendering options, and the debug toggle are now indexed in Obsidian's global settings search, and the artifact, transcript, and debug options are grouped into labeled sections. The Plaud token picker and the ribbon icon picker keep their custom controls. No setting changed its stored value or behavior.
+
 ## [0.3.1] - 2026-05-13
 
 Small follow-up to 0.3.0 covering one CI deprecation warning and one UX polish item.

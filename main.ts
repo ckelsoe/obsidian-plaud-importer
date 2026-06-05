@@ -5,6 +5,7 @@ import {
 	PluginSettingTab,
 	SecretComponent,
 	Setting,
+	type SettingDefinitionItem,
 	requestUrl,
 	setIcon,
 	type RequestUrlResponse,
@@ -301,6 +302,15 @@ export default class PlaudImporterPlugin extends Plugin {
 	async loadSettings() {
 		const stored = (await this.loadData()) as Partial<PlaudImporterSettings> | null;
 		this.settings = Object.assign({}, DEFAULT_SETTINGS, stored ?? {});
+		// Repair a blank stored output folder back to the default. The
+		// declarative control can persist an empty string; consumers expect a
+		// non-empty folder name.
+		if (
+			typeof this.settings.outputFolder !== "string" ||
+			this.settings.outputFolder.trim().length === 0
+		) {
+			this.settings.outputFolder = "Plaud";
+		}
 	}
 
 	async saveSettings() {
@@ -316,262 +326,208 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 		this.plugin = plugin;
 	}
 
-	display(): void {
-		const { containerEl } = this;
-		containerEl.empty();
+	getSettingDefinitions(): SettingDefinitionItem[] {
+		return [
+			{
+				name: "Plaud token",
+				desc: "Select or create a stored secret holding your Plaud.AI session token. The secret value is stored in Obsidian's per-vault secret storage, never in data.json.",
+				// SecretComponent needs an App instance and is added via
+				// Setting#addComponent, so it lives in a render callback rather
+				// than a declarative control. It is not search-indexable.
+				searchable: false,
+				render: (setting: Setting) => {
+					setting.addComponent((el) =>
+						new SecretComponent(this.app, el)
+							.setValue(this.plugin.settings.secretId)
+							.onChange(async (id) => {
+								this.plugin.settings.secretId = id;
+								await this.plugin.saveSettings();
+							}),
+					);
+				},
+			},
+			{
+				name: "Output folder",
+				desc: "Folder inside your vault where imported notes are written.",
+				control: { type: "text", key: "outputFolder", placeholder: "Plaud" },
+			},
+			{
+				name: "Duplicate handling",
+				desc: "What to do when a note for the recording already exists in the output folder.",
+				control: {
+					type: "dropdown",
+					key: "onDuplicate",
+					options: { skip: "Skip", overwrite: "Overwrite", prompt: "Ask each time" },
+				},
+			},
+			{
+				name: "Show ribbon icon",
+				desc: "Display the plaud importer icon in Obsidian's left rail. Turn off if you prefer to launch imports only from the command palette.",
+				control: { type: "toggle", key: "showRibbonIcon" },
+			},
+			{
+				name: "Ribbon icon",
+				desc: "Which icon to display in the left rail. Only applies when 'show ribbon icon' is on.",
+				// The live preview swaps the SVG in place via setIcon() as the
+				// dropdown changes, so this stays a render callback rather than
+				// a plain dropdown control.
+				searchable: false,
+				render: (setting: Setting) => {
+					const previewEl = setting.controlEl.createDiv({
+						cls: "plaud-importer-ribbon-preview",
+					});
+					setIcon(previewEl, resolveRibbonIconId(this.plugin.settings.ribbonIcon));
+					setting.addDropdown((dropdown) => {
+						for (const choice of RIBBON_ICON_CHOICES) {
+							dropdown.addOption(choice.id, choice.label);
+						}
+						dropdown
+							.setValue(resolveRibbonIconId(this.plugin.settings.ribbonIcon))
+							.onChange(async (value) => {
+								this.plugin.settings.ribbonIcon = value;
+								await this.plugin.saveSettings();
+								setIcon(previewEl, resolveRibbonIconId(value));
+								this.plugin.updateRibbonIcon();
+							});
+					});
+				},
+			},
+			{
+				type: "group",
+				heading: "Default artifact selection",
+				items: [
+					{
+						name: "Transcript",
+						desc: "Checked by default in import actions. You can override in 'review artifacts first'.",
+						control: { type: "toggle", key: "includeTranscript" },
+					},
+					{
+						name: "Summary",
+						desc: "Checked by default in import actions. You can override in 'review artifacts first'.",
+						control: { type: "toggle", key: "defaultIncludeSummary" },
+					},
+					{
+						name: "Attachments",
+						desc: "Checked by default in import actions when attachments are available.",
+						control: { type: "toggle", key: "defaultIncludeAttachments" },
+					},
+					{
+						name: "Mindmap",
+						desc: "Checked by default in import actions when a mindmap artifact is available.",
+						control: { type: "toggle", key: "defaultIncludeMindmap" },
+					},
+					{
+						name: "Card",
+						desc: "Checked by default in import actions when a card artifact is available.",
+						control: { type: "toggle", key: "defaultIncludeCard" },
+					},
+				],
+			},
+			{
+				type: "group",
+				heading: "Transcript rendering",
+				items: [
+					{
+						name: "Fold transcript by default",
+						desc: "Collapse the transcript section when the note is created so it doesn't dominate the view on open. Uses Obsidian's heading fold state — clicking the chevron next to the heading expands it. Turn off if you prefer the transcript always expanded.",
+						control: { type: "toggle", key: "foldTranscript" },
+					},
+					{
+						name: "Transcript heading level",
+						desc: "Markdown heading level for the wrapping 'transcript' heading. Chapter sub-headings render at one level below (e.g. Level 4 → transcript is h4, chapters are h5). This is the heading whose fold state the 'fold transcript by default' toggle controls.",
+						control: {
+							type: "dropdown",
+							key: "transcriptHeaderLevel",
+							options: { "1": "H1", "2": "H2", "3": "H3", "4": "H4", "5": "H5", "6": "H6" },
+						},
+					},
+				],
+			},
+			{
+				type: "group",
+				heading: "Debug",
+				items: [
+					{
+						name: "Debug logging",
+						desc: "Capture raw API requests, responses, and parsed results into an in-memory buffer and mirror them to the developer console (Ctrl+Shift+I). Authentication headers are NEVER captured. Payloads may contain transcript text, speaker names, and recording metadata — only enable when troubleshooting. Use the 'Plaud Importer: Debug: copy debug log to clipboard' command to export the session.",
+						control: { type: "toggle", key: "debug" },
+					},
+				],
+			},
+			{
+				name: "",
+				searchable: false,
+				render: (setting: Setting) => {
+					this.renderFooter(setting);
+				},
+			},
+		];
+	}
 
-		new Setting(containerEl)
-			.setName("Plaud token")
-			.setDesc(
-				"Select or create a stored secret holding your Plaud.AI session token. The secret value is stored in Obsidian's per-vault secret storage, never in data.json.",
-			)
-			.addComponent((el) =>
-				new SecretComponent(this.app, el)
-					.setValue(this.plugin.settings.secretId)
-					.onChange(async (id) => {
-						this.plugin.settings.secretId = id;
-						await this.plugin.saveSettings();
-					}),
-			);
+	// Binds declarative control definitions to the plugin's own settings store so
+	// changes persist via saveSettings(). transcriptHeaderLevel is stored as a
+	// number but the dropdown deals in string option keys, so it is converted at
+	// the boundary. outputFolder snaps an empty value back to the "Plaud" default,
+	// matching the previous imperative onChange behavior.
+	getControlValue(key: string): unknown {
+		if (key === "transcriptHeaderLevel") {
+			return String(this.plugin.settings.transcriptHeaderLevel);
+		}
+		return (this.plugin.settings as unknown as Record<string, unknown>)[key];
+	}
 
-		new Setting(containerEl)
-			.setName("Output folder")
-			.setDesc(
-				"Folder inside your vault where imported notes are written.",
-			)
-			.addText((text) =>
-				text
-					.setPlaceholder("Plaud")
-					.setValue(this.plugin.settings.outputFolder)
-					.onChange(async (value) => {
-						this.plugin.settings.outputFolder =
-							value.trim() || "Plaud";
-						await this.plugin.saveSettings();
-					}),
-			);
-
-		new Setting(containerEl)
-			.setName("Duplicate handling")
-			.setDesc(
-				"What to do when a note for the recording already exists in the output folder.",
-			)
-			.addDropdown((dropdown) =>
-				dropdown
-					.addOption("skip", "Skip")
-					.addOption("overwrite", "Overwrite")
-					.addOption("prompt", "Ask each time")
-					.setValue(this.plugin.settings.onDuplicate)
-					.onChange(async (value) => {
-						this.plugin.settings.onDuplicate =
-							value as "skip" | "overwrite" | "prompt";
-						await this.plugin.saveSettings();
-					}),
-			);
-
-		new Setting(containerEl)
-			.setName("Show ribbon icon")
-			.setDesc(
-				"Display the plaud importer icon in Obsidian's left rail. Turn off if you prefer to launch imports only from the command palette.",
-			)
-			.addToggle((toggle) =>
-				toggle
-					.setValue(this.plugin.settings.showRibbonIcon)
-					.onChange(async (value) => {
-						this.plugin.settings.showRibbonIcon = value;
-						await this.plugin.saveSettings();
-						this.plugin.updateRibbonIcon();
-					}),
-			);
-
-		// Ribbon icon picker + live preview. The preview element is
-		// rendered via Obsidian's setIcon() helper, which swaps the SVG
-		// in place every time the dropdown value changes so the user
-		// can see the icon before saving.
-		const iconSetting = new Setting(containerEl)
-			.setName("Ribbon icon")
-			.setDesc(
-				"Which icon to display in the left rail. Only applies when 'show ribbon icon' is on.",
-			);
-		const previewEl = iconSetting.controlEl.createDiv({
-			cls: "plaud-importer-ribbon-preview",
-		});
-		setIcon(previewEl, resolveRibbonIconId(this.plugin.settings.ribbonIcon));
-		iconSetting.addDropdown((dropdown) => {
-			for (const choice of RIBBON_ICON_CHOICES) {
-				dropdown.addOption(choice.id, choice.label);
+	async setControlValue(key: string, value: unknown): Promise<void> {
+		if (key === "outputFolder") {
+			this.plugin.settings.outputFolder =
+				(typeof value === "string" ? value.trim() : "") || "Plaud";
+		} else if (key === "transcriptHeaderLevel") {
+			const level = Number(value);
+			if (level >= 1 && level <= 6) {
+				this.plugin.settings.transcriptHeaderLevel = level as 1 | 2 | 3 | 4 | 5 | 6;
 			}
-			dropdown
-				.setValue(resolveRibbonIconId(this.plugin.settings.ribbonIcon))
-				.onChange(async (value) => {
-					this.plugin.settings.ribbonIcon = value;
-					await this.plugin.saveSettings();
-					setIcon(previewEl, resolveRibbonIconId(value));
-					this.plugin.updateRibbonIcon();
-				});
-		});
+		} else {
+			(this.plugin.settings as unknown as Record<string, unknown>)[key] = value;
+		}
+		await this.plugin.saveSettings();
 
-		new Setting(containerEl).setName("Default artifact selection").setHeading();
+		// Side effects that the imperative onChange handlers used to run inline.
+		if (key === "showRibbonIcon") {
+			this.plugin.updateRibbonIcon();
+		} else if (key === "debug") {
+			// Update the live logger's enabled flag in place so the change takes
+			// effect on the next API call without reinstantiating the client.
+			this.plugin.debugLogger.setEnabled(this.plugin.settings.debug);
+			if (this.plugin.settings.debug) {
+				new Notice(
+					"Plaud importer: Debug logging enabled. Run a command to capture events.",
+				);
+			} else {
+				new Notice(
+					"Plaud importer: Debug logging disabled. The buffer is preserved — use the clear command to wipe it.",
+				);
+			}
+		}
+	}
 
-		new Setting(containerEl)
-			.setName("Transcript")
-			.setDesc(
-				"Checked by default in import actions. You can override in 'review artifacts first'.",
-			)
-			.addToggle((toggle) =>
-				toggle
-					.setValue(this.plugin.settings.includeTranscript)
-					.onChange(async (value) => {
-						this.plugin.settings.includeTranscript = value;
-						await this.plugin.saveSettings();
-					}),
-			);
-
-		new Setting(containerEl)
-			.setName("Summary")
-			.setDesc(
-				"Checked by default in import actions. You can override in 'review artifacts first'.",
-			)
-			.addToggle((toggle) =>
-				toggle
-					.setValue(this.plugin.settings.defaultIncludeSummary)
-					.onChange(async (value) => {
-						this.plugin.settings.defaultIncludeSummary = value;
-						await this.plugin.saveSettings();
-					}),
-			);
-
-		new Setting(containerEl)
-			.setName("Attachments")
-			.setDesc(
-				"Checked by default in import actions when attachments are available.",
-			)
-			.addToggle((toggle) =>
-				toggle
-					.setValue(this.plugin.settings.defaultIncludeAttachments)
-					.onChange(async (value) => {
-						this.plugin.settings.defaultIncludeAttachments = value;
-						await this.plugin.saveSettings();
-					}),
-			);
-
-		new Setting(containerEl)
-			.setName("Mindmap")
-			.setDesc(
-				"Checked by default in import actions when a mindmap artifact is available.",
-			)
-			.addToggle((toggle) =>
-				toggle
-					.setValue(this.plugin.settings.defaultIncludeMindmap)
-					.onChange(async (value) => {
-						this.plugin.settings.defaultIncludeMindmap = value;
-						await this.plugin.saveSettings();
-					}),
-			);
-
-		new Setting(containerEl)
-			.setName("Card")
-			.setDesc(
-				"Checked by default in import actions when a card artifact is available.",
-			)
-			.addToggle((toggle) =>
-				toggle
-					.setValue(this.plugin.settings.defaultIncludeCard)
-					.onChange(async (value) => {
-						this.plugin.settings.defaultIncludeCard = value;
-						await this.plugin.saveSettings();
-					}),
-			);
-
-		new Setting(containerEl).setName("Transcript rendering").setHeading();
-
-		new Setting(containerEl)
-			.setName("Fold transcript by default")
-			.setDesc(
-				"Collapse the transcript section when the note is created so it doesn't dominate the view on open. Uses Obsidian's heading fold state — clicking the chevron next to the heading expands it. Turn off if you prefer the transcript always expanded.",
-			)
-			.addToggle((toggle) =>
-				toggle
-					.setValue(this.plugin.settings.foldTranscript)
-					.onChange(async (value) => {
-						this.plugin.settings.foldTranscript = value;
-						await this.plugin.saveSettings();
-					}),
-			);
-
-		new Setting(containerEl)
-			.setName("Transcript heading level")
-			.setDesc(
-				"Markdown heading level for the wrapping 'transcript' heading. Chapter sub-headings render at one level below (e.g. Level 4 → transcript is h4, chapters are h5). This is the heading whose fold state the 'fold transcript by default' toggle controls.",
-			)
-			.addDropdown((dropdown) =>
-				dropdown
-					.addOption("1", "H1")
-					.addOption("2", "H2")
-					.addOption("3", "H3")
-					.addOption("4", "H4")
-					.addOption("5", "H5")
-					.addOption("6", "H6")
-					.setValue(String(this.plugin.settings.transcriptHeaderLevel))
-					.onChange(async (value) => {
-						const level = Number(value);
-						if (level >= 1 && level <= 6) {
-							this.plugin.settings.transcriptHeaderLevel =
-								level as 1 | 2 | 3 | 4 | 5 | 6;
-							await this.plugin.saveSettings();
-						}
-					}),
-			);
-
-		new Setting(containerEl).setName("Debug").setHeading();
-
-		new Setting(containerEl)
-			.setName("Debug logging")
-			.setDesc(
-				"Capture raw API requests, responses, and parsed results into an in-memory buffer and mirror them to the developer console (Ctrl+Shift+I). Authentication headers are NEVER captured. Payloads may contain transcript text, speaker names, and recording metadata — only enable when troubleshooting. Use the 'Plaud Importer: Debug: copy debug log to clipboard' command to export the session.",
-			)
-			.addToggle((toggle) =>
-				toggle
-					.setValue(this.plugin.settings.debug)
-					.onChange(async (value) => {
-						this.plugin.settings.debug = value;
-						// Update the live logger's enabled flag in place so
-						// the change takes effect on the next API call
-						// without having to reinstantiate the client.
-						this.plugin.debugLogger.setEnabled(value);
-						await this.plugin.saveSettings();
-						if (value) {
-							new Notice(
-								"Plaud importer: Debug logging enabled. Run a command to capture events.",
-							);
-						} else {
-							new Notice(
-								"Plaud importer: Debug logging disabled. The buffer is preserved — use the clear command to wipe it.",
-							);
-						}
-					}),
-			);
-
-		// Footer with version + support links (matches the
-		// obsidian-shell-path-copy reference plugin's settings tab).
-		containerEl.createEl("br");
-		containerEl.createEl("br");
-
-		const footerDiv = containerEl.createDiv({
-			cls: "setting-item-description plaud-importer-footer",
-		});
+	// Renders the version + support links footer into a trailing settings row
+	// (matches the obsidian-shell-path-copy reference plugin's settings tab).
+	private renderFooter(setting: Setting): void {
+		const el = setting.settingEl;
+		el.empty();
+		el.addClass("plaud-importer-footer");
 
 		const manifestVersion = this.plugin.manifest.version || "0.0.0";
-		footerDiv.createSpan({ text: `Version ${manifestVersion} | ` });
+		el.createSpan({ text: `Version ${manifestVersion} | ` });
 
 		const createExternalLink = (text: string, url: string): HTMLAnchorElement =>
-			footerDiv.createEl("a", {
+			el.createEl("a", {
 				text,
 				href: url,
 				attr: { target: "_blank", rel: "noopener" },
 			});
 
 		createExternalLink("GitHub", "https://github.com/ckelsoe/obsidian-plaud-importer");
-		footerDiv.createSpan({ text: " | " });
+		el.createSpan({ text: " | " });
 		createExternalLink(
 			"Report Issues",
 			"https://github.com/ckelsoe/obsidian-plaud-importer/issues",
