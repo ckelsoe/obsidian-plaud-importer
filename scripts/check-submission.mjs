@@ -8,9 +8,38 @@
 //
 // Exits non-zero on any finding so it can chain into `npm run lint` and CI.
 
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 
 const findings = [];
+
+// Forbid suppressing any obsidianmd/* lint rule. Obsidian's developer-dashboard
+// scan rejects disabling its rules, and local eslint cannot report its own
+// suppressions (an `// eslint-disable obsidianmd/...` reads as zero local errors
+// but fails the dashboard), so this guard scans source for them and fails the
+// build. Comply with the rule (rename, restructure) instead of disabling it.
+const CODE_EXT = /\.(ts|mts|cts|tsx|js|mjs|cjs)$/;
+const SKIP_DIRS = new Set(["node_modules", ".git", "dist", "build", "scripts"]);
+const DISABLE_OBSIDIANMD = /eslint-disable(?:-next-line|-line)?[^\n]*\bobsidianmd\//;
+
+function* walkCode(dir) {
+	for (const entry of readdirSync(dir, { withFileTypes: true })) {
+		const path = `${dir}/${entry.name}`;
+		if (entry.isDirectory()) {
+			if (!SKIP_DIRS.has(entry.name)) yield* walkCode(path);
+		} else if (CODE_EXT.test(entry.name) && entry.name !== "main.js") {
+			yield path;
+		}
+	}
+}
+
+for (const file of walkCode(".")) {
+	const lines = readFileSync(file, "utf8").split(/\r?\n/);
+	lines.forEach((line, index) => {
+		if (DISABLE_OBSIDIANMD.test(line)) {
+			findings.push(`${file.replace(/^\.\//, "")}:${index + 1}: do not eslint-disable an obsidianmd/* rule; comply with it (rename or restructure) instead.`);
+		}
+	});
+}
 
 // The manifest description must not contain the word "Obsidian" (the online
 // review rejects it as redundant with the plugin-directory context), must be at
