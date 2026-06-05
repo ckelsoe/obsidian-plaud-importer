@@ -2,6 +2,11 @@
 
 All notable changes to Plaud Importer will be documented in this file.
 
+## [0.4.2] - 2026-06-05
+
+### Fixed
+- Added the required `-- description` to the one remaining eslint directive (`no-control-regex` in the filename sanitizer), which the developer-dashboard scan flags when missing. No runtime change.
+
 ## [0.4.1] - 2026-06-05
 
 ### Fixed

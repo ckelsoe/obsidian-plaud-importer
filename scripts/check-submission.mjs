@@ -19,7 +19,13 @@ const findings = [];
 // build. Comply with the rule (rename, restructure) instead of disabling it.
 const CODE_EXT = /\.(ts|mts|cts|tsx|js|mjs|cjs)$/;
 const SKIP_DIRS = new Set(["node_modules", ".git", "dist", "build", "scripts"]);
-const DISABLE_OBSIDIANMD = /eslint-disable(?:-next-line|-line)?[^\n]*\bobsidianmd\//;
+// Anchored to a comment opener (// or /*) so prose that merely mentions
+// "eslint-disable" is not flagged; eslint only honors directives at a comment's start.
+const DISABLE_OBSIDIANMD = /(?:\/\/|\/\*)\s*eslint-disable(?:-next-line|-line)?[^\n]*\bobsidianmd\//;
+// Every eslint directive comment must carry a `-- description` (the dashboard
+// enforces eslint-comments/require-description, which local eslint does not). A
+// directive line is compliant only if it also contains a `--` separator.
+const ESLINT_DIRECTIVE = /(?:\/\/|\/\*)\s*eslint-(?:disable|enable)(?:-next-line|-line)?\b/;
 
 function* walkCode(dir) {
 	for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -35,8 +41,12 @@ function* walkCode(dir) {
 for (const file of walkCode(".")) {
 	const lines = readFileSync(file, "utf8").split(/\r?\n/);
 	lines.forEach((line, index) => {
+		const where = `${file.replace(/^\.\//, "")}:${index + 1}`;
 		if (DISABLE_OBSIDIANMD.test(line)) {
-			findings.push(`${file.replace(/^\.\//, "")}:${index + 1}: do not eslint-disable an obsidianmd/* rule; comply with it (rename or restructure) instead.`);
+			findings.push(`${where}: do not eslint-disable an obsidianmd/* rule; comply with it (rename or restructure) instead.`);
+		}
+		if (ESLINT_DIRECTIVE.test(line) && !line.includes("--")) {
+			findings.push(`${where}: eslint directive comment needs a "-- description" explaining why it is necessary.`);
 		}
 	});
 }

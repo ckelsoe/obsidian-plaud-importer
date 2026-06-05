@@ -202,7 +202,7 @@ export function sanitizeFilename(title: string): string {
 	// dashes. Whitespace control chars like \t and \n were already handled
 	// by the step above, so what's left is things like NUL (\x00) and the
 	// other non-whitespace control codes.
-	// eslint-disable-next-line no-control-regex
+	// eslint-disable-next-line no-control-regex -- intentional: this class strips NUL and other non-whitespace control codes from the filename
 	out = out.replace(/[<>:"/\\|?*\x00-\x08\x0b\x0c\x0e-\x1f[\]]/g, '-');
 
 	// Strip trailing dots and spaces — Windows silently drops them from
