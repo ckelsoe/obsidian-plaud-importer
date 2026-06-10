@@ -499,48 +499,138 @@ export function mergeTagSources(
 	baseTags: readonly string[] | undefined,
 	aiKeywords: readonly string[] | undefined,
 ): readonly string[] {
-	const seen = new Set<string>();
-	const out: string[] = [];
+	return buildNoteTags(baseTags, aiKeywords, {
+		tagMode: 'all',
+		customTags: '',
+		aiKeywordsAsProperty: false,
+	}).tags;
+}
 
-	for (const tag of baseTags ?? []) {
+/** Which tag sources land in the note's `tags:` frontmatter. */
+export type TagMode = 'none' | 'custom' | 'plaud' | 'all';
+
+export interface TagBuildOptions {
+	readonly tagMode: TagMode;
+	/** Raw comma-separated value from the "Custom tags" setting. */
+	readonly customTags: string;
+	/**
+	 * When AI keywords are excluded from `tags:` (every mode except `all`),
+	 * surface them as a `keywords:` frontmatter property instead.
+	 */
+	readonly aiKeywordsAsProperty: boolean;
+}
+
+export interface NoteTagResult {
+	/** Final list for the `tags:` frontmatter key. May be empty. */
+	readonly tags: readonly string[];
+	/** List for the `keywords:` frontmatter key. Empty when not wanted. */
+	readonly keywords: readonly string[];
+}
+
+/**
+ * Build the tag and keyword lists for a note's frontmatter from the two
+ * Plaud sources plus the user's custom tags, honoring the tag settings.
+ *
+ * Tag selection by mode:
+ *  - `none`: no tags at all (custom tags excluded too).
+ *  - `custom`: only the user's custom tags.
+ *  - `plaud`: human-set Plaud tags plus custom tags. AI keywords dropped.
+ *  - `all`: everything, matching the pre-settings behavior.
+ *
+ * Normalization reuses the DD-004 rules documented on `mergeTagSources`:
+ * base and custom tags are trimmed, lowercased, and deduped
+ * case-insensitively; AI keywords are slugified and prefixed `plaud/`.
+ * Output order: base tags, then custom tags, then AI tags, each group in
+ * its original insertion order, first occurrence winning on collision.
+ *
+ * The `keywords` result holds the trimmed ORIGINAL keyword strings (no
+ * slugify, no prefix, case-insensitive dedup). It is populated whenever
+ * the mode excludes AI keywords from `tags:` and `aiKeywordsAsProperty`
+ * is on. A `keywords:` property never pollutes Obsidian's tag pane but
+ * stays searchable and Dataview-queryable.
+ */
+export function buildNoteTags(
+	baseTags: readonly string[] | undefined,
+	aiKeywords: readonly string[] | undefined,
+	options: TagBuildOptions,
+): NoteTagResult {
+	const seen = new Set<string>();
+	const tags: string[] = [];
+
+	const pushPlainTag = (tag: string): void => {
 		if (typeof tag !== 'string') {
-			continue;
+			return;
 		}
 		const normalized = tag.trim().toLowerCase();
 		if (normalized.length === 0 || seen.has(normalized)) {
-			continue;
+			return;
 		}
 		seen.add(normalized);
-		out.push(normalized);
+		tags.push(normalized);
+	};
+
+	if (options.tagMode === 'plaud' || options.tagMode === 'all') {
+		for (const tag of baseTags ?? []) {
+			pushPlainTag(tag);
+		}
 	}
 
-	for (const keyword of aiKeywords ?? []) {
-		if (typeof keyword !== 'string') {
-			continue;
+	if (options.tagMode !== 'none') {
+		for (const tag of options.customTags.split(',')) {
+			pushPlainTag(tag);
 		}
-		const slug = keyword
-			.trim()
-			.toLowerCase()
-			.replace(/\s+/g, '-')
-			.replace(/^-+|-+$/g, '');
-		if (slug.length === 0) {
-			continue;
-		}
-		const prefixed = `plaud/${slug}`;
-		if (seen.has(prefixed)) {
-			continue;
-		}
-		seen.add(prefixed);
-		out.push(prefixed);
 	}
 
-	return out;
+	if (options.tagMode === 'all') {
+		for (const keyword of aiKeywords ?? []) {
+			if (typeof keyword !== 'string') {
+				continue;
+			}
+			const slug = keyword
+				.trim()
+				.toLowerCase()
+				.replace(/\s+/g, '-')
+				.replace(/^-+|-+$/g, '');
+			if (slug.length === 0) {
+				continue;
+			}
+			const prefixed = `plaud/${slug}`;
+			if (seen.has(prefixed)) {
+				continue;
+			}
+			seen.add(prefixed);
+			tags.push(prefixed);
+		}
+	}
+
+	const keywords: string[] = [];
+	if (options.tagMode !== 'all' && options.aiKeywordsAsProperty) {
+		const seenKeywords = new Set<string>();
+		for (const keyword of aiKeywords ?? []) {
+			if (typeof keyword !== 'string') {
+				continue;
+			}
+			const trimmed = keyword.trim();
+			if (trimmed.length === 0) {
+				continue;
+			}
+			const dedupKey = trimmed.toLowerCase();
+			if (seenKeywords.has(dedupKey)) {
+				continue;
+			}
+			seenKeywords.add(dedupKey);
+			keywords.push(trimmed);
+		}
+	}
+
+	return { tags, keywords };
 }
 
 export function formatFrontmatter(
 	recording: Recording,
 	speakers: readonly string[],
 	summary?: Summary | null,
+	keywords?: readonly string[],
 ): string {
 	const duration = Number.isFinite(recording.durationSeconds)
 		? Math.max(0, Math.floor(recording.durationSeconds))
@@ -565,6 +655,12 @@ export function formatFrontmatter(
 	}
 	if (recording.tags && recording.tags.length > 0) {
 		lines.push(`tags: ${yamlArray(recording.tags)}`);
+	}
+	// AI keywords demoted from tags by the tag-mode setting. A plain
+	// frontmatter property is searchable and Dataview-queryable but does
+	// not feed Obsidian's vault-wide tag pane.
+	if (keywords && keywords.length > 0) {
+		lines.push(`keywords: ${yamlArray(keywords)}`);
 	}
 	lines.push('source: plaud');
 
@@ -938,6 +1034,12 @@ export interface FormatMarkdownOptions {
 	readonly includeTranscript?: boolean;
 	readonly includeSummary?: boolean;
 	readonly transcriptHeaderLevel?: HeadingLevel;
+	/**
+	 * AI keywords to surface as a `keywords:` frontmatter property.
+	 * Produced by `buildNoteTags` when the tag mode excludes AI keywords
+	 * from `tags:` and the keep-as-property setting is on.
+	 */
+	readonly keywords?: readonly string[];
 }
 
 export function formatMarkdown(
@@ -958,7 +1060,7 @@ export function formatMarkdown(
 		? formatTranscriptSection(transcript, groups, headerLevel)
 		: '';
 	const parts: string[] = [
-		formatFrontmatter(recording, speakers, summary),
+		formatFrontmatter(recording, speakers, summary, options.keywords),
 		'',
 		`# ${expandedTitle}`,
 		'',

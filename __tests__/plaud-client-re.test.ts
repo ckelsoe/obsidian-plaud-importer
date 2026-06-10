@@ -1162,19 +1162,25 @@ describe('getTranscriptAndSummary summary shape-drift detection', () => {
 // Segment validation: backwards timestamps and unit sanity
 
 describe('getTranscriptAndSummary segment validation', () => {
-	it('throws PlaudParseError when end_time is before start_time', async () => {
+	it('clamps end_time up to start_time when Plaud sends them backwards', async () => {
+		// Real-API capture on 2026-06-10: recording 9a3a1db8... contained
+		// data_result[61] with end_time 1596940 and start_time 1610440
+		// (13.5s backwards, mid-recording). The parser used to reject the
+		// whole transcript for that one boundary; now it keeps the segment
+		// and clamps the end to the (authoritative) start.
 		const { fetcher } = captureFetcher(
 			ok(transsummEnvelope({
 				data_result: [
-					{ start_time: 10000, end_time: 5000, content: 'backwards', speaker: '' },
+					{ start_time: 1610440, end_time: 1596940, content: 'backwards', speaker: '' },
 				],
 			})),
 		);
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
-		await expect(client.getTranscriptAndSummary(ID)).rejects.toThrow(
-			/end_time.*before.*start_time/,
-		);
+		const { transcript } = await client.getTranscriptAndSummary(ID);
+		expect(transcript?.segments[0].startSeconds).toBe(1610.44);
+		expect(transcript?.segments[0].endSeconds).toBe(1610.44);
+		expect(transcript?.segments[0].text).toBe('backwards');
 	});
 
 	it('allows end_time equal to start_time (zero-length segment)', async () => {

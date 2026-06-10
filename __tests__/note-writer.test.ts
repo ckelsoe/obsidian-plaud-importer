@@ -15,6 +15,8 @@ import {
 	formatTranscriptSection,
 	groupTranscriptByChapters,
 	mergeTagSources,
+	buildNoteTags,
+	type TagBuildOptions,
 	sanitizeFilename,
 	substitutePlaudPlaceholders,
 	type FileLike,
@@ -430,6 +432,32 @@ describe('formatFrontmatter', () => {
 	it('quotes YAML scalars with special characters', () => {
 		const fm = formatFrontmatter(makeRecording(), ['Ana: Chen', 'Bo "B" Li']);
 		expect(fm).toContain('speakers: ["Ana: Chen", "Bo \\"B\\" Li"]');
+	});
+
+	it('omits the keywords line when keywords is absent or empty', () => {
+		expect(formatFrontmatter(makeRecording(), [])).not.toMatch(/keywords:/);
+		expect(formatFrontmatter(makeRecording(), [], null, [])).not.toMatch(
+			/keywords:/,
+		);
+	});
+
+	it('emits the keywords line after tags when keywords has values', () => {
+		const fm = formatFrontmatter(
+			makeRecording({ tags: ['meeting'] }),
+			[],
+			null,
+			['AI Agent', 'Customer Data'],
+		);
+		expect(fm).toContain('keywords: [AI Agent, Customer Data]');
+		expect(fm.indexOf('tags:')).toBeLessThan(fm.indexOf('keywords:'));
+	});
+
+	it('quotes keyword values with special characters', () => {
+		const fm = formatFrontmatter(makeRecording(), [], null, [
+			'Q2: Review',
+			'true',
+		]);
+		expect(fm).toContain('keywords: ["Q2: Review", "true"]');
 	});
 
 	it('clamps negative/infinite durations in the duration-seconds line', () => {
@@ -1455,6 +1483,143 @@ describe('mergeTagSources', () => {
 			'plaud/roper-architecture',
 			'plaud/devops',
 			'plaud/workflow-modernization',
+		]);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// buildNoteTags — tag mode settings (2026-06-10): which sources land in
+// tags:, custom tag parsing, and the keywords: property output
+// ---------------------------------------------------------------------------
+
+describe('buildNoteTags', () => {
+	const BASE = ['Work', 'Meeting'];
+	const AI = ['AI Agent', 'Customer Data'];
+
+	function opts(overrides: Partial<TagBuildOptions> = {}): TagBuildOptions {
+		return {
+			tagMode: 'plaud',
+			customTags: '',
+			aiKeywordsAsProperty: true,
+			...overrides,
+		};
+	}
+
+	describe('tag modes', () => {
+		it("mode 'none' emits no tags at all, even custom ones", () => {
+			const result = buildNoteTags(BASE, AI, opts({ tagMode: 'none', customTags: 'pinned' }));
+			expect(result.tags).toEqual([]);
+		});
+
+		it("mode 'custom' emits only the custom tags", () => {
+			const result = buildNoteTags(BASE, AI, opts({ tagMode: 'custom', customTags: 'plaud-meeting' }));
+			expect(result.tags).toEqual(['plaud-meeting']);
+		});
+
+		it("mode 'plaud' emits base tags plus custom tags, no AI keywords", () => {
+			const result = buildNoteTags(BASE, AI, opts({ tagMode: 'plaud', customTags: 'plaud-meeting' }));
+			expect(result.tags).toEqual(['work', 'meeting', 'plaud-meeting']);
+		});
+
+		it("mode 'all' emits base, custom, then slugified AI tags in that order", () => {
+			const result = buildNoteTags(BASE, AI, opts({ tagMode: 'all', customTags: 'plaud-meeting' }));
+			expect(result.tags).toEqual([
+				'work',
+				'meeting',
+				'plaud-meeting',
+				'plaud/ai-agent',
+				'plaud/customer-data',
+			]);
+		});
+
+		it("mode 'all' with empty custom tags matches the legacy mergeTagSources output", () => {
+			const result = buildNoteTags(BASE, AI, opts({ tagMode: 'all' }));
+			expect(result.tags).toEqual(mergeTagSources(BASE, AI));
+		});
+	});
+
+	describe('custom tag parsing', () => {
+		it('splits on commas, trims, lowercases, drops empties, and dedups', () => {
+			const result = buildNoteTags(undefined, undefined, opts({
+				tagMode: 'custom',
+				customTags: 'a,, b ,A',
+			}));
+			expect(result.tags).toEqual(['a', 'b']);
+		});
+
+		it('an empty custom tags string contributes nothing', () => {
+			const result = buildNoteTags(BASE, undefined, opts({ tagMode: 'plaud', customTags: '' }));
+			expect(result.tags).toEqual(['work', 'meeting']);
+		});
+
+		it('custom tags dedup case-insensitively against base tags', () => {
+			const result = buildNoteTags(['Work'], undefined, opts({
+				tagMode: 'plaud',
+				customTags: 'WORK, extra',
+			}));
+			expect(result.tags).toEqual(['work', 'extra']);
+		});
+	});
+
+	describe('keywords property output', () => {
+		it('returns trimmed original-cased keywords when the mode excludes AI and the toggle is on', () => {
+			const result = buildNoteTags(BASE, ['  AI Agent ', 'Customer Data'], opts({ tagMode: 'plaud' }));
+			expect(result.keywords).toEqual(['AI Agent', 'Customer Data']);
+		});
+
+		it('dedups keywords case-insensitively, first occurrence wins', () => {
+			const result = buildNoteTags(undefined, ['AI Agent', 'ai agent'], opts({ tagMode: 'none' }));
+			expect(result.keywords).toEqual(['AI Agent']);
+		});
+
+		it('drops empty and non-string keyword entries', () => {
+			const result = buildNoteTags(undefined, ['', '   ', 42 as unknown as string, 'Real'], opts());
+			expect(result.keywords).toEqual(['Real']);
+		});
+
+		it('is empty when the toggle is off', () => {
+			const result = buildNoteTags(BASE, AI, opts({ aiKeywordsAsProperty: false }));
+			expect(result.keywords).toEqual([]);
+		});
+
+		it("is empty in mode 'all' because the keywords already live in tags:", () => {
+			const result = buildNoteTags(BASE, AI, opts({ tagMode: 'all' }));
+			expect(result.keywords).toEqual([]);
+		});
+
+		it("is populated in mode 'none' — the mode governs tags:, the toggle governs the property", () => {
+			const result = buildNoteTags(BASE, AI, opts({ tagMode: 'none' }));
+			expect(result.tags).toEqual([]);
+			expect(result.keywords).toEqual(['AI Agent', 'Customer Data']);
+		});
+	});
+
+	it('end-to-end: the 2026-04-14 capture under the default settings', () => {
+		// Same real-data shape as the mergeTagSources end-to-end case, but
+		// under the new defaults: tagMode 'plaud' with the property toggle
+		// on. The 9 AI keywords move from tags: to keywords:.
+		const result = buildNoteTags([], [
+			'AI Agent',
+			'Customer Data',
+			'AWS Environment',
+			'Semantic Search',
+			'ImageRight',
+			'Cloud Code',
+			'Roper Architecture',
+			'DevOps',
+			'Workflow Modernization',
+		], opts());
+		expect(result.tags).toEqual([]);
+		expect(result.keywords).toEqual([
+			'AI Agent',
+			'Customer Data',
+			'AWS Environment',
+			'Semantic Search',
+			'ImageRight',
+			'Cloud Code',
+			'Roper Architecture',
+			'DevOps',
+			'Workflow Modernization',
 		]);
 	});
 });

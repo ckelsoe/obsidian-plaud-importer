@@ -16,6 +16,7 @@ import {
 } from "./plaud-client-re";
 import { ImportModal } from "./import-modal";
 import { BufferedDebugLogger } from "./debug-logger";
+import type { TagMode } from "./note-writer";
 
 // Curated list of Lucide icon IDs offered in the "Ribbon icon" setting.
 // Each entry is a valid Lucide ID bundled with Obsidian's icon set. This
@@ -67,6 +68,11 @@ interface PlaudImporterSettings {
 	defaultIncludeCard: boolean;
 	foldTranscript: boolean;
 	transcriptHeaderLevel: 1 | 2 | 3 | 4 | 5 | 6;
+	tagMode: TagMode;
+	customTags: string;
+	aiKeywordsAsProperty: boolean;
+	autoCloseSummary: boolean;
+	autoCloseSummarySeconds: number;
 }
 
 const DEFAULT_SETTINGS: PlaudImporterSettings = {
@@ -83,6 +89,14 @@ const DEFAULT_SETTINGS: PlaudImporterSettings = {
 	defaultIncludeCard: true,
 	foldTranscript: true,
 	transcriptHeaderLevel: 4,
+	// 'plaud' keeps human-set Plaud tags but drops the AI keyword guesses
+	// that were flooding vaults with 20-30 single-use tags. The keywords
+	// stay available as a frontmatter property via aiKeywordsAsProperty.
+	tagMode: "plaud",
+	customTags: "plaud-meeting",
+	aiKeywordsAsProperty: true,
+	autoCloseSummary: true,
+	autoCloseSummarySeconds: 20,
 };
 
 // Adapt Obsidian's requestUrl to the PlaudHttpFetcher shape the client
@@ -291,6 +305,11 @@ export default class PlaudImporterPlugin extends Plugin {
 			defaultIncludeAttachments: this.settings.defaultIncludeAttachments,
 			defaultIncludeMindmap: this.settings.defaultIncludeMindmap,
 			defaultIncludeCard: this.settings.defaultIncludeCard,
+			tagMode: this.settings.tagMode,
+			customTags: this.settings.customTags,
+			aiKeywordsAsProperty: this.settings.aiKeywordsAsProperty,
+			autoCloseSummary: this.settings.autoCloseSummary,
+			autoCloseSummarySeconds: this.settings.autoCloseSummarySeconds,
 			debugLogger: this.debugLogger,
 			getAuthToken: () =>
 				this.settings.secretId.length > 0
@@ -425,6 +444,52 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 			},
 			{
 				type: "group",
+				heading: "Tags",
+				items: [
+					{
+						name: "Tag mode",
+						desc: "Which Plaud tag sources land in the note's tags frontmatter. Plaud tags are the ones you set on a recording in the Plaud app; AI keywords are Plaud's per-recording topic guesses, which can flood the tag pane.",
+						control: {
+							type: "dropdown",
+							key: "tagMode",
+							options: {
+								none: "No tags",
+								custom: "Custom tags only",
+								plaud: "Plaud tags (no AI keywords)",
+								all: "All tags",
+							},
+						},
+					},
+					{
+						name: "Custom tags",
+						desc: "Comma-separated tags added to every imported note, except in 'no tags' mode.",
+						control: { type: "text", key: "customTags", placeholder: "plaud-meeting" },
+					},
+					{
+						name: "Keep AI keywords as note property",
+						desc: "When AI keywords are excluded from tags, write them to a keywords frontmatter property instead. The property is searchable and Dataview-queryable but stays out of the tag pane.",
+						control: { type: "toggle", key: "aiKeywordsAsProperty" },
+					},
+				],
+			},
+			{
+				type: "group",
+				heading: "Import dialog",
+				items: [
+					{
+						name: "Auto-close summary",
+						desc: "Close the import window automatically after a fully successful import. A run with any failure keeps the window open so the errors stay visible. Clicking inside the window cancels the countdown.",
+						control: { type: "toggle", key: "autoCloseSummary" },
+					},
+					{
+						name: "Auto-close delay",
+						desc: "Seconds to wait before the summary closes itself. Only applies when auto-close is on.",
+						control: { type: "text", key: "autoCloseSummarySeconds", placeholder: "20" },
+					},
+				],
+			},
+			{
+				type: "group",
 				heading: "Transcript rendering",
 				items: [
 					{
@@ -473,6 +538,9 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 		if (key === "transcriptHeaderLevel") {
 			return String(this.plugin.settings.transcriptHeaderLevel);
 		}
+		if (key === "autoCloseSummarySeconds") {
+			return String(this.plugin.settings.autoCloseSummarySeconds);
+		}
 		return (this.plugin.settings as unknown as Record<string, unknown>)[key];
 	}
 
@@ -485,6 +553,15 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 			if (level >= 1 && level <= 6) {
 				this.plugin.settings.transcriptHeaderLevel = level as 1 | 2 | 3 | 4 | 5 | 6;
 			}
+		} else if (key === "autoCloseSummarySeconds") {
+			// Text control delivers a string; store a sane integer. Blank or
+			// non-numeric input snaps back to the 20s default; out-of-range
+			// values clamp to 1..600 so a typo cannot park the modal open
+			// for hours or close it instantly.
+			const parsed = Number(typeof value === "string" ? value.trim() : value);
+			this.plugin.settings.autoCloseSummarySeconds = Number.isFinite(parsed)
+				? Math.min(600, Math.max(1, Math.floor(parsed)))
+				: 20;
 		} else {
 			(this.plugin.settings as unknown as Record<string, unknown>)[key] = value;
 		}

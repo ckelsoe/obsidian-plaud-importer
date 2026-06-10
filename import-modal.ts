@@ -26,7 +26,8 @@ import {
 	NoteWriterCancelledError,
 	type DuplicatePolicy,
 	type DuplicatePromptCallback,
-	mergeTagSources,
+	buildNoteTags,
+	type TagMode,
 	findTranscriptHeadingLine,
 	type NoteWriterOptions,
 	type FormatMarkdownOptions,
@@ -46,6 +47,23 @@ import { buildPlaudIdIndex, type ImportedRecord } from './vault-index';
  */
 export interface ImportModalOptions extends NoteWriterOptions {
 	readonly foldTranscript?: boolean;
+	/** Which tag sources land in `tags:` frontmatter. Defaults to 'plaud'. */
+	readonly tagMode?: TagMode;
+	/** Comma-separated user tags appended in every mode except 'none'. */
+	readonly customTags?: string;
+	/**
+	 * Write AI keywords excluded from `tags:` to a `keywords:` frontmatter
+	 * property. Defaults to true.
+	 */
+	readonly aiKeywordsAsProperty?: boolean;
+	/**
+	 * Auto-close the post-import summary view after a fully successful
+	 * batch (no failures). Defaults to true. A batch with failures always
+	 * keeps the summary open so the errors stay visible.
+	 */
+	readonly autoCloseSummary?: boolean;
+	/** Countdown length for the summary auto-close, in seconds. Defaults to 20. */
+	readonly autoCloseSummarySeconds?: number;
 	readonly defaultIncludeSummary?: boolean;
 	readonly defaultIncludeAttachments?: boolean;
 	readonly defaultIncludeMindmap?: boolean;
@@ -759,6 +777,10 @@ export class ImportModal extends Modal {
 	// stop writing to the vault without continuing through the rest of the
 	// selected recordings. Checked between iterations in onImportClick.
 	private aborted = false;
+	// Interval id for the summary auto-close countdown. Held on the modal
+	// so onClose can clear it whether the countdown finished, the user
+	// clicked Done, or they dismissed the modal some other way.
+	private autoCloseTimer: number | null = null;
 	// Sticky choice for the "Ask each time" duplicate policy. Set when
 	// the user picks "Overwrite all remaining" or "Skip all remaining"
 	// from the per-file prompt, so subsequent duplicates in the same
@@ -802,6 +824,7 @@ export class ImportModal extends Modal {
 		// checks `this.aborted` between iterations and fires a partial
 		// Notice if it was interrupted.
 		this.aborted = true;
+		this.cancelAutoClose();
 		this.contentEl.empty();
 		this.selectedIds.clear();
 		this.teardownAutoLoadObserver();
@@ -1636,21 +1659,26 @@ export class ImportModal extends Modal {
 					attachments ?? [],
 					summaryLinkedAttachments,
 				);
-				// DD-004: merge Plaud's AI-generated keyword list (from
-				// /file/detail/) into the recording's tags before the note
-				// is rendered. mergeTagSources owns the namespacing, slug,
-				// and dedup rules; this site just feeds it the two
-				// sources. When both inputs are empty the result is [],
-				// and formatFrontmatter already handles that path by
-				// omitting the tags: key entirely.
-				const mergedTags = mergeTagSources(recording.tags, aiKeywords);
-				const enrichedRecording =
-					mergedTags.length > 0
-						? { ...recording, tags: mergedTags }
-						: recording;
+				// DD-004: combine Plaud's AI-generated keyword list (from
+				// /file/detail/), the recording's own tags, and the user's
+				// custom tags before the note is rendered. buildNoteTags
+				// owns the mode filtering, namespacing, slug, and dedup
+				// rules; this site just feeds it the sources and settings.
+				// The recording's tags are ALWAYS overwritten with the
+				// built list (even when empty) so a restrictive tag mode
+				// cannot leak the raw Plaud tags into the frontmatter.
+				// formatFrontmatter omits empty tags:/keywords: keys.
+				const tagResult = buildNoteTags(recording.tags, aiKeywords, {
+					tagMode: this.noteWriterOptions.tagMode ?? 'plaud',
+					customTags: this.noteWriterOptions.customTags ?? '',
+					aiKeywordsAsProperty:
+						this.noteWriterOptions.aiKeywordsAsProperty ?? true,
+				});
+				const enrichedRecording = { ...recording, tags: tagResult.tags };
 				const formatOptions: FormatMarkdownOptions = {
 					includeTranscript: selection.includeTranscript,
 					includeSummary: selection.includeSummary,
+					keywords: tagResult.keywords,
 				};
 				const selectedChapters = selection.includeTranscript
 					? chapters
@@ -3084,5 +3112,66 @@ export class ImportModal extends Modal {
 			cls: 'mod-cta',
 		});
 		closeButton.addEventListener('click', () => this.close());
+
+		this.maybeStartAutoClose(tally, buttonRow, closeButton);
+	}
+
+	/**
+	 * Start the summary auto-close countdown when the setting allows it.
+	 * Only a fully successful batch auto-closes: any failure keeps the
+	 * summary open so the error list stays visible. Any click inside the
+	 * modal cancels the countdown, on the assumption the user started
+	 * reading or copying something.
+	 */
+	private maybeStartAutoClose(
+		tally: ImportTally,
+		buttonRow: HTMLElement,
+		closeButton: HTMLElement,
+	): void {
+		const enabled = this.noteWriterOptions.autoCloseSummary ?? true;
+		if (!enabled || tally.failed > 0) {
+			return;
+		}
+		const configured = this.noteWriterOptions.autoCloseSummarySeconds ?? 20;
+		let remaining = Number.isFinite(configured)
+			? Math.max(1, Math.floor(configured))
+			: 20;
+
+		const countdownEl = buttonRow.createSpan({
+			cls: 'plaud-importer-autoclose',
+			text: `Auto-closes in ${remaining}s`,
+		});
+		// Capture phase so the cancel fires before any button's own click
+		// handler. Clicking Done is not a cancel, it is the close itself:
+		// stop the timer silently and let the button's handler close the
+		// modal without flashing the cancelled text first.
+		this.contentEl.addEventListener(
+			'pointerdown',
+			(event) => {
+				if (this.autoCloseTimer === null) {
+					return;
+				}
+				this.cancelAutoClose();
+				if (!(event.target instanceof Node) || !closeButton.contains(event.target)) {
+					countdownEl.setText('Auto-close cancelled');
+				}
+			},
+			{ capture: true },
+		);
+		this.autoCloseTimer = window.setInterval(() => {
+			remaining -= 1;
+			if (remaining <= 0) {
+				this.close();
+				return;
+			}
+			countdownEl.setText(`Auto-closes in ${remaining}s`);
+		}, 1000);
+	}
+
+	private cancelAutoClose(): void {
+		if (this.autoCloseTimer !== null) {
+			window.clearInterval(this.autoCloseTimer);
+			this.autoCloseTimer = null;
+		}
 	}
 }

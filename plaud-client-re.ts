@@ -229,7 +229,7 @@ export class ReverseEngineeredPlaudClient implements PlaudClient {
 		//           participant names, fixes the "Speaker 2 in Summary"
 		//           issue noted in DD-003's resolution
 		//        c. aiContentHeader.keywords — Plaud's auto-tag guess,
-		//           surfaced into frontmatter via mergeTagSources
+		//           surfaced into frontmatter via buildNoteTags
 		//
 		// The bundle lookup is best-effort: any failure at /file/detail/
 		// or in the polish S3 fetch falls back silently to the legacy
@@ -917,9 +917,9 @@ export function findNewerSummaryMarkdown(
  *
  * The keywords live at `data.extra_data.aiContentHeader.keywords` — an
  * array of short strings like `["AI Agent", "Customer Data", "AWS"]`.
- * They are Plaud's topical tag guess for the recording, suitable for
- * merging into the note's `tags:` frontmatter via `mergeTagSources` in
- * note-writer.ts.
+ * They are Plaud's topical tag guess for the recording. `buildNoteTags`
+ * in note-writer.ts decides per the tag-mode setting whether they land
+ * in the note's `tags:` frontmatter or in a `keywords:` property.
  *
  * Returns `[]` — not an error — when any of the optional intermediate
  * fields are missing (`extra_data`, `aiContentHeader`, `keywords`). This
@@ -1650,12 +1650,6 @@ function parseTranscriptSegment(
 			endpoint,
 		);
 	}
-	if (raw.end_time < raw.start_time) {
-		throw new PlaudParseError(
-			`data_result[${index}] for ${id} has end_time (${raw.end_time}) before start_time (${raw.start_time})`,
-			endpoint,
-		);
-	}
 	if (raw.start_time > MAX_PLAUSIBLE_SEGMENT_MS || raw.end_time > MAX_PLAUSIBLE_SEGMENT_MS) {
 		throw new PlaudParseError(
 			`data_result[${index}] for ${id} has timestamps beyond 24h (start=${raw.start_time}ms end=${raw.end_time}ms) — producer may have sent seconds instead of milliseconds`,
@@ -1663,11 +1657,21 @@ function parseTranscriptSegment(
 		);
 	}
 
+	// Real-API capture on 2026-06-10 (recording 9a3a1db8...) showed Plaud
+	// can emit a segment whose end_time lands BEFORE its start_time (13.5s
+	// earlier, mid-recording). This parser used to reject the whole
+	// transcript for that one mis-ordered boundary, which failed an
+	// otherwise valid import. Normalize instead: start_time stays
+	// authoritative (segment ordering and the rendered timestamps key off
+	// it) and end_time is clamped up to start_time. The negative,
+	// non-finite, and beyond-24h checks above still throw.
+	const endTimeMs = Math.max(raw.end_time, raw.start_time);
+
 	// Plaud transmits transcript timestamps in milliseconds for transcript
 	// segments (same as the list endpoint's recording start_time — both
 	// fixed in commit 4c after real-API testing).
 	const startSeconds = raw.start_time / 1000;
-	const endSeconds = raw.end_time / 1000;
+	const endSeconds = endTimeMs / 1000;
 
 	// Prefer the user-editable `speaker` field over `original_speaker`.
 	// Real-API testing on 2026-04-14 showed that `original_speaker` holds

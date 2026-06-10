@@ -35,9 +35,9 @@ export interface TranscriptAndSummary {
 	 * source that provides them. Populated by the RE client from
 	 * `/file/detail/{id}` → `data.extra_data.aiContentHeader.keywords`,
 	 * left undefined when the field is absent (older recordings, or when
-	 * the detail fetch failed silently). Consumers should merge these into
-	 * the note's tag frontmatter via `mergeTagSources` in note-writer.ts
-	 * so namespacing and dedup rules stay in one place.
+	 * the detail fetch failed silently). Consumers should route these
+	 * through `buildNoteTags` in note-writer.ts so the tag-mode setting,
+	 * namespacing, and dedup rules stay in one place.
 	 */
 	readonly aiKeywords?: readonly string[];
 	/**

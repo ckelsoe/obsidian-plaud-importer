@@ -195,6 +195,13 @@
 	flex: 0 0 auto;
 }
 
+/* Auto-close countdown next to the Done button in the summary view */
+.plaud-importer-autoclose {
+	align-self: center;
+	color: var(--text-muted);
+	font-size: var(--font-ui-small);
+}
+
 /* Post-import summary state */
 .plaud-importer-summary {
 	font-weight: 500;
