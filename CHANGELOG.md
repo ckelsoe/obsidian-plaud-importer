@@ -2,6 +2,25 @@
 
 All notable changes to Plaud Importer will be documented in this file.
 
+## [0.5.0] - 2026-06-10
+
+### Added
+
+- Tag creation is now configurable. A new "Tags" settings group controls what lands in the note's `tags:` frontmatter:
+  - "Tag mode" dropdown: "No tags", "Custom tags only", "Plaud tags (no AI keywords)", or "All tags" (the previous behavior).
+  - "Custom tags" text field: comma-separated tags appended to every imported note, except in "No tags" mode.
+  - "Keep AI keywords as note property" toggle (default on): AI keywords excluded from `tags:` are written to a `keywords:` frontmatter property instead, so they stay searchable and Dataview-queryable without flooding the tag pane.
+- The post-import summary can close itself. New "Import dialog" settings group: "Auto-close summary" toggle (default on) and "Auto-close delay" in seconds (default 20). Only a fully successful run auto-closes; any failure keeps the window open so the error list stays visible. Clicking inside the window cancels the countdown.
+
+### Changed
+
+- Default tag behavior changed. New default mode is "Plaud tags (no AI keywords)": tags you set on a recording in the Plaud app still become Obsidian tags, but Plaud's AI topic guesses (previously imported as `plaud/...` tags, often 8-10 per note) now land in the `keywords:` property instead. Imports were creating 20-30 low-value vault tags. Select "All tags" to restore the old behavior.
+- The "Custom tags" setting defaults to `plaud-meeting` so every imported note carries at least one tag out of the box. Clear the field to opt out.
+
+### Fixed
+
+- A transcript segment whose `end_time` lands before its `start_time` no longer fails the whole import with "Plaud returned data in an unexpected shape". Plaud occasionally emits one mis-ordered segment boundary mid-recording (observed in a real capture on 2026-06-10); the parser now keeps the segment and clamps its end to its start instead of rejecting the transcript.
+
 ## [0.4.2] - 2026-06-05
 
 ### Fixed
