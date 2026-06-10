@@ -1,13 +1,13 @@
 {
 	"name": "obsidian-plaud-importer",
-	"version": "0.5.0",
+	"version": "0.6.0",
 	"description": "Import meeting summaries, transcripts, and attachments from Plaud.AI into an Obsidian vault.",
 	"main": "main.js",
 	"scripts": {
 		"dev": "node esbuild.config.mjs",
 		"build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
 		"package:brat": "npm run build && node package-brat.mjs",
-		"lint": "eslint main.ts plaud-client.ts plaud-client-re.ts import-modal.ts note-writer.ts debug-logger.ts vault-index.ts __tests__/plaud-client-re.test.ts __tests__/import-modal.test.ts __tests__/note-writer.test.ts __tests__/debug-logger.test.ts __tests__/vault-index.test.ts --max-warnings 0 && node scripts/check-submission.mjs",
+		"lint": "eslint main.ts plaud-client.ts plaud-client-re.ts import-modal.ts attachment-importer.ts note-writer.ts debug-logger.ts vault-index.ts __tests__/plaud-client-re.test.ts __tests__/import-modal.test.ts __tests__/note-writer.test.ts __tests__/debug-logger.test.ts __tests__/vault-index.test.ts --max-warnings 0 && node scripts/check-submission.mjs",
 		"test": "jest --passWithNoTests",
 		"version": "node version-bump.mjs && git add manifest.json versions.json"
 	},

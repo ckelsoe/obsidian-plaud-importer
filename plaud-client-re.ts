@@ -868,10 +868,16 @@ export interface FileDetailBundle {
  *
  * See `dev-docs/deferred-decisions.md` DD-004 for the field inventory.
  */
-export function findNewerSummaryMarkdown(
+/**
+ * Validate the standard Plaud response envelope and return its `data`
+ * object. Every `/file/detail/{id}`-shaped parser shares this prologue:
+ * the body must be an object carrying an object `data` field; anything
+ * else is structurally corrupt and surfaces as a PlaudParseError.
+ */
+function requireDataEnvelope(
 	raw: unknown,
 	endpoint: string,
-): string | null {
+): Record<string, unknown> {
 	if (!isRecord(raw)) {
 		throw new PlaudParseError(
 			`Response body for ${endpoint} is not an object`,
@@ -885,6 +891,62 @@ export function findNewerSummaryMarkdown(
 			endpoint,
 		);
 	}
+	return data;
+}
+
+/**
+ * Scan a `/file/detail/{id}` response's `content_list` for the entry with
+ * the given `data_type` and return its pre-signed S3 `data_link`.
+ *
+ * Selection rules shared by every content-pipeline artifact (outline,
+ * transaction_polish):
+ *  - `content_list` absent: the recording has no content pipeline entries
+ *    yet (e.g., a just-uploaded file). Not an error, just no artifact.
+ *  - `task_status === 1` means the pipeline completed successfully. Any
+ *    other value (0 = pending, higher = failure states) means the artifact
+ *    isn't ready: treated like "absent" so the caller falls back.
+ *  - Throws PlaudParseError only on structurally corrupt responses.
+ */
+function findContentListLink(
+	raw: unknown,
+	endpoint: string,
+	dataType: string,
+): string | null {
+	const data = requireDataEnvelope(raw, endpoint);
+	const contentList = data.content_list;
+	if (contentList === undefined || contentList === null) {
+		return null;
+	}
+	if (!Array.isArray(contentList)) {
+		throw new PlaudParseError(
+			`Response body for ${endpoint} has 'content_list' that is not an array`,
+			endpoint,
+		);
+	}
+	for (const item of contentList) {
+		if (!isRecord(item)) {
+			continue;
+		}
+		if (item.data_type !== dataType) {
+			continue;
+		}
+		if (item.task_status !== 1) {
+			return null;
+		}
+		const link = item.data_link;
+		if (typeof link !== 'string' || link.length === 0) {
+			return null;
+		}
+		return link;
+	}
+	return null;
+}
+
+export function findNewerSummaryMarkdown(
+	raw: unknown,
+	endpoint: string,
+): string | null {
+	const data = requireDataEnvelope(raw, endpoint);
 	const list = data.pre_download_content_list;
 	if (list === undefined || list === null) {
 		return null;
@@ -938,19 +1000,7 @@ export function findAiKeywords(
 	raw: unknown,
 	endpoint: string,
 ): readonly string[] {
-	if (!isRecord(raw)) {
-		throw new PlaudParseError(
-			`Response body for ${endpoint} is not an object`,
-			endpoint,
-		);
-	}
-	const data = raw.data;
-	if (!isRecord(data)) {
-		throw new PlaudParseError(
-			`Response body for ${endpoint} is missing the 'data' object`,
-			endpoint,
-		);
-	}
+	const data = requireDataEnvelope(raw, endpoint);
 	const extraData = data.extra_data;
 	if (!isRecord(extraData)) {
 		return [];
@@ -986,46 +1036,7 @@ export function findOutlineLink(
 	raw: unknown,
 	endpoint: string,
 ): string | null {
-	if (!isRecord(raw)) {
-		throw new PlaudParseError(
-			`Response body for ${endpoint} is not an object`,
-			endpoint,
-		);
-	}
-	const data = raw.data;
-	if (!isRecord(data)) {
-		throw new PlaudParseError(
-			`Response body for ${endpoint} is missing the 'data' object`,
-			endpoint,
-		);
-	}
-	const contentList = data.content_list;
-	if (contentList === undefined || contentList === null) {
-		return null;
-	}
-	if (!Array.isArray(contentList)) {
-		throw new PlaudParseError(
-			`Response body for ${endpoint} has 'content_list' that is not an array`,
-			endpoint,
-		);
-	}
-	for (const item of contentList) {
-		if (!isRecord(item)) {
-			continue;
-		}
-		if (item.data_type !== 'outline') {
-			continue;
-		}
-		if (item.task_status !== 1) {
-			return null;
-		}
-		const link = item.data_link;
-		if (typeof link !== 'string' || link.length === 0) {
-			return null;
-		}
-		return link;
-	}
-	return null;
+	return findContentListLink(raw, endpoint, 'outline');
 }
 
 /**
@@ -1039,19 +1050,7 @@ export function findAttachmentAssets(
 	raw: unknown,
 	endpoint: string,
 ): readonly AttachmentAsset[] {
-	if (!isRecord(raw)) {
-		throw new PlaudParseError(
-			`Response body for ${endpoint} is not an object`,
-			endpoint,
-		);
-	}
-	const data = raw.data;
-	if (!isRecord(data)) {
-		throw new PlaudParseError(
-			`Response body for ${endpoint} is missing the 'data' object`,
-			endpoint,
-		);
-	}
+	const data = requireDataEnvelope(raw, endpoint);
 
 	const out: AttachmentAsset[] = [];
 	const seenUrls = new Set<string>();
@@ -1259,19 +1258,7 @@ export function findNestedAssetLinks(
 	raw: unknown,
 	endpoint: string,
 ): Readonly<Record<string, string>> {
-	if (!isRecord(raw)) {
-		throw new PlaudParseError(
-			`Response body for ${endpoint} is not an object`,
-			endpoint,
-		);
-	}
-	const data = raw.data;
-	if (!isRecord(data)) {
-		throw new PlaudParseError(
-			`Response body for ${endpoint} is missing the 'data' object`,
-			endpoint,
-		);
-	}
+	const data = requireDataEnvelope(raw, endpoint);
 
 	const out: Record<string, string> = {};
 	const mergeMap = (candidate: unknown): void => {
@@ -1482,52 +1469,7 @@ export function findTransactionPolishLink(
 	raw: unknown,
 	endpoint: string,
 ): string | null {
-	if (!isRecord(raw)) {
-		throw new PlaudParseError(
-			`Response body for ${endpoint} is not an object`,
-			endpoint,
-		);
-	}
-	const data = raw.data;
-	if (!isRecord(data)) {
-		throw new PlaudParseError(
-			`Response body for ${endpoint} is missing the 'data' object`,
-			endpoint,
-		);
-	}
-	const contentList = data.content_list;
-	if (contentList === undefined || contentList === null) {
-		// content_list absent — recording has no content pipeline entries
-		// yet (e.g., a just-uploaded file). Not an error — just no polish.
-		return null;
-	}
-	if (!Array.isArray(contentList)) {
-		throw new PlaudParseError(
-			`Response body for ${endpoint} has 'content_list' that is not an array`,
-			endpoint,
-		);
-	}
-	for (const item of contentList) {
-		if (!isRecord(item)) {
-			continue;
-		}
-		if (item.data_type !== 'transaction_polish') {
-			continue;
-		}
-		// task_status === 1 means the polish pipeline completed successfully.
-		// Any other value (0 = pending, higher = failure states) means the
-		// polish isn't ready yet — treat like "absent" so the caller falls
-		// back to the raw transcript.
-		if (item.task_status !== 1) {
-			return null;
-		}
-		const link = item.data_link;
-		if (typeof link !== 'string' || link.length === 0) {
-			return null;
-		}
-		return link;
-	}
-	return null;
+	return findContentListLink(raw, endpoint, 'transaction_polish');
 }
 
 function parseTranssummResponse(
