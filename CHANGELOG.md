@@ -2,6 +2,17 @@
 
 All notable changes to Plaud Importer will be documented in this file.
 
+## [Unreleased]
+
+## [0.6.0] - 2026-06-10
+
+### Changed
+- Internal restructuring, no behavior change:
+  - The attachment download/classify/persist pipeline (the densest code in the plugin) moved from `ImportModal` into a new `attachment-importer.ts` with an explicit dependency surface (vault access, auth-token provider, debug logger). `import-modal.ts` drops from 3,177 to about 2,100 lines.
+  - Two byte-identical asset-URL candidate builders collapsed into one `buildAssetUrlCandidates` helper.
+  - Six Plaud response parsers now share one envelope validator (`requireDataEnvelope`), and the outline and transaction-polish link finders delegate to a single parameterized `findContentListLink`.
+  - `NoopDebugLogger` is now actually used in production as the attachment importer's default logger instead of being a test-only export.
+
 ## [0.5.0] - 2026-06-10
 
 ### Added
