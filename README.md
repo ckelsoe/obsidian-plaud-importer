@@ -4,11 +4,7 @@
 >
 > **This plugin is in early alpha and under active development.** Expect bugs, UI changes between releases, and occasional rough edges. It talks to an **undocumented, reverse-engineered Plaud web API** that Plaud can change at any time.
 >
-> **What this plugin does and doesn't do:**
-> - It **adds new notes and attachments** under the output folder you configure — it does not scan, modify, or delete existing vault content outside that folder.
-> - Imported content is **Plaud's own data** (your recordings, Plaud's AI summary and transcript). The plugin renders it into a note with frontmatter and headings; it does not rewrite or reinterpret the transcript or summary text.
-> - When a note already exists at the target path, behavior follows your **Duplicate handling** setting (Skip / Overwrite / Ask) — overwrites only happen when you choose them.
-> - Your Plaud token is stored via Obsidian's `SecretStorage` (per-vault, not synced).
+> Before installing, please read **[What to know before you install](#what-to-know-before-you-install)** — it explains the main tradeoffs in plain language, and exactly what the plugin will and will not touch in your vault.
 >
 > No warranty — use at your own risk, and you may want to test in a non-critical vault first.
 >
@@ -26,6 +22,24 @@
 Import meeting recordings, AI summaries, transcripts, and attachments from [Plaud.AI](https://www.plaud.ai/) into your Obsidian vault as markdown notes.
 
 Each recording becomes a single note with frontmatter metadata, a Plaud-generated summary, and a heading-based transcript section with chapter navigation. Images, mind-maps, and other Plaud artifacts land in a matching `-assets` folder next to the note.
+
+## What to know before you install
+
+Plaud does not offer an official API yet, so this plugin works by using Plaud's own (undocumented) web service the same way the Plaud website does. That is what makes it possible at all, and it brings a few tradeoffs worth understanding up front. **None of them put your existing notes at risk.**
+
+### The tradeoffs
+
+- **It can break when Plaud changes their website.** There is no official, supported API, so Plaud can change how their service works at any time and an import may suddenly stop working. *Why it works this way:* it is the only way to get your recordings into Obsidian today. *What protects you:* the plugin shows a clear error instead of writing broken notes, and when Plaud ships an official API the plugin will move to it.
+- **Your sign-in token is like a key to your whole Plaud account.** The plugin stores the session token your login uses — it is not a limited, read-only key. *Why:* that is the only credential Plaud's web service provides. *What protects you:* it is kept in Obsidian's secure secret storage, never written to your settings file, never logged, and never sent anywhere except Plaud.
+- **You sign in through an embedded Plaud window.** Clicking **Sign in** opens Plaud's real website so you can log in normally. *Why:* you never hand your password to the plugin, and any login method works (including Google). *What protects you:* the plugin reads only the token your logged-in session already uses; your password is typed into Plaud's own page, not the plugin.
+- **It is an unofficial tool, not affiliated with Plaud.** *What protects you:* it reads only your own data, and only when you ask it to. Following Plaud's terms of service is your responsibility.
+- **Desktop only.** Sign-in and import rely on desktop features that Obsidian Mobile does not provide.
+
+### What it will not do
+
+- It only **adds** notes and attachments inside the output folder you choose. It never scans, edits, or deletes anything else in your vault.
+- It replaces an already-imported note only when **you** choose Overwrite (or confirm it under "Ask each time").
+- It does not rewrite Plaud's transcript or summary text — it renders Plaud's own data into a note.
 
 ## What it does
 
