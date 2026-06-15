@@ -4,6 +4,13 @@ All notable changes to Plaud Importer will be documented in this file.
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-06-15
+
+### Changed
+
+- Build tooling: replaced the `builtin-modules` dev dependency with Node's native `module.builtinModules`, clearing a marketplace module-replacement recommendation. No runtime change.
+- Documentation: added status badges to match the standard plugin README format; documented the plugin's vault file-listing (output-folder only) and write-only clipboard use under privacy; led Installation with Community plugins (BRAT demoted to beta/pre-release); added a plain-language "What to know before you install" risks section.
+
 ## [0.8.0] - 2026-06-15
 
 ### Added
