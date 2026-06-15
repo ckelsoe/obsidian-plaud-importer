@@ -39,7 +39,7 @@ Plaud does not offer an official API yet, so this plugin works by using Plaud's 
 
 ### What it will not do
 
-- It only **adds** notes and attachments inside the output folder you choose, and never edits or deletes anything outside that folder. (To spot already-imported recordings it does read the frontmatter of notes inside your output folder — see [Privacy and network use](#privacy-and-network-use).)
+- It only **adds** notes and attachments inside the output folder you choose, and never edits or deletes anything outside that folder. (To spot already-imported recordings it does read the frontmatter of notes inside your output folder — see [Permissions and access](#permissions-and-access).)
 - It replaces an already-imported note only when **you** choose Overwrite (or confirm it under "Ask each time").
 - It does not rewrite Plaud's transcript or summary text — it renders Plaud's own data into a note.
 
@@ -181,17 +181,17 @@ What this means for you:
 
 I am actively monitoring Plaud's developer announcements and [waitlist](https://www.plaud.ai/) for the official API. If you hear anything, please open an issue.
 
-## Privacy and network use
+## Permissions and access
 
-Per Obsidian's [developer policies](https://docs.obsidian.md/Developer+policies):
+Plaud Importer is desktop-only, runs on your device, and has no telemetry or maintainer server — it talks only to Plaud, and only when you ask it to. Obsidian's plugin scan discloses a few capabilities. Here is exactly what each is and why it exists:
 
-- **Network use** — the plugin communicates exclusively with Plaud.AI's servers (`api.plaud.ai` for JSON, various CDN hosts for attachment downloads that Plaud's API points at). No data is sent to any other third party. Network requests happen only when you explicitly trigger an import, scroll to load more recordings, or download attachments.
-- **In-app sign-in** — when you click **Sign in**, the plugin opens Plaud's own website (`app.plaud.ai` / `web.plaud.ai`) in an embedded browser window so you can log in. Your password is entered into Plaud's page and is never read by the plugin; the plugin reads only the session token your logged-in session sends to Plaud's API, and stores it via `SecretStorage`. The sign-in session is kept in a private partition isolated from Obsidian's other web sessions.
-- **No telemetry** — no usage data, crash reports, or analytics are collected or transmitted.
-- **Secret handling** — the Plaud token is stored via Obsidian's `SecretStorage` API (per-vault, not synced), referenced by a secret ID in `data.json` rather than the token itself.
-- **Reading your vault** — to show the "Imported" badge and avoid duplicate imports, the plugin lists your vault's markdown files and reads the frontmatter of notes **inside your output folder** to find ones it previously created (tagged with a `plaud-id`). It does not read the contents of notes elsewhere in your vault.
-- **Clipboard** — the plugin only **writes** to the clipboard, and only when you click a Copy button (copying a debug log or an error/failure list for a bug report). It never reads your clipboard.
-- **Vault writes** — all file writes go through the Obsidian `Vault` API (`Vault.create`, `Vault.process`). No direct filesystem access.
+- **Network access to Plaud.** The plugin calls Plaud's web API (`api.plaud.ai`, or your regional host) to list and fetch your recordings, summaries, transcripts, and attachments, and downloads attachment files from the CDN hosts Plaud's responses point at. It contacts no other third party, and only when you trigger an import, scroll to load more recordings, or download attachments.
+- **Embedded sign-in browser.** When you click **Sign in**, the plugin opens Plaud's own website (`app.plaud.ai` / `web.plaud.ai`) in an embedded window so you can log in normally. Your password is entered into Plaud's page and is never seen by the plugin; it reads only the session token your logged-in session already sends to Plaud, and stores it via `SecretStorage`. The sign-in runs in a private session isolated from Obsidian's other web views.
+- **Vault file enumeration.** To show the "Imported" badge and avoid duplicate imports, the plugin lists your vault's note paths and reads the frontmatter of notes **inside your output folder** to find ones it previously created (tagged with a `plaud-id`). It does not read the contents of unrelated notes.
+- **Clipboard, write only.** The only clipboard use is the Copy buttons (copy debug log, copy an error or failure list for a bug report). It writes to your clipboard and never reads it, so it cannot see anything you copied elsewhere.
+- **Secret storage.** Your Plaud token is stored via Obsidian's `SecretStorage` (per-vault, not synced); `data.json` holds only a reference id, never the token.
+
+All vault writes go through Obsidian's `Vault` API (`Vault.create`, `Vault.process`) with no direct filesystem access, and nothing here sends your data anywhere except Plaud.
 
 See [PRIVACY.md](./PRIVACY.md) for the full privacy policy and liability disclaimer, and [SECURITY.md](./SECURITY.md) for the security policy. The plugin is provided "AS IS" with no warranty (see [LICENSE](./LICENSE)); it is not affiliated with or endorsed by Plaud.AI, and you use it at your own risk.
 
