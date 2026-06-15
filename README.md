@@ -68,9 +68,17 @@ Plaud does not offer an official API yet, so this plugin works by using Plaud's 
 
 ## Installation
 
-### Via BRAT (recommended while in beta)
+### From Community plugins (recommended)
 
-[BRAT](https://github.com/TfTHacker/obsidian42-brat) is the standard way to install community plugins that are not yet in the official Obsidian marketplace.
+1. Open **Settings → Community plugins → Browse**.
+2. Search for **Plaud Importer** and click **Install**.
+3. Click **Enable**.
+
+> If you don't find it in Browse yet, it may still be in review for the community catalog. Use BRAT (below) to install it in the meantime.
+
+### Via BRAT (beta and pre-release versions)
+
+[BRAT](https://github.com/TfTHacker/obsidian42-brat) installs and auto-updates plugins straight from GitHub — useful before this plugin lands in the catalog, or to track pre-release builds.
 
 1. Install **Obsidian42 - BRAT** from the Obsidian community plugins catalog and enable it.
 2. Open the command palette and run **BRAT: Add a beta plugin for testing**.
