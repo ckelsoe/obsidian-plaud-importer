@@ -28,7 +28,7 @@
 		"@typescript-eslint/parser": "^8.35.0",
 		"bestzip": "^2.2.3",
 		"builtin-modules": "^5.0.0",
-		"esbuild": "^0.25.5",
+		"esbuild": "^0.28.1",
 		"eslint": "^9.39.2",
 		"eslint-plugin-obsidianmd": "^0.3.0",
 		"globals": "^17.1.0",
