@@ -137,6 +137,20 @@
 	display: none;
 }
 
+/* Read-only API region status in settings */
+.plaud-importer-region-host {
+	font-family: var(--font-monospace);
+	font-size: 0.9em;
+	color: var(--text-normal);
+	user-select: text;
+	-webkit-user-select: text;
+}
+
+.plaud-importer-region-note {
+	font-family: var(--font-interface);
+	color: var(--text-muted);
+}
+
 .plaud-importer-ribbon-preview {
 	display: inline-flex;
 	align-items: center;

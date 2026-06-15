@@ -72,6 +72,13 @@ export interface ImportModalOptions extends NoteWriterOptions {
 	 */
 	readonly getAuthToken?: () => string | null;
 	/**
+	 * Optional provider for the current Plaud API host. Threaded to the
+	 * attachment importer so relative-asset download candidates resolve
+	 * against the region the user was redirected to, not the hardcoded US
+	 * host. Defaults to the US host when omitted.
+	 */
+	readonly getApiBaseUrl?: () => string;
+	/**
 	 * Optional debug logger shared with the Plaud client. When provided and
 	 * enabled, attachment import emits granular events (JSON parsing, nested
 	 * picture-link extraction, and per-candidate fetch attempts) so users can
@@ -790,6 +797,7 @@ export class ImportModal extends Modal {
 		this.attachments = new AttachmentImporter({
 			app,
 			getAuthToken: noteWriterOptions.getAuthToken,
+			getApiBaseUrl: noteWriterOptions.getApiBaseUrl,
 			debugLogger: noteWriterOptions.debugLogger,
 		});
 	}

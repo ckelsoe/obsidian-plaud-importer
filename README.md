@@ -14,11 +14,11 @@
 >
 > ### Please report issues
 >
-> Bug reports are the single biggest help right now. If something breaks, behaves oddly, or doesn't match what Plaud shows on the web:
+> I use this plugin myself every day, so I often catch breakage quickly — but I am one person on one account, and Plaud can change their API for some accounts or regions before it affects mine. **If something breaks for you, an issue report is the single biggest help**, and may be the first signal I get.
 >
 > 1. **File a GitHub issue** at [ckelsoe/obsidian-plaud-importer/issues](https://github.com/ckelsoe/obsidian-plaud-importer/issues).
 > 2. Include your **Obsidian version**, **plugin version**, **OS**, and **steps to reproduce**.
-> 3. Enable **Debug log** in plugin settings, reproduce the issue, and paste the captured request/response trace (auth headers are redacted automatically).
+> 3. Attach a **debug log** — see [Capturing a debug log](#capturing-a-debug-log) below. Auth headers are redacted automatically.
 > 4. Attach a screenshot or the generated note if the output looks wrong.
 >
 > Feature requests and API-shape observations are welcome too — open an issue or discussion.
@@ -47,7 +47,7 @@ Each recording becomes a single note with frontmatter metadata, a Plaud-generate
 
 ## Requirements
 
-- **Obsidian 1.11.4 or newer** — required for the `SecretStorage` / `SecretComponent` APIs used to handle the Plaud token.
+- **Obsidian 1.13.0 or newer** — required for the settings and `SecretStorage` / `SecretComponent` APIs used to handle the Plaud token.
 - **Desktop only** (`isDesktopOnly: true`). The current authentication path depends on Electron and `localStorage` APIs that are not available on Obsidian Mobile. This restriction will be lifted when Plaud ships a public OAuth API (see [Plaud API status](#plaud-api-status) below).
 - **A Plaud.AI account** with access to the recordings you want to import.
 
@@ -82,12 +82,14 @@ The plugin authenticates against Plaud using your web session token. Capture it 
 2. Press **F12** to open DevTools and click the **Console** tab.
 3. Paste this and press Enter (Edge/Chrome may make you type `allow pasting` once before it accepts pasted code):
    ```js
-   copy(localStorage.getItem('tokenstr'))
+   copy(localStorage.getItem('pld_tokenstr') || localStorage.getItem('tokenstr'))
    ```
-   Your token is now on the clipboard. The value looks like `bearer eyJhbGci…` — the plugin normalizes the `bearer ` prefix internally, so paste exactly what you copied without editing it.
+   Your token is now on the clipboard. The value looks like `bearer eyJhbGci…` — the plugin normalizes the `bearer ` prefix internally, so paste exactly what you copied without editing it. (Plaud has used both `pld_tokenstr` and `tokenstr` as the storage key; the snippet handles either.)
 4. In Obsidian: **Settings → Community plugins → Plaud Importer**. Click the Plaud token field, choose **Create new secret**, paste, and save.
 
 The token is stored in Obsidian's per-vault secret storage. It is **never written to `data.json`** and does not travel through Obsidian Sync. Switching vaults requires re-entering the token.
+
+Regional accounts (EU and others) need no extra setup. If Plaud routes your account to a regional server, the plugin detects it on the first import and remembers it.
 
 ### Output folder
 
@@ -121,6 +123,15 @@ Off by default. When on, captures API request/response metadata and parsed resul
 3. Tick the recordings you want.
 4. Click **Import N recordings** (or **Review artifacts first** to uncheck specific artifacts for this batch).
 5. Watch the per-file progress counter. A final Notice summarizes how many were imported, skipped, or failed; failures are listed in the modal with a Copy button for bug reports.
+
+## Capturing a debug log
+
+When something breaks, a debug log is the most useful thing to attach to an issue. It records the API requests and responses the plugin made (auth headers are stripped automatically; payloads may contain transcript text and recording metadata, so review before posting).
+
+1. **Settings → Community plugins → Plaud Importer**, turn on **Debug logging**.
+2. Reproduce the problem (run the import that failed, etc.).
+3. Open the command palette and run **Plaud Importer: Debug: copy debug log to clipboard**.
+4. Paste it into your GitHub issue. Turn Debug logging back off when you are done.
 
 ## Plaud API status
 

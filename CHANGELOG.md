@@ -4,6 +4,21 @@ All notable changes to Plaud Importer will be documented in this file.
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-06-15
+
+### Fixed
+
+- EU and other regional Plaud accounts no longer fail with "Plaud returned data in an unexpected shape". Plaud routes non-US accounts to regional API hosts (for example `api-euc1.plaud.ai`) and answers the US host with a region-mismatch redirect. The plugin now detects that redirect, switches to the regional host, retries, and remembers the host so later sessions connect directly. No setup is required; if your account is later moved to a different region the plugin re-detects automatically. (#1)
+- The token-capture snippet in the docs now reads `pld_tokenstr` with a fallback to the older `tokenstr`, matching Plaud's current browser storage key.
+
+### Added
+
+- A read-only "API region" row in settings shows which Plaud server the vault is connected to, so you can confirm regional detection at a glance.
+
+### Changed
+
+- Bumped esbuild to 0.28.1 to clear a high-severity advisory (build tooling only, no runtime change).
+
 ## [0.6.0] - 2026-06-10
 
 ### Changed

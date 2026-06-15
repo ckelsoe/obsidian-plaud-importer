@@ -56,6 +56,12 @@ function resolveRibbonIconId(stored: string | undefined): string {
 
 interface PlaudImporterSettings {
 	secretId: string;
+	// Base host for the Plaud API. Defaults to the US host. The plugin
+	// auto-detects the correct regional host (EU, etc.) on the first API
+	// call that hits a region mismatch, then caches it here so later calls
+	// skip the redirect. Not surfaced in the settings UI; managed
+	// automatically.
+	apiBaseUrl: string;
 	outputFolder: string;
 	onDuplicate: "skip" | "overwrite" | "prompt";
 	showRibbonIcon: boolean;
@@ -77,6 +83,7 @@ interface PlaudImporterSettings {
 
 const DEFAULT_SETTINGS: PlaudImporterSettings = {
 	secretId: "",
+	apiBaseUrl: "https://api.plaud.ai",
 	outputFolder: "Plaud",
 	onDuplicate: "prompt",
 	showRibbonIcon: true,
@@ -228,7 +235,16 @@ export default class PlaudImporterPlugin extends Plugin {
 			this.client = new ReverseEngineeredPlaudClient(
 				() => this.app.secretStorage.getSecret(this.settings.secretId),
 				obsidianFetcher,
-				{ debugLogger: this.debugLogger },
+				{
+					debugLogger: this.debugLogger,
+					baseUrl: this.settings.apiBaseUrl,
+					// Persist the regional host the first time Plaud redirects
+					// us, so later sessions skip the round-trip.
+					onBaseUrlChanged: (url) => {
+						this.settings.apiBaseUrl = url;
+						void this.saveSettings();
+					},
+				},
 			);
 		});
 	}
@@ -315,6 +331,7 @@ export default class PlaudImporterPlugin extends Plugin {
 				this.settings.secretId.length > 0
 					? this.app.secretStorage.getSecret(this.settings.secretId)
 					: null,
+			getApiBaseUrl: () => this.settings.apiBaseUrl,
 		}).open();
 	}
 
@@ -363,6 +380,27 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 								await this.plugin.saveSettings();
 							}),
 					);
+				},
+			},
+			{
+				name: "API region",
+				desc: "Plaud server this vault is connected to. Detected automatically on the first import. EU and other regional accounts switch here on their own, so there is nothing to configure.",
+				// Read-only status, not an input: the value is owned by the
+				// client's region auto-detection and persisted via
+				// onBaseUrlChanged. Rendered fresh on each settings open, so it
+				// always reflects the latest detected host.
+				searchable: false,
+				render: (setting: Setting) => {
+					const host = this.plugin.settings.apiBaseUrl;
+					const isDefault = host === DEFAULT_SETTINGS.apiBaseUrl;
+					const span = setting.controlEl.createSpan({
+						cls: "plaud-importer-region-host",
+						text: host,
+					});
+					span.createSpan({
+						cls: "plaud-importer-region-note",
+						text: isDefault ? " (default)" : " (auto-detected)",
+					});
 				},
 			},
 			{

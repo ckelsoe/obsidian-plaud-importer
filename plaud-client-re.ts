@@ -107,13 +107,23 @@ export interface PlaudClientOptions {
 	 * zero hot-path cost.
 	 */
 	readonly debugLogger?: DebugLogger;
+	/**
+	 * Called when the client auto-detects a regional API host (Plaud routes
+	 * EU and other accounts to hosts like `api-euc1.plaud.ai`). The plugin
+	 * persists the value so future sessions skip the redirect round-trip.
+	 * See `detectRegionRedirect` for the wire format.
+	 */
+	readonly onBaseUrlChanged?: (newBaseUrl: string) => void;
 }
 
 export class ReverseEngineeredPlaudClient implements PlaudClient {
 	private readonly tokenProvider: PlaudTokenProvider;
 	private readonly fetcher: PlaudHttpFetcher;
-	private readonly baseUrl: string;
+	// Mutable: a region-mismatch response rewrites this in place so every
+	// later request goes straight to the regional host.
+	private baseUrl: string;
 	private readonly debugLogger: DebugLogger | undefined;
+	private readonly onBaseUrlChanged: ((newBaseUrl: string) => void) | undefined;
 
 	constructor(
 		tokenProvider: PlaudTokenProvider,
@@ -124,6 +134,7 @@ export class ReverseEngineeredPlaudClient implements PlaudClient {
 		this.fetcher = fetcher;
 		this.baseUrl = options.baseUrl ?? DEFAULT_BASE_URL;
 		this.debugLogger = options.debugLogger;
+		this.onBaseUrlChanged = options.onBaseUrlChanged;
 	}
 
 	async listRecordings(filter?: RecordingFilter): Promise<readonly Recording[]> {
@@ -451,7 +462,14 @@ export class ReverseEngineeredPlaudClient implements PlaudClient {
 	private async fetchJson(
 		url: string,
 		endpoint: string,
-		options: { method?: 'GET' | 'POST'; body?: string; skipAuth?: boolean } = {},
+		options: {
+			method?: 'GET' | 'POST';
+			body?: string;
+			skipAuth?: boolean;
+			// Internal: set when this call is the retry after a region
+			// redirect, so a second redirect throws instead of looping.
+			isRegionRetry?: boolean;
+		} = {},
 	): Promise<unknown> {
 		const method = options.method ?? 'GET';
 
@@ -590,8 +608,97 @@ export class ReverseEngineeredPlaudClient implements PlaudClient {
 				endpoint,
 			);
 		}
+
+		// Region mismatch is a soft redirect carried in the JSON envelope with
+		// an HTTP 200, not an HTTP 3xx — so it lands here, past every status
+		// branch. Plaud returns the correct regional host; switch to it,
+		// persist it via the callback, and retry the same request once.
+		const redirectHost = detectRegionRedirect(response.json);
+		if (redirectHost !== null && redirectHost !== this.baseUrl) {
+			if (options.isRegionRetry === true) {
+				// We already followed one redirect and got pointed somewhere
+				// else again. Stop rather than loop indefinitely.
+				throw new PlaudApiError(
+					`Plaud API ${endpoint} returned a second region redirect (to ${redirectHost}) — refusing to loop`,
+					undefined,
+					endpoint,
+				);
+			}
+			const previousBase = this.baseUrl;
+			this.baseUrl = redirectHost;
+			this.onBaseUrlChanged?.(redirectHost);
+			if (this.debugLogger?.enabled === true) {
+				this.debugLogger.log({
+					kind: 'response',
+					endpoint,
+					message: `region redirect: ${previousBase} -> ${redirectHost}, retrying`,
+				});
+			}
+			// The URL was built as `${previousBase}${endpoint}...`, so swapping
+			// the leading host preserves the path and query verbatim.
+			const retryUrl = url.startsWith(previousBase)
+				? redirectHost + url.slice(previousBase.length)
+				: url;
+			return this.fetchJson(retryUrl, endpoint, { ...options, isRegionRetry: true });
+		}
+
 		return response.json;
 	}
+}
+
+// Hosts the region redirect is allowed to point at. The retry re-sends the
+// Bearer token, so the redirect target is a credential trust boundary: a
+// tampered or malicious -302 body must never be able to steer the token at an
+// arbitrary host. Restrict to Plaud's own domains.
+const ALLOWED_REGION_EXACT_HOSTS = new Set(['plaud.ai', 'api.plaud.ai']);
+const ALLOWED_REGION_HOST_SUFFIX = '.plaud.ai';
+
+// Detects Plaud's region-mismatch soft redirect. EU and other non-US accounts
+// hitting the US host get an HTTP 200 whose JSON body is:
+//
+//   { "status": -302, "msg": "user region mismatch",
+//     "data": { "domains": { "api": "https://api-euc1.plaud.ai" } } }
+//
+// Returns the regional origin (scheme + host, no trailing slash, no path)
+// when the body matches that shape AND the target is a trusted Plaud https
+// host; otherwise null. Returning only the parsed origin (not the raw string)
+// also strips any path/query/userinfo an attacker might have appended.
+function detectRegionRedirect(json: unknown): string | null {
+	if (!isRecord(json) || json.status !== -302) {
+		return null;
+	}
+	const data = json.data;
+	if (!isRecord(data)) {
+		return null;
+	}
+	const domains = data.domains;
+	if (!isRecord(domains)) {
+		return null;
+	}
+	const api = domains.api;
+	if (typeof api !== 'string') {
+		return null;
+	}
+	let parsed: URL;
+	try {
+		parsed = new URL(api);
+	} catch {
+		return null;
+	}
+	// Plaud always serves over https. Reject anything else, and reject
+	// embedded credentials (https://api.plaud.ai@evil.example parses with
+	// hostname evil.example — the userinfo is the bypass).
+	if (parsed.protocol !== 'https:' || parsed.username !== '' || parsed.password !== '') {
+		return null;
+	}
+	const host = parsed.hostname.toLowerCase().replace(/\.$/, '');
+	const allowed =
+		ALLOWED_REGION_EXACT_HOSTS.has(host) || host.endsWith(ALLOWED_REGION_HOST_SUFFIX);
+	if (!allowed) {
+		return null;
+	}
+	// Rebuild from the parsed origin so only scheme + host[:port] survive.
+	return `https://${parsed.host}`.replace(/\/+$/, '');
 }
 
 // -----------------------------------------------------------------------------

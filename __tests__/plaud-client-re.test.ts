@@ -269,6 +269,171 @@ describe('listRecordings request shape', () => {
 	});
 });
 
+// listRecordings — regional endpoint auto-detection -------------------------
+//
+// Plaud routes EU and other non-US accounts to regional hosts. Hitting the US
+// host with such an account returns HTTP 200 whose JSON body is a soft
+// redirect: { status: -302, msg: "user region mismatch",
+// data: { domains: { api: "https://api-euc1.plaud.ai" } } }. The client must
+// switch to the returned host, persist it via onBaseUrlChanged, and retry.
+
+describe('regional endpoint auto-detection', () => {
+	function regionRedirect(apiHost: string): PlaudHttpResponse {
+		return ok({
+			status: -302,
+			msg: 'user region mismatch',
+			data: { domains: { api: apiHost } },
+		});
+	}
+
+	// A fetcher that returns each queued response in order, repeating the last
+	// one once the queue is drained. Lets a single client see a redirect first
+	// and a real payload on retry.
+	function sequenceFetcher(responses: readonly PlaudHttpResponse[]): {
+		fetcher: PlaudHttpFetcher;
+		allRequests: () => readonly PlaudHttpRequest[];
+	} {
+		const captured: PlaudHttpRequest[] = [];
+		let call = 0;
+		const fetcher: PlaudHttpFetcher = async (req) => {
+			captured.push(req);
+			const response = responses[Math.min(call, responses.length - 1)];
+			call += 1;
+			return response;
+		};
+		return { fetcher, allRequests: () => captured };
+	}
+
+	it('follows the region redirect and retries against the returned host', async () => {
+		const { fetcher, allRequests } = sequenceFetcher([
+			regionRedirect('https://api-euc1.plaud.ai'),
+			ok(listEnvelope([])),
+		]);
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+
+		await client.listRecordings();
+
+		const requests = allRequests();
+		expect(requests).toHaveLength(2);
+		expect(requests[0]?.url).toMatch(/^https:\/\/api\.plaud\.ai\//);
+		expect(requests[1]?.url).toMatch(/^https:\/\/api-euc1\.plaud\.ai\/file\/simple\/web\?/);
+		// The retry preserves the original path and query verbatim.
+		expect(requests[1]?.url).toContain('sort_by=start_time');
+	});
+
+	it('fires onBaseUrlChanged exactly once with the regional host', async () => {
+		const { fetcher } = sequenceFetcher([
+			regionRedirect('https://api-euc1.plaud.ai'),
+			ok(listEnvelope([])),
+		]);
+		const changes: string[] = [];
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher, {
+			onBaseUrlChanged: (url) => changes.push(url),
+		});
+
+		await client.listRecordings();
+
+		expect(changes).toEqual(['https://api-euc1.plaud.ai']);
+	});
+
+	it('caches the detected host so later calls skip the redirect', async () => {
+		// Only the first call sees the redirect. After the client caches the
+		// regional host, a second listRecordings must go straight there.
+		const captured: PlaudHttpRequest[] = [];
+		let call = 0;
+		const fetcher: PlaudHttpFetcher = async (req) => {
+			captured.push(req);
+			call += 1;
+			// First request only: region mismatch. Everything after: success.
+			return call === 1
+				? regionRedirect('https://api-euc1.plaud.ai')
+				: ok(listEnvelope([]));
+		};
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+
+		await client.listRecordings(); // redirect + retry (2 requests)
+		await client.listRecordings(); // cached host (1 request)
+
+		expect(captured).toHaveLength(3);
+		expect(captured[2]?.url).toMatch(/^https:\/\/api-euc1\.plaud\.ai\//);
+	});
+
+	it('throws rather than looping when a second redirect is returned', async () => {
+		// Every response is a redirect to a different host. The client must
+		// follow exactly one and then give up.
+		let call = 0;
+		const fetcher: PlaudHttpFetcher = async () => {
+			call += 1;
+			return regionRedirect(`https://api-region${call}.plaud.ai`);
+		};
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+
+		await expect(client.listRecordings()).rejects.toBeInstanceOf(PlaudApiError);
+		await expect(client.listRecordings()).rejects.toThrow(/refusing to loop/i);
+	});
+
+	it('ignores a -302 whose api domain is missing or not https', async () => {
+		// A malformed redirect must not hijack the base URL; it should fall
+		// through to the normal parser, which rejects the shape.
+		const { fetcher } = sequenceFetcher([
+			ok({ status: -302, msg: 'user region mismatch', data: { domains: {} } }),
+		]);
+		const changes: string[] = [];
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher, {
+			onBaseUrlChanged: (url) => changes.push(url),
+		});
+
+		await expect(client.listRecordings()).rejects.toBeInstanceOf(PlaudParseError);
+		expect(changes).toEqual([]);
+	});
+
+	// The retry re-sends the Bearer token, so the redirect target is a
+	// credential trust boundary. A -302 must never steer the token at a
+	// non-Plaud host.
+	it.each([
+		['a non-Plaud host', 'https://evil.example'],
+		['a lookalike host', 'https://api.plaud.ai.evil.example'],
+		['a suffix-without-dot host', 'https://notplaud.ai'],
+		['a userinfo bypass', 'https://api.plaud.ai@evil.example'],
+		['a non-https scheme', 'http://api-euc1.plaud.ai'],
+	])('rejects a region redirect to %s without changing the base URL', async (_label, host) => {
+		const { fetcher, allRequests } = sequenceFetcher([regionRedirect(host)]);
+		const changes: string[] = [];
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher, {
+			onBaseUrlChanged: (url) => changes.push(url),
+		});
+
+		// The poisoned -302 is not a valid list payload, so the parser
+		// rejects it — but crucially the host is never adopted and the token
+		// is never re-sent anywhere.
+		await expect(client.listRecordings()).rejects.toBeInstanceOf(PlaudParseError);
+		expect(changes).toEqual([]);
+		// Only the original request to the US host was made — no retry.
+		expect(allRequests()).toHaveLength(1);
+		expect(allRequests()[0]?.url).toMatch(/^https:\/\/api\.plaud\.ai\//);
+	});
+
+	it('strips any path or query an attacker appends to an otherwise-valid host', async () => {
+		const { fetcher, allRequests } = sequenceFetcher([
+			regionRedirect('https://api-euc1.plaud.ai/evil/path?x=1'),
+			ok(listEnvelope([])),
+		]);
+		const changes: string[] = [];
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher, {
+			onBaseUrlChanged: (url) => changes.push(url),
+		});
+
+		await client.listRecordings();
+
+		// Only scheme + host survive; the retry uses the real endpoint path.
+		expect(changes).toEqual(['https://api-euc1.plaud.ai']);
+		expect(allRequests()[1]?.url).toMatch(
+			/^https:\/\/api-euc1\.plaud\.ai\/file\/simple\/web\?/,
+		);
+		expect(allRequests()[1]?.url).not.toContain('/evil/path');
+	});
+});
+
 // listRecordings — filter behavior ------------------------------------------
 
 describe('listRecordings filter behavior', () => {

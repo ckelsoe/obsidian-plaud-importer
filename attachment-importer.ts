@@ -10,8 +10,12 @@ import { NoopDebugLogger, type DebugLogger } from './debug-logger';
 import type { ArtifactSelection } from './import-modal';
 
 // Plaud host bases used to resolve relative asset paths into absolute
-// download candidates.
-const PLAUD_API_BASE = 'https://api.plaud.ai';
+// download candidates. The API host can vary by region (EU accounts get
+// `api-euc1.plaud.ai`, etc.), so it is supplied per-import via
+// AttachmentImporterOptions.getApiBaseUrl rather than hardcoded. This
+// constant is only the fallback when no provider is given. The web host has
+// no known regional variants, so it stays a constant.
+const DEFAULT_PLAUD_API_BASE = 'https://api.plaud.ai';
 const PLAUD_WEB_BASE = 'https://web.plaud.ai';
 
 type AttachmentKind = 'generic' | 'mindmap' | 'card';
@@ -32,6 +36,12 @@ export interface AttachmentImporterOptions {
 	readonly app: App;
 	/** Bearer-token provider for authenticated Plaud asset fetches. */
 	readonly getAuthToken?: () => string | null;
+	/**
+	 * Provider for the current Plaud API host (e.g. a regional host detected
+	 * at runtime). Read fresh per asset so a mid-session region switch is
+	 * picked up. Defaults to the US host when omitted.
+	 */
+	readonly getApiBaseUrl?: () => string;
 	/** Defaults to a NoopDebugLogger so logging calls never null-check. */
 	readonly debugLogger?: DebugLogger;
 }
@@ -49,11 +59,13 @@ export interface AttachmentImporterOptions {
 export class AttachmentImporter {
 	private readonly app: App;
 	private readonly resolveAuthToken: () => string | null;
+	private readonly resolveApiBaseUrl: () => string;
 	private readonly debugLogger: DebugLogger;
 
 	constructor(options: AttachmentImporterOptions) {
 		this.app = options.app;
 		this.resolveAuthToken = options.getAuthToken ?? (() => null);
+		this.resolveApiBaseUrl = options.getApiBaseUrl ?? (() => DEFAULT_PLAUD_API_BASE);
 		this.debugLogger = options.debugLogger ?? new NoopDebugLogger();
 	}
 
@@ -885,9 +897,10 @@ export class AttachmentImporter {
 		}
 		const normalized = pathOrUrl.replace(/^\/+/, '');
 		const fromMap = nestedAssetLinks?.[normalized];
+		const apiBase = this.resolveApiBaseUrl().replace(/\/+$/, '');
 		return [
 			...(typeof fromMap === 'string' && fromMap.length > 0 ? [fromMap] : []),
-			`${PLAUD_API_BASE}/${normalized}`,
+			`${apiBase}/${normalized}`,
 			`${PLAUD_WEB_BASE}/${normalized}`,
 		];
 	}
