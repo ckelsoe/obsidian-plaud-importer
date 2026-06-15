@@ -4,6 +4,16 @@ All notable changes to Plaud Importer will be documented in this file.
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-06-15
+
+### Added
+
+- **One-click sign-in.** A new "Automatic sign-in" button in settings opens Plaud's website in an embedded window so you can log in normally (email and password, Google, etc.); the plugin then captures your session token automatically. Your password is never seen by the plugin. The sign-in row shows whether a token is stored. Manual token entry remains available as a fallback. Desktop only.
+
+### Changed
+
+- Documentation now leads with the sign-in flow. The manual-token instructions were corrected to copy the `Authorization` header from the browser Network tab (Plaud no longer keeps a usable token in `localStorage`).
+
 ## [0.7.0] - 2026-06-15
 
 ### Fixed

@@ -137,6 +137,60 @@
 	display: none;
 }
 
+/* Sign-in status line under the "Automatic sign-in" setting */
+.plaud-importer-signin-status {
+	margin-top: 0.35em;
+	font-size: var(--font-ui-smaller);
+	color: var(--text-muted);
+}
+
+.plaud-importer-signin-status.plaud-importer-signin-ok {
+	color: var(--text-success);
+}
+
+/* In-app Plaud sign-in modal */
+.plaud-importer-login-modal {
+	width: 80vw;
+	max-width: 900px;
+}
+
+.plaud-importer-login-intro {
+	color: var(--text-muted);
+	margin: 0 0 0.75em 0;
+	line-height: 1.4;
+}
+
+.plaud-importer-login-webview {
+	display: flex;
+	width: 100%;
+	height: 45vh;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 6px;
+	background: var(--background-primary);
+}
+
+.plaud-importer-login-status {
+	margin: 0.75em 0 0 0;
+	font-size: var(--font-ui-small);
+	color: var(--text-muted);
+}
+
+.plaud-importer-login-diag {
+	margin: 0.5em 0 0 0;
+	padding: 0.5em 0.75em;
+	max-height: 9em;
+	overflow: auto;
+	font-family: var(--font-monospace);
+	font-size: var(--font-ui-smaller);
+	color: var(--text-muted);
+	background: var(--background-secondary);
+	border-radius: 4px;
+	white-space: pre-wrap;
+	word-break: break-word;
+	user-select: text;
+	-webkit-user-select: text;
+}
+
 /* Read-only API region status in settings */
 .plaud-importer-region-host {
 	font-family: var(--font-monospace);

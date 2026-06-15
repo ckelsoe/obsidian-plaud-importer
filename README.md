@@ -29,6 +29,7 @@ Each recording becomes a single note with frontmatter metadata, a Plaud-generate
 
 ## What it does
 
+- **One-click sign-in** — connect your Plaud account from settings without copying a token from the browser console. A sign-in window opens, you log in to Plaud normally, and your session token is captured automatically. Your password is never seen by the plugin. (Manual token paste is still available as a fallback.)
 - **Lists your recent Plaud recordings** in a modal with scroll-to-load pagination.
 - **Lets you pick which to import** via checkboxes — single or multi-select.
 - **Per-recording artifact selection** — before a multi-import you can tick/untick transcript, summary, attachments, mindmap, and card independently.
@@ -48,7 +49,7 @@ Each recording becomes a single note with frontmatter metadata, a Plaud-generate
 ## Requirements
 
 - **Obsidian 1.13.0 or newer** — required for the settings and `SecretStorage` / `SecretComponent` APIs used to handle the Plaud token.
-- **Desktop only** (`isDesktopOnly: true`). The current authentication path depends on Electron and `localStorage` APIs that are not available on Obsidian Mobile. This restriction will be lifted when Plaud ships a public OAuth API (see [Plaud API status](#plaud-api-status) below).
+- **Desktop only** (`isDesktopOnly: true`). The authentication path depends on Electron APIs (including the embedded sign-in browser window) that are not available on Obsidian Mobile. This restriction will be lifted when Plaud ships a public OAuth API (see [Plaud API status](#plaud-api-status) below).
 - **A Plaud.AI account** with access to the recordings you want to import.
 
 ## Installation
@@ -74,20 +75,29 @@ Each recording becomes a single note with frontmatter metadata, a Plaud-generate
 
 Open **Settings → Community plugins → Plaud Importer** and configure:
 
-### Plaud token
+### Connect your Plaud account
 
-The plugin authenticates against Plaud using your web session token. Capture it once:
+The plugin reads your recordings using your Plaud web-session token. **You never give the plugin your Plaud password** — you sign in to Plaud directly, and the plugin captures only the session token your logged-in session already uses.
+
+#### Sign in (recommended)
+
+1. In **Settings → Community plugins → Plaud Importer**, find **Automatic sign-in** and click **Sign in**.
+2. A window opens with Plaud's own website. Sign in the way you normally do (email and password, Google, etc.).
+3. Once you reach your library, the plugin captures your session token automatically and the window closes. The sign-in row then shows **"signed in — a token is stored."**
+
+This is desktop only, because it relies on an embedded browser window. Your password never passes through the plugin.
+
+#### Paste a token manually (fallback)
+
+If the embedded sign-in window does not work on your setup, capture the token yourself from your browser:
 
 1. Sign in to [web.plaud.ai](https://web.plaud.ai) in your browser.
-2. Press **F12** to open DevTools and click the **Console** tab.
-3. Paste this and press Enter (Edge/Chrome may make you type `allow pasting` once before it accepts pasted code):
-   ```js
-   copy(localStorage.getItem('pld_tokenstr') || localStorage.getItem('tokenstr'))
-   ```
-   Your token is now on the clipboard. The value looks like `bearer eyJhbGci…` — the plugin normalizes the `bearer ` prefix internally, so paste exactly what you copied without editing it. (Plaud has used both `pld_tokenstr` and `tokenstr` as the storage key; the snippet handles either.)
-4. In Obsidian: **Settings → Community plugins → Plaud Importer**. Click the Plaud token field, choose **Create new secret**, paste, and save.
+2. Press **F12** to open DevTools and click the **Network** tab.
+3. Open a recording in Plaud so it makes some requests, then click any request to `api.plaud.ai`.
+4. Under **Request Headers**, find **Authorization** and copy its full value (it looks like `bearer eyJhbGci…`). The plugin normalizes the `bearer ` prefix internally, so paste it exactly as copied.
+5. In Obsidian, click the **Plaud token** field, choose **Create new secret**, paste, and save.
 
-The token is stored in Obsidian's per-vault secret storage. It is **never written to `data.json`** and does not travel through Obsidian Sync. Switching vaults requires re-entering the token.
+The token is stored in Obsidian's per-vault secret storage either way. It is **never written to `data.json`** and does not travel through Obsidian Sync. Switching vaults requires re-connecting.
 
 Regional accounts (EU and others) need no extra setup. If Plaud routes your account to a regional server, the plugin detects it on the first import and remembers it.
 
@@ -152,6 +162,7 @@ I am actively monitoring Plaud's developer announcements and [waitlist](https://
 Per Obsidian's [developer policies](https://docs.obsidian.md/Developer+policies):
 
 - **Network use** — the plugin communicates exclusively with Plaud.AI's servers (`api.plaud.ai` for JSON, various CDN hosts for attachment downloads that Plaud's API points at). No data is sent to any other third party. Network requests happen only when you explicitly trigger an import, scroll to load more recordings, or download attachments.
+- **In-app sign-in** — when you click **Sign in**, the plugin opens Plaud's own website (`app.plaud.ai` / `web.plaud.ai`) in an embedded browser window so you can log in. Your password is entered into Plaud's page and is never read by the plugin; the plugin reads only the session token your logged-in session sends to Plaud's API, and stores it via `SecretStorage`. The sign-in session is kept in a private partition isolated from Obsidian's other web sessions.
 - **No telemetry** — no usage data, crash reports, or analytics are collected or transmitted.
 - **Secret handling** — the Plaud token is stored via Obsidian's `SecretStorage` API (per-vault, not synced), referenced by a secret ID in `data.json` rather than the token itself.
 - **Vault writes** — all file writes go through the Obsidian `Vault` API (`Vault.create`, `Vault.process`). No direct filesystem access.
@@ -160,8 +171,8 @@ See [PRIVACY.md](./PRIVACY.md) for the full privacy policy and liability disclai
 
 ## Troubleshooting
 
-- **"No Plaud token configured"** — re-check the Plaud token dropdown in settings. If your token expired, follow the [Plaud token](#plaud-token) steps again.
-- **"Plaud rejected your token"** — your web session likely expired or you signed out of Plaud. Re-copy the JWT from DevTools and update the secret.
+- **"No Plaud token configured"** — re-check the Plaud token field in settings. If your token expired, [connect your Plaud account](#connect-your-plaud-account) again (click **Sign in**).
+- **"Plaud rejected your token"** — your web session likely expired or you signed out of Plaud. Click **Sign in** again to refresh the token (or re-paste it manually).
 - **"Could not reach Plaud.AI"** — network or DNS issue on your side, or Plaud is down. Retry from the modal's **Retry** button.
 - **"Plaud returned data in an unexpected shape"** — Plaud changed their API. File an issue with the debug log attached (see [Debug logging](#debug-logging)).
 - **Import silently "skipped"** — your duplicate handling was set to Skip and the note already existed. Switch to **Ask each time** (default since 0.2.0) or **Overwrite**.

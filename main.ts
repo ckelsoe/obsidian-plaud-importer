@@ -16,7 +16,12 @@ import {
 } from "./plaud-client-re";
 import { ImportModal } from "./import-modal";
 import { BufferedDebugLogger } from "./debug-logger";
+import { openPlaudLogin } from "./plaud-login";
 import type { TagMode } from "./note-writer";
+
+// Stable SecretStorage id for a token captured by the in-app sign-in flow.
+// Re-running sign-in overwrites it, mirroring "replace my token".
+const CAPTURED_SECRET_ID = "plaud-importer-token";
 
 // Curated list of Lucide icon IDs offered in the "Ribbon icon" setting.
 // Each entry is a valid Lucide ID bundled with Obsidian's icon set. This
@@ -380,6 +385,61 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 								await this.plugin.saveSettings();
 							}),
 					);
+				},
+			},
+			{
+				name: "Automatic sign-in (beta)",
+				desc: "Open Plaud in a window and sign in normally. The plugin captures your session token automatically, so there is no need to copy it from the browser console. Your password is never seen by the plugin. Falls back to manual entry above if your Obsidian build cannot embed a browser.",
+				searchable: false,
+				render: (setting: Setting) => {
+					const statusEl = setting.descEl.createDiv({
+						cls: "plaud-importer-signin-status",
+					});
+					const refreshStatus = (): void => {
+						const id = this.plugin.settings.secretId;
+						const stored =
+							id.length > 0 &&
+							(this.app.secretStorage.getSecret(id) ?? "").length > 0;
+						statusEl.setText(
+							stored
+								? "Status: signed in — a token is stored."
+								: "Status: not signed in yet.",
+						);
+						statusEl.toggleClass("plaud-importer-signin-ok", stored);
+					};
+					setting.addButton((btn) =>
+						btn
+							.setButtonText("Sign in")
+							.setCta()
+							.onClick(async () => {
+								btn.setDisabled(true);
+								try {
+									const result = await openPlaudLogin(this.app, {
+										debugLogger: this.plugin.debugLogger,
+									});
+									if (result === null) {
+										new Notice(
+											"Plaud sign-in closed — no token captured.",
+										);
+										return;
+									}
+									this.app.secretStorage.setSecret(
+										CAPTURED_SECRET_ID,
+										result.token,
+									);
+									this.plugin.settings.secretId = CAPTURED_SECRET_ID;
+									if (result.apiBaseUrl !== null) {
+										this.plugin.settings.apiBaseUrl = result.apiBaseUrl;
+									}
+									await this.plugin.saveSettings();
+									new Notice("Plaud token captured and saved.");
+									refreshStatus();
+								} finally {
+									btn.setDisabled(false);
+								}
+							}),
+					);
+					refreshStatus();
 				},
 			},
 			{

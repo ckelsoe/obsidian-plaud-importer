@@ -52,3 +52,26 @@ declare module 'obsidian' {
         getFoldInfo(): FoldInfo | null;
     }
 }
+
+declare global {
+    /**
+     * Electron <webview> element. Obsidian enables `webviewTag` (its Web
+     * Viewer core plugin depends on it), so a plugin-created <webview>
+     * exposes Electron's webview methods at runtime. Only the surface the
+     * Plaud login capture uses is declared here. Methods may be absent at
+     * runtime if a future Obsidian build disables the tag, so call sites
+     * still guard with `typeof`.
+     */
+    interface ElectronWebviewTag extends HTMLElement {
+        src: string;
+        partition: string;
+        executeJavaScript(code: string): Promise<unknown>;
+        getURL(): string;
+        reload(): void;
+        stop(): void;
+    }
+
+    interface HTMLElementTagNameMap {
+        webview: ElectronWebviewTag;
+    }
+}
