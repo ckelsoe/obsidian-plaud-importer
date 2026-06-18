@@ -477,6 +477,10 @@ export class ReverseEngineeredPlaudClient implements PlaudClient {
 			Accept: 'application/json',
 			'User-Agent': USER_AGENT,
 		};
+		// Debug-only: non-identifying token claims (client_id/typ/ver), filled
+		// below when a token is attached. Surfaced in the request event so a
+		// debug log can show a token-type / parse-mode mismatch.
+		let tokenDiagnostics: Record<string, unknown> | null = null;
 
 		// `skipAuth` is for fetching pre-signed S3 URLs (e.g., the polished
 		// transcript hosted in the Plaud content storage bucket). Those URLs
@@ -503,6 +507,23 @@ export class ReverseEngineeredPlaudClient implements PlaudClient {
 			// before we prepend our own capitalized scheme token.
 			const token = rawToken.trim().replace(/^bearer\s+/i, '');
 			headers.Authorization = `Bearer ${token}`;
+			if (this.debugLogger?.enabled === true) {
+				tokenDiagnostics = decodeTokenDiagnostics(token);
+			}
+
+			// Plaud's data API selects a token "parse mode" from the
+			// `app-platform` header and rejects the token with
+			// `status: -3901 "token type does not match parse mode"` when it
+			// disagrees with the token's own `client_id` claim. Derive the
+			// header from the token so the two always match, whichever Plaud
+			// client minted it; fall back to 'web' (the web app's value) when
+			// the claim is absent. Scoped to authenticated calls — the skipAuth
+			// path fetches pre-signed S3 asset URLs, which must not carry extra
+			// headers. Verified against a live web.plaud.ai token (client_id
+			// 'web') on 2026-06-18.
+			const clientId = readTokenClientId(token) ?? 'web';
+			headers['app-platform'] = clientId;
+			headers['edit-from'] = clientId;
 		}
 
 		if (options.body !== undefined) {
@@ -523,9 +544,11 @@ export class ReverseEngineeredPlaudClient implements PlaudClient {
 					method,
 					body: options.body,
 					// Intentionally NOT logging `headers` — Authorization
-					// lives there. If future diagnostics need non-auth
-					// headers, build a scrubbed subset here rather than
-					// passing the full object.
+					// lives there. Surface only the non-auth platform header
+					// and the redacted token claims needed to diagnose a
+					// `-3901 token type does not match parse mode` mismatch.
+					appPlatform: headers['app-platform'],
+					tokenDiagnostics,
 				},
 			});
 		}
@@ -642,6 +665,41 @@ export class ReverseEngineeredPlaudClient implements PlaudClient {
 			return this.fetchJson(retryUrl, endpoint, { ...options, isRegionRetry: true });
 		}
 
+		// Plaud reports failures in-band: HTTP 200 with a negative `status` and
+		// a `msg`, no data payload. Catch them here so they surface as a
+		// truthful auth/API error carrying Plaud's own message, instead of
+		// falling through to a data parser that mislabels them as an
+		// "unexpected shape" parse error. (The -302 region redirect is handled
+		// above.)
+		const inBand = detectInBandError(response.json);
+		if (inBand !== null) {
+			if (this.debugLogger?.enabled === true) {
+				this.debugLogger.log({
+					kind: 'response',
+					endpoint,
+					message: `in-band error: status=${inBand.status} msg=${inBand.msg}`,
+				});
+			}
+			// Token-expiry codes route to the re-login remediation. -419
+			// "workspace token expired" is the observed expiry code; the
+			// /expired/i guard also catches sibling codes worded the same way.
+			if (inBand.status === -419 || /expired/i.test(inBand.msg)) {
+				throw new PlaudAuthError(
+					'token_rejected',
+					`Plaud rejected the token on ${endpoint} (status ${inBand.status}: ${inBand.msg})`,
+					endpoint,
+				);
+			}
+			// Any other in-band failure (e.g. -3901 "token type does not match
+			// parse mode") surfaces Plaud's own message. The "in-band error
+			// from" prefix routes it to the api-error category in classifyError.
+			throw new PlaudApiError(
+				`Plaud returned in-band error from ${endpoint}: status=${inBand.status} msg=${inBand.msg}`,
+				undefined,
+				endpoint,
+			);
+		}
+
 		return response.json;
 	}
 }
@@ -699,6 +757,104 @@ function detectRegionRedirect(json: unknown): string | null {
 	}
 	// Rebuild from the parsed origin so only scheme + host[:port] survive.
 	return `https://${parsed.host}`.replace(/\/+$/, '');
+}
+
+// Detects Plaud's in-band error envelope. Plaud signals failures on the data
+// API as an HTTP 200 whose JSON body carries a NEGATIVE `status` code and a
+// human-readable `msg`, with no data payload. Captured from a real broken
+// session on 2026-06-18:
+//
+//   { "status": -419,  "msg": "workspace token expired" }
+//   { "status": -3901, "msg": "token type does not match parse mode" }
+//
+// This is the same envelope family as the -302 region redirect (consumed by
+// detectRegionRedirect before we reach here). Successful responses use a
+// non-negative status — the listing endpoint returns `status: 0` and the
+// transcript/summary endpoint returns `status: 1` on success — so keying on a
+// negative status cleanly separates errors from success without misreading a
+// valid payload. Returns the code and message, or null when the body is not an
+// in-band error.
+function detectInBandError(json: unknown): { status: number; msg: string } | null {
+	if (!isRecord(json)) {
+		return null;
+	}
+	const status = json.status;
+	if (typeof status !== 'number' || status >= 0) {
+		return null;
+	}
+	// -302 is the region redirect, already consumed by detectRegionRedirect.
+	if (status === -302) {
+		return null;
+	}
+	const msg =
+		typeof json.msg === 'string' && json.msg.length > 0 ? json.msg : '(no message)';
+	return { status, msg };
+}
+
+// Decodes ONLY the non-identifying diagnostic claims from a Plaud bearer token,
+// for debug logging. Plaud's data API selects a token "parse mode" from the
+// `app-platform` request header and rejects the token with
+// `status: -3901 "token type does not match parse mode"` when that mode does
+// not match the token's own `client_id`. Surfacing `client_id`/`typ`/`ver`
+// (never `sub`/`wid`/`jti` or the token string) lets a debug log reveal that
+// mismatch without leaking identity. Returns null when debug is off / no token.
+function decodeJwtSegment(seg: string): Record<string, unknown> | null {
+	try {
+		const b64 = seg.replace(/-/g, '+').replace(/_/g, '/');
+		const padded = b64 + '='.repeat((4 - (b64.length % 4)) % 4);
+		const bin =
+			typeof atob === 'function'
+				? atob(padded)
+				: Buffer.from(padded, 'base64').toString('binary');
+		return JSON.parse(bin) as Record<string, unknown>;
+	} catch {
+		return null;
+	}
+}
+
+// The Plaud client that minted the token, read from the JWT `client_id` claim
+// (e.g. 'web', 'app'). The data API rejects a token with
+// `status: -3901 "token type does not match parse mode"` when the request's
+// `app-platform` header disagrees with this claim, so the client uses it to
+// keep the two in sync. Returns null when the token is opaque or has no claim.
+function readTokenClientId(token: string): string | null {
+	const parts = token.split('.');
+	if (parts.length < 2) {
+		return null;
+	}
+	const payload = decodeJwtSegment(parts[1]);
+	return payload !== null && typeof payload.client_id === 'string'
+		? payload.client_id
+		: null;
+}
+
+// Decodes ONLY the non-identifying diagnostic claims from a Plaud bearer token,
+// for debug logging. Surfaces `client_id`/`typ`/`ver` (never `sub`/`wid`/`jti`
+// or the token string) so a debug log can reveal a token-type / parse-mode
+// mismatch without leaking identity.
+const TOKEN_DIAG_CLAIMS = ['typ', 'alg', 'client_id', 'ver', 'wtype', 'auth_method', 'exp'];
+function decodeTokenDiagnostics(token: string): Record<string, unknown> {
+	const parts = token.split('.');
+	if (parts.length < 2) {
+		return { token: 'not-a-jwt' };
+	}
+	const safe: Record<string, unknown> = {};
+	for (const [name, seg] of [
+		['header', parts[0]],
+		['payload', parts[1]],
+	] as const) {
+		const obj = decodeJwtSegment(seg);
+		if (obj === null) {
+			safe[name] = 'decode-failed';
+			continue;
+		}
+		for (const claim of TOKEN_DIAG_CLAIMS) {
+			if (claim in obj) {
+				safe[`${name}.${claim}`] = obj[claim];
+			}
+		}
+	}
+	return safe;
 }
 
 // -----------------------------------------------------------------------------

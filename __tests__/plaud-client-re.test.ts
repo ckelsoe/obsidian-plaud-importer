@@ -233,6 +233,47 @@ describe('listRecordings request shape', () => {
 		expect(headers['User-Agent']).toMatch(/obsidian-plaud-importer/);
 	});
 
+	// Regression for the 2026-06-18 `status: -3901 "token type does not match
+	// parse mode"` breakage. Plaud's data API rejects a token when the
+	// `app-platform` header disagrees with the token's `client_id` claim, so
+	// the client derives the header from the token. Verified against a live
+	// web.plaud.ai token (client_id 'web').
+	const jwt = (payload: Record<string, unknown>): string => {
+		const enc = (o: unknown): string => Buffer.from(JSON.stringify(o)).toString('base64url');
+		return `${enc({ alg: 'HS256', typ: 'WT' })}.${enc(payload)}.sig`;
+	};
+
+	it("derives app-platform from a web token's client_id", async () => {
+		const { fetcher, lastRequest } = captureFetcher(ok(listEnvelope([])));
+		const client = new ReverseEngineeredPlaudClient(() => jwt({ client_id: 'web' }), fetcher);
+
+		await client.listRecordings();
+
+		const headers = lastRequest()?.headers ?? {};
+		expect(headers['app-platform']).toBe('web');
+		expect(headers['edit-from']).toBe('web');
+	});
+
+	it("derives app-platform from an app token's client_id (no forced mismatch)", async () => {
+		const { fetcher, lastRequest } = captureFetcher(ok(listEnvelope([])));
+		const client = new ReverseEngineeredPlaudClient(() => jwt({ client_id: 'app' }), fetcher);
+
+		await client.listRecordings();
+
+		const headers = lastRequest()?.headers ?? {};
+		expect(headers['app-platform']).toBe('app');
+		expect(headers['edit-from']).toBe('app');
+	});
+
+	it('falls back to web when the token carries no client_id claim', async () => {
+		const { fetcher, lastRequest } = captureFetcher(ok(listEnvelope([])));
+		const client = new ReverseEngineeredPlaudClient(() => 'opaque-token', fetcher);
+
+		await client.listRecordings();
+
+		expect(lastRequest()?.headers['app-platform']).toBe('web');
+	});
+
 	it('sends the documented query params (skip, limit, is_trash, sort_by, is_desc)', async () => {
 		const { fetcher, lastRequest } = captureFetcher(ok(listEnvelope([])));
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
@@ -670,6 +711,65 @@ describe('listRecordings parse errors', () => {
 		const { fetcher } = captureFetcher(
 			ok(listEnvelope([record({ some_new_field_from_plaud: 'whatever' })])),
 		);
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+
+		const result = await client.listRecordings();
+		expect(result).toHaveLength(1);
+	});
+});
+
+// listRecordings — in-band error envelopes ----------------------------------
+//
+// Plaud signals failures as HTTP 200 with a NEGATIVE `status` and a `msg`,
+// no data payload. Before this was handled, the body fell through to
+// parseListResponse and surfaced as a misleading "unexpected shape / plugin
+// may need an update" parse error. These fixtures are the exact envelopes
+// captured from a real broken session on 2026-06-18.
+
+describe('listRecordings in-band error envelopes', () => {
+	it('maps -419 "workspace token expired" to a PlaudAuthError (token_rejected), not a parse error', async () => {
+		const { fetcher } = captureFetcher(
+			ok({ status: -419, msg: 'workspace token expired' }),
+		);
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+
+		const err = await client.listRecordings().catch((e: unknown) => e);
+		expect(err).toBeInstanceOf(PlaudAuthError);
+		expect(err).not.toBeInstanceOf(PlaudParseError);
+		expect((err as PlaudAuthError).reason).toBe('token_rejected');
+	});
+
+	it('routes any "expired" message to token_rejected even on a novel code', async () => {
+		const { fetcher } = captureFetcher(
+			ok({ status: -1234, msg: 'session token expired' }),
+		);
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+
+		const err = await client.listRecordings().catch((e: unknown) => e);
+		expect(err).toBeInstanceOf(PlaudAuthError);
+		expect((err as PlaudAuthError).reason).toBe('token_rejected');
+	});
+
+	it('maps -3901 "token type does not match parse mode" to a non-parse in-band PlaudApiError', async () => {
+		const { fetcher } = captureFetcher(
+			ok({ status: -3901, msg: 'token type does not match parse mode' }),
+		);
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+
+		const err = await client.listRecordings().catch((e: unknown) => e);
+		expect(err).toBeInstanceOf(PlaudApiError);
+		expect(err).not.toBeInstanceOf(PlaudParseError);
+		expect(err).not.toBeInstanceOf(PlaudAuthError);
+		// "in-band error from" is the discriminator classifyError uses to route
+		// these to the api-error category and surface Plaud's own message.
+		expect((err as PlaudApiError).message).toContain('in-band error from');
+		expect((err as PlaudApiError).message).toContain(
+			'token type does not match parse mode',
+		);
+	});
+
+	it('does not trip on a valid list (status 0) — success path is unaffected', async () => {
+		const { fetcher } = captureFetcher(ok(listEnvelope([record()])));
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
 		const result = await client.listRecordings();

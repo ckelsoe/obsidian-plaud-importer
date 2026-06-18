@@ -148,6 +148,21 @@
 	color: var(--text-success);
 }
 
+/* Result line under the "Test connection" setting */
+.plaud-importer-test-status {
+	margin-top: 0.35em;
+	font-size: var(--font-ui-smaller);
+	color: var(--text-muted);
+}
+
+.plaud-importer-test-status.plaud-importer-test-ok {
+	color: var(--text-success);
+}
+
+.plaud-importer-test-status.plaud-importer-test-err {
+	color: var(--text-error);
+}
+
 /* In-app Plaud sign-in modal */
 .plaud-importer-login-modal {
 	width: 80vw;

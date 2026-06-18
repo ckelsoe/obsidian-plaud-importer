@@ -20,7 +20,13 @@
 import { App, Modal } from 'obsidian';
 import { NoopDebugLogger, type DebugLogger } from './debug-logger';
 
-const PLAUD_LOGIN_URL = 'https://app.plaud.ai';
+// Load the same web client the data API expects. The token is platform-typed:
+// a token minted by app.plaud.ai is parsed in a different mode by /file/simple/web
+// and rejected with `status: -3901 "token type does not match parse mode"`. The
+// client tags its requests `app-platform: web` / `edit-from: web` (see
+// plaud-client-re.ts), so the captured token must come from the web client to
+// match. Verified against a live web.plaud.ai HAR capture on 2026-06-18.
+const PLAUD_LOGIN_URL = 'https://web.plaud.ai';
 // Persistent partition so a returning user keeps their Plaud session and does
 // not have to sign in every time. Isolated from Obsidian's own web sessions.
 const PLAUD_PARTITION = 'persist:plaud-importer';
@@ -33,6 +39,40 @@ const SESSION_FILTER = { urls: ['*://*.plaud.ai/*'] };
 // A JWT, optionally bearer-prefixed.
 const JWT_RE = /eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/;
 
+// Plaud's data API tags tokens by type in the JWT header `typ`. The workspace
+// ACCESS token used for /file/* data calls is `WT`; the paired REFRESH token is
+// `WRT`. During login the web app sends the refresh token (WRT) in an
+// Authorization header before the access token (WT), so a "grab the first
+// Authorization header" capture stores the WRT and the data API then rejects it
+// with `status: -3901 "token type does not match parse mode"`. Only accept the
+// access token. Verified against a live web.plaud.ai session on 2026-06-18.
+const ACCESS_TOKEN_TYP = 'WT';
+
+// Reads the JWT header `typ` from a (possibly bearer-prefixed) token, or null
+// when the value is not a decodable JWT.
+function jwtTyp(value: string): string | null {
+	const match = value.replace(/^bearer\s+/i, '').match(JWT_RE);
+	if (match === null) {
+		return null;
+	}
+	const seg = match[0].split('.')[0].replace(/-/g, '+').replace(/_/g, '/');
+	const padded = seg + '='.repeat((4 - (seg.length % 4)) % 4);
+	try {
+		const json =
+			typeof atob === 'function'
+				? atob(padded)
+				: Buffer.from(padded, 'base64').toString('binary');
+		const header = JSON.parse(json) as Record<string, unknown>;
+		return typeof header.typ === 'string' ? header.typ : null;
+	} catch {
+		return null;
+	}
+}
+
+function isAccessToken(value: string): boolean {
+	return jwtTyp(value) === ACCESS_TOKEN_TYP;
+}
+
 // Injected as a fallback when the session-level capture is unavailable.
 // Monkey-patches fetch and XMLHttpRequest to record the Authorization header
 // the page sends, exposing it as window.__pldAuth.
@@ -40,8 +80,20 @@ const HOOK_JS = `(() => {
 	if (window.__pldAuthHook) { return 'already'; }
 	window.__pldAuthHook = true;
 	window.__pldAuth = null;
+	function typOf(v) {
+		try {
+			var jwt = v.replace(/^bearer\\s+/i, '').match(/eyJ[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+/);
+			if (!jwt) { return null; }
+			var seg = jwt[0].split('.')[0].replace(/-/g, '+').replace(/_/g, '/');
+			seg += '='.repeat((4 - seg.length % 4) % 4);
+			var header = JSON.parse(atob(seg));
+			return header && header.typ;
+		} catch (e) { return null; }
+	}
 	function remember(v) {
-		if (typeof v === 'string' && /eyJ[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+/.test(v)) {
+		// Only the workspace ACCESS token (typ WT) works on the data API; the
+		// refresh token (WRT) appears first during login and must be ignored.
+		if (typeof v === 'string' && typOf(v) === 'WT') {
 			window.__pldAuth = v;
 		}
 	}
@@ -267,7 +319,10 @@ class PlaudLoginModal extends Modal {
 			session.webRequest.onSendHeaders(SESSION_FILTER, (details) => {
 				const headers = details.requestHeaders ?? {};
 				const auth = headers.Authorization ?? headers.authorization;
-				if (typeof auth === 'string' && JWT_RE.test(auth)) {
+				// Only keep the workspace ACCESS token (typ WT). The refresh
+				// token (WRT) is sent first during login; capturing it is what
+				// produced `-3901 "token type does not match parse mode"`.
+				if (typeof auth === 'string' && isAccessToken(auth)) {
 					this.capturedAuth = auth;
 				}
 			});
@@ -321,7 +376,10 @@ class PlaudLoginModal extends Modal {
 				});
 				this.renderDiagnostics(probe, token !== null);
 			}
-			if (token !== null && !this.settled) {
+			// Defense in depth: both capture paths already filter to the access
+			// token, but re-check here so a refresh token can never be the value
+			// we store and close the modal on.
+			if (token !== null && isAccessToken(token) && !this.settled) {
 				this.captureToken(token, apiBaseUrl);
 			}
 		};

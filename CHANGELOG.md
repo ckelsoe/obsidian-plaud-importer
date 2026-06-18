@@ -4,6 +4,21 @@ All notable changes to Plaud Importer will be documented in this file.
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-06-18
+
+### Fixed
+
+- Imports failing with "token type does not match parse mode" (surfaced as "Plaud returned data in an unexpected shape"). Automatic sign-in was capturing Plaud's refresh token instead of the workspace access token the data API requires, and the sign-in window closed the instant it saw that wrong token. Sign-in now captures only the access token and stays open until it appears. **If you hit this, click Sign in again to capture a fresh token.**
+- Plaud's in-band errors (an HTTP 200 carrying a negative status, such as an expired token) are now reported with Plaud's own message and routed to the right fix, sign in again, instead of a misleading "unexpected shape" parse error.
+
+### Added
+
+- **Test connection** button in settings. It makes one lightweight call to Plaud and reports whether your token works, so you can confirm you are signed in, or learn you need to sign in again, without running a full import.
+
+### Changed
+
+- The automatic sign-in window now loads `web.plaud.ai`, and data requests are tagged with the platform that matches the token so Plaud parses it in the right mode.
+
 ## [0.8.1] - 2026-06-15
 
 ### Changed

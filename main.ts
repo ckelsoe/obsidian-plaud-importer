@@ -14,7 +14,7 @@ import {
 	ReverseEngineeredPlaudClient,
 	type PlaudHttpFetcher,
 } from "./plaud-client-re";
-import { ImportModal } from "./import-modal";
+import { ImportModal, classifyError } from "./import-modal";
 import { BufferedDebugLogger } from "./debug-logger";
 import { openPlaudLogin } from "./plaud-login";
 import type { TagMode } from "./note-writer";
@@ -263,6 +263,36 @@ export default class PlaudImporterPlugin extends Plugin {
 	}
 
 	/**
+	 * Make one lightweight authenticated call so the user can confirm their
+	 * stored token actually reaches Plaud, without running a full import. Maps
+	 * any failure through the same classifier the import modal uses, so an
+	 * expired or wrong-type token reports the exact remediation (e.g. sign in
+	 * again) instead of a generic failure.
+	 */
+	async testPlaudConnection(): Promise<{ ok: boolean; message: string }> {
+		const client = this.client;
+		if (client === undefined) {
+			return {
+				ok: false,
+				message:
+					"Plaud Importer is still starting up. Wait a moment and try again.",
+			};
+		}
+		try {
+			const recordings = await client.listRecordings({ limit: 1 });
+			return {
+				ok: true,
+				message:
+					recordings.length > 0
+						? "Connected to Plaud. Your token works and recordings are reachable."
+						: "Connected to Plaud. Your token works (no recordings found yet).",
+			};
+		} catch (err) {
+			return { ok: false, message: classifyError(err).message };
+		}
+	}
+
+	/**
 	 * Add, remove, or swap the left-rail ribbon icon based on the
 	 * current settings. Safe to call repeatedly — no-ops when the DOM
 	 * state already matches the setting. An icon ID change triggers a
@@ -440,6 +470,38 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 							}),
 					);
 					refreshStatus();
+				},
+			},
+			{
+				name: "Test connection",
+				desc: "Check that your stored token can reach Plaud. Use this after signing in, or any time imports start failing, to see whether you need to sign in again.",
+				searchable: false,
+				render: (setting: Setting) => {
+					const resultEl = setting.descEl.createDiv({
+						cls: "plaud-importer-test-status",
+					});
+					setting.addButton((btn) =>
+						btn.setButtonText("Test connection").onClick(async () => {
+							btn.setDisabled(true);
+							resultEl.setText("Testing…");
+							resultEl.toggleClass("plaud-importer-test-ok", false);
+							resultEl.toggleClass("plaud-importer-test-err", false);
+							try {
+								const result = await this.plugin.testPlaudConnection();
+								resultEl.setText(result.message);
+								resultEl.toggleClass(
+									"plaud-importer-test-ok",
+									result.ok,
+								);
+								resultEl.toggleClass(
+									"plaud-importer-test-err",
+									!result.ok,
+								);
+							} finally {
+								btn.setDisabled(false);
+							}
+						}),
+					);
 				},
 			},
 			{

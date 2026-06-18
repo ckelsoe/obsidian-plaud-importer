@@ -46,6 +46,7 @@ Plaud does not offer an official API yet, so this plugin works by using Plaud's 
 ## What it does
 
 - **One-click sign-in** — connect your Plaud account from settings without copying a token from the browser console. A sign-in window opens, you log in to Plaud normally, and your session token is captured automatically. Your password is never seen by the plugin. (Manual token paste is still available as a fallback.)
+- **Test connection** — a button in settings makes one lightweight call to Plaud and tells you whether your token works, so you can confirm you are signed in (or learn you need to sign in again) without running a full import.
 - **Lists your recent Plaud recordings** in a modal with scroll-to-load pagination.
 - **Lets you pick which to import** via checkboxes — single or multi-select.
 - **Per-recording artifact selection** — before a multi-import you can tick/untick transcript, summary, attachments, mindmap, and card independently.
@@ -125,6 +126,10 @@ The token is stored in Obsidian's per-vault secret storage either way. It is **n
 
 Regional accounts (EU and others) need no extra setup. If Plaud routes your account to a regional server, the plugin detects it on the first import and remembers it.
 
+### Test connection
+
+After signing in, click **Test connection** to confirm your token reaches Plaud. It makes one lightweight call and reports either that your token works or the specific problem (for example, an expired token that needs a fresh sign-in). Use it any time imports start failing to tell quickly whether you need to sign in again.
+
 ### Output folder
 
 Folder inside your vault where imported notes are written. Defaults to `Plaud`. Nested paths work (`Archive/Plaud/2026`).
@@ -198,7 +203,7 @@ See [PRIVACY.md](./PRIVACY.md) for the full privacy policy and liability disclai
 ## Troubleshooting
 
 - **"No Plaud token configured"** — re-check the Plaud token field in settings. If your token expired, [connect your Plaud account](#connect-your-plaud-account) again (click **Sign in**).
-- **"Plaud rejected your token"** — your web session likely expired or you signed out of Plaud. Click **Sign in** again to refresh the token (or re-paste it manually).
+- **"Plaud rejected your token"** — your web session likely expired or you signed out of Plaud. Click **Sign in** again to refresh the token (or re-paste it manually), then use **Test connection** to confirm it works.
 - **"Could not reach Plaud.AI"** — network or DNS issue on your side, or Plaud is down. Retry from the modal's **Retry** button.
 - **"Plaud returned data in an unexpected shape"** — Plaud changed their API. File an issue with the debug log attached (see [Debug logging](#debug-logging)).
 - **Import silently "skipped"** — your duplicate handling was set to Skip and the note already existed. Switch to **Ask each time** (default since 0.2.0) or **Overwrite**.
