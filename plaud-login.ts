@@ -17,7 +17,7 @@
 // in localStorage (it is derived at request time), so the only reliable source
 // is the Authorization header on a real request.
 
-import { App, Modal } from 'obsidian';
+import { App, Modal, Platform } from 'obsidian';
 import { NoopDebugLogger, type DebugLogger } from './debug-logger';
 
 // Load the same web client the data API expects. The token is platform-typed:
@@ -173,6 +173,9 @@ interface SessionLike {
 	// call site because they may be absent where the remote module is disabled.
 	clearStorageData?(): Promise<void>;
 	clearCache?(): Promise<void>;
+	// Sets the user-agent for every request in this session, including popups
+	// (e.g. the Google/Apple SSO window) that share the partition.
+	setUserAgent?(userAgent: string): void;
 }
 interface ElectronRemoteLike {
 	session?: { fromPartition(partition: string): SessionLike };
@@ -191,6 +194,22 @@ function requireElectron(): ElectronLike | null {
 	} catch {
 		return null;
 	}
+}
+
+// Presents the embedded browser as plain desktop Chrome. Obsidian's own
+// user-agent carries `obsidian/x` and `Electron/x` product tokens that Google
+// and Apple key on to refuse OAuth inside embedded webviews; a clean Chrome UA
+// is the standard workaround. The OS token comes from Obsidian's Platform API
+// (the navigator UA is off-limits to the obsidianmd lint) so it matches the
+// host. Best-effort only: the providers also fingerprint other signals, so this
+// may not lift the block on its own.
+function spoofUserAgent(): string {
+	const os = Platform.isMacOS
+		? 'Macintosh; Intel Mac OS X 10_15_7'
+		: Platform.isLinux
+			? 'X11; Linux x86_64'
+			: 'Windows NT 10.0; Win64; x64';
+	return `Mozilla/5.0 (${os}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36`;
 }
 
 /**
@@ -273,8 +292,16 @@ class PlaudLoginModal extends Modal {
 
 		const webview = this.contentEl.createEl('webview', {
 			cls: 'plaud-importer-login-webview',
-			// allowpopups lets Google-SSO popup windows open.
-			attr: { partition: PLAUD_PARTITION, allowpopups: '' },
+			// allowpopups lets Google-SSO popup windows open. useragent presents
+			// the frame as plain desktop Chrome so Google/Apple are less likely to
+			// block SSO as an embedded webview (best-effort; see spoofUserAgent).
+			// The session-level setUserAgent in armSessionCapture covers the SSO
+			// popup, which this frame attribute alone does not.
+			attr: {
+				partition: PLAUD_PARTITION,
+				allowpopups: '',
+				useragent: spoofUserAgent(),
+			},
 		});
 
 		this.statusEl = this.contentEl.createEl('p', {
@@ -341,8 +368,24 @@ class PlaudLoginModal extends Modal {
 
 	private armSessionCapture(): void {
 		const session = requireElectron()?.remote?.session?.fromPartition(PLAUD_PARTITION);
-		if (session === undefined || typeof session.webRequest?.onSendHeaders !== 'function') {
-			this.note('session capture unavailable; relying on in-page hook');
+		if (session === undefined) {
+			this.note('session unavailable; relying on in-page hook, host user-agent');
+			return;
+		}
+		// Spoof the user-agent at the session level so the main frame AND its
+		// SSO popups (same partition) present as plain desktop Chrome. Done
+		// independently of header capture so it still applies on builds where
+		// webRequest is missing.
+		if (typeof session.setUserAgent === 'function') {
+			try {
+				session.setUserAgent(spoofUserAgent());
+				this.note('spoofed session user-agent for SSO');
+			} catch (err) {
+				this.note(`set user-agent failed: ${String(err)}`, 'error');
+			}
+		}
+		if (typeof session.webRequest?.onSendHeaders !== 'function') {
+			this.note('session header capture unavailable; relying on in-page hook');
 			return;
 		}
 		this.webRequestSession = session;
