@@ -4,6 +4,12 @@ All notable changes to Plaud Importer will be documented in this file.
 
 ## [Unreleased]
 
+## [0.10.2] - 2026-06-20
+
+### Changed
+
+- Lowered the minimum required Obsidian version from 1.12.0 to 1.11.4, the oldest version that provides the per-vault secret storage this plugin stores your token in. The plugin now installs and runs on the Obsidian 1.11.4 release line and later.
+
 ## [0.10.1] - 2026-06-20
 
 ### Fixed

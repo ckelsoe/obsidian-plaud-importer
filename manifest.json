@@ -1,8 +1,8 @@
 {
 	"id": "plaud-importer",
 	"name": "Plaud Importer",
-	"version": "0.10.1",
-	"minAppVersion": "1.12.0",
+	"version": "0.10.2",
+	"minAppVersion": "1.11.4",
 	"description": "Import meeting summaries, transcripts, and attachments from Plaud.AI into your vault.",
 	"author": "Charles Kelsoe (ckelsoe)",
 	"authorUrl": "https://github.com/ckelsoe",
