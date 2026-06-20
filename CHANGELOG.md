@@ -4,6 +4,12 @@ All notable changes to Plaud Importer will be documented in this file.
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-06-20
+
+### Changed
+
+- Lowered the minimum required Obsidian version from 1.13.0 to 1.12.0. The plugin now installs and runs on the Obsidian 1.12 release line, not just 1.13 and later. The settings tab renders the same set of options on both: 1.13+ uses Obsidian's built-in declarative settings, and 1.12 falls back to an equivalent layout driven by the same definitions, so there is no difference in what you can configure.
+
 ## [0.9.0] - 2026-06-18
 
 ### Fixed

@@ -5,8 +5,11 @@ import {
 	PluginSettingTab,
 	SecretComponent,
 	Setting,
+	type SettingControl,
 	type SettingDefinitionItem,
+	SettingGroup,
 	requestUrl,
+	requireApiVersion,
 	setIcon,
 	type RequestUrlResponse,
 } from "obsidian";
@@ -395,6 +398,118 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 	constructor(app: App, plugin: PlaudImporterPlugin) {
 		super(app, plugin);
 		this.plugin = plugin;
+	}
+
+	// Backwards-compat fallback for Obsidian < 1.13.0, which has no knowledge
+	// of getSettingDefinitions() and calls display() instead. On 1.13.0+ the
+	// host renders from getSettingDefinitions() and skips display() entirely,
+	// so this guard short-circuits there to avoid double-rendering. Rather than
+	// maintain a parallel imperative tab, we walk the same declarative
+	// definitions and materialize each one into a real Setting, binding through
+	// the same getControlValue/setControlValue plumbing the declarative host
+	// uses. One source of truth, no drift.
+	display(): void {
+		if (requireApiVersion("1.13.0")) {
+			return;
+		}
+		const { containerEl } = this;
+		containerEl.empty();
+		for (const item of this.getSettingDefinitions()) {
+			this.renderItemImperatively(containerEl, item);
+		}
+	}
+
+	private renderItemImperatively(
+		containerEl: HTMLElement,
+		item: SettingDefinitionItem,
+	): void {
+		// Groups (and lists) render a heading then recurse over their children.
+		if ("type" in item && (item.type === "group" || item.type === "list")) {
+			if (item.heading) {
+				new Setting(containerEl).setName(item.heading).setHeading();
+			}
+			for (const child of item.items ?? []) {
+				this.renderItemImperatively(containerEl, child);
+			}
+			return;
+		}
+
+		const setting = new Setting(containerEl);
+		if ("name" in item && item.name) {
+			setting.setName(item.name);
+		}
+		if ("desc" in item && item.desc) {
+			setting.setDesc(item.desc);
+		}
+
+		// render callbacks already operate on a Setting, so reuse them verbatim.
+		// They take a second SettingGroup arg (unused by every callback here);
+		// pass a real one to satisfy the signature. SettingGroup is @since
+		// 1.11.0, so it exists on every host this fallback runs on.
+		if ("render" in item && typeof item.render === "function") {
+			item.render(setting, new SettingGroup(containerEl));
+			return;
+		}
+
+		if ("control" in item && item.control) {
+			this.bindControlImperatively(setting, item.control);
+		}
+	}
+
+	// getControlValue returns unknown; text and dropdown controls only ever
+	// bind to primitive-valued keys. Coerce primitives to a display string and
+	// fall back to empty for anything else, avoiding "[object Object]".
+	private controlValueAsString(key: string): string {
+		const value = this.getControlValue(key);
+		if (typeof value === "string") {
+			return value;
+		}
+		if (typeof value === "number" || typeof value === "boolean") {
+			return String(value);
+		}
+		return "";
+	}
+
+	private bindControlImperatively(
+		setting: Setting,
+		control: SettingControl,
+	): void {
+		const key = control.key;
+		switch (control.type) {
+			case "toggle":
+				setting.addToggle((toggle) =>
+					toggle
+						.setValue(Boolean(this.getControlValue(key)))
+						.onChange(async (value) => {
+							await this.setControlValue(key, value);
+						}),
+				);
+				break;
+			case "dropdown":
+				setting.addDropdown((dropdown) => {
+					for (const [value, label] of Object.entries(control.options)) {
+						dropdown.addOption(value, label);
+					}
+					dropdown
+						.setValue(this.controlValueAsString(key))
+						.onChange(async (value) => {
+							await this.setControlValue(key, value);
+						});
+				});
+				break;
+			case "text":
+				setting.addText((text) => {
+					if (control.placeholder) {
+						text.setPlaceholder(control.placeholder);
+					}
+					text
+						.setValue(this.controlValueAsString(key))
+						.onChange(async (value) => {
+							await this.setControlValue(key, value);
+						});
+				});
+				break;
+		}
 	}
 
 	getSettingDefinitions(): SettingDefinitionItem[] {
