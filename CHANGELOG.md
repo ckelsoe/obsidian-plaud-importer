@@ -4,6 +4,12 @@ All notable changes to Plaud Importer will be documented in this file.
 
 ## [Unreleased]
 
+## [0.10.1] - 2026-06-20
+
+### Fixed
+
+- The Obsidian 1.12 support added in 0.10.0 did not actually work: the settings tab still depended on a settings API that only exists in Obsidian 1.13, so on Obsidian 1.12 the settings tab would have failed to render. The settings tab now includes a fully compatible fallback layout for Obsidian 1.12 that mirrors the 1.13 settings exactly, so every option is available on both.
+
 ## [0.10.0] - 2026-06-20
 
 ### Changed

@@ -5,11 +5,8 @@ import {
 	PluginSettingTab,
 	SecretComponent,
 	Setting,
-	type SettingControl,
 	type SettingDefinitionItem,
-	SettingGroup,
 	requestUrl,
-	requireApiVersion,
 	setIcon,
 	type RequestUrlResponse,
 } from "obsidian";
@@ -400,67 +397,388 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 		this.plugin = plugin;
 	}
 
-	// Backwards-compat fallback for Obsidian < 1.13.0, which has no knowledge
-	// of getSettingDefinitions() and calls display() instead. On 1.13.0+ the
-	// host renders from getSettingDefinitions() and skips display() entirely,
-	// so this guard short-circuits there to avoid double-rendering. Rather than
-	// maintain a parallel imperative tab, we walk the same declarative
-	// definitions and materialize each one into a real Setting, binding through
-	// the same getControlValue/setControlValue plumbing the declarative host
-	// uses. One source of truth, no drift.
+	// Imperative settings tab for Obsidian < 1.13.0. Obsidian 1.13.0+ renders
+	// from getSettingDefinitions() and skips display() entirely; older builds
+	// have no knowledge of getSettingDefinitions() and call display() instead.
+	//
+	// This method and the render/row helpers it calls use ONLY pre-1.12 Obsidian
+	// APIs and never touch the 1.13.0 declarative SettingDefinition* types: the
+	// marketplace no-unsupported-api scan rejects any reference to a 1.13.0 API
+	// (the types included) while minAppVersion is below 1.13.0. The two paths
+	// describe the same settings, so any change here must be mirrored in
+	// getSettingDefinitions() below, and vice versa.
 	display(): void {
-		if (requireApiVersion("1.13.0")) {
-			return;
-		}
 		const { containerEl } = this;
 		containerEl.empty();
-		for (const item of this.getSettingDefinitions()) {
-			this.renderItemImperatively(containerEl, item);
-		}
+
+		this.renderTokenControl(
+			this.makeSetting(
+				containerEl,
+				"Plaud token",
+				"Select or create a stored secret holding your Plaud.AI session token. The secret value is stored in Obsidian's per-vault secret storage, never in data.json.",
+			),
+		);
+		this.renderSigninControl(
+			this.makeSetting(
+				containerEl,
+				"Automatic sign-in (beta)",
+				"Open Plaud in a window and sign in normally. The plugin captures your session token automatically, so there is no need to copy it from the browser console. Your password is never seen by the plugin. Falls back to manual entry above if your Obsidian build cannot embed a browser.",
+			),
+		);
+		this.renderTestControl(
+			this.makeSetting(
+				containerEl,
+				"Test connection",
+				"Check that your stored token can reach Plaud. Use this after signing in, or any time imports start failing, to see whether you need to sign in again.",
+			),
+		);
+		this.renderRegionControl(
+			this.makeSetting(
+				containerEl,
+				"API region",
+				"Plaud server this vault is connected to. Detected automatically on the first import. EU and other regional accounts switch here on their own, so there is nothing to configure.",
+			),
+		);
+
+		this.addTextRow(
+			containerEl,
+			"Output folder",
+			"Folder inside your vault where imported notes are written.",
+			"outputFolder",
+			"Plaud",
+		);
+		this.addDropdownRow(
+			containerEl,
+			"Duplicate handling",
+			"What to do when a note for the recording already exists in the output folder.",
+			"onDuplicate",
+			{ skip: "Skip", overwrite: "Overwrite", prompt: "Ask each time" },
+		);
+		this.addToggleRow(
+			containerEl,
+			"Show ribbon icon",
+			"Display the plaud importer icon in Obsidian's left rail. Turn off if you prefer to launch imports only from the command palette.",
+			"showRibbonIcon",
+		);
+		this.renderRibbonControl(
+			this.makeSetting(
+				containerEl,
+				"Ribbon icon",
+				"Which icon to display in the left rail. Only applies when 'show ribbon icon' is on.",
+			),
+		);
+
+		new Setting(containerEl).setName("Default artifact selection").setHeading();
+		this.addToggleRow(
+			containerEl,
+			"Transcript",
+			"Checked by default in import actions. You can override in 'review artifacts first'.",
+			"includeTranscript",
+		);
+		this.addToggleRow(
+			containerEl,
+			"Summary",
+			"Checked by default in import actions. You can override in 'review artifacts first'.",
+			"defaultIncludeSummary",
+		);
+		this.addToggleRow(
+			containerEl,
+			"Attachments",
+			"Checked by default in import actions when attachments are available.",
+			"defaultIncludeAttachments",
+		);
+		this.addToggleRow(
+			containerEl,
+			"Mindmap",
+			"Checked by default in import actions when a mindmap artifact is available.",
+			"defaultIncludeMindmap",
+		);
+		this.addToggleRow(
+			containerEl,
+			"Card",
+			"Checked by default in import actions when a card artifact is available.",
+			"defaultIncludeCard",
+		);
+
+		new Setting(containerEl).setName("Tags").setHeading();
+		this.addDropdownRow(
+			containerEl,
+			"Tag mode",
+			"Which Plaud tag sources land in the note's tags frontmatter. Plaud tags are the ones you set on a recording in the Plaud app; AI keywords are Plaud's per-recording topic guesses, which can flood the tag pane.",
+			"tagMode",
+			{
+				none: "No tags",
+				custom: "Custom tags only",
+				plaud: "Plaud tags (no AI keywords)",
+				all: "All tags",
+			},
+		);
+		this.addTextRow(
+			containerEl,
+			"Custom tags",
+			"Comma-separated tags added to every imported note, except in 'no tags' mode.",
+			"customTags",
+			"plaud-meeting",
+		);
+		this.addToggleRow(
+			containerEl,
+			"Keep AI keywords as note property",
+			"When AI keywords are excluded from tags, write them to a keywords frontmatter property instead. The property is searchable and Dataview-queryable but stays out of the tag pane.",
+			"aiKeywordsAsProperty",
+		);
+
+		new Setting(containerEl).setName("Import dialog").setHeading();
+		this.addToggleRow(
+			containerEl,
+			"Auto-close summary",
+			"Close the import window automatically after a fully successful import. A run with any failure keeps the window open so the errors stay visible. Clicking inside the window cancels the countdown.",
+			"autoCloseSummary",
+		);
+		this.addTextRow(
+			containerEl,
+			"Auto-close delay",
+			"Seconds to wait before the summary closes itself. Only applies when auto-close is on.",
+			"autoCloseSummarySeconds",
+			"20",
+		);
+
+		new Setting(containerEl).setName("Transcript rendering").setHeading();
+		this.addToggleRow(
+			containerEl,
+			"Fold transcript by default",
+			"Collapse the transcript section when the note is created so it doesn't dominate the view on open. Uses Obsidian's heading fold state — clicking the chevron next to the heading expands it. Turn off if you prefer the transcript always expanded.",
+			"foldTranscript",
+		);
+		this.addDropdownRow(
+			containerEl,
+			"Transcript heading level",
+			"Markdown heading level for the wrapping 'transcript' heading. Chapter sub-headings render at one level below (e.g. Level 4 → transcript is h4, chapters are h5). This is the heading whose fold state the 'fold transcript by default' toggle controls.",
+			"transcriptHeaderLevel",
+			{ "1": "H1", "2": "H2", "3": "H3", "4": "H4", "5": "H5", "6": "H6" },
+		);
+
+		new Setting(containerEl).setName("Debug").setHeading();
+		this.addToggleRow(
+			containerEl,
+			"Debug logging",
+			"Capture raw API requests, responses, and parsed results into an in-memory buffer and mirror them to the developer console (Ctrl+Shift+I). Authentication headers are NEVER captured. Payloads may contain transcript text, speaker names, and recording metadata — only enable when troubleshooting. Use the 'Plaud Importer: Debug: copy debug log to clipboard' command to export the session.",
+			"debug",
+		);
+
+		this.renderFooter(new Setting(containerEl));
 	}
 
-	private renderItemImperatively(
+	// Shared control bodies. Each adds the row's control(s) to a Setting whose
+	// name/desc the caller has already set, so the declarative render callbacks
+	// (1.13+) and the imperative display() fallback (1.12) produce identical UI.
+	// These touch only pre-1.12 Obsidian APIs.
+	private renderTokenControl(setting: Setting): void {
+		setting.addComponent((el) =>
+			new SecretComponent(this.app, el)
+				.setValue(this.plugin.settings.secretId)
+				.onChange(async (id) => {
+					this.plugin.settings.secretId = id;
+					await this.plugin.saveSettings();
+				}),
+		);
+	}
+
+	private renderSigninControl(setting: Setting): void {
+		const statusEl = setting.descEl.createDiv({
+			cls: "plaud-importer-signin-status",
+		});
+		const refreshStatus = (): void => {
+			const id = this.plugin.settings.secretId;
+			const stored =
+				id.length > 0 &&
+				(this.app.secretStorage.getSecret(id) ?? "").length > 0;
+			statusEl.setText(
+				stored
+					? "Status: signed in — a token is stored."
+					: "Status: not signed in yet.",
+			);
+			statusEl.toggleClass("plaud-importer-signin-ok", stored);
+		};
+		setting.addButton((btn) =>
+			btn
+				.setButtonText("Sign in")
+				.setCta()
+				.onClick(async () => {
+					btn.setDisabled(true);
+					try {
+						const result = await openPlaudLogin(this.app, {
+							debugLogger: this.plugin.debugLogger,
+						});
+						if (result === null) {
+							new Notice("Plaud sign-in closed — no token captured.");
+							return;
+						}
+						this.app.secretStorage.setSecret(
+							CAPTURED_SECRET_ID,
+							result.token,
+						);
+						this.plugin.settings.secretId = CAPTURED_SECRET_ID;
+						if (result.apiBaseUrl !== null) {
+							this.plugin.settings.apiBaseUrl = result.apiBaseUrl;
+						}
+						await this.plugin.saveSettings();
+						new Notice("Plaud token captured and saved.");
+						refreshStatus();
+					} finally {
+						btn.setDisabled(false);
+					}
+				}),
+		);
+		refreshStatus();
+	}
+
+	private renderTestControl(setting: Setting): void {
+		const resultEl = setting.descEl.createDiv({
+			cls: "plaud-importer-test-status",
+		});
+		setting.addButton((btn) =>
+			btn.setButtonText("Test connection").onClick(async () => {
+				btn.setDisabled(true);
+				resultEl.setText("Testing…");
+				resultEl.toggleClass("plaud-importer-test-ok", false);
+				resultEl.toggleClass("plaud-importer-test-err", false);
+				try {
+					const result = await this.plugin.testPlaudConnection();
+					resultEl.setText(result.message);
+					resultEl.toggleClass("plaud-importer-test-ok", result.ok);
+					resultEl.toggleClass("plaud-importer-test-err", !result.ok);
+				} finally {
+					btn.setDisabled(false);
+				}
+			}),
+		);
+	}
+
+	private renderRegionControl(setting: Setting): void {
+		const host = this.plugin.settings.apiBaseUrl;
+		const isDefault = host === DEFAULT_SETTINGS.apiBaseUrl;
+		const span = setting.controlEl.createSpan({
+			cls: "plaud-importer-region-host",
+			text: host,
+		});
+		span.createSpan({
+			cls: "plaud-importer-region-note",
+			text: isDefault ? " (default)" : " (auto-detected)",
+		});
+	}
+
+	private renderRibbonControl(setting: Setting): void {
+		const previewEl = setting.controlEl.createDiv({
+			cls: "plaud-importer-ribbon-preview",
+		});
+		setIcon(previewEl, resolveRibbonIconId(this.plugin.settings.ribbonIcon));
+		setting.addDropdown((dropdown) => {
+			for (const choice of RIBBON_ICON_CHOICES) {
+				dropdown.addOption(choice.id, choice.label);
+			}
+			dropdown
+				.setValue(resolveRibbonIconId(this.plugin.settings.ribbonIcon))
+				.onChange(async (value) => {
+					this.plugin.settings.ribbonIcon = value;
+					await this.plugin.saveSettings();
+					setIcon(previewEl, resolveRibbonIconId(value));
+					this.plugin.updateRibbonIcon();
+				});
+		});
+	}
+
+	// Builds a Setting with name/desc set. Desc passes as an argument rather
+	// than a setDesc() string literal so the sentence-case lint (which would
+	// otherwise mangle proper nouns like "Plaud" and "EU") sees the same
+	// param-bound form the declarative desc fields already use.
+	private makeSetting(
 		containerEl: HTMLElement,
-		item: SettingDefinitionItem,
-	): void {
-		// Groups (and lists) render a heading then recurse over their children.
-		if ("type" in item && (item.type === "group" || item.type === "list")) {
-			if (item.heading) {
-				new Setting(containerEl).setName(item.heading).setHeading();
-			}
-			for (const child of item.items ?? []) {
-				this.renderItemImperatively(containerEl, child);
-			}
-			return;
-		}
-
-		const setting = new Setting(containerEl);
-		if ("name" in item && item.name) {
-			setting.setName(item.name);
-		}
-		if ("desc" in item && item.desc) {
-			setting.setDesc(item.desc);
-		}
-
-		// render callbacks already operate on a Setting, so reuse them verbatim.
-		// They take a second SettingGroup arg (unused by every callback here);
-		// pass a real one to satisfy the signature. SettingGroup is @since
-		// 1.11.0, so it exists on every host this fallback runs on.
-		if ("render" in item && typeof item.render === "function") {
-			item.render(setting, new SettingGroup(containerEl));
-			return;
-		}
-
-		if ("control" in item && item.control) {
-			this.bindControlImperatively(setting, item.control);
-		}
+		name: string,
+		desc: string,
+	): Setting {
+		return new Setting(containerEl).setName(name).setDesc(desc);
 	}
 
-	// getControlValue returns unknown; text and dropdown controls only ever
-	// bind to primitive-valued keys. Coerce primitives to a display string and
-	// fall back to empty for anything else, avoiding "[object Object]".
-	private controlValueAsString(key: string): string {
-		const value = this.getControlValue(key);
+	// Imperative row helpers used only by display(). Each binds to the plugin's
+	// settings through the same applyControlChange() the declarative path uses,
+	// so coercion and side effects stay in one place.
+	private addToggleRow(
+		containerEl: HTMLElement,
+		name: string,
+		desc: string,
+		key: string,
+	): void {
+		new Setting(containerEl)
+			.setName(name)
+			.setDesc(desc)
+			.addToggle((toggle) =>
+				toggle.setValue(this.readSettingBool(key)).onChange(async (value) => {
+					await this.applyControlChange(key, value);
+				}),
+			);
+	}
+
+	private addTextRow(
+		containerEl: HTMLElement,
+		name: string,
+		desc: string,
+		key: string,
+		placeholder: string,
+	): void {
+		new Setting(containerEl)
+			.setName(name)
+			.setDesc(desc)
+			.addText((text) =>
+				text
+					.setPlaceholder(placeholder)
+					.setValue(this.readSettingString(key))
+					.onChange(async (value) => {
+						await this.applyControlChange(key, value);
+					}),
+			);
+	}
+
+	private addDropdownRow(
+		containerEl: HTMLElement,
+		name: string,
+		desc: string,
+		key: string,
+		options: Record<string, string>,
+	): void {
+		new Setting(containerEl)
+			.setName(name)
+			.setDesc(desc)
+			.addDropdown((dropdown) => {
+				for (const [value, label] of Object.entries(options)) {
+					dropdown.addOption(value, label);
+				}
+				dropdown
+					.setValue(this.readSettingString(key))
+					.onChange(async (value) => {
+						await this.applyControlChange(key, value);
+					});
+			});
+	}
+
+	// Reads a settings value as a boolean for toggle rows.
+	private readSettingBool(key: string): boolean {
+		return Boolean(
+			(this.plugin.settings as unknown as Record<string, unknown>)[key],
+		);
+	}
+
+	// Reads a settings value as a display string for text/dropdown rows. Mirrors
+	// getControlValue()'s number-to-string handling for the two numeric keys.
+	private readSettingString(key: string): string {
+		if (key === "transcriptHeaderLevel") {
+			return String(this.plugin.settings.transcriptHeaderLevel);
+		}
+		if (key === "autoCloseSummarySeconds") {
+			return String(this.plugin.settings.autoCloseSummarySeconds);
+		}
+		const value = (this.plugin.settings as unknown as Record<string, unknown>)[
+			key
+		];
 		if (typeof value === "string") {
 			return value;
 		}
@@ -468,48 +786,6 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 			return String(value);
 		}
 		return "";
-	}
-
-	private bindControlImperatively(
-		setting: Setting,
-		control: SettingControl,
-	): void {
-		const key = control.key;
-		switch (control.type) {
-			case "toggle":
-				setting.addToggle((toggle) =>
-					toggle
-						.setValue(Boolean(this.getControlValue(key)))
-						.onChange(async (value) => {
-							await this.setControlValue(key, value);
-						}),
-				);
-				break;
-			case "dropdown":
-				setting.addDropdown((dropdown) => {
-					for (const [value, label] of Object.entries(control.options)) {
-						dropdown.addOption(value, label);
-					}
-					dropdown
-						.setValue(this.controlValueAsString(key))
-						.onChange(async (value) => {
-							await this.setControlValue(key, value);
-						});
-				});
-				break;
-			case "text":
-				setting.addText((text) => {
-					if (control.placeholder) {
-						text.setPlaceholder(control.placeholder);
-					}
-					text
-						.setValue(this.controlValueAsString(key))
-						.onChange(async (value) => {
-							await this.setControlValue(key, value);
-						});
-				});
-				break;
-		}
 	}
 
 	getSettingDefinitions(): SettingDefinitionItem[] {
@@ -521,103 +797,19 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 				// Setting#addComponent, so it lives in a render callback rather
 				// than a declarative control. It is not search-indexable.
 				searchable: false,
-				render: (setting: Setting) => {
-					setting.addComponent((el) =>
-						new SecretComponent(this.app, el)
-							.setValue(this.plugin.settings.secretId)
-							.onChange(async (id) => {
-								this.plugin.settings.secretId = id;
-								await this.plugin.saveSettings();
-							}),
-					);
-				},
+				render: (setting: Setting) => this.renderTokenControl(setting),
 			},
 			{
 				name: "Automatic sign-in (beta)",
 				desc: "Open Plaud in a window and sign in normally. The plugin captures your session token automatically, so there is no need to copy it from the browser console. Your password is never seen by the plugin. Falls back to manual entry above if your Obsidian build cannot embed a browser.",
 				searchable: false,
-				render: (setting: Setting) => {
-					const statusEl = setting.descEl.createDiv({
-						cls: "plaud-importer-signin-status",
-					});
-					const refreshStatus = (): void => {
-						const id = this.plugin.settings.secretId;
-						const stored =
-							id.length > 0 &&
-							(this.app.secretStorage.getSecret(id) ?? "").length > 0;
-						statusEl.setText(
-							stored
-								? "Status: signed in — a token is stored."
-								: "Status: not signed in yet.",
-						);
-						statusEl.toggleClass("plaud-importer-signin-ok", stored);
-					};
-					setting.addButton((btn) =>
-						btn
-							.setButtonText("Sign in")
-							.setCta()
-							.onClick(async () => {
-								btn.setDisabled(true);
-								try {
-									const result = await openPlaudLogin(this.app, {
-										debugLogger: this.plugin.debugLogger,
-									});
-									if (result === null) {
-										new Notice(
-											"Plaud sign-in closed — no token captured.",
-										);
-										return;
-									}
-									this.app.secretStorage.setSecret(
-										CAPTURED_SECRET_ID,
-										result.token,
-									);
-									this.plugin.settings.secretId = CAPTURED_SECRET_ID;
-									if (result.apiBaseUrl !== null) {
-										this.plugin.settings.apiBaseUrl = result.apiBaseUrl;
-									}
-									await this.plugin.saveSettings();
-									new Notice("Plaud token captured and saved.");
-									refreshStatus();
-								} finally {
-									btn.setDisabled(false);
-								}
-							}),
-					);
-					refreshStatus();
-				},
+				render: (setting: Setting) => this.renderSigninControl(setting),
 			},
 			{
 				name: "Test connection",
 				desc: "Check that your stored token can reach Plaud. Use this after signing in, or any time imports start failing, to see whether you need to sign in again.",
 				searchable: false,
-				render: (setting: Setting) => {
-					const resultEl = setting.descEl.createDiv({
-						cls: "plaud-importer-test-status",
-					});
-					setting.addButton((btn) =>
-						btn.setButtonText("Test connection").onClick(async () => {
-							btn.setDisabled(true);
-							resultEl.setText("Testing…");
-							resultEl.toggleClass("plaud-importer-test-ok", false);
-							resultEl.toggleClass("plaud-importer-test-err", false);
-							try {
-								const result = await this.plugin.testPlaudConnection();
-								resultEl.setText(result.message);
-								resultEl.toggleClass(
-									"plaud-importer-test-ok",
-									result.ok,
-								);
-								resultEl.toggleClass(
-									"plaud-importer-test-err",
-									!result.ok,
-								);
-							} finally {
-								btn.setDisabled(false);
-							}
-						}),
-					);
-				},
+				render: (setting: Setting) => this.renderTestControl(setting),
 			},
 			{
 				name: "API region",
@@ -627,18 +819,7 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 				// onBaseUrlChanged. Rendered fresh on each settings open, so it
 				// always reflects the latest detected host.
 				searchable: false,
-				render: (setting: Setting) => {
-					const host = this.plugin.settings.apiBaseUrl;
-					const isDefault = host === DEFAULT_SETTINGS.apiBaseUrl;
-					const span = setting.controlEl.createSpan({
-						cls: "plaud-importer-region-host",
-						text: host,
-					});
-					span.createSpan({
-						cls: "plaud-importer-region-note",
-						text: isDefault ? " (default)" : " (auto-detected)",
-					});
-				},
+				render: (setting: Setting) => this.renderRegionControl(setting),
 			},
 			{
 				name: "Output folder",
@@ -666,25 +847,7 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 				// dropdown changes, so this stays a render callback rather than
 				// a plain dropdown control.
 				searchable: false,
-				render: (setting: Setting) => {
-					const previewEl = setting.controlEl.createDiv({
-						cls: "plaud-importer-ribbon-preview",
-					});
-					setIcon(previewEl, resolveRibbonIconId(this.plugin.settings.ribbonIcon));
-					setting.addDropdown((dropdown) => {
-						for (const choice of RIBBON_ICON_CHOICES) {
-							dropdown.addOption(choice.id, choice.label);
-						}
-						dropdown
-							.setValue(resolveRibbonIconId(this.plugin.settings.ribbonIcon))
-							.onChange(async (value) => {
-								this.plugin.settings.ribbonIcon = value;
-								await this.plugin.saveSettings();
-								setIcon(previewEl, resolveRibbonIconId(value));
-								this.plugin.updateRibbonIcon();
-							});
-					});
-				},
+				render: (setting: Setting) => this.renderRibbonControl(setting),
 			},
 			{
 				type: "group",
@@ -820,6 +983,13 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 	}
 
 	async setControlValue(key: string, value: unknown): Promise<void> {
+		await this.applyControlChange(key, value);
+	}
+
+	// Coerces and persists a single settings change, then runs any side effect.
+	// Shared by the declarative setControlValue() (1.13+) and the imperative
+	// row helpers in display() (1.12), so neither path can drift on validation.
+	private async applyControlChange(key: string, value: unknown): Promise<void> {
 		if (key === "outputFolder") {
 			this.plugin.settings.outputFolder =
 				(typeof value === "string" ? value.trim() : "") || "Plaud";
