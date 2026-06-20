@@ -16,7 +16,7 @@ import {
 } from "./plaud-client-re";
 import { ImportModal, classifyError } from "./import-modal";
 import { BufferedDebugLogger } from "./debug-logger";
-import { openPlaudLogin } from "./plaud-login";
+import { clearPlaudLoginSession, openPlaudLogin } from "./plaud-login";
 import type { TagMode } from "./note-writer";
 
 // Stable SecretStorage id for a token captured by the in-app sign-in flow.
@@ -387,10 +387,38 @@ export default class PlaudImporterPlugin extends Plugin {
 	async saveSettings() {
 		await this.saveData(this.settings);
 	}
+
+	// Returns the plugin to a pre-sign-in state for a clean re-authentication:
+	// clears the embedded browser's Plaud session (so the next sign-in starts
+	// logged out) and unlinks the stored token by clearing secretId. The secret
+	// value itself stays in Obsidian's SecretStorage, which exposes no delete
+	// API; unlinking secretId means the plugin no longer reads or sends it, so
+	// the plugin is effectively signed out. Region (apiBaseUrl) is left as-is;
+	// it re-detects on the next import. Returns whether the browser session was
+	// cleared, so the caller can tell the user if only the token was unlinked.
+	async clearSignIn(): Promise<{ sessionCleared: boolean }> {
+		let sessionCleared = false;
+		try {
+			sessionCleared = await clearPlaudLoginSession();
+		} catch (err) {
+			console.error(
+				"Plaud importer: failed to clear sign-in browser session",
+				err,
+			);
+		}
+		this.settings.secretId = "";
+		await this.saveSettings();
+		return { sessionCleared };
+	}
 }
 
 class PlaudImporterSettingsTab extends PluginSettingTab {
 	plugin: PlaudImporterPlugin;
+
+	// Set by renderSigninControl() so the Clear sign-in button can refresh the
+	// sign-in status line in place after wiping the token. Null until the
+	// sign-in row has rendered.
+	private signinRefresh: (() => void) | null = null;
 
 	constructor(app: App, plugin: PlaudImporterPlugin) {
 		super(app, plugin);
@@ -430,6 +458,13 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 				containerEl,
 				"Test connection",
 				"Check that your stored token can reach Plaud. Use this after signing in, or any time imports start failing, to see whether you need to sign in again.",
+			),
+		);
+		this.renderClearSignInControl(
+			this.makeSetting(
+				containerEl,
+				"Clear sign-in",
+				"Sign out of the embedded Plaud browser and unlink the stored token so the next sign-in starts completely fresh. Use this to reach Plaud's sign-in screen when it keeps signing you in automatically. The token value stays in Obsidian's secret storage but is no longer used.",
 			),
 		);
 		this.renderRegionControl(
@@ -599,6 +634,7 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 			);
 			statusEl.toggleClass("plaud-importer-signin-ok", stored);
 		};
+		this.signinRefresh = refreshStatus;
 		setting.addButton((btn) =>
 			btn
 				.setButtonText("Sign in")
@@ -652,6 +688,54 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 				}
 			}),
 		);
+	}
+
+	private renderClearSignInControl(setting: Setting): void {
+		const resultEl = setting.descEl.createDiv({
+			cls: "plaud-importer-clear-status",
+		});
+		// Two-step confirm: the first click arms the button, the second clears.
+		// Destructive (unlinks the token), so guard against an accidental click.
+		let armed = false;
+		let revertHandle: number | null = null;
+		setting.addButton((btn) => {
+			const disarm = (): void => {
+				armed = false;
+				btn.setButtonText("Clear sign-in");
+			};
+			// Warning styling via Obsidian's button class directly: setWarning()
+			// is deprecated and its replacement setDestructive() is @since 1.13.0,
+			// above this plugin's minAppVersion, so neither method can be used.
+			btn.buttonEl.addClass("mod-warning");
+			btn
+				.setButtonText("Clear sign-in")
+				.onClick(async () => {
+					if (!armed) {
+						armed = true;
+						btn.setButtonText("Click again to clear");
+						revertHandle = window.setTimeout(disarm, 4000);
+						return;
+					}
+					if (revertHandle !== null) {
+						window.clearTimeout(revertHandle);
+						revertHandle = null;
+					}
+					disarm();
+					btn.setDisabled(true);
+					try {
+						const { sessionCleared } = await this.plugin.clearSignIn();
+						resultEl.setText(
+							sessionCleared
+								? "Cleared. The embedded browser is signed out and the stored token is unlinked. Click Sign in to start fresh."
+								: "Token unlinked. The embedded browser session could not be cleared on this build, so you may still be signed in there.",
+						);
+						new Notice("Plaud sign-in cleared.");
+						this.signinRefresh?.();
+					} finally {
+						btn.setDisabled(false);
+					}
+				});
+		});
 	}
 
 	private renderRegionControl(setting: Setting): void {
@@ -810,6 +894,12 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 				desc: "Check that your stored token can reach Plaud. Use this after signing in, or any time imports start failing, to see whether you need to sign in again.",
 				searchable: false,
 				render: (setting: Setting) => this.renderTestControl(setting),
+			},
+			{
+				name: "Clear sign-in",
+				desc: "Sign out of the embedded Plaud browser and unlink the stored token so the next sign-in starts completely fresh. Use this to reach Plaud's sign-in screen when it keeps signing you in automatically. The token value stays in Obsidian's secret storage but is no longer used.",
+				searchable: false,
+				render: (setting: Setting) => this.renderClearSignInControl(setting),
 			},
 			{
 				name: "API region",

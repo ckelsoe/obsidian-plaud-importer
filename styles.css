@@ -163,6 +163,13 @@
 	color: var(--text-error);
 }
 
+/* Result line under the "Clear sign-in" setting */
+.plaud-importer-clear-status {
+	margin-top: 0.35em;
+	font-size: var(--font-ui-smaller);
+	color: var(--text-muted);
+}
+
 /* In-app Plaud sign-in modal */
 .plaud-importer-login-modal {
 	width: 80vw;

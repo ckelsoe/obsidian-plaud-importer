@@ -169,6 +169,10 @@ interface WebRequestLike {
 }
 interface SessionLike {
 	webRequest?: WebRequestLike;
+	// Electron Session storage controls. Present on real builds; guarded at the
+	// call site because they may be absent where the remote module is disabled.
+	clearStorageData?(): Promise<void>;
+	clearCache?(): Promise<void>;
 }
 interface ElectronRemoteLike {
 	session?: { fromPartition(partition: string): SessionLike };
@@ -187,6 +191,33 @@ function requireElectron(): ElectronLike | null {
 	} catch {
 		return null;
 	}
+}
+
+/**
+ * Clear the embedded sign-in browser's stored session for the Plaud partition:
+ * cookies, local storage, and cache. After this, the next sign-in starts logged
+ * out (so a Google-SSO account reaches the account picker again instead of being
+ * silently re-authenticated). Returns true if a clearable session was found,
+ * false when the embedded-browser session API is unavailable on this build (in
+ * which case there is nothing to clear because automatic sign-in is unavailable
+ * anyway).
+ */
+export async function clearPlaudLoginSession(): Promise<boolean> {
+	const session = requireElectron()?.remote?.session?.fromPartition(
+		PLAUD_PARTITION,
+	);
+	if (session === undefined || typeof session.clearStorageData !== 'function') {
+		return false;
+	}
+	await session.clearStorageData();
+	if (typeof session.clearCache === 'function') {
+		try {
+			await session.clearCache();
+		} catch {
+			// Best effort; clearing cookies/storage is what signs the user out.
+		}
+	}
+	return true;
 }
 
 /**
