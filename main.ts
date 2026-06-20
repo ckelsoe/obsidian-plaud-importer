@@ -694,47 +694,27 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 		const resultEl = setting.descEl.createDiv({
 			cls: "plaud-importer-clear-status",
 		});
-		// Two-step confirm: the first click arms the button, the second clears.
-		// Destructive (unlinks the token), so guard against an accidental click.
-		let armed = false;
-		let revertHandle: number | null = null;
 		setting.addButton((btn) => {
-			const disarm = (): void => {
-				armed = false;
-				btn.setButtonText("Clear sign-in");
-			};
 			// Warning styling via Obsidian's button class directly: setWarning()
 			// is deprecated and its replacement setDestructive() is @since 1.13.0,
 			// above this plugin's minAppVersion, so neither method can be used.
 			btn.buttonEl.addClass("mod-warning");
-			btn
-				.setButtonText("Clear sign-in")
-				.onClick(async () => {
-					if (!armed) {
-						armed = true;
-						btn.setButtonText("Click again to clear");
-						revertHandle = window.setTimeout(disarm, 4000);
-						return;
-					}
-					if (revertHandle !== null) {
-						window.clearTimeout(revertHandle);
-						revertHandle = null;
-					}
-					disarm();
-					btn.setDisabled(true);
-					try {
-						const { sessionCleared } = await this.plugin.clearSignIn();
-						resultEl.setText(
-							sessionCleared
-								? "Cleared. The embedded browser is signed out and the stored token is unlinked. Click Sign in to start fresh."
-								: "Token unlinked. The embedded browser session could not be cleared on this build, so you may still be signed in there.",
-						);
-						new Notice("Plaud sign-in cleared.");
-						this.signinRefresh?.();
-					} finally {
-						btn.setDisabled(false);
-					}
-				});
+			btn.setButtonText("Clear sign-in").onClick(async () => {
+				btn.setDisabled(true);
+				resultEl.setText("Clearing…");
+				try {
+					const { sessionCleared } = await this.plugin.clearSignIn();
+					resultEl.setText(
+						sessionCleared
+							? "Cleared. The embedded browser is signed out and the stored token is unlinked. Click Sign in to start fresh."
+							: "Token unlinked, but the embedded browser session could NOT be cleared on this build (the Electron session API is unavailable), so Sign in may still open already logged in.",
+					);
+					new Notice("Plaud sign-in cleared.");
+					this.signinRefresh?.();
+				} finally {
+					btn.setDisabled(false);
+				}
+			});
 		});
 	}
 
