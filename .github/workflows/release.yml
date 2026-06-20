@@ -46,6 +46,10 @@ jobs:
             styles.css
 
       - name: VirusTotal scan of release artifacts
+        # Advisory only: an upload error (e.g. HTTP 409 when a version bump does
+        # not change main.js, so VirusTotal already has the identical file) must
+        # not block publishing the release. The scan reports, it does not gate.
+        continue-on-error: true
         uses: crazy-max/ghaction-virustotal@v5
         with:
           vt_api_key: ${{ secrets.VT_API_KEY }}
