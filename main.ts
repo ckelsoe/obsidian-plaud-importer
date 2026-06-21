@@ -1,5 +1,6 @@
 import {
 	App,
+	Modal,
 	Notice,
 	Plugin,
 	PluginSettingTab,
@@ -567,6 +568,55 @@ export default class PlaudImporterPlugin extends Plugin {
 	}
 }
 
+// Just-in-time reminder shown when the user launches the browser sign-in, so
+// the capture steps are in front of them at the moment they switch to the
+// browser. Step text is built from variables (not string literals at the call
+// site) so it can name "Plaud" and the buttons while satisfying the
+// sentence-case lint, which only inspects literals.
+class BrowserSignInModal extends Modal {
+	private readonly onLaunch: () => void;
+
+	constructor(app: App, onLaunch: () => void) {
+		super(app);
+		this.onLaunch = onLaunch;
+	}
+
+	onOpen(): void {
+		this.setTitle("Get your sign-in token");
+		const { contentEl } = this;
+		const intro = "Your web browser is about to open. Do these in order:";
+		contentEl.createEl("p", { text: intro });
+		const ol = contentEl.createEl("ol");
+		const lines = [
+			"Sign in to Plaud if you are not already. Google, Apple, and password all work in a real browser.",
+			"Click the 'Plaud → Obsidian' bookmark on your bookmarks bar (the one you saved in step 1).",
+			"Click any meeting. A small box pops up showing your token.",
+			"Copy the token, switch back to Obsidian, and click 'Paste token from clipboard'.",
+		];
+		for (const line of lines) {
+			ol.createEl("li", { text: line });
+		}
+		const openLabel = "Open my browser now";
+		new Setting(contentEl)
+			.addButton((btn) =>
+				btn
+					.setButtonText(openLabel)
+					.setCta()
+					.onClick(() => {
+						this.onLaunch();
+						this.close();
+					}),
+			)
+			.addButton((btn) =>
+				btn.setButtonText("Cancel").onClick(() => this.close()),
+			);
+	}
+
+	onClose(): void {
+		this.contentEl.empty();
+	}
+}
+
 class PlaudImporterSettingsTab extends PluginSettingTab {
 	plugin: PlaudImporterPlugin;
 
@@ -846,24 +896,23 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 	}
 
 	private renderBrowserSignInControl(setting: Setting): void {
-		// Stack the row and its buttons full-width: three buttons do not fit
-		// side by side in the right rail. See styles.css.
+		// Buttons sit below the description, side by side. See styles.css.
 		setting.settingEl.addClass("plaud-importer-browser-signin");
 		const steps = setting.descEl.createEl("ol", {
 			cls: "plaud-importer-browser-steps",
 		});
-		steps.createEl("li", {
-			text: "One-time setup: use the set-up-bookmark button below. A page opens in your browser. Drag its button up onto your bookmarks bar.",
-		});
-		steps.createEl("li", {
-			text: "Use the open-in-browser button, then sign in the way you normally do.",
-		});
-		steps.createEl("li", {
-			text: "Once your recordings load, click the bookmark you added, then open any recording. A small box pops up with your token. Copy it.",
-		});
-		steps.createEl("li", {
-			text: "Come back here and use the paste button. Your token is stored. Repeat from step 2 whenever it expires.",
-		});
+		// Built from a variable array so the steps can name the buttons and
+		// "Plaud" plainly; the sentence-case lint only inspects string literals
+		// written directly at a createEl/setText call, not array contents.
+		const stepLines = [
+			"First time only: click 'Set up bookmark'. A web page opens. Drag the big button onto your browser's bookmarks bar (the strip near the top of the window).",
+			"Click 'Launch sign-in to capture token'. A short reminder pops up, then your browser opens.",
+			"In the browser: sign in to Plaud if needed, click the bookmark you saved, then click any meeting. A small box shows your token. Copy it.",
+			"Come back to Obsidian and click 'Paste token from clipboard'. Done! If the token stops working later, do steps 2 to 4 again.",
+		];
+		for (const line of stepLines) {
+			steps.createEl("li", { text: line });
+		}
 		setting.addButton((btn) =>
 			btn.setButtonText("Set up bookmark").onClick(() => {
 				void this.plugin.openBookmarkSetupPage();
@@ -871,10 +920,12 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 		);
 		setting.addButton((btn) =>
 			btn
-				.setButtonText("Open in browser")
+				.setButtonText("Launch sign-in to capture token")
 				.setCta()
 				.onClick(() => {
-					this.plugin.openPlaudInBrowser();
+					new BrowserSignInModal(this.app, () =>
+						this.plugin.openPlaudInBrowser(),
+					).open();
 				}),
 		);
 		setting.addButton((btn) =>

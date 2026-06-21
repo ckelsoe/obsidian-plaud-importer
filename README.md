@@ -104,23 +104,33 @@ Open **Settings → Community plugins → Plaud Importer** and configure:
 
 The plugin reads your recordings using your Plaud web-session token. **You never give the plugin your Plaud password** — you sign in to Plaud directly, and the plugin captures only the session token your logged-in session already uses.
 
-#### Sign in (recommended)
+There are two ways to sign in. Try Option 1 first. If your login method does not work there (Google and Apple often do not), use Option 2.
+
+#### Option 1: sign in through the pop-up window
 
 1. In **Settings → Community plugins → Plaud Importer**, find **Automatic sign-in** and click **Sign in**.
-2. A window opens with Plaud's own website. Sign in the way you normally do (email and password, Google, etc.).
-3. Once you reach your library, the plugin captures your session token automatically and the window closes. The sign-in row then shows **"signed in — a token is stored."**
+2. A window opens with Plaud's own website. Sign in the way you normally do.
+3. Once you reach your library, the plugin captures your token automatically and the window closes. The sign-in row shows **"signed in — a token is stored."**
 
-This is desktop only, because it relies on an embedded browser window. Your password never passes through the plugin.
+This is desktop only, because it uses an embedded browser window, and your password never passes through the plugin. Some sign-in methods, including **Google and Apple**, may not finish inside this window. If yours does not, use Option 2.
 
-#### Paste a token manually (fallback)
+#### Option 2: sign in with your normal browser (works with Google and Apple)
 
-If the embedded sign-in window does not work on your setup, capture the token yourself from your browser:
+This signs you in to Plaud in your own web browser, where every login method works, then sends the token back to Obsidian. Find **Sign in with your browser** in the plugin settings.
 
-1. Sign in to [web.plaud.ai](https://web.plaud.ai) in your browser.
-2. Press **F12** to open DevTools and click the **Network** tab.
-3. Open a recording in Plaud so it makes some requests, then click any request to `api.plaud.ai`.
-4. Under **Request Headers**, find **Authorization** and copy its full value (it looks like `bearer eyJhbGci…`). The plugin normalizes the `bearer ` prefix internally, so paste it exactly as copied.
-5. In Obsidian, click the **Plaud token** field, choose **Create new secret**, paste, and save.
+**One-time setup:**
+
+1. Click **Set up bookmark**. A small page opens in your browser.
+2. Drag the **Plaud → Obsidian** button onto your browser's bookmarks bar. If the bar is hidden, press **Ctrl+Shift+B** (**Cmd+Shift+B** on Mac) to show it.
+
+**Each time you connect:**
+
+3. Click **Launch sign-in to capture token**. A short reminder appears. Click **Open my browser now**.
+4. In your browser, sign in to Plaud if you are not already.
+5. Click the **Plaud → Obsidian** bookmark, then open any meeting. A small box shows your token. Copy it.
+6. Switch back to Obsidian and click **Paste token from clipboard**. You are connected.
+
+Your sign-in token lasts about a day. When imports stop working, repeat the "each time you connect" steps to get a fresh one.
 
 The token is stored in Obsidian's per-vault secret storage either way. It is **never written to `data.json`** and does not travel through Obsidian Sync. Switching vaults requires re-connecting.
 

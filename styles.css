@@ -190,14 +190,18 @@
 }
 
 .plaud-importer-browser-signin .setting-item-control {
-	flex-direction: column;
-	align-items: stretch;
-	gap: 0.4em;
+	justify-content: flex-start;
+	flex-wrap: wrap;
+	gap: 0.5em;
 	margin-top: 0.6em;
 }
 
-.plaud-importer-browser-signin .setting-item-control button {
-	width: 100%;
+/* Button row in the browser sign-in reminder modal */
+.plaud-importer-modal-buttons {
+	display: flex;
+	gap: 0.5em;
+	justify-content: flex-end;
+	margin-top: 1em;
 }
 
 /* In-app Plaud sign-in modal */
