@@ -444,28 +444,39 @@ export default class PlaudImporterPlugin extends Plugin {
 		window.open(PLAUD_WEB_URL, "_blank");
 	}
 
-	// Handles obsidian://plaud-importer-token?token=… deep links from the
-	// browser sign-in bookmarklet. Validates that the value is a real access
-	// token (typ WT) before storing it, so a stray or refresh-token link cannot
-	// install a token the data API would reject.
-	private async handleTokenDeepLink(
-		params: ObsidianProtocolData,
-	): Promise<void> {
-		const token = typeof params.token === "string" ? params.token.trim() : "";
-		if (token.length === 0) {
-			new Notice("Plaud sign-in link contained no token.");
-			return;
-		}
-		if (!isAccessToken(token)) {
-			new Notice(
-				"Plaud sign-in link did not carry a usable access token. In your browser, open a recording before clicking the bookmarklet, then try again.",
-			);
-			return;
+	// Validates a raw token value (a typ WT access token, optionally bearer-
+	// prefixed) and, if valid, stores it in the captured-token secret and links
+	// it. Overwrites the same secret each time, so refreshing a token never
+	// requires creating or deleting a secret. Returns false without changing
+	// anything when the value is not a usable access token. Shared by the
+	// browser deep-link handler and the clipboard-paste button.
+	async storeAccessToken(rawToken: string): Promise<boolean> {
+		const token = rawToken.trim().replace(/^bearer\s+/i, "");
+		if (token.length === 0 || !isAccessToken(token)) {
+			return false;
 		}
 		this.app.secretStorage.setSecret(CAPTURED_SECRET_ID, token);
 		this.settings.secretId = CAPTURED_SECRET_ID;
 		await this.saveSettings();
-		new Notice("Plaud token received from your browser and saved.");
+		return true;
+	}
+
+	// Handles obsidian://plaud-importer-token?token=… deep links from the
+	// browser sign-in bookmarklet.
+	private async handleTokenDeepLink(
+		params: ObsidianProtocolData,
+	): Promise<void> {
+		const raw = typeof params.token === "string" ? params.token : "";
+		if (raw.trim().length === 0) {
+			new Notice("Plaud sign-in link contained no token.");
+			return;
+		}
+		const ok = await this.storeAccessToken(raw);
+		new Notice(
+			ok
+				? "Plaud token received from your browser and saved."
+				: "Plaud sign-in link did not carry a usable access token. In your browser, open a recording before clicking the bookmarklet, then try again.",
+		);
 	}
 }
 
@@ -743,7 +754,7 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 			text: "Open it in your browser with the button below, then sign in the way you normally do.",
 		});
 		steps.createEl("li", {
-			text: "Click the saved bookmark, then open any recording. A popup shows your token. Copy it and paste it into the token field at the top of these settings (create new secret).",
+			text: "Click the saved bookmark, then open any recording. A popup shows your token. Copy it, return here, and use the paste-from-clipboard button below (it overwrites the same secret each time, so no need to create or delete one).",
 		});
 		setting.addButton((btn) =>
 			btn
@@ -760,6 +771,29 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 						"Bookmarklet copied. Create a new bookmark in your browser and paste it as the address.",
 					);
 				});
+			}),
+		);
+		setting.addButton((btn) =>
+			btn.setButtonText("Paste token from clipboard").onClick(async () => {
+				let text = "";
+				try {
+					text = await navigator.clipboard.readText();
+				} catch (err) {
+					console.error("Plaud importer: clipboard read failed", err);
+					new Notice(
+						"Could not read the clipboard. Copy the token from the browser popup, then try again.",
+					);
+					return;
+				}
+				const ok = await this.plugin.storeAccessToken(text);
+				if (ok) {
+					new Notice("Token saved. Run a connection test to confirm it works.");
+					this.signinRefresh?.();
+				} else {
+					new Notice(
+						"The clipboard did not hold a valid access token. That usually means the wrong request was copied. Copy the token from the popup the bookmarklet shows, which only fires on the right one.",
+					);
+				}
 			}),
 		);
 	}
