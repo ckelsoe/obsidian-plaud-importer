@@ -26,13 +26,7 @@ import { NoopDebugLogger, type DebugLogger } from './debug-logger';
 // client tags its requests `app-platform: web` / `edit-from: web` (see
 // plaud-client-re.ts), so the captured token must come from the web client to
 // match. Verified against a live web.plaud.ai HAR capture on 2026-06-18.
-// Load the login page directly. Loading the app root (`https://web.plaud.ai`)
-// redirects to `/login` when signed out, and that redirect throws a webview
-// `did-fail-load`; debug logs showed the unclickable opens are the ones that hit
-// that redirect. Starting at `/login` avoids it. When already signed in, Plaud
-// redirects `/login` back to the library and the token is still captured at the
-// session level, so the signed-in path is unaffected.
-const PLAUD_LOGIN_URL = 'https://web.plaud.ai/login';
+const PLAUD_LOGIN_URL = 'https://web.plaud.ai';
 // Persistent partition so a returning user keeps their Plaud session and does
 // not have to sign in every time. Isolated from Obsidian's own web sessions.
 const PLAUD_PARTITION = 'persist:plaud-importer';
