@@ -37,7 +37,7 @@ const PLAUD_WEB_URL = "https://web.plaud.ai";
 // name Plaud/Google/Apple plainly: the sentence-case lint only inspects string
 // literals written directly at a setText/createEl call, not a referenced const.
 const SIGN_IN_NOTE =
-	"Plaud has no official API, so sign-in is unavoidably fragile and may stop working when Plaud changes their website. There are two ways to sign in, depending on how you log in to Plaud. Use 'Sign in with email' if you log in with an email address and password. Use 'Sign in with Google or Apple' if you log in with one of those.";
+	"Plaud has no official API, so this plugin relies on their internal one. That makes sign-in fragile, and it may stop working when Plaud changes that internal API. We expect this whole process to get much simpler once Plaud releases an official API. There are two ways to sign in, depending on how you log in to Plaud: use 'Sign in with email' for an email address and password, or 'Sign in with Google or Apple' for those logins.";
 
 // Bookmarklet for the browser sign-in flow. Run on a signed-in Plaud tab, it
 // hooks BOTH fetch and XMLHttpRequest (Plaud loads recordings via XHR, so a
