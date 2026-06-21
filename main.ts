@@ -487,6 +487,10 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 	// sign-in status line in place after wiping the token. Null until the
 	// sign-in row has rendered.
 	private signinRefresh: (() => void) | null = null;
+	// Set by renderTokenControl() so the paste/sign-in flows can redraw the
+	// secret picker to show a just-stored token as the selected secret. Null
+	// until the token row has rendered.
+	private tokenRefresh: (() => void) | null = null;
 
 	constructor(app: App, plugin: PlaudImporterPlugin) {
 		super(app, plugin);
@@ -683,14 +687,24 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 	// (1.13+) and the imperative display() fallback (1.12) produce identical UI.
 	// These touch only pre-1.12 Obsidian APIs.
 	private renderTokenControl(setting: Setting): void {
-		setting.addComponent((el) =>
-			new SecretComponent(this.app, el)
-				.setValue(this.plugin.settings.secretId)
-				.onChange(async (id) => {
-					this.plugin.settings.secretId = id;
-					await this.plugin.saveSettings();
-				}),
-		);
+		setting.addComponent((el) => {
+			// Rebuild the picker so it re-reads the secret list and reflects the
+			// currently linked secretId. Recreating (rather than setValue) is
+			// what makes a freshly stored secret appear selected. tokenRefresh
+			// lets the paste/sign-in flows trigger this redraw.
+			const build = (): SecretComponent =>
+				new SecretComponent(this.app, el)
+					.setValue(this.plugin.settings.secretId)
+					.onChange(async (id) => {
+						this.plugin.settings.secretId = id;
+						await this.plugin.saveSettings();
+					});
+			this.tokenRefresh = () => {
+				el.empty();
+				build();
+			};
+			return build();
+		});
 	}
 
 	private renderSigninControl(setting: Setting): void {
@@ -735,6 +749,7 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 						await this.plugin.saveSettings();
 						new Notice("Plaud token captured and saved.");
 						refreshStatus();
+						this.tokenRefresh?.();
 					} finally {
 						btn.setDisabled(false);
 					}
@@ -789,6 +804,7 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 				if (ok) {
 					new Notice("Token saved. Run a connection test to confirm it works.");
 					this.signinRefresh?.();
+					this.tokenRefresh?.();
 				} else {
 					new Notice(
 						"The clipboard did not hold a valid access token. That usually means the wrong request was copied. Copy the token from the popup the bookmarklet shows, which only fires on the right one.",
