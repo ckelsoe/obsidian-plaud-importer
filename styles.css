@@ -176,6 +176,20 @@
 	max-width: 900px;
 }
 
+/*
+ * Disable the modal entrance animation for the sign-in modal only. Obsidian's
+ * pop-in animation applies a transform to the modal element, and an Electron
+ * <webview> under a transformed ancestor mis-computes its mouse hit region, so
+ * the embedded page renders but swallows every click until the modal is
+ * reopened. Removing the animation keeps the transform off the webview's
+ * ancestors. The `.modal` qualifier raises specificity above the app default;
+ * centering is handled by the modal container's flexbox, not this animation.
+ */
+.modal.plaud-importer-login-modal {
+	animation: none;
+	transform: none;
+}
+
 .plaud-importer-login-intro {
 	color: var(--text-muted);
 	margin: 0 0 0.75em 0;

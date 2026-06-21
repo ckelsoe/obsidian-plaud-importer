@@ -319,6 +319,12 @@ class PlaudLoginModal extends Modal {
 		webview.addEventListener('dom-ready', () => {
 			this.domReady = true;
 			this.clearLoadTimeout();
+			// Route input focus into the embedded page once it is live. Helps the
+			// first-open case where the webview renders but does not yet have
+			// focus, alongside the transform fix in styles.css.
+			if (typeof webview.focus === 'function') {
+				webview.focus();
+			}
 			if (typeof webview.executeJavaScript !== 'function') {
 				this.fail(
 					'This Obsidian build does not expose an embedded browser, so automatic sign-in is unavailable. Use manual token entry instead.',
