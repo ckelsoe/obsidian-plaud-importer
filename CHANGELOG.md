@@ -4,6 +4,20 @@ All notable changes to Plaud Importer will be documented in this file.
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-06-21
+
+### Added
+
+- Browser sign-in for Google and Apple accounts. Single sign-on through Google or Apple cannot complete in an in-app window, so the new **Sign in with Google or Apple** option signs you in through your normal web browser and brings the token back. A one-time **Set up bookmark** step installs a drag-to-save bookmarklet; after that, connecting is a few clicks. See the README for the full walkthrough.
+- **Paste token from clipboard** button that stores a copied token directly, after checking it is a usable access token, with no secret to create or select.
+- **Clear sign-in** button that signs you out and clears the stored token so you can start fresh or connect a different account.
+
+### Changed
+
+- Email sign-in now opens a real separate window instead of an embedded browser view. The embedded view could freeze on first open (a known Electron webview limitation); a standalone window is reliable.
+- The settings are reorganized into clear sections (Sign in, Output, Appearance, and the import groups). The Sign in section now explains that sign-in is fragile while Plaud has no official API, and which method to use for email versus Google or Apple logins.
+- The connection status moved to the stored-token row, so it reflects whichever sign-in method you used.
+
 ## [0.10.2] - 2026-06-20
 
 ### Changed

@@ -1,6 +1,6 @@
 # Plaud Importer
 
-[![CI](https://img.shields.io/github/actions/workflow/status/ckelsoe/obsidian-plaud-importer/ci.yml?branch=main&label=CI&logo=github)](https://github.com/ckelsoe/obsidian-plaud-importer/actions/workflows/ci.yml) [![Release](https://img.shields.io/github/actions/workflow/status/ckelsoe/obsidian-plaud-importer/release.yml?label=Release&logo=github)](https://github.com/ckelsoe/obsidian-plaud-importer/actions/workflows/release.yml) [![GitHub Downloads](https://img.shields.io/github/downloads/ckelsoe/obsidian-plaud-importer/total?logo=github&label=Downloads)](https://github.com/ckelsoe/obsidian-plaud-importer/releases) [![GitHub Stars](https://img.shields.io/github/stars/ckelsoe/obsidian-plaud-importer?style=flat&logo=github&label=Stars)](https://github.com/ckelsoe/obsidian-plaud-importer) [![Obsidian](https://img.shields.io/badge/Obsidian-v1.13.0%2B-7C3AED?logo=obsidian&logoColor=white)](https://obsidian.md) [![License](https://img.shields.io/github/license/ckelsoe/obsidian-plaud-importer)](https://github.com/ckelsoe/obsidian-plaud-importer/blob/main/LICENSE) [![Latest Release](https://img.shields.io/github/v/release/ckelsoe/obsidian-plaud-importer?label=Latest)](https://github.com/ckelsoe/obsidian-plaud-importer/releases/latest)
+[![CI](https://img.shields.io/github/actions/workflow/status/ckelsoe/obsidian-plaud-importer/ci.yml?branch=main&label=CI&logo=github)](https://github.com/ckelsoe/obsidian-plaud-importer/actions/workflows/ci.yml) [![Release](https://img.shields.io/github/actions/workflow/status/ckelsoe/obsidian-plaud-importer/release.yml?label=Release&logo=github)](https://github.com/ckelsoe/obsidian-plaud-importer/actions/workflows/release.yml) [![GitHub Downloads](https://img.shields.io/github/downloads/ckelsoe/obsidian-plaud-importer/total?logo=github&label=Downloads)](https://github.com/ckelsoe/obsidian-plaud-importer/releases) [![GitHub Stars](https://img.shields.io/github/stars/ckelsoe/obsidian-plaud-importer?style=flat&logo=github&label=Stars)](https://github.com/ckelsoe/obsidian-plaud-importer) [![Obsidian](https://img.shields.io/badge/Obsidian-v1.11.4%2B-7C3AED?logo=obsidian&logoColor=white)](https://obsidian.md) [![License](https://img.shields.io/github/license/ckelsoe/obsidian-plaud-importer)](https://github.com/ckelsoe/obsidian-plaud-importer/blob/main/LICENSE) [![Latest Release](https://img.shields.io/github/v/release/ckelsoe/obsidian-plaud-importer?label=Latest)](https://github.com/ckelsoe/obsidian-plaud-importer/releases/latest)
 
 > ## ⚠️ Early Alpha
 >
@@ -33,7 +33,7 @@ Plaud does not offer an official API yet, so this plugin works by using Plaud's 
 
 - **It can break when Plaud changes their website or API.** There is no official, supported API, so Plaud can change how their service works at any time and an import may suddenly stop working. *Why it works this way:* it is the only way to get your recordings into Obsidian today. *What protects you:* the plugin shows a clear error instead of writing broken notes, and when Plaud ships an official API the plugin will move to it.
 - **Your sign-in token is like a key to your whole Plaud account.** The plugin stores the session token your login uses — it is not a limited, read-only key. *Why:* that is the only credential Plaud's web service provides. *What protects you:* it is kept in Obsidian's secure secret storage, never written to your settings file, never logged, and never sent anywhere except Plaud.
-- **You sign in through an embedded Plaud window.** Clicking **Sign in** opens Plaud's real website so you can log in normally. *Why:* you never hand your password to the plugin, and any login method works (including Google). *What protects you:* the plugin reads only the token your logged-in session already uses; your password is typed into Plaud's own page, not the plugin.
+- **You sign in through Plaud's own website.** Clicking **Sign in** opens Plaud's real site in a separate window so you can log in normally; Google and Apple logins use your normal browser instead (see [Connect your Plaud account](#connect-your-plaud-account)). *Why:* you never hand your password to the plugin. *What protects you:* the plugin reads only the token your logged-in session already uses; your password is typed into Plaud's own page, not the plugin.
 - **It is an unofficial tool, not affiliated with Plaud.** *What protects you:* it reads only your own data, and only when you ask it to. Following Plaud's terms of service is your responsibility.
 - **Desktop only.** Sign-in and import rely on desktop features that Obsidian Mobile does not provide.
 
@@ -65,8 +65,8 @@ Plaud does not offer an official API yet, so this plugin works by using Plaud's 
 
 ## Requirements
 
-- **Obsidian 1.13.0 or newer** — required for the settings and `SecretStorage` / `SecretComponent` APIs used to handle the Plaud token.
-- **Desktop only** (`isDesktopOnly: true`). The authentication path depends on Electron APIs (including the embedded sign-in browser window) that are not available on Obsidian Mobile. This restriction will be lifted when Plaud ships a public OAuth API (see [Plaud API status](#plaud-api-status) below).
+- **Obsidian 1.11.4 or newer** — required for the `SecretStorage` / `SecretComponent` APIs used to handle the Plaud token securely.
+- **Desktop only** (`isDesktopOnly: true`). The authentication path depends on Electron APIs (including the separate sign-in window) that are not available on Obsidian Mobile. This restriction will be lifted when Plaud ships a public OAuth API (see [Plaud API status](#plaud-api-status) below).
 - **A Plaud.AI account** with access to the recordings you want to import.
 
 ## Installation
@@ -104,31 +104,38 @@ Open **Settings → Community plugins → Plaud Importer** and configure:
 
 The plugin reads your recordings using your Plaud web-session token. **You never give the plugin your Plaud password** — you sign in to Plaud directly, and the plugin captures only the session token your logged-in session already uses.
 
-There are two ways to sign in. Try Option 1 first. If your login method does not work there (Google and Apple often do not), use Option 2.
+Because Plaud has no official API, which method works depends on **how you log in to Plaud**. Pick the one that matches your account. Both store your token the same way; the difference is only how the token is captured.
 
-#### Option 1: sign in through the pop-up window
+#### Sign in with email
 
-1. In **Settings → Community plugins → Plaud Importer**, under **Sign in**, find **Sign in with email** and click **Sign in**.
-2. A window opens with Plaud's own website. Sign in the way you normally do.
-3. Once you reach your library, the plugin captures your token automatically and the window closes. The sign-in row shows **"signed in — a token is stored."**
+Use this if you log in to Plaud with an **email address and password**.
 
-This is desktop only, because it uses an embedded browser window, and your password never passes through the plugin. Some sign-in methods, including **Google and Apple**, may not finish inside this window. If yours does not, use Option 2.
+1. In **Settings → Community plugins → Plaud Importer**, under **Sign in**, click **Sign in** next to **Sign in with email**.
+2. A separate sign-in window opens with Plaud's website. Log in with your email and password.
+3. Once you reach your library, the plugin captures your token automatically and the window closes. The **Plaud token** status changes to **"connected."**
 
-#### Option 2: sign in with your normal browser (works with Google and Apple)
+Google and Apple logins do **not** complete in this window. For those, use the next method.
 
-This signs you in to Plaud in your own web browser, where every login method works, then sends the token back to Obsidian. Find **Sign in with your browser** in the plugin settings.
+#### Sign in with Google or Apple
 
-**One-time setup:**
+Use this if you log in to Plaud with **single sign-on (SSO) through a Google or Apple account**. Those logins only work in a real web browser, so this method signs you in there and hands the token back to Obsidian. There is a quick one-time setup (saving a bookmark), then a few clicks each time.
 
-1. Click **Set up bookmark**. A small page opens in your browser.
-2. Drag the **Plaud → Obsidian** button onto your browser's bookmarks bar. If the bar is hidden, press **Ctrl+Shift+B** (**Cmd+Shift+B** on Mac) to show it.
+**One-time setup (do this once):**
 
-**Each time you connect:**
+1. In the plugin settings under **Sign in**, find **Sign in with Google or Apple** and click **Set up bookmark**. A small page opens in your default web browser.
+2. That page shows a button labeled **Plaud → Obsidian**. **Drag that button up onto your browser's bookmarks bar.** If you do not see a bookmarks bar, press **Ctrl+Shift+B** (Windows/Linux) or **Cmd+Shift+B** (Mac) to show it, then drag the button onto it.
+3. The bookmark is now saved. You will not need to repeat this step.
 
-3. Click **Launch sign-in to capture token**. A short reminder appears. Click **Open my browser now**.
-4. In your browser, sign in to Plaud if you are not already.
-5. Click the **Plaud → Obsidian** bookmark, then open any meeting. A small box shows your token. Copy it.
-6. Switch back to Obsidian and click **Paste token from clipboard**. You are connected.
+**Each time you connect (about once a day, when the token expires):**
+
+1. Back in the plugin settings, click **Launch sign-in to capture token**. A short reminder pops up; read it and click **Open my browser now**. Plaud opens in your browser.
+2. Sign in to Plaud with Google or Apple if you are not already signed in.
+3. When your recordings are showing, **click the Plaud → Obsidian bookmark** you saved, then **open any meeting**. A small pop-up box appears with your token in it. Select the token and copy it (Ctrl+C or Cmd+C).
+4. Switch back to Obsidian and click **Paste token from clipboard**. The **Plaud token** status changes to **"connected."**
+
+Why open a meeting in step 3: the bookmark watches for the request your token rides on, and opening a meeting is what triggers that request. If no pop-up appears, make sure you clicked the bookmark first, then open a meeting.
+
+**Starting over:** the **Clear sign-in** button signs you out and clears the stored token, so you can connect a different account or recover from a stuck state.
 
 Your sign-in token lasts about a day. When imports stop working, repeat the "each time you connect" steps to get a fresh one.
 
@@ -201,7 +208,7 @@ I am actively monitoring Plaud's developer announcements and [waitlist](https://
 Plaud Importer is desktop-only, runs on your device, and has no telemetry or maintainer server — it talks only to Plaud, and only when you ask it to. Obsidian's plugin scan discloses a few capabilities. Here is exactly what each is and why it exists:
 
 - **Network access to Plaud.** The plugin calls Plaud's web API (`api.plaud.ai`, or your regional host) to list and fetch your recordings, summaries, transcripts, and attachments, and downloads attachment files from the CDN hosts Plaud's responses point at. It contacts no other third party, and only when you trigger an import, scroll to load more recordings, or download attachments.
-- **Embedded sign-in browser.** When you click **Sign in**, the plugin opens Plaud's own website (`app.plaud.ai` / `web.plaud.ai`) in an embedded window so you can log in normally. Your password is entered into Plaud's page and is never seen by the plugin; it reads only the session token your logged-in session already sends to Plaud, and stores it via `SecretStorage`. The sign-in runs in a private session isolated from Obsidian's other web views.
+- **Sign-in window.** When you click **Sign in**, the plugin opens Plaud's own website (`web.plaud.ai`) in a separate window so you can log in normally. For Google or Apple logins, you sign in through your normal web browser instead and hand the token back with a bookmarklet. Either way, your password is entered into Plaud's page and is never seen by the plugin; it reads only the session token your logged-in session already sends to Plaud, and stores it via `SecretStorage`. The sign-in runs in a private session isolated from Obsidian's other web views.
 - **Vault file enumeration.** To show the "Imported" badge and avoid duplicate imports, the plugin lists your vault's note paths and reads the frontmatter of notes **inside your output folder** to find ones it previously created (tagged with a `plaud-id`). It does not read the contents of unrelated notes.
 - **Clipboard, write only.** The only clipboard use is the Copy buttons (copy debug log, copy an error or failure list for a bug report). It writes to your clipboard and never reads it, so it cannot see anything you copied elsewhere.
 - **Secret storage.** Your Plaud token is stored via Obsidian's `SecretStorage` (per-vault, not synced); `data.json` holds only a reference id, never the token.
