@@ -33,12 +33,15 @@ const CAPTURED_SECRET_ID = "plaud-importer-token";
 const PLAUD_WEB_URL = "https://web.plaud.ai";
 
 // Bookmarklet for the browser sign-in flow. Run on a signed-in Plaud tab, it
-// hooks fetch, waits for a request carrying the workspace access token (typ
-// WT), and hands that token to this plugin via an obsidian:// deep link. The
-// WT filter avoids grabbing the refresh token (WRT) sent during login, which
-// the data API rejects. Kept as one line so it pastes as a valid bookmark URL.
+// hooks BOTH fetch and XMLHttpRequest (Plaud loads recordings via XHR, so a
+// fetch-only hook misses them), waits for a request carrying the workspace
+// access token (typ WT, not the refresh token WRT the data API rejects), and
+// shows it in a prompt() the user copies and pastes into the plugin. A copy
+// dialog is used rather than an obsidian:// redirect because launching a custom
+// protocol from a network callback (no user gesture) is blocked by browsers.
+// Kept as one line, no backslashes, so it pastes as a valid bookmark URL.
 const SIGN_IN_BOOKMARKLET =
-	"javascript:(function(){var f=window.fetch;window.fetch=function(i,n){try{var h=n&&n.headers;var a=h&&(h.authorization||h.Authorization||(h.get&&h.get('authorization')));if(a&&/eyJ/.test(a)){var s=a.replace(/^bearer /i,'').split('.')[0].replace(/-/g,'+').replace(/_/g,'/');while(s.length%4){s+='=';}try{if(JSON.parse(atob(s)).typ==='WT'){window.location.href='obsidian://plaud-importer-token?token='+encodeURIComponent(a);}}catch(e){}}}catch(e){}return f.apply(this,arguments);};alert('Token capture armed. Now open any recording in Plaud to send your token to Obsidian.');})()";
+	"javascript:(function(){function typ(v){try{if(!/eyJ/.test(v))return null;var s=v.replace(/^bearer /i,'').split('.')[0].replace(/-/g,'+').replace(/_/g,'/');while(s.length%4)s+='=';return JSON.parse(atob(s)).typ;}catch(e){return null;}}var done=false;function got(a){if(done||typeof a!=='string')return;if(typ(a)==='WT'){done=true;prompt('Plaud token captured. Select all, copy, then paste it into the token field in Obsidian settings:',a.replace(/^bearer /i,''));}}var of=window.fetch;window.fetch=function(i,n){try{var h=n&&n.headers;if(h){got(h.authorization||h.Authorization||(h.get&&h.get('authorization')));}}catch(e){}return of.apply(this,arguments);};var os=XMLHttpRequest.prototype.setRequestHeader;XMLHttpRequest.prototype.setRequestHeader=function(k,v){try{if(/^authorization$/i.test(k))got(v);}catch(e){}return os.apply(this,arguments);};alert('Token capture armed. Now open any recording in Plaud.');})()";
 
 // Curated list of Lucide icon IDs offered in the "Ribbon icon" setting.
 // Each entry is a valid Lucide ID bundled with Obsidian's icon set. This
@@ -511,7 +514,7 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 			this.makeSetting(
 				containerEl,
 				"Sign in with your browser",
-				"Alternative to the embedded sign-in above. Sign in to Plaud in your normal browser (where Google and Apple work), then send the token back to Obsidian with one click. Use this if the embedded window does not work for your login method.",
+				"Alternative to the embedded sign-in above. Sign in to Plaud in your normal browser (where Google and Apple work), then use the bookmarklet below to copy your token into Obsidian. Use this if the embedded window does not work for your login method.",
 			),
 		);
 		this.renderTestControl(
@@ -740,7 +743,7 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 			text: "Open it in your browser with the button below, then sign in the way you normally do.",
 		});
 		steps.createEl("li", {
-			text: "When your recordings load, click the saved bookmark, then open any recording. Your token returns to Obsidian automatically.",
+			text: "Click the saved bookmark, then open any recording. A popup shows your token. Copy it and paste it into the token field at the top of these settings (create new secret).",
 		});
 		setting.addButton((btn) =>
 			btn
@@ -964,7 +967,7 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 			},
 			{
 				name: "Sign in with your browser",
-				desc: "Alternative to the embedded sign-in above. Sign in to Plaud in your normal browser (where Google and Apple work), then send the token back to Obsidian with one click. Use this if the embedded window does not work for your login method.",
+				desc: "Alternative to the embedded sign-in above. Sign in to Plaud in your normal browser (where Google and Apple work), then use the bookmarklet below to copy your token into Obsidian. Use this if the embedded window does not work for your login method.",
 				searchable: false,
 				render: (setting: Setting) =>
 					this.renderBrowserSignInControl(setting),
