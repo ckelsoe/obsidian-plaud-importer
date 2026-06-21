@@ -6,6 +6,7 @@ import {
 	SecretComponent,
 	Setting,
 	type SettingDefinitionItem,
+	type ObsidianProtocolData,
 	requestUrl,
 	setIcon,
 	type RequestUrlResponse,
@@ -16,12 +17,28 @@ import {
 } from "./plaud-client-re";
 import { ImportModal, classifyError } from "./import-modal";
 import { BufferedDebugLogger } from "./debug-logger";
-import { clearPlaudLoginSession, openPlaudLogin } from "./plaud-login";
+import {
+	clearPlaudLoginSession,
+	isAccessToken,
+	openPlaudLogin,
+} from "./plaud-login";
 import type { TagMode } from "./note-writer";
 
 // Stable SecretStorage id for a token captured by the in-app sign-in flow.
 // Re-running sign-in overwrites it, mirroring "replace my token".
 const CAPTURED_SECRET_ID = "plaud-importer-token";
+
+// Plaud web app, opened in the system browser for the browser-based sign-in
+// flow (where Google/Apple SSO work, unlike an embedded webview).
+const PLAUD_WEB_URL = "https://web.plaud.ai";
+
+// Bookmarklet for the browser sign-in flow. Run on a signed-in Plaud tab, it
+// hooks fetch, waits for a request carrying the workspace access token (typ
+// WT), and hands that token to this plugin via an obsidian:// deep link. The
+// WT filter avoids grabbing the refresh token (WRT) sent during login, which
+// the data API rejects. Kept as one line so it pastes as a valid bookmark URL.
+const SIGN_IN_BOOKMARKLET =
+	"javascript:(function(){var f=window.fetch;window.fetch=function(i,n){try{var h=n&&n.headers;var a=h&&(h.authorization||h.Authorization||(h.get&&h.get('authorization')));if(a&&/eyJ/.test(a)){var s=a.replace(/^bearer /i,'').split('.')[0].replace(/-/g,'+').replace(/_/g,'/');while(s.length%4){s+='=';}try{if(JSON.parse(atob(s)).typ==='WT'){window.location.href='obsidian://plaud-importer-token?token='+encodeURIComponent(a);}}catch(e){}}}catch(e){}return f.apply(this,arguments);};alert('Token capture armed. Now open any recording in Plaud to send your token to Obsidian.');})()";
 
 // Curated list of Lucide icon IDs offered in the "Ribbon icon" setting.
 // Each entry is a valid Lucide ID bundled with Obsidian's icon set. This
@@ -190,6 +207,12 @@ export default class PlaudImporterPlugin extends Plugin {
 		});
 
 		this.addSettingTab(new PlaudImporterSettingsTab(this.app, this));
+
+		// Receive a token handed back from the user's external browser (the
+		// browser sign-in flow) via obsidian://plaud-importer-token?token=…
+		this.registerObsidianProtocolHandler("plaud-importer-token", (params) => {
+			void this.handleTokenDeepLink(params);
+		});
 
 		this.addCommand({
 			id: "import-recent",
@@ -410,6 +433,37 @@ export default class PlaudImporterPlugin extends Plugin {
 		await this.saveSettings();
 		return { sessionCleared };
 	}
+
+	// Opens the Plaud web app in the system browser for the browser-based
+	// sign-in flow. Google and Apple SSO complete there because it is a real
+	// browser, not an embedded webview.
+	openPlaudInBrowser(): void {
+		window.open(PLAUD_WEB_URL, "_blank");
+	}
+
+	// Handles obsidian://plaud-importer-token?token=… deep links from the
+	// browser sign-in bookmarklet. Validates that the value is a real access
+	// token (typ WT) before storing it, so a stray or refresh-token link cannot
+	// install a token the data API would reject.
+	private async handleTokenDeepLink(
+		params: ObsidianProtocolData,
+	): Promise<void> {
+		const token = typeof params.token === "string" ? params.token.trim() : "";
+		if (token.length === 0) {
+			new Notice("Plaud sign-in link contained no token.");
+			return;
+		}
+		if (!isAccessToken(token)) {
+			new Notice(
+				"Plaud sign-in link did not carry a usable access token. In your browser, open a recording before clicking the bookmarklet, then try again.",
+			);
+			return;
+		}
+		this.app.secretStorage.setSecret(CAPTURED_SECRET_ID, token);
+		this.settings.secretId = CAPTURED_SECRET_ID;
+		await this.saveSettings();
+		new Notice("Plaud token received from your browser and saved.");
+	}
 }
 
 class PlaudImporterSettingsTab extends PluginSettingTab {
@@ -451,6 +505,13 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 				containerEl,
 				"Automatic sign-in (beta)",
 				"Open Plaud in a window and sign in normally. The plugin captures your session token automatically, so there is no need to copy it from the browser console. Your password is never seen by the plugin. Falls back to manual entry above if your Obsidian build cannot embed a browser.",
+			),
+		);
+		this.renderBrowserSignInControl(
+			this.makeSetting(
+				containerEl,
+				"Sign in with your browser",
+				"Alternative to the embedded sign-in above. Sign in to Plaud in your normal browser (where Google and Apple work), then send the token back to Obsidian with one click. Use this if the embedded window does not work for your login method.",
 			),
 		);
 		this.renderTestControl(
@@ -668,6 +729,38 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 		refreshStatus();
 	}
 
+	private renderBrowserSignInControl(setting: Setting): void {
+		const steps = setting.descEl.createEl("ol", {
+			cls: "plaud-importer-browser-steps",
+		});
+		steps.createEl("li", {
+			text: "Copy the bookmarklet below and save it as a bookmark in your browser (new bookmark, paste it as the URL).",
+		});
+		steps.createEl("li", {
+			text: "Open it in your browser with the button below, then sign in the way you normally do.",
+		});
+		steps.createEl("li", {
+			text: "When your recordings load, click the saved bookmark, then open any recording. Your token returns to Obsidian automatically.",
+		});
+		setting.addButton((btn) =>
+			btn
+				.setButtonText("Open in browser")
+				.setCta()
+				.onClick(() => {
+					this.plugin.openPlaudInBrowser();
+				}),
+		);
+		setting.addButton((btn) =>
+			btn.setButtonText("Copy bookmarklet").onClick(() => {
+				void copyToClipboard(SIGN_IN_BOOKMARKLET, () => {
+					new Notice(
+						"Bookmarklet copied. Create a new bookmark in your browser and paste it as the address.",
+					);
+				});
+			}),
+		);
+	}
+
 	private renderTestControl(setting: Setting): void {
 		const resultEl = setting.descEl.createDiv({
 			cls: "plaud-importer-test-status",
@@ -868,6 +961,13 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 				desc: "Open Plaud in a window and sign in normally. The plugin captures your session token automatically, so there is no need to copy it from the browser console. Your password is never seen by the plugin. Falls back to manual entry above if your Obsidian build cannot embed a browser.",
 				searchable: false,
 				render: (setting: Setting) => this.renderSigninControl(setting),
+			},
+			{
+				name: "Sign in with your browser",
+				desc: "Alternative to the embedded sign-in above. Sign in to Plaud in your normal browser (where Google and Apple work), then send the token back to Obsidian with one click. Use this if the embedded window does not work for your login method.",
+				searchable: false,
+				render: (setting: Setting) =>
+					this.renderBrowserSignInControl(setting),
 			},
 			{
 				name: "Test connection",

@@ -69,7 +69,7 @@ function jwtTyp(value: string): string | null {
 	}
 }
 
-function isAccessToken(value: string): boolean {
+export function isAccessToken(value: string): boolean {
 	return jwtTyp(value) === ACCESS_TOKEN_TYP;
 }
 
