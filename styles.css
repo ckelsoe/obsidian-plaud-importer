@@ -196,6 +196,19 @@
 	margin-top: 0.6em;
 }
 
+/*
+ * Off-screen focus shim used to force input focus into the sign-in webview on
+ * first attach (Electron webview input-focus workaround). Must be focusable, so
+ * it cannot use display:none; keep it in layout but invisible and inert.
+ */
+.plaud-importer-focus-shim {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	opacity: 0;
+	pointer-events: none;
+}
+
 /* Button row in the browser sign-in reminder modal */
 .plaud-importer-modal-buttons {
 	display: flex;

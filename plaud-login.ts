@@ -322,8 +322,22 @@ class PlaudLoginModal extends Modal {
 			// Route input focus into the embedded page once it is live. Helps the
 			// first-open case where the webview renders but does not yet have
 			// focus, alongside the transform fix in styles.css.
+			// Electron <webview> frequently does not accept mouse or keyboard
+			// input on first attach until focus is moved INTO it from another
+			// element. Calling webview.focus() alone is not enough; the
+			// documented workaround (electron/electron#5900, #15289) is to focus
+			// a throwaway shim first, then the webview on the next tick, which
+			// forces Electron to attach input focus to the guest view.
 			if (typeof webview.focus === 'function') {
-				webview.focus();
+				const shim = this.contentEl.createDiv({
+					cls: 'plaud-importer-focus-shim',
+					attr: { tabindex: '-1' },
+				});
+				shim.focus();
+				window.setTimeout(() => {
+					webview.focus();
+					shim.remove();
+				}, 50);
 			}
 			if (typeof webview.executeJavaScript !== 'function') {
 				this.fail(
