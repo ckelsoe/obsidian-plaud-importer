@@ -652,21 +652,23 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 			this.makeSetting(
 				containerEl,
 				"Plaud token",
-				"Select or create a stored secret holding your Plaud.AI session token. The secret value is stored in Obsidian's per-vault secret storage, never in data.json.",
+				"Your stored Plaud token. The status below shows whether you are connected. The value stays in Obsidian's secret storage, never in data.json.",
 			),
 		);
+
+		new Setting(containerEl).setName("Sign in").setHeading();
 		this.renderSigninControl(
 			this.makeSetting(
 				containerEl,
-				"Automatic sign-in (beta)",
-				"Open Plaud in a window and sign in normally. The plugin captures your session token automatically, so there is no need to copy it from the browser console. Your password is never seen by the plugin. Falls back to manual entry above if your Obsidian build cannot embed a browser.",
+				"Sign in with email",
+				"Best for email and password logins. Click Sign in, log in to Plaud in the window that opens, and your token is saved automatically. Google and Apple logins do not work in this window; use the option below for those.",
 			),
 		);
 		this.renderBrowserSignInControl(
 			this.makeSetting(
 				containerEl,
-				"Sign in with your browser",
-				"For login methods the embedded window cannot handle: Google and Apple sign-in only complete in a real browser. Sign in to Plaud in your own browser, then bring the token back to Obsidian with the steps below.",
+				"Sign in with Google or Apple",
+				"For Google and Apple logins, which only work in a real browser. The first time needs a one-time bookmark setup. After that, sign in to Plaud in your normal browser and send the token back with the steps below.",
 			),
 		);
 		this.renderTestControl(
@@ -824,6 +826,24 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 	// (1.13+) and the imperative display() fallback (1.12) produce identical UI.
 	// These touch only pre-1.12 Obsidian APIs.
 	private renderTokenControl(setting: Setting): void {
+		// Method-agnostic connection status lives on the token row, not under a
+		// specific sign-in method, since a token can be stored by either flow.
+		const statusEl = setting.descEl.createDiv({
+			cls: "plaud-importer-signin-status",
+		});
+		const refreshStatus = (): void => {
+			const id = this.plugin.settings.secretId;
+			const stored =
+				id.length > 0 &&
+				(this.app.secretStorage.getSecret(id) ?? "").length > 0;
+			statusEl.setText(
+				stored
+					? "Status: connected. A token is stored."
+					: "Status: not connected yet.",
+			);
+			statusEl.toggleClass("plaud-importer-signin-ok", stored);
+		};
+		this.signinRefresh = refreshStatus;
 		setting.addComponent((el) => {
 			// Rebuild the picker so it re-reads the secret list and reflects the
 			// currently linked secretId. Recreating (rather than setValue) is
@@ -835,6 +855,7 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 					.onChange(async (id) => {
 						this.plugin.settings.secretId = id;
 						await this.plugin.saveSettings();
+						refreshStatus();
 					});
 			this.tokenRefresh = () => {
 				el.empty();
@@ -842,25 +863,10 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 			};
 			return build();
 		});
+		refreshStatus();
 	}
 
 	private renderSigninControl(setting: Setting): void {
-		const statusEl = setting.descEl.createDiv({
-			cls: "plaud-importer-signin-status",
-		});
-		const refreshStatus = (): void => {
-			const id = this.plugin.settings.secretId;
-			const stored =
-				id.length > 0 &&
-				(this.app.secretStorage.getSecret(id) ?? "").length > 0;
-			statusEl.setText(
-				stored
-					? "Status: signed in — a token is stored."
-					: "Status: not signed in yet.",
-			);
-			statusEl.toggleClass("plaud-importer-signin-ok", stored);
-		};
-		this.signinRefresh = refreshStatus;
 		setting.addButton((btn) =>
 			btn
 				.setButtonText("Sign in")
@@ -885,14 +891,13 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 						}
 						await this.plugin.saveSettings();
 						new Notice("Plaud token captured and saved.");
-						refreshStatus();
+						this.signinRefresh?.();
 						this.tokenRefresh?.();
 					} finally {
 						btn.setDisabled(false);
 					}
 				}),
 		);
-		refreshStatus();
 	}
 
 	private renderBrowserSignInControl(setting: Setting): void {
@@ -1143,7 +1148,7 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 		return [
 			{
 				name: "Plaud token",
-				desc: "Select or create a stored secret holding your Plaud.AI session token. The secret value is stored in Obsidian's per-vault secret storage, never in data.json.",
+				desc: "Your stored Plaud token. The status below shows whether you are connected. The value stays in Obsidian's secret storage, never in data.json.",
 				// SecretComponent needs an App instance and is added via
 				// Setting#addComponent, so it lives in a render callback rather
 				// than a declarative control. It is not search-indexable.
@@ -1151,29 +1156,36 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 				render: (setting: Setting) => this.renderTokenControl(setting),
 			},
 			{
-				name: "Automatic sign-in (beta)",
-				desc: "Open Plaud in a window and sign in normally. The plugin captures your session token automatically, so there is no need to copy it from the browser console. Your password is never seen by the plugin. Falls back to manual entry above if your Obsidian build cannot embed a browser.",
-				searchable: false,
-				render: (setting: Setting) => this.renderSigninControl(setting),
-			},
-			{
-				name: "Sign in with your browser",
-				desc: "For login methods the embedded window cannot handle: Google and Apple sign-in only complete in a real browser. Sign in to Plaud in your own browser, then bring the token back to Obsidian with the steps below.",
-				searchable: false,
-				render: (setting: Setting) =>
-					this.renderBrowserSignInControl(setting),
-			},
-			{
-				name: "Test connection",
-				desc: "Check that your stored token can reach Plaud. Use this after signing in, or any time imports start failing, to see whether you need to sign in again.",
-				searchable: false,
-				render: (setting: Setting) => this.renderTestControl(setting),
-			},
-			{
-				name: "Clear sign-in",
-				desc: "Sign out of the embedded Plaud browser and wipe the stored token so the next sign-in starts completely fresh. Use this to reach the sign-in screen when it keeps signing you in automatically. Obsidian has no way to delete the secret entry, so an emptied one may stay in the token picker, but it holds no token.",
-				searchable: false,
-				render: (setting: Setting) => this.renderClearSignInControl(setting),
+				type: "group",
+				heading: "Sign in",
+				items: [
+					{
+						name: "Sign in with email",
+						desc: "Best for email and password logins. Click Sign in, log in to Plaud in the window that opens, and your token is saved automatically. Google and Apple logins do not work in this window; use the option below for those.",
+						searchable: false,
+						render: (setting: Setting) => this.renderSigninControl(setting),
+					},
+					{
+						name: "Sign in with Google or Apple",
+						desc: "For Google and Apple logins, which only work in a real browser. The first time needs a one-time bookmark setup. After that, sign in to Plaud in your normal browser and send the token back with the steps below.",
+						searchable: false,
+						render: (setting: Setting) =>
+							this.renderBrowserSignInControl(setting),
+					},
+					{
+						name: "Test connection",
+						desc: "Check that your stored token can reach Plaud. Use this after signing in, or any time imports start failing, to see whether you need to sign in again.",
+						searchable: false,
+						render: (setting: Setting) => this.renderTestControl(setting),
+					},
+					{
+						name: "Clear sign-in",
+						desc: "Sign out of the embedded Plaud browser and wipe the stored token so the next sign-in starts completely fresh. Use this to reach the sign-in screen when it keeps signing you in automatically. Obsidian has no way to delete the secret entry, so an emptied one may stay in the token picker, but it holds no token.",
+						searchable: false,
+						render: (setting: Setting) =>
+							this.renderClearSignInControl(setting),
+					},
+				],
 			},
 			{
 				name: "API region",

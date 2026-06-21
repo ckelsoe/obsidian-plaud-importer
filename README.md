@@ -108,7 +108,7 @@ There are two ways to sign in. Try Option 1 first. If your login method does not
 
 #### Option 1: sign in through the pop-up window
 
-1. In **Settings → Community plugins → Plaud Importer**, find **Automatic sign-in** and click **Sign in**.
+1. In **Settings → Community plugins → Plaud Importer**, under **Sign in**, find **Sign in with email** and click **Sign in**.
 2. A window opens with Plaud's own website. Sign in the way you normally do.
 3. Once you reach your library, the plugin captures your token automatically and the window closes. The sign-in row shows **"signed in — a token is stored."**
 
