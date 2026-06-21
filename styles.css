@@ -170,6 +170,14 @@
 	color: var(--text-muted);
 }
 
+/* Explanatory note under the "Sign in" heading */
+.plaud-importer-signin-note {
+	margin: 0.25em 0 0.5em 0;
+	color: var(--text-muted);
+	font-size: var(--font-ui-smaller);
+	line-height: 1.5;
+}
+
 /* Numbered steps under the "Sign in with your browser" setting */
 .plaud-importer-browser-steps {
 	margin: 0.5em 0 0 0;

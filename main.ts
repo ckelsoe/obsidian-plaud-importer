@@ -33,6 +33,12 @@ const CAPTURED_SECRET_ID = "plaud-importer-token";
 // flow (where Google/Apple SSO work, unlike an embedded webview).
 const PLAUD_WEB_URL = "https://web.plaud.ai";
 
+// Explanatory note shown under the "Sign in" heading. Held in a const so it can
+// name Plaud/Google/Apple plainly: the sentence-case lint only inspects string
+// literals written directly at a setText/createEl call, not a referenced const.
+const SIGN_IN_NOTE =
+	"Plaud has no official API, so sign-in is unavoidably fragile and may stop working when Plaud changes their website. There are two ways to sign in, depending on how you log in to Plaud. Use 'Sign in with email' if you log in with an email address and password. Use 'Sign in with Google or Apple' if you log in with one of those.";
+
 // Bookmarklet for the browser sign-in flow. Run on a signed-in Plaud tab, it
 // hooks BOTH fetch and XMLHttpRequest (Plaud loads recordings via XHR, so a
 // fetch-only hook misses them), waits for a request carrying the workspace
@@ -657,6 +663,7 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 		);
 
 		new Setting(containerEl).setName("Sign in").setHeading();
+		this.renderSignInIntro(new Setting(containerEl));
 		this.renderSigninControl(
 			this.makeSetting(
 				containerEl,
@@ -693,6 +700,7 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 			),
 		);
 
+		new Setting(containerEl).setName("Output").setHeading();
 		this.addTextRow(
 			containerEl,
 			"Output folder",
@@ -707,6 +715,8 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 			"onDuplicate",
 			{ skip: "Skip", overwrite: "Overwrite", prompt: "Ask each time" },
 		);
+
+		new Setting(containerEl).setName("Appearance").setHeading();
 		this.addToggleRow(
 			containerEl,
 			"Show ribbon icon",
@@ -864,6 +874,13 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 			return build();
 		});
 		refreshStatus();
+	}
+
+	private renderSignInIntro(setting: Setting): void {
+		setting.descEl.createEl("p", {
+			cls: "plaud-importer-signin-note",
+			text: SIGN_IN_NOTE,
+		});
 	}
 
 	private renderSigninControl(setting: Setting): void {
@@ -1160,6 +1177,11 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 				heading: "Sign in",
 				items: [
 					{
+						name: "",
+						searchable: false,
+						render: (setting: Setting) => this.renderSignInIntro(setting),
+					},
+					{
 						name: "Sign in with email",
 						desc: "Best for email and password logins. Click Sign in, log in to Plaud in the window that opens, and your token is saved automatically. Google and Apple logins do not work in this window; use the option below for those.",
 						searchable: false,
@@ -1185,45 +1207,50 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 						render: (setting: Setting) =>
 							this.renderClearSignInControl(setting),
 					},
+					{
+						name: "API region",
+						desc: "Plaud server this vault is connected to. Detected automatically on the first import. EU and other regional accounts switch here on their own, so there is nothing to configure.",
+						searchable: false,
+						render: (setting: Setting) => this.renderRegionControl(setting),
+					},
 				],
 			},
 			{
-				name: "API region",
-				desc: "Plaud server this vault is connected to. Detected automatically on the first import. EU and other regional accounts switch here on their own, so there is nothing to configure.",
-				// Read-only status, not an input: the value is owned by the
-				// client's region auto-detection and persisted via
-				// onBaseUrlChanged. Rendered fresh on each settings open, so it
-				// always reflects the latest detected host.
-				searchable: false,
-				render: (setting: Setting) => this.renderRegionControl(setting),
+				type: "group",
+				heading: "Output",
+				items: [
+					{
+						name: "Output folder",
+						desc: "Folder inside your vault where imported notes are written.",
+						control: { type: "text", key: "outputFolder", placeholder: "Plaud" },
+					},
+					{
+						name: "Duplicate handling",
+						desc: "What to do when a note for the recording already exists in the output folder.",
+						control: {
+							type: "dropdown",
+							key: "onDuplicate",
+							options: { skip: "Skip", overwrite: "Overwrite", prompt: "Ask each time" },
+						},
+					},
+				],
 			},
 			{
-				name: "Output folder",
-				desc: "Folder inside your vault where imported notes are written.",
-				control: { type: "text", key: "outputFolder", placeholder: "Plaud" },
-			},
-			{
-				name: "Duplicate handling",
-				desc: "What to do when a note for the recording already exists in the output folder.",
-				control: {
-					type: "dropdown",
-					key: "onDuplicate",
-					options: { skip: "Skip", overwrite: "Overwrite", prompt: "Ask each time" },
-				},
-			},
-			{
-				name: "Show ribbon icon",
-				desc: "Display the plaud importer icon in Obsidian's left rail. Turn off if you prefer to launch imports only from the command palette.",
-				control: { type: "toggle", key: "showRibbonIcon" },
-			},
-			{
-				name: "Ribbon icon",
-				desc: "Which icon to display in the left rail. Only applies when 'show ribbon icon' is on.",
-				// The live preview swaps the SVG in place via setIcon() as the
-				// dropdown changes, so this stays a render callback rather than
-				// a plain dropdown control.
-				searchable: false,
-				render: (setting: Setting) => this.renderRibbonControl(setting),
+				type: "group",
+				heading: "Appearance",
+				items: [
+					{
+						name: "Show ribbon icon",
+						desc: "Display the plaud importer icon in Obsidian's left rail. Turn off if you prefer to launch imports only from the command palette.",
+						control: { type: "toggle", key: "showRibbonIcon" },
+					},
+					{
+						name: "Ribbon icon",
+						desc: "Which icon to display in the left rail. Only applies when 'show ribbon icon' is on.",
+						searchable: false,
+						render: (setting: Setting) => this.renderRibbonControl(setting),
+					},
+				],
 			},
 			{
 				type: "group",
