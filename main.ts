@@ -43,6 +43,39 @@ const PLAUD_WEB_URL = "https://web.plaud.ai";
 const SIGN_IN_BOOKMARKLET =
 	"javascript:(function(){function typ(v){try{if(!/eyJ/.test(v))return null;var s=v.replace(/^bearer /i,'').split('.')[0].replace(/-/g,'+').replace(/_/g,'/');while(s.length%4)s+='=';return JSON.parse(atob(s)).typ;}catch(e){return null;}}var done=false;function got(a){if(done||typeof a!=='string')return;if(typ(a)==='WT'){done=true;prompt('Plaud token captured. Select all, copy, then paste it into the token field in Obsidian settings:',a.replace(/^bearer /i,''));}}var of=window.fetch;window.fetch=function(i,n){try{var h=n&&n.headers;if(h){got(h.authorization||h.Authorization||(h.get&&h.get('authorization')));}}catch(e){}return of.apply(this,arguments);};var os=XMLHttpRequest.prototype.setRequestHeader;XMLHttpRequest.prototype.setRequestHeader=function(k,v){try{if(/^authorization$/i.test(k))got(v);}catch(e){}return os.apply(this,arguments);};alert('Token capture armed. Now open any recording in Plaud.');})()";
 
+// Standalone HTML page opened in the system browser for one-time bookmark
+// setup. It offers the sign-in bookmarklet as a draggable link so a
+// non-technical user can drag it onto their bookmarks bar instead of pasting a
+// javascript: URL into a new bookmark by hand. `&` in the href is escaped so
+// the bookmarklet's `&&`/`||` survive as a valid HTML attribute.
+function bookmarkSetupHtml(): string {
+	const href = SIGN_IN_BOOKMARKLET.replace(/&/g, "&amp;");
+	return [
+		"<!doctype html>",
+		'<html lang="en"><head><meta charset="utf-8">',
+		"<title>Plaud Importer bookmark setup</title>",
+		"<style>",
+		"body{font-family:system-ui,sans-serif;max-width:620px;margin:48px auto;padding:0 24px;line-height:1.55;color:#1a1a1a}",
+		"h1{font-size:1.35rem}",
+		".bm{display:inline-block;padding:12px 22px;background:#5b46f2;color:#fff;border-radius:8px;text-decoration:none;font-weight:600;font-size:1.05rem;cursor:grab}",
+		".note{color:#555;font-size:0.95rem}",
+		"ol{color:#333}",
+		"</style></head><body>",
+		"<h1>Plaud Importer: one-time setup</h1>",
+		"<p><strong>Drag this button up onto your browser's bookmarks bar:</strong></p>",
+		'<p><a class="bm" href="' + href + '">Plaud → Obsidian</a></p>',
+		'<p class="note">Bookmarks bar hidden? Press Ctrl+Shift+B (Cmd+Shift+B on Mac) to show it, then drag the button onto it.</p>',
+		"<hr><p>After it is saved, each time you need to connect:</p>",
+		"<ol>",
+		"<li>Sign in to Plaud in this browser.</li>",
+		"<li>Click the bookmark you just added.</li>",
+		"<li>Open any recording. A box shows your token. Copy it.</li>",
+		"<li>Go back to Obsidian and click the paste button.</li>",
+		"</ol>",
+		"</body></html>",
+	].join("");
+}
+
 // Curated list of Lucide icon IDs offered in the "Ribbon icon" setting.
 // Each entry is a valid Lucide ID bundled with Obsidian's icon set. This
 // list is intentionally short for now — a future upgrade can swap the
@@ -456,6 +489,48 @@ export default class PlaudImporterPlugin extends Plugin {
 		window.open(PLAUD_WEB_URL, "_blank");
 	}
 
+	// Writes the one-time bookmark-setup page to a temp file and opens it in the
+	// system browser, where the user drags the bookmarklet onto their bookmarks
+	// bar. Falls back to copying the bookmarklet if Node/Electron APIs are
+	// unavailable (e.g. a hardened build), so the manual path still works.
+	async openBookmarkSetupPage(): Promise<void> {
+		const req = (window as { require?: (id: string) => unknown }).require;
+		if (typeof req !== "function") {
+			void copyToClipboard(SIGN_IN_BOOKMARKLET, () => {
+				new Notice(
+					"Bookmarklet copied. Make a new bookmark and paste it into the address field.",
+				);
+			});
+			return;
+		}
+		try {
+			const os = req("os") as { tmpdir(): string };
+			const fs = req("fs") as {
+				writeFileSync(path: string, data: string): void;
+			};
+			const pathMod = req("path") as {
+				join(...parts: string[]): string;
+			};
+			const file = pathMod.join(os.tmpdir(), "plaud-importer-bookmark.html");
+			fs.writeFileSync(file, bookmarkSetupHtml());
+			const shell = (
+				req("electron") as {
+					shell?: { openPath(path: string): Promise<string> };
+				}
+			).shell;
+			if (shell && typeof shell.openPath === "function") {
+				await shell.openPath(file);
+			} else {
+				window.open("file:///" + file.replace(/\\/g, "/"), "_blank");
+			}
+		} catch (err) {
+			console.error("Plaud importer: bookmark setup page failed", err);
+			new Notice(
+				"Could not open the setup page. Copy the bookmarklet and add it as a bookmark manually.",
+			);
+		}
+	}
+
 	// Validates a raw token value (a typ WT access token, optionally bearer-
 	// prefixed) and, if valid, stores it in the captured-token secret and links
 	// it. Overwrites the same secret each time, so refreshing a token never
@@ -778,24 +853,20 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 			cls: "plaud-importer-browser-steps",
 		});
 		steps.createEl("li", {
-			text: "One-time setup: use the copy-bookmarklet button below, then make a new bookmark in your browser and paste it into the bookmark's address field.",
+			text: "One-time setup: use the set-up-bookmark button below. A page opens in your browser. Drag its button up onto your bookmarks bar.",
 		});
 		steps.createEl("li", {
 			text: "Use the open-in-browser button, then sign in the way you normally do.",
 		});
 		steps.createEl("li", {
-			text: "Once your recordings load, click the saved bookmark, then open any recording. A small box pops up with your token. Copy it.",
+			text: "Once your recordings load, click the bookmark you added, then open any recording. A small box pops up with your token. Copy it.",
 		});
 		steps.createEl("li", {
 			text: "Come back here and use the paste button. Your token is stored. Repeat from step 2 whenever it expires.",
 		});
 		setting.addButton((btn) =>
-			btn.setButtonText("Copy bookmarklet").onClick(() => {
-				void copyToClipboard(SIGN_IN_BOOKMARKLET, () => {
-					new Notice(
-						"Bookmarklet copied. Make a new bookmark in your browser and paste it into the address field.",
-					);
-				});
+			btn.setButtonText("Set up bookmark").onClick(() => {
+				void this.plugin.openBookmarkSetupPage();
 			}),
 		);
 		setting.addButton((btn) =>
