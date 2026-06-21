@@ -432,6 +432,18 @@ export default class PlaudImporterPlugin extends Plugin {
 				err,
 			);
 		}
+		// Wipe the stored token value(s). Obsidian's SecretStorage exposes no
+		// delete call (only set/get/list), so the secret entry itself cannot be
+		// removed; blanking the value is the most thorough removal available.
+		for (const id of new Set([this.settings.secretId, CAPTURED_SECRET_ID])) {
+			if (id.length > 0) {
+				try {
+					this.app.secretStorage.setSecret(id, "");
+				} catch (err) {
+					console.error("Plaud importer: failed to blank secret", err);
+				}
+			}
+		}
 		this.settings.secretId = "";
 		await this.saveSettings();
 		return { sessionCleared };
@@ -543,7 +555,7 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 			this.makeSetting(
 				containerEl,
 				"Clear sign-in",
-				"Sign out of the embedded Plaud browser and unlink the stored token so the next sign-in starts completely fresh. Use this to reach Plaud's sign-in screen when it keeps signing you in automatically. The token value stays in Obsidian's secret storage but is no longer used.",
+				"Sign out of the embedded Plaud browser and wipe the stored token so the next sign-in starts completely fresh. Use this to reach the sign-in screen when it keeps signing you in automatically. Obsidian has no way to delete the secret entry, so an emptied one may stay in the token picker, but it holds no token.",
 			),
 		);
 		this.renderRegionControl(
@@ -857,6 +869,7 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 					);
 					new Notice("Plaud sign-in cleared.");
 					this.signinRefresh?.();
+					this.tokenRefresh?.();
 				} finally {
 					btn.setDisabled(false);
 				}
@@ -1030,7 +1043,7 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 			},
 			{
 				name: "Clear sign-in",
-				desc: "Sign out of the embedded Plaud browser and unlink the stored token so the next sign-in starts completely fresh. Use this to reach Plaud's sign-in screen when it keeps signing you in automatically. The token value stays in Obsidian's secret storage but is no longer used.",
+				desc: "Sign out of the embedded Plaud browser and wipe the stored token so the next sign-in starts completely fresh. Use this to reach the sign-in screen when it keeps signing you in automatically. Obsidian has no way to delete the secret entry, so an emptied one may stay in the token picker, but it holds no token.",
 				searchable: false,
 				render: (setting: Setting) => this.renderClearSignInControl(setting),
 			},
