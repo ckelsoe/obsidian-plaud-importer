@@ -541,7 +541,7 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 			this.makeSetting(
 				containerEl,
 				"Sign in with your browser",
-				"Alternative to the embedded sign-in above. Sign in to Plaud in your normal browser (where Google and Apple work), then use the bookmarklet below to copy your token into Obsidian. Use this if the embedded window does not work for your login method.",
+				"For login methods the embedded window cannot handle: Google and Apple sign-in only complete in a real browser. Sign in to Plaud in your own browser, then bring the token back to Obsidian with the steps below.",
 			),
 		);
 		this.renderTestControl(
@@ -771,18 +771,33 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 	}
 
 	private renderBrowserSignInControl(setting: Setting): void {
+		// Stack the row and its buttons full-width: three buttons do not fit
+		// side by side in the right rail. See styles.css.
+		setting.settingEl.addClass("plaud-importer-browser-signin");
 		const steps = setting.descEl.createEl("ol", {
 			cls: "plaud-importer-browser-steps",
 		});
 		steps.createEl("li", {
-			text: "Copy the bookmarklet below and save it as a bookmark in your browser (new bookmark, paste it as the URL).",
+			text: "One-time setup: use the copy-bookmarklet button below, then make a new bookmark in your browser and paste it into the bookmark's address field.",
 		});
 		steps.createEl("li", {
-			text: "Open it in your browser with the button below, then sign in the way you normally do.",
+			text: "Use the open-in-browser button, then sign in the way you normally do.",
 		});
 		steps.createEl("li", {
-			text: "Click the saved bookmark, then open any recording. A popup shows your token. Copy it, return here, and use the paste-from-clipboard button below (it overwrites the same secret each time, so no need to create or delete one).",
+			text: "Once your recordings load, click the saved bookmark, then open any recording. A small box pops up with your token. Copy it.",
 		});
+		steps.createEl("li", {
+			text: "Come back here and use the paste button. Your token is stored. Repeat from step 2 whenever it expires.",
+		});
+		setting.addButton((btn) =>
+			btn.setButtonText("Copy bookmarklet").onClick(() => {
+				void copyToClipboard(SIGN_IN_BOOKMARKLET, () => {
+					new Notice(
+						"Bookmarklet copied. Make a new bookmark in your browser and paste it into the address field.",
+					);
+				});
+			}),
+		);
 		setting.addButton((btn) =>
 			btn
 				.setButtonText("Open in browser")
@@ -790,15 +805,6 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 				.onClick(() => {
 					this.plugin.openPlaudInBrowser();
 				}),
-		);
-		setting.addButton((btn) =>
-			btn.setButtonText("Copy bookmarklet").onClick(() => {
-				void copyToClipboard(SIGN_IN_BOOKMARKLET, () => {
-					new Notice(
-						"Bookmarklet copied. Create a new bookmark in your browser and paste it as the address.",
-					);
-				});
-			}),
 		);
 		setting.addButton((btn) =>
 			btn.setButtonText("Paste token from clipboard").onClick(async () => {
@@ -1030,7 +1036,7 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 			},
 			{
 				name: "Sign in with your browser",
-				desc: "Alternative to the embedded sign-in above. Sign in to Plaud in your normal browser (where Google and Apple work), then use the bookmarklet below to copy your token into Obsidian. Use this if the embedded window does not work for your login method.",
+				desc: "For login methods the embedded window cannot handle: Google and Apple sign-in only complete in a real browser. Sign in to Plaud in your own browser, then bring the token back to Obsidian with the steps below.",
 				searchable: false,
 				render: (setting: Setting) =>
 					this.renderBrowserSignInControl(setting),

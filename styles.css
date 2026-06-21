@@ -179,6 +179,27 @@
 	line-height: 1.5;
 }
 
+/*
+ * Stacked layout for the "Sign in with your browser" setting. Three buttons do
+ * not fit side by side in the right rail, so put the name/description on top and
+ * the buttons full-width, stacked, below. Class specificity (two classes) wins
+ * over Obsidian's default .setting-item-control without !important.
+ */
+.plaud-importer-browser-signin {
+	display: block;
+}
+
+.plaud-importer-browser-signin .setting-item-control {
+	flex-direction: column;
+	align-items: stretch;
+	gap: 0.4em;
+	margin-top: 0.6em;
+}
+
+.plaud-importer-browser-signin .setting-item-control button {
+	width: 100%;
+}
+
 /* In-app Plaud sign-in modal */
 .plaud-importer-login-modal {
 	width: 80vw;
