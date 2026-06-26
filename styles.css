@@ -107,9 +107,34 @@
 	padding: 0.75em 0.25em 0.25em 0.25em;
 }
 
+.plaud-importer-progress-status {
+	display: flex;
+	align-items: center;
+	gap: 0.5em;
+	min-width: 0;
+}
+
 .plaud-importer-progress-text {
 	font-size: 0.85em;
 	color: var(--text-muted);
+}
+
+/* Spinner shown beside the progress text while a page is being fetched. The
+ * rotation gives the "still working" motion a static line cannot. */
+.plaud-importer-spinner {
+	width: 0.9em;
+	height: 0.9em;
+	flex-shrink: 0;
+	border: 2px solid var(--background-modifier-border);
+	border-top-color: var(--interactive-accent);
+	border-radius: 50%;
+	animation: plaud-importer-spin 0.7s linear infinite;
+}
+
+@keyframes plaud-importer-spin {
+	to {
+		transform: rotate(360deg);
+	}
 }
 
 .plaud-importer-progress-action {

@@ -725,6 +725,7 @@ export class ImportModal extends Modal {
 	// hints and a manual action button when auto-loading is paused or fails.
 	private progressEl: HTMLElement | null = null;
 	private progressTextEl: HTMLElement | null = null;
+	private progressSpinnerEl: HTMLElement | null = null;
 	private progressActionButton: HTMLButtonElement | null = null;
 	// Invisible sentinel watched by IntersectionObserver. When it enters view
 	// (near list bottom), we auto-fetch another page.
@@ -830,6 +831,7 @@ export class ImportModal extends Modal {
 		this.listEl = null;
 		this.progressEl = null;
 		this.progressTextEl = null;
+		this.progressSpinnerEl = null;
 		this.progressActionButton = null;
 		this.autoLoadSentinelEl = null;
 		this.introEl = null;
@@ -856,6 +858,7 @@ export class ImportModal extends Modal {
 		this.listEl = null;
 		this.progressEl = null;
 		this.progressTextEl = null;
+		this.progressSpinnerEl = null;
 		this.progressActionButton = null;
 		this.autoLoadSentinelEl = null;
 		this.introEl = null;
@@ -1327,7 +1330,15 @@ export class ImportModal extends Modal {
 		}
 		const progressEl = this.listEl.createDiv({ cls: 'plaud-importer-progress' });
 		this.progressEl = progressEl;
-		this.progressTextEl = progressEl.createDiv({ cls: 'plaud-importer-progress-text' });
+		// Status group holds an (animated) spinner next to the text so the
+		// "loading more" state reads as active work, not a frozen list, while
+		// a page is fetched mid-scroll. The spinner stays hidden until a fetch
+		// is in flight.
+		const statusEl = progressEl.createDiv({ cls: 'plaud-importer-progress-status' });
+		this.progressSpinnerEl = statusEl.createDiv({
+			cls: 'plaud-importer-spinner plaud-importer-hidden',
+		});
+		this.progressTextEl = statusEl.createDiv({ cls: 'plaud-importer-progress-text' });
 		this.progressActionButton = progressEl.createEl('button', {
 			cls: 'plaud-importer-progress-action plaud-importer-hidden',
 		});
@@ -1360,6 +1371,8 @@ export class ImportModal extends Modal {
 		}
 		this.progressEl.hidden = false;
 		this.setProgressActionButton(null);
+		// Spinner is visible only while a page fetch is actually in flight.
+		this.progressSpinnerEl?.toggleClass('plaud-importer-hidden', !this.loadingMore);
 		if (this.loadingMore) {
 			this.progressTextEl.setText('Loading more recordings...');
 			return;
