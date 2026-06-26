@@ -162,11 +162,12 @@ const DEFAULT_SETTINGS: PlaudImporterSettings = {
 	foldTranscript: true,
 	transcriptHeaderLevel: 4,
 	// 'plaud' keeps human-set Plaud tags but drops the AI keyword guesses
-	// that were flooding vaults with 20-30 single-use tags. The keywords
-	// stay available as a frontmatter property via aiKeywordsAsProperty.
+	// that were flooding vaults with single-use tags. aiKeywordsAsProperty
+	// is off by default because Plaud's keyword list can run to hundreds of
+	// low-value entries per recording; users who want it can opt back in.
 	tagMode: "plaud",
 	customTags: "plaud-meeting",
-	aiKeywordsAsProperty: true,
+	aiKeywordsAsProperty: false,
 	autoCloseSummary: true,
 	autoCloseSummarySeconds: 20,
 };
@@ -1308,7 +1309,7 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 					},
 					{
 						name: "Keep AI keywords as note property",
-						desc: "When AI keywords are excluded from tags, write them to a keywords frontmatter property instead. The property is searchable and Dataview-queryable but stays out of the tag pane.",
+						desc: "When AI keywords are excluded from tags, write them to a keywords frontmatter property instead. Plaud's keyword list can run to hundreds of low-value entries per recording, so this is off by default. The property is searchable and Dataview-queryable but stays out of the tag pane.",
 						control: { type: "toggle", key: "aiKeywordsAsProperty" },
 					},
 				],

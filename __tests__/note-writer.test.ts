@@ -1594,10 +1594,11 @@ describe('buildNoteTags', () => {
 		});
 	});
 
-	it('end-to-end: the 2026-04-14 capture under the default settings', () => {
-		// Same real-data shape as the mergeTagSources end-to-end case, but
-		// under the new defaults: tagMode 'plaud' with the property toggle
-		// on. The 9 AI keywords move from tags: to keywords:.
+	it('end-to-end: the 2026-04-14 capture with the keywords property opted in', () => {
+		// Same real-data shape as the mergeTagSources end-to-end case, in
+		// tagMode 'plaud' with the property toggle explicitly on. The toggle
+		// is OFF by default (see DEFAULT_SETTINGS); this exercises the opt-in
+		// path where the 9 AI keywords move from tags: to keywords:.
 		const result = buildNoteTags([], [
 			'AI Agent',
 			'Customer Data',
