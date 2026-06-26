@@ -248,7 +248,25 @@ export class ReverseEngineeredPlaudClient implements PlaudClient {
 		// fields generated yet, and older recordings may never have had
 		// them. See dev-docs/deferred-decisions.md DD-003 and DD-004.
 
-		const legacy = await this.fetchLegacyTranssumm(id);
+		// The legacy /ai/transsumm/{id} POST appears to START a transcription
+		// task server-side. On older recordings Plaud returns the in-band
+		// status=-12 "start trans task error" instead of cached data, which
+		// used to throw and abort the whole recording. Make it best-effort,
+		// exactly like the bundle below: /file/detail/{id} is a plain read of
+		// already-stored data and usually still carries the polished transcript
+		// and newer summary for those recordings. We only fail when BOTH
+		// sources come back empty. See dev-docs/deferred-decisions.md DD-003.
+		let legacy: TranscriptAndSummary = {
+			transcript: null,
+			summary: null,
+			nestedAssetLinks: {},
+		};
+		let legacyError: unknown = null;
+		try {
+			legacy = await this.fetchLegacyTranssumm(id);
+		} catch (err) {
+			legacyError = err;
+		}
 
 		let bundle: FileDetailBundle = {
 			polishedTranscript: null,
@@ -269,6 +287,21 @@ export class ReverseEngineeredPlaudClient implements PlaudClient {
 
 		const finalTranscript = bundle.polishedTranscript ?? legacy.transcript;
 		const finalSummary = bundle.newerSummary ?? legacy.summary;
+
+		// If the legacy endpoint errored AND the detail bundle yielded no
+		// transcript or summary, there is genuinely nothing to write. Surface
+		// the original Plaud error (retryable api-error) rather than writing an
+		// empty note. When the bundle DID produce content, the legacy failure
+		// was recoverable, so it is intentionally swallowed.
+		if (legacyError !== null && finalTranscript === null && finalSummary === null) {
+			throw legacyError instanceof Error
+				? legacyError
+				: new PlaudApiError(
+						`Plaud transcript/summary fetch failed for ${id}: ${describeUnknownError(legacyError)}`,
+						undefined,
+						`/ai/transsumm/${encodeURIComponent(id)}`,
+					);
+		}
 
 		if (this.debugLogger?.enabled === true) {
 			this.debugLogger.log({
@@ -294,6 +327,8 @@ export class ReverseEngineeredPlaudClient implements PlaudClient {
 						bundle.newerSummary !== null ? 'auto_sum_note' : 'ai/transsumm',
 					bundleErrorMessage:
 						bundleError !== null ? describeUnknownError(bundleError) : null,
+					legacyErrorMessage:
+						legacyError !== null ? describeUnknownError(legacyError) : null,
 					segmentCount: finalTranscript?.segments.length ?? 0,
 					summaryLength: finalSummary?.text.length ?? 0,
 					aiKeywordCount: bundle.aiKeywords.length,

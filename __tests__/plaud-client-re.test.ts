@@ -891,6 +891,75 @@ describe('getTranscriptAndSummary request shape', () => {
 	});
 });
 
+// Legacy-transsumm failure fallback (older recordings) ----------------------
+//
+// Older recordings return an in-band `status=-12 "start trans task error"`
+// from POST /ai/transsumm/{id} (the endpoint appears to start a transcription
+// task that cannot run for archived recordings). That used to abort the whole
+// recording. /file/detail/{id} is a plain read of stored data and still
+// carries the summary/transcript, so the legacy failure must be best-effort.
+
+describe('getTranscriptAndSummary legacy-transsumm -12 fallback', () => {
+	// Routes the two endpoints independently: transsumm fails in-band, detail
+	// succeeds (or not, per the second test).
+	function routed(
+		transsummResponse: PlaudHttpResponse,
+		detailResponse: PlaudHttpResponse,
+	): PlaudHttpFetcher {
+		return async (req) => {
+			if (req.url.includes('/ai/transsumm/')) {
+				return transsummResponse;
+			}
+			if (req.url.includes('/file/detail/')) {
+				return detailResponse;
+			}
+			return status(404);
+		};
+	}
+
+	const transsummMinus12 = ok({
+		status: -12,
+		msg: 'start trans task error',
+	});
+
+	const detailWithNewerSummary = ok({
+		status: 0,
+		msg: 'success',
+		data: {
+			pre_download_content_list: [
+				{
+					data_type: 'auto_sum_note',
+					data_content: '## Key points\n- Recovered from /file/detail',
+				},
+			],
+		},
+	});
+
+	it('recovers the summary from /file/detail when transsumm returns -12', async () => {
+		const client = new ReverseEngineeredPlaudClient(
+			() => 'tok',
+			routed(transsummMinus12, detailWithNewerSummary),
+		);
+
+		const result = await client.getTranscriptAndSummary(ID);
+
+		expect(result.summary).not.toBeNull();
+		expect(result.summary?.text).toContain('Recovered from /file/detail');
+	});
+
+	it('surfaces the original -12 error when /file/detail also yields nothing', async () => {
+		const emptyDetail = ok({ status: 0, msg: 'success', data: {} });
+		const client = new ReverseEngineeredPlaudClient(
+			() => 'tok',
+			routed(transsummMinus12, emptyDetail),
+		);
+
+		await expect(client.getTranscriptAndSummary(ID)).rejects.toThrow(
+			/start trans task error/,
+		);
+	});
+});
+
 // Happy path response parsing ----------------------------------------------
 
 describe('getTranscriptAndSummary happy path', () => {
