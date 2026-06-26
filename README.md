@@ -156,6 +156,8 @@ Folder inside your vault where imported notes are written. Defaults to `Plaud`. 
 
 By default every note lands directly in the output folder. To keep a growing library organized, set a **Subfolder template** that files each note into a subfolder built from the recording's date. Leave it empty to keep the flat layout.
 
+A forward slash (`/`) starts a new nested folder level, so `{{yyyy}}/{{MM}}` makes a year folder with month folders inside it. Everything else (dashes, spaces, words) stays within a single folder name.
+
 Tokens (combine with your own text and separators):
 
 | Token | Expands to |
@@ -171,11 +173,11 @@ Examples (folder for a June 4 2026 recording):
 
 | Template | Resulting folder |
 | --- | --- |
-| `{{yyyy-MM}}` | `2026-06` |
-| `{{yyyy}}/{{MM}}` | `2026/06` (nested) |
-| `{{yyyy}}-{{MM}}` | `2026-06` (your own dash) |
-| `{{dd}}-{{MM}}-{{yyyy}}` | `04-06-2026` (day-first order) |
-| `{{yyyy}}/W{{ww}}` | `2026/W23` (by week) |
+| `{{yyyy-MM}}` | `2026-06` (one folder) |
+| `{{yyyy}}/{{MM}}` | `2026/06` (a `2026` folder containing a `06` folder) |
+| `{{yyyy}}-{{MM}}` | `2026-06` (one folder, your own dash) |
+| `{{dd}}-{{MM}}-{{yyyy}}` | `04-06-2026` (one folder, day-first order) |
+| `{{yyyy}}/W{{ww}}` | `2026/W23` (a `2026` folder containing a `W23` folder) |
 
 The numbers are fixed and not locale dependent; you choose the order and the separators, so any date layout works. The folder is built from the recording's own date, so re-importing always resolves to the same place. A recording with no usable date goes to an `_undated` subfolder.
 

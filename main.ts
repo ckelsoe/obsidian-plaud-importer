@@ -110,7 +110,7 @@ const DEFAULT_RIBBON_ICON = "audio-lines";
 // at createEl/setDesc) so the obsidianmd sentence-case lint, which inspects
 // literal arguments, leaves the token examples and proper nouns alone.
 const SUBFOLDER_TEMPLATE_INTRO =
-	"Optional. Files each imported note into a subfolder of the output folder, built from the recording's own date. Leave empty to keep every note in one folder. The order and separators are yours; combine tokens with any literal text.";
+	"Optional. Files each imported note into a subfolder of the output folder, built from the recording's own date. Leave empty to keep every note in one folder. Combine tokens with any literal text; a forward slash (/) starts a new nested folder level, so {{yyyy}}/{{MM}} makes a year folder containing month folders.";
 
 // [token, what it expands to] pairs. Numeric and zero-padded so folder names
 // sort chronologically; no locale-dependent or named-month forms.
@@ -127,9 +127,9 @@ const SUBFOLDER_TEMPLATE_TOKENS: ReadonlyArray<readonly [string, string]> = [
 // nesting, a custom separator, and a non-US day-first order so the answer to
 // "can I add a dash / reorder for my locale" is visible, not buried.
 const SUBFOLDER_TEMPLATE_EXAMPLES: ReadonlyArray<readonly [string, string]> = [
-	["{{yyyy-MM}}", "2026-06"],
-	["{{yyyy}}/{{MM}}", "2026/06 (nested folders)"],
-	["{{yyyy}}-{{MM}}", "2026-06 (your own dash separator)"],
+	["{{yyyy-MM}}", "2026-06 (one folder)"],
+	["{{yyyy}}/{{MM}}", "2026/06 (a 2026 folder containing a 06 folder)"],
+	["{{yyyy}}-{{MM}}", "2026-06 (one folder, your own dash separator)"],
 	["{{dd}}-{{MM}}-{{yyyy}}", "04-06-2026 (day-first order)"],
 	["{{yyyy}}/W{{ww}}", "2026/W23 (by week)"],
 ];
