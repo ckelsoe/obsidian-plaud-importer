@@ -2190,6 +2190,56 @@ describe('getTranscriptAndSummary polished-transcript path', () => {
 		expect(urls.some((u) => u.includes('/polish'))).toBe(true);
 	});
 
+	it('recovers the raw transcript from /file/detail when transsumm -12s and there is no polish', async () => {
+		// Older recording: transsumm fails in-band, the detail bundle has a
+		// raw `transaction` entry but was never polished and has no
+		// auto_sum_note. The raw transcript link must be followed so the
+		// recording still imports.
+		const detailRawOnly = ok({
+			status: 0,
+			msg: 'success',
+			data: {
+				content_list: [
+					{
+						data_type: 'transaction',
+						task_status: 1,
+						data_link: 'https://s3/raw-transcript?sig=x',
+					},
+				],
+			},
+		});
+		const { fetcher, requests } = routeFetcher({
+			transsumm: ok({ status: -12, msg: 'start trans task error' }),
+			detail: detailRawOnly,
+			// routeFetcher routes any non-transsumm/non-detail URL here, which
+			// covers the raw transcript S3 link.
+			polish: ok([
+				polishedSegment({
+					speaker: 'Speaker 1',
+					original_speaker: 'Speaker 1',
+					content: 'Raw line one.',
+				}),
+				polishedSegment({
+					start_time: 1000,
+					end_time: 2000,
+					speaker: 'Speaker 2',
+					original_speaker: 'Speaker 2',
+					content: 'Raw line two.',
+				}),
+			]),
+		});
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+
+		const { transcript } = await client.getTranscriptAndSummary(ID);
+
+		expect(transcript).not.toBeNull();
+		expect(transcript?.segments).toHaveLength(2);
+		expect(transcript?.segments[0].text).toContain('Raw line one');
+		// The raw S3 link was fetched without the Bearer token.
+		const rawReq = requests().find((r) => r.url.includes('/raw-transcript'));
+		expect(rawReq?.headers.Authorization).toBeUndefined();
+	});
+
 	it('fetches the pre-signed S3 URL WITHOUT Authorization (skipAuth)', async () => {
 		const { fetcher, requests } = routeFetcher({
 			transsumm: ok(transsummEnvelope()),

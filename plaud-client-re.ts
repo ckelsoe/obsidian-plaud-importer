@@ -403,6 +403,7 @@ export class ReverseEngineeredPlaudClient implements PlaudClient {
 		const rawDetail = await this.fetchJson(detailUrl, detailEndpoint);
 
 		const polishLink = findTransactionPolishLink(rawDetail, detailEndpoint);
+		const rawTranscriptLink = findRawTranscriptLink(rawDetail, detailEndpoint);
 		const outlineLink = findOutlineLink(rawDetail, detailEndpoint);
 		const newerSummaryMarkdown = findNewerSummaryMarkdown(rawDetail, detailEndpoint);
 		const aiKeywords = findAiKeywords(rawDetail, detailEndpoint);
@@ -417,20 +418,29 @@ export class ReverseEngineeredPlaudClient implements PlaudClient {
 			newerSummaryMarkdown !== null ? { id, text: newerSummaryMarkdown } : null;
 
 		let polishedTranscript: Transcript | null = null;
-		if (polishLink !== null) {
+		// Prefer the polished transcript (real speaker names from Plaud's
+		// rename map); fall back to the raw `transaction` transcript when a
+		// recording was never polished. Older recordings frequently have only
+		// the raw entry AND fail the legacy /ai/transsumm endpoint with -12, so
+		// this raw fallback is what lets them import at all.
+		const transcriptLink = polishLink ?? rawTranscriptLink;
+		if (transcriptLink !== null) {
 			// Fetch the pre-signed S3 URL without the Bearer token — it already
 			// carries its own X-Amz-Signature. Synthetic endpoint label for
 			// logging / errors so the origin of the call is obvious in debug
 			// output without leaking the full URL (which contains an AWS
 			// session token query param).
-			const polishEndpoint = `/s3/file_transaction_polish/${encodeURIComponent(id)}`;
-			const rawPolish = await this.fetchJson(polishLink, polishEndpoint, {
+			const transcriptEndpoint =
+				polishLink !== null
+					? `/s3/file_transaction_polish/${encodeURIComponent(id)}`
+					: `/s3/file_transaction/${encodeURIComponent(id)}`;
+			const rawTranscript = await this.fetchJson(transcriptLink, transcriptEndpoint, {
 				skipAuth: true,
 			});
-			// The polish file is a bare JSON array of segments (no envelope).
-			// parseTranscriptField handles that shape directly — pass the raw
-			// value as the segments list.
-			polishedTranscript = parseTranscriptField(id, rawPolish, polishEndpoint);
+			// The transcript file is a bare JSON array of segments (no
+			// envelope). parseTranscriptField handles that shape directly —
+			// pass the raw value as the segments list.
+			polishedTranscript = parseTranscriptField(id, rawTranscript, transcriptEndpoint);
 		}
 
 		let chapters: readonly Chapter[] = [];
@@ -1768,6 +1778,22 @@ export function findTransactionPolishLink(
 	endpoint: string,
 ): string | null {
 	return findContentListLink(raw, endpoint, 'transaction_polish');
+}
+
+/**
+ * Walk a `/file/detail/{id}` response and return the pre-signed S3 URL of the
+ * RAW transcript (`data_type === 'transaction'`) — the unpolished transcript
+ * with Plaud's "Speaker 1/2" labels and no rename map. Used as a fallback when
+ * a recording has no `transaction_polish` entry, which is common on older
+ * recordings that also fail the legacy `/ai/transsumm/{id}` endpoint with the
+ * in-band `-12` "start trans task error". Same selection rules as the polish
+ * finder: requires `task_status === 1`, returns null when absent.
+ */
+export function findRawTranscriptLink(
+	raw: unknown,
+	endpoint: string,
+): string | null {
+	return findContentListLink(raw, endpoint, 'transaction');
 }
 
 function parseTranssummResponse(
