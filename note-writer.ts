@@ -116,6 +116,23 @@ export type HeadingLevel = 1 | 2 | 3 | 4 | 5 | 6;
 
 export interface NoteWriterOptions {
 	readonly outputFolder: string;
+	/**
+	 * Optional subfolder template appended to `outputFolder`, resolved per
+	 * recording against its date via `resolveSubfolder`. Empty or omitted
+	 * reproduces the flat `outputFolder`-only layout. See `resolveSubfolder`
+	 * for the token list and rules.
+	 */
+	readonly subfolderTemplate?: string;
+	/**
+	 * Optional vault-wide lookup from a `plaud-id` to the path of an existing
+	 * note for that recording, anywhere under the output folder. Lets the
+	 * writer find a prior import that lives in a DIFFERENT subfolder (for
+	 * example after the user edits `subfolderTemplate`) so it applies the
+	 * duplicate policy to that note instead of silently writing a second copy.
+	 * Returns null when no prior note exists. When omitted, the writer falls
+	 * back to the path-scoped check only.
+	 */
+	readonly existingPathForPlaudId?: (plaudId: string) => string | null;
 	readonly onDuplicate: DuplicatePolicy;
 	/**
 	 * Required when `onDuplicate === 'prompt'`. Invoked per duplicate
@@ -359,6 +376,119 @@ export function extractSpeakers(transcript: Transcript | null): readonly string[
 function formatDateYmd(d: Date): string {
 	const pad = (n: number): string => String(n).padStart(2, '0');
 	return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+/**
+ * Tokens recognized in a destination subfolder template. Each expands from
+ * the recording's own date, using the SAME local-time basis as the `date:`
+ * frontmatter field (formatDateYmd) so the folder and the field never
+ * disagree about which day a recording belongs to.
+ */
+const SUBFOLDER_TOKENS = ['yyyy', 'MM', 'dd', 'yyyy-MM', 'ww', 'Q'] as const;
+
+/**
+ * ISO 8601 week number (1-53) for a date, computed from its LOCAL calendar
+ * day so it agrees with the other tokens' local-time basis. Week 1 is the
+ * week containing the first Thursday of the year; weeks start Monday. The
+ * arithmetic runs in UTC purely to sidestep DST hour shifts — only the
+ * local Y/M/D are fed in, so the result is the local day's ISO week.
+ *
+ * Caveat for templates that pair `{{yyyy}}` with `{{ww}}`: ISO weeks belong
+ * to an ISO week-year that can differ from the calendar year by one at the
+ * Dec/Jan boundary (e.g. 2027-01-01 can be ISO week 53). `{{yyyy}}` is the
+ * calendar year, so a handful of boundary recordings may file under a
+ * calendar year that disagrees with their ISO week. This is cosmetic for
+ * foldering and avoids exposing a second, confusing week-year token.
+ */
+function isoWeekNumber(year: number, monthIndex: number, day: number): number {
+	const d = new Date(Date.UTC(year, monthIndex, day));
+	const dayOfWeek = (d.getUTCDay() + 6) % 7; // Monday = 0 ... Sunday = 6
+	d.setUTCDate(d.getUTCDate() - dayOfWeek + 3); // shift to the week's Thursday
+	const firstThursday = new Date(Date.UTC(d.getUTCFullYear(), 0, 4));
+	const firstDayOfWeek = (firstThursday.getUTCDay() + 6) % 7;
+	firstThursday.setUTCDate(firstThursday.getUTCDate() - firstDayOfWeek + 3);
+	const msPerWeek = 7 * 24 * 60 * 60 * 1000;
+	return 1 + Math.round((d.getTime() - firstThursday.getTime()) / msPerWeek);
+}
+
+/**
+ * Resolve a user-configured subfolder template against a recording's date.
+ *
+ * The result is a vault-relative subpath (no leading/trailing slash) that the
+ * caller appends to the output folder. Keying off the recording date (not the
+ * import date) keeps the resolved path a pure function of the recording's own
+ * metadata, so the same recording always lands in the same folder and the
+ * duplicate guard keeps working across re-imports.
+ *
+ * Rules:
+ *  - An empty or whitespace-only template returns '' (flat, current behavior).
+ *  - Literal path text is preserved: `meetings/{{yyyy}}` is valid.
+ *  - An unknown `{{token}}` throws, so a typo surfaces instead of silently
+ *    creating a `{{yyy}}` folder.
+ *  - A missing or invalid recording date resolves to the `_undated` bucket
+ *    rather than collapsing tokens to empty path segments.
+ *  - The expanded path runs through normalizeFolderPath, so `..` traversal and
+ *    redundant slashes are rejected/cleaned the same as the output folder.
+ */
+export function resolveSubfolder(template: string, date: Date): string {
+	if (template.trim() === '') {
+		return '';
+	}
+	const dateValid = date instanceof Date && !Number.isNaN(date.getTime());
+	const pad = (n: number): string => String(n).padStart(2, '0');
+	const expand = (token: string): string => {
+		switch (token) {
+			case 'yyyy':
+				return String(date.getFullYear());
+			case 'MM':
+				return pad(date.getMonth() + 1);
+			case 'dd':
+				return pad(date.getDate());
+			case 'yyyy-MM':
+				return `${date.getFullYear()}-${pad(date.getMonth() + 1)}`;
+			case 'ww':
+				return pad(
+					isoWeekNumber(date.getFullYear(), date.getMonth(), date.getDate()),
+				);
+			case 'Q':
+				return String(Math.floor(date.getMonth() / 3) + 1);
+			default:
+				return '';
+		}
+	};
+	let sawUndatedToken = false;
+	const replaced = template.replace(/\{\{\s*([^}]*?)\s*\}\}/g, (_match, raw: string) => {
+		const token = raw.trim();
+		if (!(SUBFOLDER_TOKENS as readonly string[]).includes(token)) {
+			throw new NoteWriterError(
+				`Unknown subfolder template token "{{${token}}}" — valid tokens: ${SUBFOLDER_TOKENS.join(', ')}`,
+			);
+		}
+		if (!dateValid) {
+			sawUndatedToken = true;
+			return '';
+		}
+		return expand(token);
+	});
+	if (sawUndatedToken) {
+		return '_undated';
+	}
+	return normalizeFolderPath(replaced);
+}
+
+/**
+ * Join an output folder with a resolved subfolder, tolerating either side
+ * being empty so the flat case (`subfolder === ''`) reproduces the original
+ * `outputFolder`-only path exactly.
+ */
+function joinFolderPath(base: string, sub: string): string {
+	if (base === '') {
+		return sub;
+	}
+	if (sub === '') {
+		return base;
+	}
+	return `${base}/${sub}`;
 }
 
 /**
@@ -1107,6 +1237,8 @@ export class NoteWriter {
 	// if the raw input had path-traversal segments, so this value is always
 	// safe to concatenate with a filename.
 	private readonly outputFolder: string;
+	private readonly subfolderTemplate: string;
+	private readonly existingPathForPlaudId?: (plaudId: string) => string | null;
 	private readonly onDuplicate: DuplicatePolicy;
 	private readonly promptOnDuplicate?: DuplicatePromptCallback;
 	private readonly defaultFormatOptions: FormatMarkdownOptions;
@@ -1128,6 +1260,8 @@ export class NoteWriter {
 		}
 		this.vault = vault;
 		this.outputFolder = normalizeFolderPath(options.outputFolder);
+		this.subfolderTemplate = options.subfolderTemplate ?? '';
+		this.existingPathForPlaudId = options.existingPathForPlaudId;
 		this.onDuplicate = options.onDuplicate;
 		this.promptOnDuplicate = options.promptOnDuplicate;
 		this.defaultFormatOptions = {
@@ -1159,7 +1293,12 @@ export class NoteWriter {
 			);
 		}
 
-		await this.ensureFolder(this.outputFolder);
+		// Resolve the per-recording destination folder. The subfolder template
+		// keys off the recording date, so the resolved path is a pure function
+		// of the recording's own metadata and stays stable across re-imports.
+		const subfolder = resolveSubfolder(this.subfolderTemplate, recording.createdAt);
+		const destinationFolder = joinFolderPath(this.outputFolder, subfolder);
+		await this.ensureFolder(destinationFolder);
 
 		// Expand the title with its year if it uses Plaud's MM-DD default
 		// naming — applies to both the filename and the H1 so they stay in
@@ -1170,7 +1309,7 @@ export class NoteWriter {
 		);
 		const filename = `${sanitizeFilename(expandedTitle)}.md`;
 		const targetPath =
-			this.outputFolder === '' ? filename : `${this.outputFolder}/${filename}`;
+			destinationFolder === '' ? filename : `${destinationFolder}/${filename}`;
 		const effectiveFormatOptions: FormatMarkdownOptions = {
 			...this.defaultFormatOptions,
 			...formatOptions,
@@ -1198,7 +1337,25 @@ export class NoteWriter {
 					}
 				: undefined;
 
-		const existing = this.vault.getFileByPath(targetPath);
+		// Look for a prior note for this recording. First the exact target
+		// path; then, if none, a vault-wide lookup that catches an earlier
+		// import living in a DIFFERENT subfolder (for example after the user
+		// edited the subfolder template). Matching cross-folder is what stops
+		// a template change from writing a second copy of a recording that is
+		// already imported elsewhere. The existing note is left in place — this
+		// is dedup, not migration; moving notes is a separate, opt-in feature.
+		let existing = this.vault.getFileByPath(targetPath);
+		let notePath = targetPath;
+		if (existing === null && this.existingPathForPlaudId) {
+			const priorPath = this.existingPathForPlaudId(recording.id);
+			if (priorPath !== null && priorPath !== targetPath) {
+				const priorFile = this.vault.getFileByPath(priorPath);
+				if (priorFile !== null) {
+					existing = priorFile;
+					notePath = priorPath;
+				}
+			}
+		}
 		if (existing === null) {
 			try {
 				await this.vault.create(targetPath, markdown);
@@ -1212,17 +1369,17 @@ export class NoteWriter {
 			return { status: 'created', path: targetPath, foldInfo };
 		}
 
-		// A file already exists at this path. Before honoring the duplicate
-		// policy, check whether it belongs to a DIFFERENT recording — two
-		// distinct Plaud recordings can sanitize to the same filename, and
-		// silently overwriting or skipping would cause data loss that the
-		// user would never know about.
+		// A note for this recording already exists (at notePath). Before
+		// honoring the duplicate policy, check whether it belongs to a
+		// DIFFERENT recording — two distinct Plaud recordings can sanitize to
+		// the same filename, and silently overwriting or skipping would cause
+		// data loss that the user would never know about.
 		let existingContent: string;
 		try {
 			existingContent = await this.vault.read(existing);
 		} catch (cause) {
 			throw new NoteWriterError(
-				`Failed to read existing ${targetPath} while checking for collisions: ${
+				`Failed to read existing ${notePath} while checking for collisions: ${
 					cause instanceof Error ? cause.message : String(cause)
 				}`,
 			);
@@ -1230,12 +1387,12 @@ export class NoteWriter {
 		const existingPlaudId = extractPlaudIdFromFrontmatter(existingContent);
 		if (existingPlaudId !== null && existingPlaudId !== recording.id) {
 			throw new NoteWriterError(
-				`Filename collision at ${targetPath}: this note belongs to recording ${existingPlaudId}, not ${recording.id}. Rename one of the source recordings in Plaud or delete the existing note to re-import.`,
+				`Filename collision at ${notePath}: this note belongs to recording ${existingPlaudId}, not ${recording.id}. Rename one of the source recordings in Plaud or delete the existing note to re-import.`,
 			);
 		}
 
 		if (this.onDuplicate === 'skip') {
-			return { status: 'skipped', path: targetPath };
+			return { status: 'skipped', path: notePath };
 		}
 
 		// Resolve prompt-mode into a concrete action. 'skip' short-circuits,
@@ -1250,7 +1407,7 @@ export class NoteWriter {
 			const decision = await this.promptOnDuplicate({
 				recordingId: recording.id,
 				recordingTitle: recording.title,
-				targetPath,
+				targetPath: notePath,
 			});
 			if (decision === 'cancel') {
 				throw new NoteWriterCancelledError();
@@ -1261,7 +1418,7 @@ export class NoteWriter {
 				);
 			}
 			if (decision === 'skip') {
-				return { status: 'skipped', path: targetPath };
+				return { status: 'skipped', path: notePath };
 			}
 		}
 
@@ -1273,12 +1430,12 @@ export class NoteWriter {
 			await this.vault.process(existing, () => markdown);
 		} catch (cause) {
 			throw new NoteWriterError(
-				`Failed to overwrite ${targetPath} for recording ${recording.id}: ${
+				`Failed to overwrite ${notePath} for recording ${recording.id}: ${
 					cause instanceof Error ? cause.message : String(cause)
 				}`,
 			);
 		}
-		return { status: 'overwritten', path: targetPath, foldInfo };
+		return { status: 'overwritten', path: notePath, foldInfo };
 	}
 
 	/**

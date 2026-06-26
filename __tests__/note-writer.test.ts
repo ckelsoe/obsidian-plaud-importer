@@ -17,6 +17,7 @@ import {
 	mergeTagSources,
 	buildNoteTags,
 	type TagBuildOptions,
+	resolveSubfolder,
 	sanitizeFilename,
 	substitutePlaudPlaceholders,
 	type FileLike,
@@ -329,6 +330,83 @@ describe('expandTitleWithYear', () => {
 		expect(expandTitleWithYear('  04-13 Padded  ', apr14)).toBe(
 			'2026-04-13 Padded',
 		);
+	});
+});
+
+// resolveSubfolder ----------------------------------------------------------
+
+describe('resolveSubfolder', () => {
+	const jun4 = new Date(2026, 5, 4); // 2026-06-04 local
+
+	it('returns empty string for an empty or whitespace template (flat behavior)', () => {
+		expect(resolveSubfolder('', jun4)).toBe('');
+		expect(resolveSubfolder('   ', jun4)).toBe('');
+	});
+
+	it('expands {{yyyy}}, {{MM}}, {{dd}} from the recording date', () => {
+		expect(resolveSubfolder('{{yyyy}}', jun4)).toBe('2026');
+		expect(resolveSubfolder('{{MM}}', jun4)).toBe('06');
+		expect(resolveSubfolder('{{dd}}', jun4)).toBe('04');
+	});
+
+	it('expands the {{yyyy-MM}} composite token', () => {
+		expect(resolveSubfolder('{{yyyy-MM}}', jun4)).toBe('2026-06');
+	});
+
+	it('supports nested tokens and literal path text', () => {
+		expect(resolveSubfolder('{{yyyy}}/{{MM}}', jun4)).toBe('2026/06');
+		expect(resolveSubfolder('meetings/{{yyyy-MM}}', jun4)).toBe('meetings/2026-06');
+	});
+
+	it('keeps literal separators a user puts between tokens', () => {
+		// A dash between year and month.
+		expect(resolveSubfolder('{{yyyy}}-{{MM}}', jun4)).toBe('2026-06');
+		// Day-first ordering for non-US users, with their own separators.
+		expect(resolveSubfolder('{{dd}}-{{MM}}-{{yyyy}}', jun4)).toBe('04-06-2026');
+		// Literal text around a token.
+		expect(resolveSubfolder('Q{{Q}}-{{yyyy}}', jun4)).toBe('Q2-2026');
+	});
+
+	it('tolerates inner whitespace in a token', () => {
+		expect(resolveSubfolder('{{ yyyy-MM }}', jun4)).toBe('2026-06');
+	});
+
+	it('throws on an unknown token so typos surface', () => {
+		expect(() => resolveSubfolder('{{yyy}}', jun4)).toThrow(NoteWriterError);
+		expect(() => resolveSubfolder('{{week}}', jun4)).toThrow(/Unknown subfolder template token/);
+	});
+
+	it('resolves to _undated when the recording date is missing or invalid', () => {
+		expect(resolveSubfolder('{{yyyy-MM}}', new Date(Number.NaN))).toBe('_undated');
+	});
+
+	it('rejects a template that would escape the vault', () => {
+		expect(() => resolveSubfolder('../{{yyyy}}', jun4)).toThrow(NoteWriterError);
+	});
+
+	it('uses local-time fields, matching the date: frontmatter basis', () => {
+		// A late-evening local time must not roll into the next UTC day.
+		const lateLocal = new Date(2026, 0, 31, 23, 30); // 2026-01-31 23:30 local
+		expect(resolveSubfolder('{{yyyy-MM}}/{{dd}}', lateLocal)).toBe('2026-01/31');
+	});
+
+	it('expands {{ww}} to a zero-padded ISO week number', () => {
+		// Jan 4 is always in ISO week 1, by definition of the standard.
+		expect(resolveSubfolder('{{ww}}', new Date(2026, 0, 4))).toBe('01');
+		// Mid-year sanity: the result is always a two-digit string.
+		expect(resolveSubfolder('{{ww}}', jun4)).toMatch(/^\d{2}$/);
+	});
+
+	it('pairs {{yyyy}} with {{ww}} for week-foldered layouts', () => {
+		expect(resolveSubfolder('{{yyyy}}/W{{ww}}', new Date(2026, 0, 4))).toBe('2026/W01');
+	});
+
+	it('expands {{Q}} to the calendar quarter', () => {
+		expect(resolveSubfolder('{{Q}}', new Date(2026, 0, 15))).toBe('1'); // Jan
+		expect(resolveSubfolder('{{Q}}', new Date(2026, 2, 31))).toBe('1'); // Mar
+		expect(resolveSubfolder('{{Q}}', new Date(2026, 3, 1))).toBe('2'); // Apr
+		expect(resolveSubfolder('{{Q}}', jun4)).toBe('2'); // Jun
+		expect(resolveSubfolder('{{Q}}', new Date(2026, 11, 31))).toBe('4'); // Dec
 	});
 });
 
@@ -986,6 +1064,122 @@ describe('NoteWriter', () => {
 
 		expect(outcome.status).toBe('created');
 		expect(vault.createdPaths).toEqual(['Plaud/Morning standup.md']);
+	});
+
+	describe('subfolder template', () => {
+		it('omitted template keeps the flat output-folder path', async () => {
+			const vault = makeFakeVault();
+			const writer = new NoteWriter(vault, { outputFolder: 'Plaud', onDuplicate: 'skip' });
+
+			await writer.writeNote(makeRecording(), makeTranscript(), makeSummary());
+
+			expect(vault.createdPaths).toEqual(['Plaud/Morning standup.md']);
+		});
+
+		it('resolves {{yyyy-MM}} from the recording date and nests the note under it', async () => {
+			const vault = makeFakeVault();
+			const writer = new NoteWriter(vault, {
+				outputFolder: 'Plaud',
+				subfolderTemplate: '{{yyyy-MM}}',
+				onDuplicate: 'skip',
+			});
+
+			const outcome = await writer.writeNote(makeRecording(), makeTranscript(), makeSummary());
+
+			// makeRecording().createdAt is 2026-04-14 local.
+			expect(outcome.path).toBe('Plaud/2026-04/Morning standup.md');
+			expect(vault.createdPaths).toEqual(['Plaud/2026-04/Morning standup.md']);
+			expect(vault.folders.has('Plaud/2026-04')).toBe(true);
+		});
+
+		it('applies the subfolder to an empty output folder', async () => {
+			const vault = makeFakeVault();
+			const writer = new NoteWriter(vault, {
+				outputFolder: '',
+				subfolderTemplate: '{{yyyy}}/{{MM}}',
+				onDuplicate: 'skip',
+			});
+
+			const outcome = await writer.writeNote(makeRecording(), makeTranscript(), makeSummary());
+
+			expect(outcome.path).toBe('2026/04/Morning standup.md');
+		});
+	});
+
+	describe('cross-folder dedup via existingPathForPlaudId', () => {
+		const PRIOR = 'Plaud/Morning standup.md';
+		const priorContent = '---\nplaud-id: abc123\n---\n# Morning standup\n';
+
+		function vaultWithPriorNote(): FakeVault {
+			const vault = makeFakeVault();
+			vault.files.set(PRIOR, priorContent);
+			vault.folders.add('Plaud');
+			return vault;
+		}
+
+		it('skips instead of writing a second copy when the recording exists in another subfolder', async () => {
+			const vault = vaultWithPriorNote();
+			const writer = new NoteWriter(vault, {
+				outputFolder: 'Plaud',
+				subfolderTemplate: '{{yyyy-MM}}',
+				onDuplicate: 'skip',
+				existingPathForPlaudId: (id) => (id === 'abc123' ? PRIOR : null),
+			});
+
+			const outcome = await writer.writeNote(makeRecording(), makeTranscript(), makeSummary());
+
+			expect(outcome.status).toBe('skipped');
+			expect(outcome.path).toBe(PRIOR);
+			expect(vault.createdPaths).toEqual([]);
+			expect(vault.files.has('Plaud/2026-04/Morning standup.md')).toBe(false);
+		});
+
+		it('overwrites the existing note in place rather than creating a duplicate', async () => {
+			const vault = vaultWithPriorNote();
+			const writer = new NoteWriter(vault, {
+				outputFolder: 'Plaud',
+				subfolderTemplate: '{{yyyy-MM}}',
+				onDuplicate: 'overwrite',
+				existingPathForPlaudId: (id) => (id === 'abc123' ? PRIOR : null),
+			});
+
+			const outcome = await writer.writeNote(makeRecording(), makeTranscript(), makeSummary());
+
+			expect(outcome.status).toBe('overwritten');
+			expect(outcome.path).toBe(PRIOR);
+			expect(vault.overwrittenPaths).toEqual([PRIOR]);
+			expect(vault.createdPaths).toEqual([]);
+		});
+
+		it('creates a new note at the resolved subfolder when the lookup finds nothing', async () => {
+			const vault = makeFakeVault();
+			const writer = new NoteWriter(vault, {
+				outputFolder: 'Plaud',
+				subfolderTemplate: '{{yyyy-MM}}',
+				onDuplicate: 'skip',
+				existingPathForPlaudId: () => null,
+			});
+
+			const outcome = await writer.writeNote(makeRecording(), makeTranscript(), makeSummary());
+
+			expect(outcome.status).toBe('created');
+			expect(vault.createdPaths).toEqual(['Plaud/2026-04/Morning standup.md']);
+		});
+
+		it('falls through to create when the lookup returns a stale path with no file', async () => {
+			const vault = makeFakeVault();
+			const writer = new NoteWriter(vault, {
+				outputFolder: 'Plaud',
+				subfolderTemplate: '{{yyyy-MM}}',
+				onDuplicate: 'skip',
+				existingPathForPlaudId: () => 'Plaud/ghost.md',
+			});
+
+			const outcome = await writer.writeNote(makeRecording(), makeTranscript(), makeSummary());
+
+			expect(outcome.status).toBe('created');
+			expect(vault.createdPaths).toEqual(['Plaud/2026-04/Morning standup.md']);
+		});
 	});
 
 	it('writes the full markdown body including frontmatter, title, summary, and callout', async () => {

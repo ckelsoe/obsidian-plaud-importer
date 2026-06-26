@@ -104,6 +104,42 @@ const RIBBON_ICON_CHOICES: ReadonlyArray<{ id: string; label: string }> = [
 ];
 const DEFAULT_RIBBON_ICON = "audio-lines";
 
+// Subfolder template documentation, shared by the declarative settings
+// (1.13+) and the imperative display() fallback (1.12) so both render the
+// identical token reference. Strings are held in consts (not inline literals
+// at createEl/setDesc) so the obsidianmd sentence-case lint, which inspects
+// literal arguments, leaves the token examples and proper nouns alone.
+const SUBFOLDER_TEMPLATE_INTRO =
+	"Optional. Files each imported note into a subfolder of the output folder, built from the recording's own date. Leave empty to keep every note in one folder. The order and separators are yours; combine tokens with any literal text.";
+
+// [token, what it expands to] pairs. Numeric and zero-padded so folder names
+// sort chronologically; no locale-dependent or named-month forms.
+const SUBFOLDER_TEMPLATE_TOKENS: ReadonlyArray<readonly [string, string]> = [
+	["{{yyyy}}", "year, for example 2026"],
+	["{{MM}}", "month, 01 to 12"],
+	["{{dd}}", "day, 01 to 31"],
+	["{{yyyy-MM}}", "year and month together, for example 2026-06"],
+	["{{ww}}", "ISO week number, 01 to 53"],
+	["{{Q}}", "quarter, 1 to 4"],
+];
+
+// [template, resulting folder] pairs for a June 4 2026 recording. Covers
+// nesting, a custom separator, and a non-US day-first order so the answer to
+// "can I add a dash / reorder for my locale" is visible, not buried.
+const SUBFOLDER_TEMPLATE_EXAMPLES: ReadonlyArray<readonly [string, string]> = [
+	["{{yyyy-MM}}", "2026-06"],
+	["{{yyyy}}/{{MM}}", "2026/06 (nested folders)"],
+	["{{yyyy}}-{{MM}}", "2026-06 (your own dash separator)"],
+	["{{dd}}-{{MM}}-{{yyyy}}", "04-06-2026 (day-first order)"],
+	["{{yyyy}}/W{{ww}}", "2026/W23 (by week)"],
+];
+
+const SUBFOLDER_TEMPLATE_TOKENS_HEADING =
+	"Tokens (mix with your own text and separators):";
+const SUBFOLDER_TEMPLATE_EXAMPLES_HEADING = "Examples:";
+const SUBFOLDER_TEMPLATE_FOOTNOTE =
+	"Applies to new imports; notes you already imported stay where they are.";
+
 /**
  * Coerce a stored ribbon icon ID to a known-good value. Protects against
  * a hand-edited `data.json` or a setting left over from a future build
@@ -128,6 +164,7 @@ interface PlaudImporterSettings {
 	// automatically.
 	apiBaseUrl: string;
 	outputFolder: string;
+	subfolderTemplate: string;
 	onDuplicate: "skip" | "overwrite" | "prompt";
 	showRibbonIcon: boolean;
 	ribbonIcon: string;
@@ -150,6 +187,7 @@ const DEFAULT_SETTINGS: PlaudImporterSettings = {
 	secretId: "",
 	apiBaseUrl: "https://api.plaud.ai",
 	outputFolder: "Plaud",
+	subfolderTemplate: "",
 	onDuplicate: "prompt",
 	showRibbonIcon: true,
 	ribbonIcon: DEFAULT_RIBBON_ICON,
@@ -414,6 +452,7 @@ export default class PlaudImporterPlugin extends Plugin {
 		// tab take effect on the next click without reinstantiation.
 		new ImportModal(this.app, this.client, {
 			outputFolder: this.settings.outputFolder,
+			subfolderTemplate: this.settings.subfolderTemplate,
 			onDuplicate: this.settings.onDuplicate,
 			includeTranscript: this.settings.includeTranscript,
 			includeSummary: this.settings.defaultIncludeSummary,
@@ -708,6 +747,9 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 			"Folder inside your vault where imported notes are written.",
 			"outputFolder",
 			"Plaud",
+		);
+		this.renderSubfolderTemplateControl(
+			this.makeSetting(containerEl, "Subfolder template", SUBFOLDER_TEMPLATE_INTRO),
 		);
 		this.addDropdownRow(
 			containerEl,
@@ -1061,6 +1103,40 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 		});
 	}
 
+	// Renders the subfolder-template row: appends the token reference (a list,
+	// not a cramped one-line desc) into the description, then adds the text
+	// control bound to subfolderTemplate. Shared by the declarative path
+	// (via the item's render callback) and the imperative display() fallback,
+	// so both Obsidian versions show the identical documentation. Building the
+	// DOM fresh on each call avoids any DocumentFragment-reuse pitfalls.
+	private renderSubfolderTemplateControl(setting: Setting): void {
+		const docEl = setting.descEl.createDiv();
+		docEl.createEl("div", { text: SUBFOLDER_TEMPLATE_TOKENS_HEADING });
+		const tokenList = docEl.createEl("ul");
+		for (const [token, meaning] of SUBFOLDER_TEMPLATE_TOKENS) {
+			const item = tokenList.createEl("li");
+			item.createEl("code", { text: token });
+			item.createSpan({ text: ` ${meaning}` });
+		}
+		docEl.createEl("div", { text: SUBFOLDER_TEMPLATE_EXAMPLES_HEADING });
+		const exampleList = docEl.createEl("ul");
+		for (const [template, result] of SUBFOLDER_TEMPLATE_EXAMPLES) {
+			const item = exampleList.createEl("li");
+			item.createEl("code", { text: template });
+			item.createSpan({ text: ` → ${result}` });
+		}
+		docEl.createEl("div", { text: SUBFOLDER_TEMPLATE_FOOTNOTE });
+
+		setting.addText((text) =>
+			text
+				.setPlaceholder("{{yyyy-MM}}")
+				.setValue(this.readSettingString("subfolderTemplate"))
+				.onChange(async (value) => {
+					await this.applyControlChange("subfolderTemplate", value);
+				}),
+		);
+	}
+
 	// Builds a Setting with name/desc set. Desc passes as an argument rather
 	// than a setDesc() string literal so the sentence-case lint (which would
 	// otherwise mangle proper nouns like "Plaud" and "EU") sees the same
@@ -1224,6 +1300,16 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 						name: "Output folder",
 						desc: "Folder inside your vault where imported notes are written.",
 						control: { type: "text", key: "outputFolder", placeholder: "Plaud" },
+					},
+					{
+						name: "Subfolder template",
+						desc: SUBFOLDER_TEMPLATE_INTRO,
+						// Rendered imperatively so the token reference (a list,
+						// not a one-line string) appears in the description. Not
+						// search-indexable, like the other render-based rows.
+						searchable: false,
+						render: (setting: Setting) =>
+							this.renderSubfolderTemplateControl(setting),
 					},
 					{
 						name: "Duplicate handling",

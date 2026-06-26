@@ -4,6 +4,14 @@ All notable changes to Plaud Importer will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- Subfolder template for the output folder. A new **Subfolder template** setting files each imported note into a dated subfolder built from the recording date, so a growing library stops piling into one flat folder. Leave it empty to keep the current single-folder layout. Tokens: `{{yyyy}}`, `{{MM}}`, `{{dd}}`, the `{{yyyy-MM}}` shorthand, `{{ww}}` (ISO week number), and `{{Q}}` (calendar quarter). For example, `{{yyyy-MM}}` files a June 2026 recording under `2026-06`, and `{{yyyy}}/W{{ww}}` files by week. Attachments follow their note into the same subfolder. The setting applies to new imports; notes you already imported stay where they are. Re-importing a recording whose template changed updates the existing note in place instead of creating a duplicate.
+
+### Changed
+
+- Plaud's AI keyword list is no longer written to a `keywords:` note property by default. That list can run to hundreds of low-value entries per recording, which buried the few tags that matter and added noise to every note. Turn **Keep AI keywords as note property** back on if you want the list.
+
 ## [0.11.0] - 2026-06-21
 
 ### Added

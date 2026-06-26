@@ -1602,6 +1602,13 @@ export class ImportModal extends Modal {
 				onDuplicate: duplicatePolicy,
 				promptOnDuplicate:
 					duplicatePolicy === 'prompt' ? this.handleDuplicatePrompt : undefined,
+				// Cross-folder dedup: let the writer find a prior import of the
+				// same recording that lives in a different subfolder (for
+				// example after the subfolder template changed) so it never
+				// writes a second copy. Backed by the vault index, read live so
+				// it reflects notes written earlier in this same run.
+				existingPathForPlaudId: (id) =>
+					this.importedIndex.get(id as PlaudRecordingId)?.path ?? null,
 			});
 		} catch (err) {
 			if (err instanceof NoteWriterError) {

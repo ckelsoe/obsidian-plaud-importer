@@ -58,6 +58,7 @@ Plaud does not offer an official API yet, so this plugin works by using Plaud's 
   - A heading-based transcript section with per-chapter `Back to Chapters` links
   - An `Open in Plaud` link under the H1 for quick round-tripping
 - **Downloads attachments** (images, mind-map PNGs, card PNGs, other files) into a `<note-name>-assets/` folder and references them from the note.
+- **Organize into dated subfolders** — an optional path template (for example `{{yyyy-MM}}`) files notes into per-month, per-week, or per-quarter folders built from the recording date, instead of one flat folder. Attachments follow their note.
 - **"Imported" badge in the recording list** — each row whose `plaud-id` already exists in your output folder shows an Imported pill. Click it to open the existing note. Re-importing is still possible and honors your duplicate-handling setting.
 - **Duplicate handling** is configurable — Skip, Overwrite, or Ask each time. "Ask each time" prompts per file with an explicit warning that the existing note body AND its `-assets` folder will be replaced; in a multi-select import you can escalate to "Overwrite all remaining" / "Skip all remaining" or cancel the batch.
 - **Transcript folding** — imported notes open with the transcript section collapsed by default so the summary is what you see first. Toggleable in settings.
@@ -151,6 +152,35 @@ After signing in, click **Test connection** to confirm your token reaches Plaud.
 
 Folder inside your vault where imported notes are written. Defaults to `Plaud`. Nested paths work (`Archive/Plaud/2026`).
 
+### Subfolder template
+
+By default every note lands directly in the output folder. To keep a growing library organized, set a **Subfolder template** that files each note into a subfolder built from the recording's date. Leave it empty to keep the flat layout.
+
+Tokens (combine with your own text and separators):
+
+| Token | Expands to |
+| --- | --- |
+| `{{yyyy}}` | Year, for example `2026` |
+| `{{MM}}` | Month, `01` to `12` |
+| `{{dd}}` | Day, `01` to `31` |
+| `{{yyyy-MM}}` | Year and month, for example `2026-06` |
+| `{{ww}}` | ISO week number, `01` to `53` |
+| `{{Q}}` | Quarter, `1` to `4` |
+
+Examples (folder for a June 4 2026 recording):
+
+| Template | Resulting folder |
+| --- | --- |
+| `{{yyyy-MM}}` | `2026-06` |
+| `{{yyyy}}/{{MM}}` | `2026/06` (nested) |
+| `{{yyyy}}-{{MM}}` | `2026-06` (your own dash) |
+| `{{dd}}-{{MM}}-{{yyyy}}` | `04-06-2026` (day-first order) |
+| `{{yyyy}}/W{{ww}}` | `2026/W23` (by week) |
+
+The numbers are fixed and not locale dependent; you choose the order and the separators, so any date layout works. The folder is built from the recording's own date, so re-importing always resolves to the same place. A recording with no usable date goes to an `_undated` subfolder.
+
+The template applies to **new imports**; notes you already imported stay where they are. Each note's `-assets` folder follows it into the same subfolder. If you change the template later, re-importing an existing recording updates the note in place instead of creating a duplicate.
+
 ### Duplicate handling
 
 What the importer does when a note for a recording already exists in the output folder:
@@ -162,6 +192,12 @@ What the importer does when a note for a recording already exists in the output 
 ### Default artifact selection
 
 What the "Review artifacts first" checklist starts with when you begin a multi-import: transcript, summary, attachments, mindmap, card. Uncheck artifacts you never want to pull by default; you can always override per-batch.
+
+### Tags and keywords
+
+- **Tag mode** — which sources land in each note's `tags:` frontmatter: no tags, your custom tags only, Plaud tags (the default), or all (which also adds Plaud's AI keywords as `plaud/...` tags).
+- **Custom tags** — comma-separated tags added to every imported note. Defaults to `plaud-meeting`.
+- **Keep AI keywords as note property** — when AI keywords are kept out of `tags:`, optionally write them to a `keywords:` property instead. **Off by default**: Plaud's keyword list can run to hundreds of low-value entries per recording, which buries the tags that matter and adds noise to every note. Turn it on if you want the full list.
 
 ### Transcript rendering
 
