@@ -1287,9 +1287,18 @@ export class NoteWriter {
 				`Recording ${recording.id} advertised a transcript but none was provided — refusing to write a partial note`,
 			);
 		}
-		if (recording.summaryAvailable && summary === null) {
+		// A summary Plaud advertised (is_summary) can be genuinely
+		// unretrievable on older recordings: the transcript endpoint returns
+		// the in-band -12 error and the detail bundle carries no auto_sum_note,
+		// so there is no summary to fetch from any source. Per the 2026-06-26
+		// decision, still write the note WHEN a transcript exists — the body
+		// renders a "_No summary available._" placeholder under the Summary
+		// heading — but never write a contentless note when the transcript is
+		// missing too. (A missing-but-advertised transcript already threw
+		// above; this also covers a not-advertised null transcript.)
+		if (recording.summaryAvailable && summary === null && transcript === null) {
 			throw new NoteWriterError(
-				`Recording ${recording.id} advertised a summary but none was provided — refusing to write a partial note`,
+				`Recording ${recording.id} advertised a summary but neither a summary nor a transcript could be retrieved — refusing to write an empty note`,
 			);
 		}
 

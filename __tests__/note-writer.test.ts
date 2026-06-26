@@ -1329,14 +1329,33 @@ describe('NoteWriter', () => {
 			).rejects.toBeInstanceOf(NoteWriterError);
 		});
 
-		it('throws when summaryAvailable is true but summary is null', async () => {
+		it('writes a partial note with a placeholder when summary is advertised but null and a transcript exists', async () => {
+			// Older recordings: Plaud advertises a summary (is_summary) but it
+			// is unretrievable. As long as a transcript exists, write the note
+			// with a "_No summary available._" placeholder rather than failing.
+			const vault = makeFakeVault();
+			const writer = new NoteWriter(vault, { outputFolder: 'Plaud', onDuplicate: 'skip' });
+
+			const outcome = await writer.writeNote(
+				makeRecording({ summaryAvailable: true, transcriptAvailable: true }),
+				makeTranscript(),
+				null,
+			);
+
+			expect(outcome.status).toBe('created');
+			const body = vault.files.get('Plaud/Morning standup.md') ?? '';
+			expect(body).toContain('## Summary');
+			expect(body).toContain('_No summary available._');
+		});
+
+		it('throws when an advertised summary is null and no transcript is available either', async () => {
 			const vault = makeFakeVault();
 			const writer = new NoteWriter(vault, { outputFolder: 'Plaud', onDuplicate: 'skip' });
 
 			await expect(
 				writer.writeNote(
-					makeRecording({ summaryAvailable: true }),
-					makeTranscript(),
+					makeRecording({ summaryAvailable: true, transcriptAvailable: false }),
+					null,
 					null,
 				),
 			).rejects.toBeInstanceOf(NoteWriterError);
