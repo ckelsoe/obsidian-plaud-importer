@@ -143,6 +143,13 @@ export interface Recording {
 	 * authoritative answer is `getSummary(id) !== null`.
 	 */
 	readonly summaryAvailable: boolean;
+	/**
+	 * True when the recording is in Plaud's trash. The list endpoint returns
+	 * trashed and non-trashed recordings together, so consumers that should not
+	 * surface trash (the import list) must filter on this. Defaults to false
+	 * when the list payload omits the flag (older recordings).
+	 */
+	readonly isTrashed: boolean;
 	readonly folderId?: string;
 	readonly tags?: readonly string[];
 }

@@ -4,6 +4,17 @@ All notable changes to Plaud Importer will be documented in this file.
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-06-27
+
+### Added
+
+- Placeholder notes for recordings Plaud has not processed yet. When Plaud has a recording but reports it has no transcript or summary available (an in-band server error such as "start trans task error", status -12), the importer now writes a placeholder note carrying the recording ID and a link back to Plaud instead of recording a bare failure. A later successful import replaces the placeholder automatically, even under the skip or prompt duplicate policy. Controlled by a new **Write placeholder for unprocessed recordings** setting, on by default. Turn it off to keep such recordings as plain failures with no file written.
+- The import list now hides recordings that are in your Plaud trash, matching the Plaud app. Trashed recordings are usually short accidental clips with no transcript, and were the most common source of "no content" import failures. A new **Show trashed recordings** setting (off by default) brings them back when you want to import something you trashed in Plaud but still want in your vault.
+
+### Changed
+
+- Import errors that come from Plaud's own server now say so in plain English. When Plaud returns an error for a request (rather than the plugin failing to read the response), the failure message leads with "This is a Plaud-side issue, not a problem with the plugin reading the data". A "start trans task error" (status -12) is explained as Plaud having no transcript or summary for the recording, with the most common cause called out: audio with no detectable speech, which Plaud reports as "No speech detected". Plaud's raw status and message are kept at the end for troubleshooting.
+
 ## [0.12.1] - 2026-06-27
 
 ### Fixed

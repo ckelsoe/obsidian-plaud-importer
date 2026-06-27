@@ -28,6 +28,7 @@ import {
 	type NoteWriterOptions,
 	type FormatMarkdownOptions,
 	type WriteOutcome,
+	type PlaceholderWriteOutcome,
 } from './note-writer';
 import type { DebugLogger } from './debug-logger';
 import { buildPlaudIdIndex, type ImportedRecord } from './vault-index';
@@ -61,6 +62,21 @@ export interface ImportModalOptions extends NoteWriterOptions {
 	readonly autoCloseSummary?: boolean;
 	/** Countdown length for the summary auto-close, in seconds. Defaults to 20. */
 	readonly autoCloseSummarySeconds?: number;
+	/**
+	 * When true (the default), a recording Plaud reports it cannot transcribe
+	 * or summarize yet (an in-band server error such as -12) gets a placeholder
+	 * note carrying the recording ID and a Plaud link, instead of a bare
+	 * failure. The stub is replaced automatically by a later successful import.
+	 * Set false to keep such recordings as plain failures with no file written.
+	 */
+	readonly writePlaceholderForUnprocessed?: boolean;
+	/**
+	 * Show recordings that are in Plaud's trash in the import list. Defaults to
+	 * false (trash hidden, matching the Plaud web UI). The recordings are still
+	 * fetched — they are filtered at the display layer — so pagination is
+	 * unaffected.
+	 */
+	readonly showTrashedRecordings?: boolean;
 	readonly defaultIncludeSummary?: boolean;
 	readonly defaultIncludeAttachments?: boolean;
 	readonly defaultIncludeMindmap?: boolean;
@@ -202,13 +218,28 @@ export function classifyError(err: unknown): ErrorClassification {
 		}
 		// No status. Two sub-cases distinguished by message text:
 		//   1. In-band error (Plaud returned a failure envelope on HTTP
-		//      200) → api-error, message says Plaud-side failure.
+		//      200) → api-error, message states plainly that this is a
+		//      Plaud-side issue, NOT the plugin failing to read the response.
 		//   2. Fetcher threw (DNS, TLS, offline) → network-error with a
 		//      "could not reach" prefix.
 		if (err.message.includes('in-band error from')) {
+			// Lead with the ownership statement: an in-band error means Plaud
+			// returned a structured error envelope that the plugin parsed
+			// correctly, so the failure is on Plaud's side. -12 "start trans
+			// task error" specifically means Plaud has not produced a transcript
+			// or summary for this recording yet; other codes get the generic
+			// Plaud-side phrasing. Plaud's raw status/msg is kept at the end for
+			// bug reports.
+			const lead =
+				err.inBandStatus === -12
+					? 'Plaud has no transcript or summary for this recording. A common cause is audio with no detectable speech (Plaud shows "No speech detected"); it can also mean the recording is still processing.'
+					: 'Plaud could not complete this request and returned an error.';
 			return {
 				category: 'api-error',
-				message: err.message,
+				message:
+					`${lead} This is a Plaud-side issue, not a problem with the plugin reading the data. ` +
+					`The plugin received and parsed Plaud's response correctly. Open the recording in the ` +
+					`Plaud app to check the exact reason, then re-import if content becomes available. (${err.message})`,
 				canRetry: true,
 			};
 		}
@@ -229,6 +260,25 @@ export function classifyError(err: unknown): ErrorClassification {
 		})`,
 		canRetry: false,
 	};
+}
+
+/**
+ * True when an import error is a Plaud-side, in-band failure that means Plaud
+ * itself has no transcript or summary for the recording yet (it returned a
+ * structured error envelope, which the plugin parsed correctly). This is the
+ * case where writing a placeholder note is the right move: the recording exists
+ * on Plaud but has no derivable content, so a stub with the link is more useful
+ * than a bare failure. Excludes token/auth failures (those need the user to fix
+ * the token, not a stub) and transport/parse failures (retryable or plugin
+ * bugs, where a placeholder would be misleading).
+ */
+export function isPlaudUnprocessedError(err: unknown): boolean {
+	return (
+		err instanceof PlaudApiError &&
+		!(err instanceof PlaudAuthError) &&
+		!(err instanceof PlaudParseError) &&
+		err.message.includes('in-band error from')
+	);
 }
 
 export function formatDate(d: Date): string {
@@ -290,6 +340,20 @@ export type ImportResult =
 			// reason instead of a spurious error.
 			readonly kind: 'skipped-no-content';
 			readonly recording: Recording;
+	  }
+	| {
+			// Plaud confirmed (via an in-band server error such as -12) that it
+			// has no transcript or summary for this recording yet, but the
+			// recording exists. Instead of a bare failure, the importer wrote a
+			// placeholder note carrying the recording ID and a link back to
+			// Plaud, which a later successful import replaces automatically.
+			readonly kind: 'placeholder-written';
+			readonly recording: Recording;
+			readonly outcome: PlaceholderWriteOutcome;
+			// The classified Plaud-side reason, surfaced in the summary and the
+			// copy-details payload so the user knows why it was a placeholder.
+			readonly reason: string;
+			readonly classification: ErrorClassification;
 	  };
 
 export interface ImportTally {
@@ -307,6 +371,11 @@ export interface ImportTally {
 	// The 'skipped-no-content' results, kept for the summary view's
 	// informational (non-error) list.
 	readonly noContentResults: readonly ImportResult[];
+	// Recordings Plaud has not processed yet, for which a placeholder note was
+	// written (created or refreshed). Counts only actual stubs, not the
+	// 'kept-existing' case (which is reported as a skip via a 'written' result).
+	readonly placeholdersWritten: number;
+	readonly placeholderResults: readonly ImportResult[];
 }
 
 export function tallyImportResults(results: readonly ImportResult[]): ImportTally {
@@ -315,8 +384,10 @@ export function tallyImportResults(results: readonly ImportResult[]): ImportTall
 	let skipped = 0;
 	let noContent = 0;
 	let failed = 0;
+	let placeholdersWritten = 0;
 	const failures: ImportResult[] = [];
 	const noContentResults: ImportResult[] = [];
+	const placeholderResults: ImportResult[] = [];
 	for (const r of results) {
 		if (r.kind === 'failed') {
 			failed++;
@@ -326,6 +397,11 @@ export function tallyImportResults(results: readonly ImportResult[]): ImportTall
 		if (r.kind === 'skipped-no-content') {
 			noContent++;
 			noContentResults.push(r);
+			continue;
+		}
+		if (r.kind === 'placeholder-written') {
+			placeholdersWritten++;
+			placeholderResults.push(r);
 			continue;
 		}
 		switch (r.writeOutcome.status) {
@@ -349,6 +425,8 @@ export function tallyImportResults(results: readonly ImportResult[]): ImportTall
 		failed,
 		failures,
 		noContentResults,
+		placeholdersWritten,
+		placeholderResults,
 	};
 }
 
@@ -369,6 +447,9 @@ export function formatImportNotice(tally: ImportTally): string {
 	}
 	if (tally.noContent > 0) {
 		parts.push(`${tally.noContent} no content`);
+	}
+	if (tally.placeholdersWritten > 0) {
+		parts.push(`${tally.placeholdersWritten} placeholder`);
 	}
 	if (tally.failed > 0) {
 		parts.push(`${tally.failed} failed`);
@@ -462,6 +543,23 @@ export function mergeRecordings(
 	}
 	const hasMore = incoming.length >= pageSize;
 	return { merged, hasMore };
+}
+
+/**
+ * Filter the recordings the modal should DISPLAY. Trashed recordings are kept
+ * in the modal's accumulator (so pagination math stays correct — the server
+ * page size and skip offset must not change) but hidden from the list unless
+ * the user opts in. Pure and exported so the view logic is unit-testable
+ * without a DOM.
+ */
+export function filterVisibleRecordings(
+	recordings: readonly Recording[],
+	showTrashed: boolean,
+): readonly Recording[] {
+	if (showTrashed) {
+		return recordings;
+	}
+	return recordings.filter((r) => !r.isTrashed);
 }
 
 type LoadMoreTrigger = 'auto' | 'manual' | 'retry';
@@ -1001,8 +1099,13 @@ export class ImportModal extends Modal {
 			this.hasMore = hasMore;
 
 			if (this.listEl !== null) {
+				// Render only the newly-arrived rows that are visible; trashed
+				// rows stay in currentRecordings (for paging) but are not shown.
+				const showTrashed = this.noteWriterOptions.showTrashedRecordings === true;
 				for (const rec of newRows) {
-					this.renderRow(this.listEl, rec);
+					if (showTrashed || !rec.isTrashed) {
+						this.renderRow(this.listEl, rec);
+					}
 				}
 			}
 			this.updateIntroCount();
@@ -1095,6 +1198,18 @@ export class ImportModal extends Modal {
 		closeButton.addEventListener('click', () => this.close());
 	}
 
+	/**
+	 * Recordings to display: all fetched recordings minus trash (unless the
+	 * user opted in). Trash stays in `currentRecordings` for pagination; this
+	 * is the view over it.
+	 */
+	private visibleRecordings(): readonly Recording[] {
+		return filterVisibleRecordings(
+			this.currentRecordings,
+			this.noteWriterOptions.showTrashedRecordings === true,
+		);
+	}
+
 	private renderList(): void {
 		const { contentEl } = this;
 		contentEl.empty();
@@ -1105,7 +1220,7 @@ export class ImportModal extends Modal {
 
 		const listEl = contentEl.createDiv({ cls: 'plaud-importer-list' });
 		this.listEl = listEl;
-		for (const rec of this.currentRecordings) {
+		for (const rec of this.visibleRecordings()) {
 			this.renderRow(listEl, rec);
 		}
 		// Footer sits BELOW the scroll list (a sibling, not a child) so the
@@ -1157,6 +1272,10 @@ export class ImportModal extends Modal {
 		// sentinel stays the last child of the scroll list — its
 		// intersection with the bottom is what drives paging.
 		const row = listEl.createDiv({ cls: 'plaud-importer-row' });
+		// Stamp the recording id so updateRowBadge can find this row by id
+		// rather than by positional index. Index-matching breaks once trashed
+		// recordings live in currentRecordings but are not rendered.
+		row.dataset.recordingId = rec.id;
 		if (
 			this.autoLoadSentinelEl !== null &&
 			this.autoLoadSentinelEl.parentElement === listEl
@@ -1215,15 +1334,15 @@ export class ImportModal extends Modal {
 	private updateRowBadge(recId: PlaudRecordingId): void {
 		this.refreshImportedIndex();
 		if (this.listEl === null) return;
-		const rows = this.listEl.querySelectorAll('.plaud-importer-row');
 		const existing = this.importedIndex.get(recId);
 		if (existing === undefined) return;
-		// Match by checkbox value isn't reliable — checkboxes don't
-		// carry the id today. Iterate and find the row whose title
-		// matches the recording by reading from currentRecordings.
-		const idx = this.currentRecordings.findIndex((r) => r.id === recId);
-		if (idx === -1 || idx >= rows.length) return;
-		const row = rows[idx] as HTMLElement;
+		// Find the row by its stamped recording id. Robust to trashed
+		// recordings that sit in currentRecordings but are not rendered, which
+		// would otherwise desync a positional index from the DOM row order.
+		const row = this.listEl.querySelector(
+			`.plaud-importer-row[data-recording-id="${CSS.escape(recId)}"]`,
+		);
+		if (row === null) return;
 		const titleRow = row.querySelector('.plaud-importer-title-row');
 		if (titleRow === null) return;
 		const existingBadge = titleRow.querySelector('.plaud-importer-imported-badge');
@@ -1387,7 +1506,7 @@ export class ImportModal extends Modal {
 		if (this.introEl === null) {
 			return;
 		}
-		const n = this.currentRecordings.length;
+		const n = this.visibleRecordings().length;
 		const suffix = this.hasMore ? ' (scroll for more)' : '';
 		this.introEl.setText(
 			`${n} recording${n === 1 ? '' : 's'} loaded${suffix}. Select which to import.`,
@@ -1988,6 +2107,63 @@ export class ImportModal extends Modal {
 					err,
 				);
 				const classification = classifyError(err);
+
+				// Plaud confirmed (in-band) it has no transcript/summary for this
+				// recording yet. Rather than a bare failure, write a placeholder
+				// note carrying the recording ID and a Plaud link so the user
+				// keeps a breadcrumb; a later successful import replaces it
+				// automatically. Gated by the writePlaceholderForUnprocessed
+				// setting (default on). A failure of the placeholder write itself
+				// falls through to the normal failure path below.
+				if (
+					this.noteWriterOptions.writePlaceholderForUnprocessed !== false &&
+					isPlaudUnprocessedError(err)
+				) {
+					try {
+						// Pass Plaud's own concise error line as the stub's reason
+						// (e.g. "...: status=-12 msg=start trans task error"), not
+						// the full classified paragraph, since the placeholder body
+						// already carries the plain-English explanation.
+						const outcome = await writer.writePlaceholderNote(
+							recording,
+							err instanceof Error ? err.message : classification.message,
+						);
+						this.logImportDebug('placeholder note outcome', {
+							recordingId: recording.id,
+							recordingTitle: recording.title,
+							status: outcome.status,
+							path: outcome.path,
+						});
+						if (outcome.status === 'kept-existing') {
+							// A real note already exists; nothing to write. Report
+							// as a benign skip rather than a placeholder.
+							results.push({
+								kind: 'written',
+								recording,
+								writeOutcome: { status: 'skipped', path: outcome.path },
+							});
+						} else {
+							this.updateRowBadge(recording.id);
+							results.push({
+								kind: 'placeholder-written',
+								recording,
+								outcome,
+								reason: classification.message,
+								classification,
+							});
+						}
+						continue;
+					} catch (placeholderErr) {
+						// The stub write failed (vault error, collision with a
+						// different recording, etc.). Fall through and report the
+						// original Plaud failure so the user still sees something.
+						console.error(
+							`Plaud importer: placeholder write failed for recording ${recording.id}`,
+							placeholderErr,
+						);
+					}
+				}
+
 				results.push({
 					kind: 'failed',
 					recording,
@@ -2188,9 +2364,13 @@ export class ImportModal extends Modal {
 		const imported = tally.created + tally.overwritten;
 		const noContentClause =
 			tally.noContent > 0 ? `${tally.noContent} no content, ` : '';
+		const placeholderClause =
+			tally.placeholdersWritten > 0
+				? `${tally.placeholdersWritten} placeholder, `
+				: '';
 		const summaryLine =
 			`${imported} imported (${tally.created} new, ${tally.overwritten} overwritten), ` +
-			`${tally.skipped} skipped, ${noContentClause}${tally.failed} failed.`;
+			`${tally.skipped} skipped, ${noContentClause}${placeholderClause}${tally.failed} failed.`;
 
 		contentEl.createEl('p', {
 			text: summaryLine,
@@ -2276,6 +2456,41 @@ export class ImportModal extends Modal {
 			}
 		}
 
+		// Informational list of recordings Plaud has not processed yet, for
+		// which a placeholder note was written. Pre-expanded so the user notices
+		// the stubs and knows to re-import once Plaud finishes processing. These
+		// are not failures: the recording exists, Plaud just has no transcript
+		// or summary for it yet, and the placeholder keeps the link.
+		if (tally.placeholderResults.length > 0) {
+			const placeholders = contentEl.createEl('details', {
+				cls: 'plaud-importer-placeholders',
+			});
+			placeholders.setAttribute('open', '');
+			placeholders.createEl('summary', {
+				text: `${tally.placeholderResults.length} placeholder note${
+					tally.placeholderResults.length === 1 ? '' : 's'
+				} written, Plaud has not processed these yet`,
+			});
+			placeholders.createEl('p', {
+				text: 'These recordings have no transcript or summary available. A common cause is audio with no detectable speech; another is that processing has not finished. A placeholder note with a link was written for each, so you can re-run the import later if content becomes available.',
+				cls: 'plaud-importer-placeholders-note',
+			});
+			const list = placeholders.createEl('ul');
+			for (const r of tally.placeholderResults) {
+				if (r.kind !== 'placeholder-written') {
+					continue;
+				}
+				const li = list.createEl('li');
+				li.createEl('strong', { text: r.recording.title });
+				li.createEl('span', {
+					text: ` (${r.recording.id})`,
+					cls: 'plaud-importer-failure-id',
+				});
+				li.createEl('br');
+				li.createSpan({ text: r.reason });
+			}
+		}
+
 		const buttonRow = contentEl.createDiv({ cls: 'plaud-importer-buttons' });
 		const closeButton = buttonRow.createEl('button', {
 			text: 'Done',
@@ -2299,7 +2514,10 @@ export class ImportModal extends Modal {
 		closeButton: HTMLElement,
 	): void {
 		const enabled = this.noteWriterOptions.autoCloseSummary ?? true;
-		if (!enabled || tally.failed > 0) {
+		// Keep the summary open on any failure OR when placeholders were written.
+		// Both are things the user should see and act on (re-import later),
+		// not auto-dismiss.
+		if (!enabled || tally.failed > 0 || tally.placeholdersWritten > 0) {
 			return;
 		}
 		const configured = this.noteWriterOptions.autoCloseSummarySeconds ?? 20;

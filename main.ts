@@ -181,6 +181,15 @@ interface PlaudImporterSettings {
 	aiKeywordsAsProperty: boolean;
 	autoCloseSummary: boolean;
 	autoCloseSummarySeconds: number;
+	// When a recording exists in Plaud but Plaud reports it has no transcript
+	// or summary yet (an in-band server error such as -12), write a placeholder
+	// note carrying the recording ID and a Plaud link instead of recording a
+	// bare failure. A later successful import replaces the stub automatically.
+	writePlaceholderForUnprocessed: boolean;
+	// Show recordings that are in Plaud's trash in the import list. Off by
+	// default, matching the Plaud web UI which hides trash. Trashed recordings
+	// are short accidental clips with no transcript more often than not.
+	showTrashedRecordings: boolean;
 }
 
 const DEFAULT_SETTINGS: PlaudImporterSettings = {
@@ -208,6 +217,8 @@ const DEFAULT_SETTINGS: PlaudImporterSettings = {
 	aiKeywordsAsProperty: false,
 	autoCloseSummary: true,
 	autoCloseSummarySeconds: 20,
+	writePlaceholderForUnprocessed: true,
+	showTrashedRecordings: false,
 };
 
 // Adapt Obsidian's requestUrl to the PlaudHttpFetcher shape the client
@@ -467,6 +478,9 @@ export default class PlaudImporterPlugin extends Plugin {
 			aiKeywordsAsProperty: this.settings.aiKeywordsAsProperty,
 			autoCloseSummary: this.settings.autoCloseSummary,
 			autoCloseSummarySeconds: this.settings.autoCloseSummarySeconds,
+			writePlaceholderForUnprocessed:
+				this.settings.writePlaceholderForUnprocessed,
+			showTrashedRecordings: this.settings.showTrashedRecordings,
 			debugLogger: this.debugLogger,
 			getAuthToken: () =>
 				this.settings.secretId.length > 0
@@ -846,6 +860,18 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 			"Seconds to wait before the summary closes itself. Only applies when auto-close is on.",
 			"autoCloseSummarySeconds",
 			"20",
+		);
+		this.addToggleRow(
+			containerEl,
+			"Write placeholder for unprocessed recordings",
+			"When Plaud has a recording but reports no transcript or summary for it yet (a Plaud-side issue, not a plugin error), write a placeholder note with the recording ID and a link back to Plaud instead of recording a failure. A later successful import replaces the placeholder automatically. Turn off to keep such recordings as plain failures with no file written.",
+			"writePlaceholderForUnprocessed",
+		);
+		this.addToggleRow(
+			containerEl,
+			"Show trashed recordings",
+			"Include recordings that are in your Plaud trash in the import list. Off by default, matching the Plaud app, which hides trash. Trashed recordings are usually short accidental clips with no transcript. Turn on to import something you trashed in Plaud but still want in your vault.",
+			"showTrashedRecordings",
 		);
 
 		new Setting(containerEl).setName("Transcript rendering").setHeading();
@@ -1413,6 +1439,16 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 						name: "Auto-close delay",
 						desc: "Seconds to wait before the summary closes itself. Only applies when auto-close is on.",
 						control: { type: "text", key: "autoCloseSummarySeconds", placeholder: "20" },
+					},
+					{
+						name: "Write placeholder for unprocessed recordings",
+						desc: "When Plaud has a recording but reports no transcript or summary for it yet (a Plaud-side issue, not a plugin error), write a placeholder note with the recording ID and a link back to Plaud instead of recording a failure. A later successful import replaces the placeholder automatically. Turn off to keep such recordings as plain failures with no file written.",
+						control: { type: "toggle", key: "writePlaceholderForUnprocessed" },
+					},
+					{
+						name: "Show trashed recordings",
+						desc: "Include recordings that are in your Plaud trash in the import list. Off by default, matching the Plaud app, which hides trash. Trashed recordings are usually short accidental clips with no transcript. Turn on to import something you trashed in Plaud but still want in your vault.",
+						control: { type: "toggle", key: "showTrashedRecordings" },
 					},
 				],
 			},

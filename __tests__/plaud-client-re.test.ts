@@ -195,6 +195,28 @@ describe('listRecordings happy path', () => {
 
 		expect(r.tags).toBeUndefined();
 	});
+
+	it('maps is_trash to isTrashed', async () => {
+		const { fetcher } = captureFetcher(
+			ok(listEnvelope([record({ is_trash: true })])),
+		);
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+
+		const [r] = await client.listRecordings();
+
+		expect(r.isTrashed).toBe(true);
+	});
+
+	it('defaults isTrashed to false when is_trash is absent', async () => {
+		const { fetcher } = captureFetcher(
+			ok(listEnvelope([record({ is_trash: undefined })])),
+		);
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+
+		const [r] = await client.listRecordings();
+
+		expect(r.isTrashed).toBe(false);
+	});
 });
 
 // listRecordings — request shape --------------------------------------------

@@ -1,8 +1,10 @@
 import {
 	classifyError,
+	filterVisibleRecordings,
 	formatDate,
 	formatDuration,
 	formatImportNotice,
+	isPlaudUnprocessedError,
 	mergeRecordings,
 	tallyImportResults,
 	type ImportResult,
@@ -123,6 +125,42 @@ describe('classifyError', () => {
 			expect(result.canRetry).toBe(true);
 			expect(result.message).not.toMatch(/could not reach/i);
 			expect(result.message).toContain('ai_pipeline_failed');
+		});
+
+		it('explains an in-band -12 as Plaud not having processed the recording yet, in plain English', () => {
+			const err = new PlaudApiError(
+				'Plaud returned in-band error from /ai/transsumm/abc: status=-12 msg=start trans task error',
+				undefined,
+				'/ai/transsumm/abc',
+				-12,
+			);
+			const result = classifyError(err);
+			expect(result.category).toBe('api-error');
+			expect(result.canRetry).toBe(true);
+			// Leads with the "no transcript/summary, likely no speech" framing
+			// for -12, without promising a retry will succeed...
+			expect(result.message).toMatch(/no transcript or summary for this recording/i);
+			expect(result.message).toMatch(/no detectable speech/i);
+			// ...and states plainly that the fault is Plaud's, not the plugin's
+			// inability to read the response.
+			expect(result.message).toMatch(/plaud-side issue/i);
+			expect(result.message).toMatch(/parsed plaud's response correctly/i);
+			// Keeps Plaud's raw status/msg for bug reports.
+			expect(result.message).toContain('status=-12');
+		});
+
+		it('gives a generic Plaud-side explanation for other in-band codes', () => {
+			const err = new PlaudApiError(
+				'Plaud returned in-band error from /ai/transsumm/abc: status=-3901 msg=token type does not match parse mode',
+				undefined,
+				'/ai/transsumm/abc',
+				-3901,
+			);
+			const result = classifyError(err);
+			expect(result.category).toBe('api-error');
+			// Not the -12-specific wording, but still owns the failure as Plaud's.
+			expect(result.message).not.toMatch(/no detectable speech/i);
+			expect(result.message).toMatch(/plaud-side issue/i);
 		});
 
 		it.each([
@@ -312,9 +350,45 @@ describe('mergeRecordings', () => {
 	});
 });
 
+// filterVisibleRecordings ---------------------------------------------------
+
+describe('filterVisibleRecordings', () => {
+	const live1 = rec('a', 'live a', false);
+	const trashed = rec('b', 'trashed b', true);
+	const live2 = rec('c', 'live c', false);
+	const all = [live1, trashed, live2];
+
+	it('hides trashed recordings by default', () => {
+		expect(filterVisibleRecordings(all, false).map((r) => r.id)).toEqual([
+			'a',
+			'c',
+		]);
+	});
+
+	it('shows all recordings when showTrashed is true', () => {
+		expect(filterVisibleRecordings(all, true)).toBe(all);
+	});
+
+	it('returns an empty list when every recording is trashed and hidden', () => {
+		expect(filterVisibleRecordings([trashed], false)).toEqual([]);
+	});
+
+	it('preserves order of the visible recordings', () => {
+		const ordered = [live2, trashed, live1];
+		expect(filterVisibleRecordings(ordered, false).map((r) => r.id)).toEqual([
+			'c',
+			'a',
+		]);
+	});
+});
+
 // tallyImportResults --------------------------------------------------------
 
-function rec(id: string, title = `rec ${id}`): Recording {
+function rec(
+	id: string,
+	title = `rec ${id}`,
+	isTrashed = false,
+): Recording {
 	return {
 		id: id as PlaudRecordingId,
 		title,
@@ -322,6 +396,7 @@ function rec(id: string, title = `rec ${id}`): Recording {
 		durationSeconds: 60,
 		transcriptAvailable: true,
 		summaryAvailable: true,
+		isTrashed,
 	};
 }
 
@@ -356,6 +431,25 @@ function noContent(id: string, title?: string): ImportResult {
 			transcriptAvailable: false,
 			summaryAvailable: false,
 		},
+	};
+}
+
+function placeholder(
+	id: string,
+	status: 'created' | 'refreshed' = 'created',
+	title?: string,
+): ImportResult {
+	const classification: ErrorClassification = {
+		category: 'api-error',
+		message: 'Plaud has no transcript yet',
+		canRetry: true,
+	};
+	return {
+		kind: 'placeholder-written',
+		recording: rec(id, title),
+		outcome: { status, path: `Plaud/${id}.md` },
+		reason: classification.message,
+		classification,
 	};
 }
 
@@ -426,6 +520,58 @@ describe('tallyImportResults', () => {
 		expect(tally.failures).toHaveLength(1);
 		expect(tally.noContentResults.map((r) => r.recording.id)).toEqual(['c', 'd']);
 	});
+
+	it('counts placeholder writes in their own bucket, separate from failures and skips', () => {
+		const tally = tallyImportResults([
+			written('a', 'created'),
+			placeholder('b'),
+			placeholder('c', 'refreshed'),
+			failed('d', 'token rejected'),
+		]);
+		expect(tally.placeholdersWritten).toBe(2);
+		expect(tally.failed).toBe(1);
+		// Placeholders are NOT failures.
+		expect(tally.failures).toHaveLength(1);
+		expect(tally.placeholderResults.map((r) => r.recording.id)).toEqual(['b', 'c']);
+	});
+});
+
+// isPlaudUnprocessedError ----------------------------------------------------
+
+describe('isPlaudUnprocessedError', () => {
+	it('is true for an in-band Plaud API error (server said no, parsed fine)', () => {
+		const err = new PlaudApiError(
+			'Plaud returned in-band error from /ai/transsumm/abc: status=-12 msg=start trans task error',
+			undefined,
+			'/ai/transsumm/abc',
+			-12,
+		);
+		expect(isPlaudUnprocessedError(err)).toBe(true);
+	});
+
+	it('is false for a token/auth rejection (the user must fix the token, not get a stub)', () => {
+		const err = new PlaudAuthError(
+			'token_rejected',
+			'Plaud rejected the token on /ai/transsumm/abc (status -419: workspace token expired)',
+			'/ai/transsumm/abc',
+		);
+		expect(isPlaudUnprocessedError(err)).toBe(false);
+	});
+
+	it('is false for a parse error (a plugin bug, not missing content)', () => {
+		const err = new PlaudParseError('unexpected shape', '/ai/transsumm/abc');
+		expect(isPlaudUnprocessedError(err)).toBe(false);
+	});
+
+	it('is false for a transport failure (no in-band envelope, retry may work)', () => {
+		const err = new PlaudApiError('network unreachable', undefined, '/ai/transsumm/abc');
+		expect(isPlaudUnprocessedError(err)).toBe(false);
+	});
+
+	it('is false for a non-Plaud error', () => {
+		expect(isPlaudUnprocessedError(new Error('boom'))).toBe(false);
+		expect(isPlaudUnprocessedError('string')).toBe(false);
+	});
 });
 
 // formatImportNotice --------------------------------------------------------
@@ -481,6 +627,19 @@ describe('formatImportNotice', () => {
 		]);
 		expect(formatImportNotice(tally)).toBe(
 			'Plaud importer: 1 imported, 1 skipped, 1 no content, 1 failed.',
+		);
+	});
+
+	it('includes a placeholder clause, between no-content and failed, when stubs were written', () => {
+		const tally = tallyImportResults([
+			written('a', 'created'),
+			written('b', 'skipped'),
+			noContent('c'),
+			placeholder('d'),
+			failed('e', 'x'),
+		]);
+		expect(formatImportNotice(tally)).toBe(
+			'Plaud importer: 1 imported, 1 skipped, 1 no content, 1 placeholder, 1 failed.',
 		);
 	});
 

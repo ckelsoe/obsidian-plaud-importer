@@ -56,12 +56,27 @@ export interface PlaudHttpResponse {
 export class PlaudApiError extends Error {
 	readonly status: number | undefined;
 	readonly endpoint: string | undefined;
+	/**
+	 * Plaud's own negative `status` code when this error came from an in-band
+	 * error envelope (HTTP 200 body with a negative `status` + `msg`), for
+	 * example `-12` "start trans task error". Undefined for HTTP-status errors,
+	 * network failures, and parse errors. Lets the UI distinguish a genuine
+	 * Plaud-side rejection (the plugin read the response correctly) from a
+	 * transport or parsing failure, and recognize specific codes like `-12`.
+	 */
+	readonly inBandStatus: number | undefined;
 
-	constructor(message: string, status?: number, endpoint?: string) {
+	constructor(
+		message: string,
+		status?: number,
+		endpoint?: string,
+		inBandStatus?: number,
+	) {
 		super(message);
 		this.name = 'PlaudApiError';
 		this.status = status;
 		this.endpoint = endpoint;
+		this.inBandStatus = inBandStatus;
 	}
 }
 
@@ -755,11 +770,14 @@ export class ReverseEngineeredPlaudClient implements PlaudClient {
 			}
 			// Any other in-band failure (e.g. -3901 "token type does not match
 			// parse mode") surfaces Plaud's own message. The "in-band error
-			// from" prefix routes it to the api-error category in classifyError.
+			// from" prefix routes it to the api-error category in classifyError,
+			// and inBandStatus carries Plaud's numeric code so the UI can give a
+			// code-specific explanation (e.g. -12 "start trans task error").
 			throw new PlaudApiError(
 				`Plaud returned in-band error from ${endpoint}: status=${inBand.status} msg=${inBand.msg}`,
 				undefined,
 				endpoint,
+				inBand.status,
 			);
 		}
 
@@ -933,6 +951,9 @@ interface RawRecording {
 	readonly duration: number;
 	readonly is_trans: boolean;
 	readonly is_summary: boolean;
+	// Optional: present on current Plaud payloads, absent on some older ones.
+	// Treated as not-trashed when missing.
+	readonly is_trash?: boolean;
 	readonly filetag_id_list?: readonly string[];
 }
 
@@ -1040,6 +1061,7 @@ function parseRecording(raw: RawRecording, endpoint: string): Recording {
 		durationSeconds: raw.duration / 1000,
 		transcriptAvailable: raw.is_trans,
 		summaryAvailable: raw.is_summary,
+		isTrashed: raw.is_trash === true,
 		tags: raw.filetag_id_list,
 	};
 }

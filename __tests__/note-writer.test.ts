@@ -4,12 +4,14 @@ import {
 	NoteWriterCancelledError,
 	expandTitleWithYear,
 	extractPlaudIdFromFrontmatter,
+	extractPlaudPlaceholderFlag,
 	extractSpeakers,
 	findTranscriptHeadingLine,
 	formatChapterIndexSection,
 	formatDurationHoursMinutes,
 	formatFrontmatter,
 	formatMarkdown,
+	formatPlaceholderMarkdown,
 	formatPlaudWebUrl,
 	formatTimestamp,
 	formatTranscriptSection,
@@ -44,6 +46,7 @@ function makeRecording(overrides: Partial<Recording> = {}): Recording {
 		durationSeconds: 600,
 		transcriptAvailable: true,
 		summaryAvailable: true,
+		isTrashed: false,
 		...overrides,
 	};
 }
@@ -2564,5 +2567,169 @@ describe('NoteWriter.writeNote foldInfo', () => {
 		const created = expectCreatedOutcome(outcome);
 		// With H2 configured, findTranscriptHeadingLine locates `## Transcript`.
 		expect(created.foldInfo).toBeDefined();
+	});
+});
+
+// extractPlaudPlaceholderFlag ------------------------------------------------
+
+describe('extractPlaudPlaceholderFlag', () => {
+	it('returns true when the frontmatter carries plaud-placeholder: true', () => {
+		const content = '---\nplaud-id: abc\nplaud-placeholder: true\n---\n\n# Note';
+		expect(extractPlaudPlaceholderFlag(content)).toBe(true);
+	});
+
+	it('accepts quoted and yes forms case-insensitively', () => {
+		expect(
+			extractPlaudPlaceholderFlag('---\nplaud-placeholder: "true"\n---'),
+		).toBe(true);
+		expect(extractPlaudPlaceholderFlag('---\nplaud-placeholder: YES\n---')).toBe(
+			true,
+		);
+	});
+
+	it('returns false for a real note with no marker', () => {
+		const content = '---\nplaud-id: abc\nsource: plaud\n---\n\n# Note';
+		expect(extractPlaudPlaceholderFlag(content)).toBe(false);
+	});
+
+	it('returns false when the marker is explicitly false or absent frontmatter', () => {
+		expect(
+			extractPlaudPlaceholderFlag('---\nplaud-placeholder: false\n---'),
+		).toBe(false);
+		expect(extractPlaudPlaceholderFlag('no frontmatter here')).toBe(false);
+	});
+});
+
+// formatPlaceholderMarkdown --------------------------------------------------
+
+describe('formatPlaceholderMarkdown', () => {
+	it('carries the recording id, link, marker, and reason', () => {
+		const md = formatPlaceholderMarkdown(
+			makeRecording({ id: 'rec-9' as PlaudRecordingId, title: 'Strategy sync' }),
+			'Plaud reported: status=-12 msg=start trans task error',
+		);
+		expect(md).toContain('plaud-id: rec-9');
+		expect(md).toContain('plaud-placeholder: true');
+		expect(md).toContain(formatPlaudWebUrl('rec-9'));
+		expect(md).toContain('[Open in Plaud →]');
+		expect(md).toContain('# Strategy sync');
+		expect(md).toContain('start trans task error');
+	});
+
+	it('is recognized as a placeholder by extractPlaudPlaceholderFlag', () => {
+		const md = formatPlaceholderMarkdown(makeRecording(), 'because reasons');
+		expect(extractPlaudPlaceholderFlag(md)).toBe(true);
+		// And it still carries a parseable plaud-id for collision/dedup checks.
+		expect(extractPlaudIdFromFrontmatter(md)).toBe('abc123');
+	});
+
+	it('flattens newlines in the reason so the callout stays well-formed', () => {
+		const md = formatPlaceholderMarkdown(
+			makeRecording(),
+			'line one\nline two',
+		);
+		expect(md).toContain('line one line two');
+		expect(md).not.toContain('line one\nline two');
+	});
+});
+
+// NoteWriter.writePlaceholderNote --------------------------------------------
+
+describe('NoteWriter.writePlaceholderNote', () => {
+	it('creates a placeholder note when none exists', async () => {
+		const vault = makeFakeVault();
+		const writer = new NoteWriter(vault, { outputFolder: 'Plaud', onDuplicate: 'skip' });
+
+		const outcome = await writer.writePlaceholderNote(makeRecording(), 'no content yet');
+
+		expect(outcome.status).toBe('created');
+		expect(outcome.path).toBe('Plaud/Morning standup.md');
+		const body = vault.files.get('Plaud/Morning standup.md') ?? '';
+		expect(extractPlaudPlaceholderFlag(body)).toBe(true);
+	});
+
+	it('refreshes an existing placeholder rather than duplicating it', async () => {
+		const vault = makeFakeVault();
+		const writer = new NoteWriter(vault, { outputFolder: 'Plaud', onDuplicate: 'skip' });
+		await writer.writePlaceholderNote(makeRecording(), 'first reason');
+
+		const outcome = await writer.writePlaceholderNote(makeRecording(), 'second reason');
+
+		expect(outcome.status).toBe('refreshed');
+		expect(vault.files.size).toBe(1);
+		expect(vault.files.get('Plaud/Morning standup.md')).toContain('second reason');
+	});
+
+	it('keeps an existing real note and never downgrades it to a stub', async () => {
+		const vault = makeFakeVault();
+		const writer = new NoteWriter(vault, { outputFolder: 'Plaud', onDuplicate: 'skip' });
+		await writer.writeNote(makeRecording(), makeTranscript(), makeSummary());
+		const realBody = vault.files.get('Plaud/Morning standup.md');
+
+		const outcome = await writer.writePlaceholderNote(makeRecording(), 'plaud erred');
+
+		expect(outcome.status).toBe('kept-existing');
+		// The real note is untouched: still has the summary, no placeholder marker.
+		expect(vault.files.get('Plaud/Morning standup.md')).toBe(realBody);
+		expect(
+			extractPlaudPlaceholderFlag(vault.files.get('Plaud/Morning standup.md') ?? ''),
+		).toBe(false);
+	});
+
+	it('throws a collision error when a note for a DIFFERENT recording occupies the path', async () => {
+		const vault = makeFakeVault();
+		const writer = new NoteWriter(vault, { outputFolder: 'Plaud', onDuplicate: 'skip' });
+		vault.files.set(
+			'Plaud/Morning standup.md',
+			'---\nplaud-id: someone-else\n---\n\n# Morning standup',
+		);
+
+		await expect(
+			writer.writePlaceholderNote(makeRecording(), 'plaud erred'),
+		).rejects.toThrow(NoteWriterError);
+	});
+});
+
+// writeNote placeholder supersession -----------------------------------------
+
+describe('NoteWriter.writeNote superseding a placeholder', () => {
+	it('overwrites a placeholder with real content even under the skip policy', async () => {
+		const vault = makeFakeVault();
+		const writer = new NoteWriter(vault, { outputFolder: 'Plaud', onDuplicate: 'skip' });
+		await writer.writePlaceholderNote(makeRecording(), 'no content yet');
+
+		const outcome = await writer.writeNote(
+			makeRecording(),
+			makeTranscript(),
+			makeSummary(),
+		);
+
+		// Skip policy would normally leave an existing note alone, but a
+		// placeholder must always yield to real content.
+		expect(outcome.status).toBe('overwritten');
+		const body = vault.files.get('Plaud/Morning standup.md') ?? '';
+		expect(extractPlaudPlaceholderFlag(body)).toBe(false);
+		expect(body).toContain('## Summary');
+	});
+
+	it('overwrites a placeholder without invoking the duplicate prompt', async () => {
+		const vault = makeFakeVault();
+		const promptOnDuplicate = jest.fn();
+		const writer = new NoteWriter(vault, {
+			outputFolder: 'Plaud',
+			onDuplicate: 'prompt',
+			promptOnDuplicate,
+		});
+		await writer.writePlaceholderNote(makeRecording(), 'no content yet');
+
+		const outcome = await writer.writeNote(
+			makeRecording(),
+			makeTranscript(),
+			makeSummary(),
+		);
+
+		expect(outcome.status).toBe('overwritten');
+		// Replacing our own stub needs no user decision.
+		expect(promptOnDuplicate).not.toHaveBeenCalled();
 	});
 });

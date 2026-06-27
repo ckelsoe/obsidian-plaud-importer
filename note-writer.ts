@@ -195,6 +195,19 @@ export type WriteOutcome =
 	  }
 	| { readonly status: 'skipped'; readonly path: string };
 
+/**
+ * Result of writing a placeholder note for an unprocessed recording.
+ *   - 'created': no prior note existed; a fresh stub was written.
+ *   - 'refreshed': an older placeholder existed and was rewritten.
+ *   - 'kept-existing': a real (non-placeholder) note already existed for this
+ *     recording, so it was left untouched. Never downgrade real content to a
+ *     stub.
+ */
+export type PlaceholderWriteOutcome = {
+	readonly status: 'created' | 'refreshed' | 'kept-existing';
+	readonly path: string;
+};
+
 // -----------------------------------------------------------------------------
 // Pure helpers (exported for testing).
 // -----------------------------------------------------------------------------
@@ -858,6 +871,31 @@ export function extractPlaudIdFromFrontmatter(content: string): string | null {
 	return value.length > 0 ? value : null;
 }
 
+/**
+ * Detect whether a note's YAML frontmatter carries the `plaud-placeholder:
+ * true` marker. A placeholder note is a stub the importer writes when Plaud
+ * confirmed (via an in-band server error) that it has no transcript or summary
+ * for a recording yet; it holds only the link and recording ID. The writer
+ * uses this to let a later real import always supersede a placeholder,
+ * regardless of the user's duplicate policy, and to avoid downgrading a real
+ * note back to a stub.
+ *
+ * Returns false for any note without frontmatter, without the key, or with the
+ * key set to anything other than a truthy `true`/`yes` token.
+ */
+export function extractPlaudPlaceholderFlag(content: string): boolean {
+	const block = content.match(/^---\s*\r?\n([\s\S]*?)\r?\n---/);
+	if (!block) {
+		return false;
+	}
+	const markerLine = block[1].match(/^plaud-placeholder:\s*(.*?)\s*$/m);
+	if (!markerLine) {
+		return false;
+	}
+	const value = markerLine[1].trim().replace(/^["']|["']$/g, '').toLowerCase();
+	return value === 'true' || value === 'yes';
+}
+
 function formatSummaryBody(summary: Summary | null): string {
 	if (!summary) {
 		return '_No summary available._';
@@ -1227,6 +1265,57 @@ export function formatMarkdown(
 	return parts.join('\n');
 }
 
+/**
+ * Build a placeholder note for a recording Plaud has no transcript or summary
+ * for yet. Written only when Plaud affirmatively reported it cannot produce
+ * content (an in-band server error such as `-12 start trans task error`), so
+ * the user still gets a note in the vault carrying the recording ID and a
+ * working link back to Plaud. The `plaud-placeholder: true` frontmatter marker
+ * lets a later successful import overwrite this stub automatically.
+ *
+ * `reason` is a short, single-line human explanation (typically the classified
+ * error message). Newlines are flattened so the callout stays well-formed.
+ */
+export function formatPlaceholderMarkdown(
+	recording: Recording,
+	reason: string,
+): string {
+	const url = formatPlaudWebUrl(recording.id);
+	const expandedTitle = expandTitleWithYear(recording.title, recording.createdAt);
+	const flatReason = reason.replace(/\s*\r?\n\s*/g, ' ').trim();
+	const lines: string[] = [
+		'---',
+		`plaud-id: ${yamlScalar(recording.id)}`,
+		`plaud-url: ${yamlScalar(url)}`,
+		`date: ${formatDateYmd(recording.createdAt)}`,
+		'source: plaud',
+		// Marker that distinguishes this stub from a real note. extractPlaud-
+		// PlaceholderFlag keys on it so a later real import always replaces it.
+		'plaud-placeholder: true',
+		'---',
+		'',
+		`# ${expandedTitle}`,
+		'',
+		`[Open in Plaud →](${url})`,
+		'',
+		'> [!warning] Not imported: Plaud has no transcript or summary',
+		'> Plaud has no transcript or summary available for this recording. This is a',
+		'> Plaud-side condition, not a problem reading the data. A common cause is that',
+		'> the audio has no detectable speech (Plaud shows "No speech detected"). It can',
+		'> also mean the recording is still processing. Open it in Plaud to see the exact',
+		'> reason. If Plaud later has content for it, re-run the import and this',
+		'> placeholder is replaced automatically. If Plaud reports no speech, there is',
+		'> nothing to import.',
+		'>',
+		`> Recording ID: \`${recording.id}\``,
+	];
+	if (flatReason.length > 0) {
+		lines.push('>', `> Plaud reported: ${flatReason}`);
+	}
+	lines.push('');
+	return lines.join('\n');
+}
+
 // -----------------------------------------------------------------------------
 // NoteWriter class — handles vault-level file creation and duplicate policy.
 // -----------------------------------------------------------------------------
@@ -1271,6 +1360,129 @@ export class NoteWriter {
 		};
 	}
 
+	/**
+	 * Resolve the per-recording destination path (folder + sanitized filename),
+	 * creating the destination folder if needed. Shared by writeNote and
+	 * writePlaceholderNote so both land a recording at the exact same path.
+	 */
+	private async resolveTargetPath(recording: Recording): Promise<string> {
+		const subfolder = resolveSubfolder(this.subfolderTemplate, recording.createdAt);
+		const destinationFolder = joinFolderPath(this.outputFolder, subfolder);
+		await this.ensureFolder(destinationFolder);
+		const expandedTitle = expandTitleWithYear(recording.title, recording.createdAt);
+		const filename = `${sanitizeFilename(expandedTitle)}.md`;
+		return destinationFolder === '' ? filename : `${destinationFolder}/${filename}`;
+	}
+
+	/**
+	 * Find a prior note for this recording. First the exact target path; then,
+	 * if none, the vault-wide lookup that catches an earlier import living in a
+	 * DIFFERENT subfolder (for example after the user edited the subfolder
+	 * template). Returns the matched file and its path, or a null file when no
+	 * prior note exists.
+	 */
+	private findExistingNote(
+		recording: Recording,
+		targetPath: string,
+	): { existing: FileLike | null; notePath: string } {
+		let existing = this.vault.getFileByPath(targetPath);
+		let notePath = targetPath;
+		if (existing === null && this.existingPathForPlaudId) {
+			const priorPath = this.existingPathForPlaudId(recording.id);
+			if (priorPath !== null && priorPath !== targetPath) {
+				const priorFile = this.vault.getFileByPath(priorPath);
+				if (priorFile !== null) {
+					existing = priorFile;
+					notePath = priorPath;
+				}
+			}
+		}
+		return { existing, notePath };
+	}
+
+	/**
+	 * Read an existing note and assert it belongs to this recording. Two
+	 * distinct Plaud recordings can sanitize to the same filename; overwriting
+	 * or skipping the wrong one would lose data silently, so a mismatched
+	 * plaud-id throws a loud collision error. Returns the file content for the
+	 * caller to inspect (for example, the placeholder marker).
+	 */
+	private async readExistingContent(
+		existing: FileLike,
+		notePath: string,
+		recordingId: string,
+	): Promise<string> {
+		let existingContent: string;
+		try {
+			existingContent = await this.vault.read(existing);
+		} catch (cause) {
+			throw new NoteWriterError(
+				`Failed to read existing ${notePath} while checking for collisions: ${
+					cause instanceof Error ? cause.message : String(cause)
+				}`,
+			);
+		}
+		const existingPlaudId = extractPlaudIdFromFrontmatter(existingContent);
+		if (existingPlaudId !== null && existingPlaudId !== recordingId) {
+			throw new NoteWriterError(
+				`Filename collision at ${notePath}: this note belongs to recording ${existingPlaudId}, not ${recordingId}. Rename one of the source recordings in Plaud or delete the existing note to re-import.`,
+			);
+		}
+		return existingContent;
+	}
+
+	/**
+	 * Write a stub note for a recording Plaud reported it cannot transcribe or
+	 * summarize yet (an in-band server error such as `-12 start trans task
+	 * error`). The stub carries the recording ID and a link back to Plaud so
+	 * the user keeps a breadcrumb, and is marked `plaud-placeholder: true` so a
+	 * later successful import replaces it automatically. Never downgrades a real
+	 * note to a stub: when a non-placeholder note already exists for the
+	 * recording it is left untouched.
+	 */
+	async writePlaceholderNote(
+		recording: Recording,
+		reason: string,
+	): Promise<PlaceholderWriteOutcome> {
+		const targetPath = await this.resolveTargetPath(recording);
+		const markdown = formatPlaceholderMarkdown(recording, reason);
+		const { existing, notePath } = this.findExistingNote(recording, targetPath);
+		if (existing === null) {
+			try {
+				await this.vault.create(targetPath, markdown);
+			} catch (cause) {
+				throw new NoteWriterError(
+					`Failed to create placeholder ${targetPath} for recording ${recording.id}: ${
+						cause instanceof Error ? cause.message : String(cause)
+					}`,
+				);
+			}
+			return { status: 'created', path: targetPath };
+		}
+		const existingContent = await this.readExistingContent(
+			existing,
+			notePath,
+			recording.id,
+		);
+		if (!extractPlaudPlaceholderFlag(existingContent)) {
+			// A real note already exists for this recording, so keep it. The fetch
+			// failed this run, but a prior import succeeded, so the good content
+			// wins over a stub.
+			return { status: 'kept-existing', path: notePath };
+		}
+		// Refresh the older placeholder so its reason text stays current.
+		try {
+			await this.vault.process(existing, () => markdown);
+		} catch (cause) {
+			throw new NoteWriterError(
+				`Failed to refresh placeholder ${notePath} for recording ${recording.id}: ${
+					cause instanceof Error ? cause.message : String(cause)
+				}`,
+			);
+		}
+		return { status: 'refreshed', path: notePath };
+	}
+
 	async writeNote(
 		recording: Recording,
 		transcript: Transcript | null,
@@ -1302,23 +1514,10 @@ export class NoteWriter {
 			);
 		}
 
-		// Resolve the per-recording destination folder. The subfolder template
+		// Resolve the per-recording destination path. The subfolder template
 		// keys off the recording date, so the resolved path is a pure function
 		// of the recording's own metadata and stays stable across re-imports.
-		const subfolder = resolveSubfolder(this.subfolderTemplate, recording.createdAt);
-		const destinationFolder = joinFolderPath(this.outputFolder, subfolder);
-		await this.ensureFolder(destinationFolder);
-
-		// Expand the title with its year if it uses Plaud's MM-DD default
-		// naming — applies to both the filename and the H1 so they stay in
-		// sync. formatMarkdown below calls the same helper.
-		const expandedTitle = expandTitleWithYear(
-			recording.title,
-			recording.createdAt,
-		);
-		const filename = `${sanitizeFilename(expandedTitle)}.md`;
-		const targetPath =
-			destinationFolder === '' ? filename : `${destinationFolder}/${filename}`;
+		const targetPath = await this.resolveTargetPath(recording);
 		const effectiveFormatOptions: FormatMarkdownOptions = {
 			...this.defaultFormatOptions,
 			...formatOptions,
@@ -1346,25 +1545,12 @@ export class NoteWriter {
 					}
 				: undefined;
 
-		// Look for a prior note for this recording. First the exact target
-		// path; then, if none, a vault-wide lookup that catches an earlier
-		// import living in a DIFFERENT subfolder (for example after the user
-		// edited the subfolder template). Matching cross-folder is what stops
-		// a template change from writing a second copy of a recording that is
-		// already imported elsewhere. The existing note is left in place — this
-		// is dedup, not migration; moving notes is a separate, opt-in feature.
-		let existing = this.vault.getFileByPath(targetPath);
-		let notePath = targetPath;
-		if (existing === null && this.existingPathForPlaudId) {
-			const priorPath = this.existingPathForPlaudId(recording.id);
-			if (priorPath !== null && priorPath !== targetPath) {
-				const priorFile = this.vault.getFileByPath(priorPath);
-				if (priorFile !== null) {
-					existing = priorFile;
-					notePath = priorPath;
-				}
-			}
-		}
+		// Look for a prior note for this recording (exact path, then cross-folder
+		// lookup). Matching cross-folder is what stops a subfolder-template
+		// change from writing a second copy of a recording already imported
+		// elsewhere. The existing note is left in place — this is dedup, not
+		// migration; moving notes is a separate, opt-in feature.
+		const { existing, notePath } = this.findExistingNote(recording, targetPath);
 		if (existing === null) {
 			try {
 				await this.vault.create(targetPath, markdown);
@@ -1378,36 +1564,33 @@ export class NoteWriter {
 			return { status: 'created', path: targetPath, foldInfo };
 		}
 
-		// A note for this recording already exists (at notePath). Before
-		// honoring the duplicate policy, check whether it belongs to a
-		// DIFFERENT recording — two distinct Plaud recordings can sanitize to
-		// the same filename, and silently overwriting or skipping would cause
-		// data loss that the user would never know about.
-		let existingContent: string;
-		try {
-			existingContent = await this.vault.read(existing);
-		} catch (cause) {
-			throw new NoteWriterError(
-				`Failed to read existing ${notePath} while checking for collisions: ${
-					cause instanceof Error ? cause.message : String(cause)
-				}`,
-			);
-		}
-		const existingPlaudId = extractPlaudIdFromFrontmatter(existingContent);
-		if (existingPlaudId !== null && existingPlaudId !== recording.id) {
-			throw new NoteWriterError(
-				`Filename collision at ${notePath}: this note belongs to recording ${existingPlaudId}, not ${recording.id}. Rename one of the source recordings in Plaud or delete the existing note to re-import.`,
-			);
-		}
+		// A note for this recording already exists (at notePath). Read it and
+		// assert it belongs to this recording (throws on a filename collision
+		// with a DIFFERENT recording).
+		const existingContent = await this.readExistingContent(
+			existing,
+			notePath,
+			recording.id,
+		);
 
-		if (this.onDuplicate === 'skip') {
+		// Real content always supersedes a placeholder stub: if the existing
+		// note is a placeholder we wrote for an unprocessed recording, overwrite
+		// it with the now-available content regardless of the duplicate policy.
+		// This is what makes the placeholder self-healing: a later import that
+		// actually has the transcript/summary replaces the stub even under a
+		// 'skip' or 'prompt' policy that would otherwise leave it stranded.
+		const supersedingPlaceholder = extractPlaudPlaceholderFlag(existingContent);
+
+		if (!supersedingPlaceholder && this.onDuplicate === 'skip') {
 			return { status: 'skipped', path: notePath };
 		}
 
 		// Resolve prompt-mode into a concrete action. 'skip' short-circuits,
 		// 'cancel' throws, anything else falls through to the overwrite path
-		// shared with onDuplicate === 'overwrite'.
-		if (this.onDuplicate === 'prompt') {
+		// shared with onDuplicate === 'overwrite'. Skipped entirely when we are
+		// superseding a placeholder: replacing our own stub with real content
+		// needs no user decision.
+		if (this.onDuplicate === 'prompt' && !supersedingPlaceholder) {
 			if (!this.promptOnDuplicate) {
 				throw new NoteWriterError(
 					'promptOnDuplicate callback missing at write time — this is a plugin bug',
