@@ -405,7 +405,25 @@ export class ReverseEngineeredPlaudClient implements PlaudClient {
 		const polishLink = findTransactionPolishLink(rawDetail, detailEndpoint);
 		const rawTranscriptLink = findRawTranscriptLink(rawDetail, detailEndpoint);
 		const outlineLink = findOutlineLink(rawDetail, detailEndpoint);
-		const newerSummaryMarkdown = findNewerSummaryMarkdown(rawDetail, detailEndpoint);
+		// Best-effort: a drift in Plaud's summary envelope (malformed JSON,
+		// missing ai_content, non-array list) must never abort the bundle and
+		// drag the transcript down with it. Isolate the throw, log it for
+		// visibility, and fall back to the legacy summary (newerSummary stays
+		// null). Structural corruption of the response envelope itself already
+		// surfaces earlier via findTransactionPolishLink.
+		let newerSummaryMarkdown: string | null = null;
+		try {
+			newerSummaryMarkdown = findNewerSummaryMarkdown(rawDetail, detailEndpoint);
+		} catch (err) {
+			if (this.debugLogger?.enabled === true) {
+				this.debugLogger.log({
+					kind: 'parsed',
+					endpoint: detailEndpoint,
+					message: `newer-summary extraction failed for ${id}; falling back to legacy summary: ${describeUnknownError(err)}`,
+					payload: { summaryExtractError: describeUnknownError(err) },
+				});
+			}
+		}
 		const aiKeywords = findAiKeywords(rawDetail, detailEndpoint);
 		const attachments = findAttachmentAssets(rawDetail, detailEndpoint);
 		const nestedAssetLinks = findNestedAssetLinks(rawDetail, detailEndpoint);
@@ -1155,10 +1173,13 @@ export interface FileDetailBundle {
  * Walk a raw `/file/detail/{id}` response and return the markdown text of
  * Plaud's NEWER summary, or null when this recording has no newer summary.
  *
- * The newer summary lives at
- * `data.pre_download_content_list[data_type='auto_sum_note'].data_content`
- * — embedded directly in the response body (no S3 follow-up). It differs
- * from the legacy `/ai/transsumm/{id}` summary in two important ways:
+ * The newer summary lives in `data.pre_download_content_list` — the entry
+ * whose `data_id` starts with `auto_sum:` (these entries carry NO
+ * `data_type` field; that exists only on `content_list`). Its
+ * `data_content` is either a JSON envelope carrying the markdown under
+ * `ai_content`, or a bare markdown string. Embedded directly in the
+ * response body (no S3 follow-up). It differs from the legacy
+ * `/ai/transsumm/{id}` summary in two important ways:
  *  1. Participant names are resolved from Plaud's speaker-rename map, so
  *     a note reads "Participants: Charles Kelsoe, Vijay Muniswamy" instead
  *     of "Speaker 2, Speaker 3".
@@ -1167,8 +1188,9 @@ export interface FileDetailBundle {
  *
  * Returns null — not an error — when:
  *  - The response has no `pre_download_content_list` field (older recordings)
- *  - The list is present but contains no `auto_sum_note` entry
- *  - The `auto_sum_note` entry has no `data_content` string
+ *  - The list is present but contains no `auto_sum:` entry
+ *  - The `auto_sum:` entry has no `data_content` string, or its envelope
+ *    `ai_content` trims to empty
  *
  * Throws `PlaudParseError` on structurally-invalid responses (missing
  * `data`, non-array `pre_download_content_list`) so the caller can surface
@@ -1269,16 +1291,76 @@ export function findNewerSummaryMarkdown(
 		if (!isRecord(item)) {
 			continue;
 		}
-		if (item.data_type !== 'auto_sum_note') {
+		// pre_download_content_list entries are keyed by `data_id`, NOT by
+		// `data_type` (that field only exists on `content_list`). The
+		// pre-rendered auto summary is the entry whose data_id starts with
+		// `auto_sum:` — e.g. "auto_sum:899720e9:<fileId>". The previous code
+		// keyed on `data_type === 'auto_sum_note'`, which is absent on these
+		// entries, so it matched nothing in production and silently dropped
+		// every summary while transcripts still imported (0.11.0 regression).
+		const dataId = item.data_id;
+		if (typeof dataId !== 'string' || !dataId.startsWith('auto_sum:')) {
 			continue;
 		}
 		const content = item.data_content;
-		if (typeof content === 'string' && content.trim().length > 0) {
-			return content.trim();
+		if (typeof content !== 'string') {
+			return null;
 		}
-		return null;
+		return extractAutoSumMarkdown(content, endpoint);
 	}
 	return null;
+}
+
+/**
+ * Pull the markdown summary body out of an `auto_sum:` entry's
+ * `data_content`. Two shapes occur in the wild:
+ *  1. Newer recordings: a JSON envelope string carrying the markdown under
+ *     `ai_content`, alongside `category` / `summary_id` metadata.
+ *  2. Brief or older recordings: the markdown string verbatim, with no JSON
+ *     wrapper — e.g. "The transcript is brief, no summary is needed...".
+ *
+ * Returns null when the content trims to empty, or when the JSON envelope's
+ * `ai_content` is present but empty. Throws PlaudParseError when the payload
+ * looks like JSON but fails to parse, or parses to an object lacking an
+ * `ai_content` string — a loud signal that Plaud's summary envelope drifted.
+ * The caller (fetchFileDetailBundle) isolates this throw so a summary-shape
+ * drift can never block the transcript path. Mirrors parseSummaryField's
+ * JSON-vs-verbatim discrimination.
+ */
+function extractAutoSumMarkdown(
+	content: string,
+	endpoint: string,
+): string | null {
+	const trimmed = content.trim();
+	if (trimmed.length === 0) {
+		return null;
+	}
+	// Only JSON.parse when the payload looks structured; a bare markdown
+	// body (shape 2) is returned verbatim.
+	if (!trimmed.startsWith('{')) {
+		return trimmed;
+	}
+	let obj: unknown;
+	try {
+		obj = JSON.parse(trimmed);
+	} catch (err) {
+		throw new PlaudParseError(
+			`auto_sum data_content for ${endpoint} looks like JSON but failed to parse: ${
+				err instanceof Error ? err.message : String(err)
+			}`,
+			endpoint,
+		);
+	}
+	if (isRecord(obj) && typeof obj.ai_content === 'string') {
+		const aiContent = obj.ai_content.trim();
+		return aiContent.length > 0 ? aiContent : null;
+	}
+	throw new PlaudParseError(
+		`auto_sum data_content for ${endpoint} parsed to JSON but has no 'ai_content' string — Plaud summary envelope may have changed. Keys: [${
+			isRecord(obj) ? Object.keys(obj).join(', ') : typeof obj
+		}]`,
+		endpoint,
+	);
 }
 
 /**
@@ -1506,6 +1588,14 @@ function collectAttachmentUrls(value: unknown): readonly string[] {
 
 function looksLikeAttachmentUrl(value: string): boolean {
 	const lower = value.toLowerCase();
+	// Pipeline DATA blobs — the gzipped transcript/outline JSON and the
+	// gzipped summary markdown — are never user attachments. They appear in
+	// some older recordings' download maps, and without this guard they leak
+	// in as bogus ".gz" attachment links (Plaud/.../-assets/<id>-fileN.gz).
+	// Reject them before the permissive https:// check below accepts them.
+	if (isPipelineDataUrl(lower)) {
+		return false;
+	}
 	if (lower.startsWith('http://') || lower.startsWith('https://')) {
 		return true;
 	}
@@ -1524,6 +1614,27 @@ function looksLikeAttachmentUrl(value: string): boolean {
 		return true;
 	}
 	return false;
+}
+
+/**
+ * True when a URL/path points at one of Plaud's transcript/outline/summary
+ * pipeline data blobs rather than a real user attachment. These are always
+ * gzipped JSON or markdown; an actual attachment (card PNG, mindmap, photo,
+ * PDF) is never `.gz`. The path markers are defensive in case a future data
+ * file is not gzipped. Input is expected already lower-cased.
+ */
+function isPipelineDataUrl(lower: string): boolean {
+	if (/\.gz(\?|$)/.test(lower)) {
+		return true;
+	}
+	return (
+		lower.includes('/file_transcript/') ||
+		lower.includes('/file_outline/') ||
+		lower.includes('/file_summary/') ||
+		lower.includes('/file_transaction_polish/') ||
+		lower.includes('trans_result') ||
+		lower.includes('ai_content')
+	);
 }
 
 function inferAttachmentDataTypeFromPath(path: string): string {

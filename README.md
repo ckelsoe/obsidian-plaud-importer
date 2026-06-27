@@ -208,11 +208,11 @@ What the "Review artifacts first" checklist starts with when you begin a multi-i
 
 ### Debug logging
 
-Off by default. When on, captures API request/response metadata and parsed results into an in-memory buffer for troubleshooting. Auth headers are stripped. Payloads may contain transcript text, speaker names, and recording metadata, so only enable when you are preparing a bug report. Use the command **Plaud importer: Debug: copy debug log to clipboard** to export the session.
+Off by default. When on, captures API request/response metadata and parsed results into an in-memory buffer for troubleshooting. Auth headers are stripped. Payloads may contain transcript text, speaker names, and recording metadata, so only enable when you are preparing a bug report. Use the command **Plaud Importer: Debug: copy debug log to clipboard** to export the session.
 
 ## Using it
 
-1. Click the **audio-lines** ribbon icon on the left rail, or run the command **Plaud importer: Import recordings**.
+1. Click the **audio-lines** ribbon icon on the left rail, or run the command **Plaud Importer: Import recent recordings**.
 2. Scroll the recording list to load older pages (handled automatically as you scroll).
 3. Tick the recordings you want.
 4. Click **Import N recordings** (or **Review artifacts first** to uncheck specific artifacts for this batch).

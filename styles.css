@@ -98,7 +98,14 @@
 	color: var(--text-accent);
 }
 
-/* Progressive loading footer that lives at the bottom of the list. */
+/* Footer band below the scroll list. Holds the load-more status row so it
+ * stays pinned in view instead of scrolling away with the recordings. */
+.plaud-importer-list-footer {
+	flex-shrink: 0;
+	border-top: 1px solid var(--background-modifier-border);
+}
+
+/* Progressive loading status row, shown in the footer band. */
 .plaud-importer-progress {
 	display: flex;
 	align-items: center;
@@ -438,6 +445,41 @@
 .plaud-importer-copy-failures {
 	margin-top: 0.5em;
 	font-size: 0.85em;
+}
+
+/* Informational list of recordings Plaud had no content for. Neutral
+ * (muted) styling, not the error red used for failures, because a
+ * never-transcribed recording is expected rather than a problem. */
+.plaud-importer-nocontent {
+	margin: 0.5em 0 1em 0;
+	padding: 0.5em 0.75em;
+	background: var(--background-secondary);
+	border-left: 3px solid var(--background-modifier-border);
+	border-radius: 2px;
+	user-select: text;
+	-webkit-user-select: text;
+}
+
+.plaud-importer-nocontent summary {
+	cursor: pointer;
+	color: var(--text-muted);
+	font-weight: 500;
+	user-select: none;
+}
+
+.plaud-importer-nocontent ul {
+	margin: 0.5em 0 0 0;
+	padding-left: 1.25em;
+}
+
+.plaud-importer-nocontent li {
+	margin-bottom: 0.4em;
+	font-size: 0.9em;
+	line-height: 1.4;
+}
+
+.plaud-importer-nocontent strong {
+	color: var(--text-normal);
 }
 
 .plaud-importer-mono {

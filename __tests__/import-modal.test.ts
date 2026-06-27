@@ -348,6 +348,17 @@ function failed(id: string, reason: string, title?: string): ImportResult {
 	};
 }
 
+function noContent(id: string, title?: string): ImportResult {
+	return {
+		kind: 'skipped-no-content',
+		recording: {
+			...rec(id, title),
+			transcriptAvailable: false,
+			summaryAvailable: false,
+		},
+	};
+}
+
 describe('tallyImportResults', () => {
 	it('returns a zeroed tally for an empty list', () => {
 		const tally = tallyImportResults([]);
@@ -399,6 +410,22 @@ describe('tallyImportResults', () => {
 		]);
 		expect(tally.failures.map((f) => f.recording.id)).toEqual(['1', '3', '5']);
 	});
+
+	it('counts no-content skips in their own bucket, separate from duplicate-skips and failures', () => {
+		const tally = tallyImportResults([
+			written('a', 'created'),
+			written('b', 'skipped'),
+			noContent('c'),
+			noContent('d'),
+			failed('e', 'network error'),
+		]);
+		expect(tally.noContent).toBe(2);
+		expect(tally.skipped).toBe(1);
+		expect(tally.failed).toBe(1);
+		// No-content skips are NOT failures.
+		expect(tally.failures).toHaveLength(1);
+		expect(tally.noContentResults.map((r) => r.recording.id)).toEqual(['c', 'd']);
+	});
 });
 
 // formatImportNotice --------------------------------------------------------
@@ -442,6 +469,18 @@ describe('formatImportNotice', () => {
 		]);
 		expect(formatImportNotice(tally)).toBe(
 			'Plaud importer: 2 imported, 1 skipped, 1 failed.',
+		);
+	});
+
+	it('includes a "no content" clause, between skipped and failed, when any recording had no content', () => {
+		const tally = tallyImportResults([
+			written('a', 'created'),
+			written('b', 'skipped'),
+			noContent('c'),
+			failed('d', 'x'),
+		]);
+		expect(formatImportNotice(tally)).toBe(
+			'Plaud importer: 1 imported, 1 skipped, 1 no content, 1 failed.',
 		);
 	});
 

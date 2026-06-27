@@ -928,7 +928,7 @@ describe('getTranscriptAndSummary legacy-transsumm -12 fallback', () => {
 		data: {
 			pre_download_content_list: [
 				{
-					data_type: 'auto_sum_note',
+					data_id: 'auto_sum:owner:fileid',
 					data_content: '## Key points\n- Recovered from /file/detail',
 				},
 			],
@@ -2377,13 +2377,15 @@ describe('findNewerSummaryMarkdown', () => {
 		};
 	}
 
+	// Real pre_download_content_list entries are keyed by `data_id`
+	// (prefix "auto_sum:") and carry NO `data_type` field. The finder must
+	// match on data_id; keying on data_type silently broke in 0.11.0.
 	function autoSumNoteItem(
 		content: unknown,
 		overrides: Record<string, unknown> = {},
 	): Record<string, unknown> {
 		return {
-			data_type: 'auto_sum_note',
-			data_id: 'source_auto_sum_note:xxx:abc123',
+			data_id: 'auto_sum:xxx:abc123',
 			data_content: content,
 			...overrides,
 		};
@@ -2403,6 +2405,64 @@ describe('findNewerSummaryMarkdown', () => {
 		expect(result).toBe('# Summary');
 	});
 
+	it('extracts ai_content from a JSON envelope data_content (newer shape)', () => {
+		// The production wire shape: data_content is a JSON envelope, not bare
+		// markdown. The markdown body lives under `ai_content`.
+		const envelope = JSON.stringify({
+			category: 'Meeting Minutes',
+			summary_id: '20250801164611-v2@abc-1',
+			ai_content: '> Date & Time\n## Overview\nBody text.',
+		});
+		const raw = fileDetailWithSummary([autoSumNoteItem(envelope)]);
+		expect(findNewerSummaryMarkdown(raw, '/file/detail/abc123')).toBe(
+			'> Date & Time\n## Overview\nBody text.',
+		);
+	});
+
+	it('matches the auto_sum entry by data_id prefix, not data_type', () => {
+		// Regression guard for the 0.11.0 silent summary loss: real entries
+		// carry only a data_id like "auto_sum:<owner>:<fileId>" and no
+		// data_type, so the finder must key on data_id.
+		const raw = fileDetailWithSummary([
+			{ data_id: 'auto_sum:owner:abc123', data_content: '## Real summary' },
+		]);
+		expect(findNewerSummaryMarkdown(raw, '/file/detail/abc123')).toBe(
+			'## Real summary',
+		);
+	});
+
+	it('returns a bare (non-JSON) markdown data_content verbatim', () => {
+		const raw = fileDetailWithSummary([
+			autoSumNoteItem('The transcript is brief, no summary is needed.'),
+		]);
+		expect(findNewerSummaryMarkdown(raw, '/file/detail/abc123')).toBe(
+			'The transcript is brief, no summary is needed.',
+		);
+	});
+
+	it('returns null when the JSON envelope ai_content trims to empty', () => {
+		const raw = fileDetailWithSummary([
+			autoSumNoteItem(JSON.stringify({ ai_content: '   ' })),
+		]);
+		expect(findNewerSummaryMarkdown(raw, '/file/detail/abc123')).toBeNull();
+	});
+
+	it('throws PlaudParseError when data_content looks like JSON but fails to parse', () => {
+		const raw = fileDetailWithSummary([autoSumNoteItem('{ broken')]);
+		expect(() =>
+			findNewerSummaryMarkdown(raw, '/file/detail/abc123'),
+		).toThrow(PlaudParseError);
+	});
+
+	it('throws PlaudParseError when the JSON envelope lacks an ai_content string', () => {
+		const raw = fileDetailWithSummary([
+			autoSumNoteItem(JSON.stringify({ category: 'x', summary_id: 'y' })),
+		]);
+		expect(() =>
+			findNewerSummaryMarkdown(raw, '/file/detail/abc123'),
+		).toThrow(PlaudParseError);
+	});
+
 	it('returns null when pre_download_content_list is absent', () => {
 		const raw = { status: 0, data: { file_id: 'abc' } };
 		expect(findNewerSummaryMarkdown(raw, '/file/detail/abc')).toBeNull();
@@ -2413,9 +2473,9 @@ describe('findNewerSummaryMarkdown', () => {
 		expect(findNewerSummaryMarkdown(raw, '/file/detail/abc')).toBeNull();
 	});
 
-	it('returns null when the list has no auto_sum_note entry', () => {
+	it('returns null when no entry has an auto_sum: data_id', () => {
 		const raw = fileDetailWithSummary([
-			{ data_type: 'transaction_polish', data_content: 'nope' },
+			{ data_id: 'source_transaction:xxx', data_content: 'nope' },
 		]);
 		expect(findNewerSummaryMarkdown(raw, '/file/detail/abc')).toBeNull();
 	});
@@ -2727,6 +2787,53 @@ describe('findAttachmentAssets', () => {
 		]);
 	});
 
+	it('rejects gzipped pipeline data blobs from download maps so they do not leak in as .gz attachments', () => {
+		// Regression: older recordings carried the transcript/outline/summary
+		// data files (.json.gz / .md.gz) in download_path_mapping. Without a
+		// guard these surfaced as bogus "File N" .gz attachment links. A real
+		// card PNG in the same map must still come through.
+		const raw = {
+			status: 0,
+			msg: 'success',
+			data: {
+				file_id: 'abc123',
+				content_list: [],
+				pre_download_content_list: [],
+				download_path_mapping: {
+					'permanent/abc/file_transcript/abc/trans_result.json.gz':
+						'https://cdn.example.com/trans_result.json.gz?sig=x',
+					'permanent/abc/file_outline/abc/outline.json.gz':
+						'https://cdn.example.com/outline.json.gz?sig=x',
+					'permanent/abc/file_summary/abc/ai_content.md.gz':
+						'https://cdn.example.com/ai_content.md.gz?sig=x',
+					'permanent/abc/card/result.png': 'https://cdn.example.com/card.png?sig=x',
+				},
+			},
+		};
+		expect(findAttachmentAssets(raw, '/file/detail/abc')).toEqual([
+			{
+				dataType: 'card',
+				url: 'https://cdn.example.com/card.png?sig=x',
+				name: 'result.png',
+				mimeType: undefined,
+			},
+		]);
+	});
+
+	it('rejects gzipped pipeline data blobs carried on content_list entries with non-pipeline data_types', () => {
+		// Defense in depth: even if an entry is NOT one of the excluded
+		// pipeline data_types, a .gz data_link is still not an attachment.
+		const raw = fileDetailWithAssets([
+			{
+				data_type: 'source',
+				task_status: 1,
+				data_link:
+					'https://cdn.example.com/permanent/abc/file_transcript/abc/trans_result.json.gz?sig=x',
+			},
+		]);
+		expect(findAttachmentAssets(raw, '/file/detail/abc')).toEqual([]);
+	});
+
 	it('throws PlaudParseError when response body is not an object', () => {
 		expect(() => findAttachmentAssets('nope', '/file/detail/abc')).toThrow(
 			PlaudParseError,
@@ -2784,7 +2891,7 @@ describe('getTranscriptAndSummary DD-004 paths', () => {
 		const preDownload: unknown[] = [];
 		if (options.newerSummary !== undefined) {
 			preDownload.push({
-				data_type: 'auto_sum_note',
+				data_id: 'auto_sum:owner:abc123',
 				data_content: options.newerSummary,
 			});
 		}
@@ -2845,6 +2952,57 @@ describe('getTranscriptAndSummary DD-004 paths', () => {
 		const result = await client.getTranscriptAndSummary(ID);
 
 		expect(result.summary?.text).toContain('Key points');
+	});
+
+	it('extracts ai_content when the newer summary is a JSON envelope', async () => {
+		// The real production wire shape: data_content is a JSON envelope and
+		// the markdown body lives under `ai_content`.
+		const { fetcher } = routeFetcher({
+			transsumm: ok(transsummEnvelope()), // legacy summary says "Key points..."
+			detail: ok(
+				fileDetailFull({
+					newerSummary: JSON.stringify({
+						category: 'Meeting Minutes',
+						summary_id: 'sid-1',
+						ai_content: '**Participants:** Charles, Vijay\n\nEnvelope body.',
+					}),
+				}),
+			),
+		});
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+
+		const result = await client.getTranscriptAndSummary(ID);
+
+		expect(result.summary?.text).toBe(
+			'**Participants:** Charles, Vijay\n\nEnvelope body.',
+		);
+		expect(result.summary?.text).not.toContain('Key points');
+	});
+
+	it('keeps the polished transcript when the newer summary envelope is malformed', async () => {
+		// Robustness: a drift in the auto_sum data_content (here, broken JSON)
+		// must not abort the bundle and take the polished transcript down with
+		// it. The summary throw is isolated inside fetchFileDetailBundle; the
+		// transcript still resolves to the polish file and the summary falls
+		// back to the legacy /ai/transsumm body.
+		const { fetcher } = routeFetcher({
+			transsumm: ok(transsummEnvelope()),
+			detail: ok(
+				fileDetailFull({
+					polishUrl: 'https://s3/polish?sig=x',
+					newerSummary: '{ "ai_content": broken',
+				}),
+			),
+			polish: ok([polishedSegment({ speaker: 'Charles Kelsoe', content: 'Hi.' })]),
+		});
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+
+		const { transcript, summary } = await client.getTranscriptAndSummary(ID);
+
+		expect(transcript?.segments.map((s) => s.speaker)).toEqual([
+			'Charles Kelsoe',
+		]);
+		expect(summary?.text).toContain('Key points');
 	});
 
 	it('propagates AI keywords on the result when present', async () => {

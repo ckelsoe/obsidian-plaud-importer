@@ -280,27 +280,52 @@ export type ImportResult =
 			// Preserved original value so a future logError pass can
 			// surface the full stack / error class / status in telemetry.
 			readonly cause: unknown;
+	  }
+	| {
+			// Plaud never produced a transcript OR a summary for this
+			// recording (e.g. a never-processed raw clip). There is
+			// genuinely nothing to write, so this is a benign skip, not a
+			// failure: surfaced separately from duplicate-skips and from
+			// the -12 error path so the user sees an honest "no content"
+			// reason instead of a spurious error.
+			readonly kind: 'skipped-no-content';
+			readonly recording: Recording;
 	  };
 
 export interface ImportTally {
 	readonly total: number;
 	readonly created: number;
 	readonly overwritten: number;
+	// Notes skipped because a same-path/same-id note already existed and
+	// the duplicate policy was 'skip'. Distinct from noContent.
 	readonly skipped: number;
+	// Recordings skipped because Plaud has no transcript and no summary
+	// for them — nothing to import, reported as a benign skip.
+	readonly noContent: number;
 	readonly failed: number;
 	readonly failures: readonly ImportResult[];
+	// The 'skipped-no-content' results, kept for the summary view's
+	// informational (non-error) list.
+	readonly noContentResults: readonly ImportResult[];
 }
 
 export function tallyImportResults(results: readonly ImportResult[]): ImportTally {
 	let created = 0;
 	let overwritten = 0;
 	let skipped = 0;
+	let noContent = 0;
 	let failed = 0;
 	const failures: ImportResult[] = [];
+	const noContentResults: ImportResult[] = [];
 	for (const r of results) {
 		if (r.kind === 'failed') {
 			failed++;
 			failures.push(r);
+			continue;
+		}
+		if (r.kind === 'skipped-no-content') {
+			noContent++;
+			noContentResults.push(r);
 			continue;
 		}
 		switch (r.writeOutcome.status) {
@@ -320,8 +345,10 @@ export function tallyImportResults(results: readonly ImportResult[]): ImportTall
 		created,
 		overwritten,
 		skipped,
+		noContent,
 		failed,
 		failures,
+		noContentResults,
 	};
 }
 
@@ -339,6 +366,9 @@ export function formatImportNotice(tally: ImportTally): string {
 	parts.push(`${imported} imported`);
 	if (tally.skipped > 0) {
 		parts.push(`${tally.skipped} skipped`);
+	}
+	if (tally.noContent > 0) {
+		parts.push(`${tally.noContent} no content`);
 	}
 	if (tally.failed > 0) {
 		parts.push(`${tally.failed} failed`);
@@ -723,6 +753,10 @@ export class ImportModal extends Modal {
 	private listEl: HTMLElement | null = null;
 	// Tail status area inside the scrollable list. Shows loading/error/end
 	// hints and a manual action button when auto-loading is paused or fails.
+	// Footer container that sits BELOW the scroll list (a sibling of it),
+	// holding the load-more status/spinner so they stay pinned in view
+	// instead of scrolling away with the rows.
+	private progressFooterEl: HTMLElement | null = null;
 	private progressEl: HTMLElement | null = null;
 	private progressTextEl: HTMLElement | null = null;
 	private progressSpinnerEl: HTMLElement | null = null;
@@ -746,6 +780,9 @@ export class ImportModal extends Modal {
 	private loadingMore = false;
 	private loadMoreErrorMessage: string | null = null;
 	private lastAutoLoadAt = 0;
+	// Last non-throttle reason maybeAutoLoad refused to page, used to
+	// deduplicate the scroll debug log (scroll fires many events per second).
+	private lastAutoLoadBlockReason: string | null = null;
 	// First-scroll gate: we do not auto-load on initial modal open. Once the
 	// user starts interacting with the list, auto-loading and background
 	// prefetch are enabled.
@@ -829,6 +866,7 @@ export class ImportModal extends Modal {
 		this.reviewArtifactsButton = null;
 		this.currentRecordings = [];
 		this.listEl = null;
+		this.progressFooterEl = null;
 		this.progressEl = null;
 		this.progressTextEl = null;
 		this.progressSpinnerEl = null;
@@ -856,6 +894,7 @@ export class ImportModal extends Modal {
 		this.importButton = null;
 		this.reviewArtifactsButton = null;
 		this.listEl = null;
+		this.progressFooterEl = null;
 		this.progressEl = null;
 		this.progressTextEl = null;
 		this.progressSpinnerEl = null;
@@ -929,6 +968,12 @@ export class ImportModal extends Modal {
 
 		try {
 			let incoming: readonly Recording[];
+			const fromPrefetch = this.prefetchedRecordings !== null;
+			this.logScrollDebug('loadMore start', {
+				trigger,
+				skip,
+				source: fromPrefetch ? 'prefetch-cache' : 'live-fetch',
+			});
 			if (this.prefetchedRecordings !== null) {
 				incoming = this.prefetchedRecordings;
 				this.prefetchedRecordings = null;
@@ -962,6 +1007,14 @@ export class ImportModal extends Modal {
 			}
 			this.updateIntroCount();
 			this.updateProgressUi();
+			this.logScrollDebug('loadMore done', {
+				trigger,
+				skip,
+				newRows: newRows.length,
+				received: incoming.length,
+				totalLoaded: this.currentRecordings.length,
+				hasMore: this.hasMore,
+			});
 			this.startPrefetchIfNeeded();
 		} catch (err) {
 			if (generation !== this.fetchGeneration) {
@@ -974,6 +1027,12 @@ export class ImportModal extends Modal {
 			const classification = classifyError(err);
 			new Notice(`Plaud importer: could not load more — ${classification.message}`);
 			this.loadMoreErrorMessage = classification.message;
+			this.logScrollDebug('loadMore error', {
+				trigger,
+				skip,
+				error: classification.message,
+				category: classification.category,
+			});
 			this.updateProgressUi();
 		} finally {
 			this.loadingMore = false;
@@ -1049,6 +1108,12 @@ export class ImportModal extends Modal {
 		for (const rec of this.currentRecordings) {
 			this.renderRow(listEl, rec);
 		}
+		// Footer sits BELOW the scroll list (a sibling, not a child) so the
+		// load-more status and spinner stay pinned in view rather than
+		// scrolling out of sight with the rows.
+		this.progressFooterEl = contentEl.createDiv({
+			cls: 'plaud-importer-list-footer',
+		});
 		this.ensureProgressElements();
 		this.updateProgressUi();
 		this.setupAutoLoadObserver();
@@ -1088,10 +1153,15 @@ export class ImportModal extends Modal {
 	}
 
 	private renderRow(listEl: HTMLElement, rec: Recording): void {
-		// Keep rows ahead of footer/sentinel tail elements.
+		// Keep newly appended rows above the auto-load sentinel so the
+		// sentinel stays the last child of the scroll list — its
+		// intersection with the bottom is what drives paging.
 		const row = listEl.createDiv({ cls: 'plaud-importer-row' });
-		if (this.progressEl !== null && this.progressEl.parentElement === listEl) {
-			listEl.insertBefore(row, this.progressEl);
+		if (
+			this.autoLoadSentinelEl !== null &&
+			this.autoLoadSentinelEl.parentElement === listEl
+		) {
+			listEl.insertBefore(row, this.autoLoadSentinelEl);
 		}
 
 		const checkbox = row.createEl('input', {
@@ -1325,10 +1395,19 @@ export class ImportModal extends Modal {
 	}
 
 	private ensureProgressElements(): void {
-		if (this.listEl === null || this.progressEl !== null) {
+		if (
+			this.listEl === null ||
+			this.progressFooterEl === null ||
+			this.progressEl !== null
+		) {
 			return;
 		}
-		const progressEl = this.listEl.createDiv({ cls: 'plaud-importer-progress' });
+		// Progress UI lives in the footer (below the scroll list); the
+		// sentinel stays inside the scroll list because the auto-load
+		// IntersectionObserver uses listEl as its root.
+		const progressEl = this.progressFooterEl.createDiv({
+			cls: 'plaud-importer-progress',
+		});
 		this.progressEl = progressEl;
 		// Status group holds an (animated) spinner next to the text so the
 		// "loading more" state reads as active work, not a frozen list, while
@@ -1371,8 +1450,12 @@ export class ImportModal extends Modal {
 		}
 		this.progressEl.hidden = false;
 		this.setProgressActionButton(null);
-		// Spinner is visible only while a page fetch is actually in flight.
-		this.progressSpinnerEl?.toggleClass('plaud-importer-hidden', !this.loadingMore);
+		// Spinner shows the moment a page fetch starts — including the
+		// background prefetch, which is where the real network wait happens.
+		// Gating it on loadingMore alone made it flash only when the cached
+		// page was consumed (after the wait), reading as a frozen list.
+		const fetching = this.loadingMore || this.prefetchInFlight;
+		this.progressSpinnerEl?.toggleClass('plaud-importer-hidden', !fetching);
 		if (this.loadingMore) {
 			this.progressTextEl.setText('Loading more recordings...');
 			return;
@@ -1416,12 +1499,23 @@ export class ImportModal extends Modal {
 	}
 
 	private handleListInteraction(): void {
-		if (this.userStartedScrolling) {
-			return;
+		const firstInteraction = !this.userStartedScrolling;
+		if (firstInteraction) {
+			this.userStartedScrolling = true;
+			this.startPrefetchIfNeeded();
+			this.updateProgressUi();
+			this.logScrollDebug('first list interaction', this.scrollStateSnapshot());
 		}
-		this.userStartedScrolling = true;
-		this.startPrefetchIfNeeded();
-		this.updateProgressUi();
+		// Re-check near-bottom on every interaction, not just the first. The
+		// IntersectionObserver fires only on transitions, and once we page
+		// before the sentinel scrolls out of view it can stay continuously
+		// intersecting and never fire again — which froze paging with the
+		// footer stuck on "Scroll to load more". A direct scroll-driven check
+		// keeps paging alive regardless of the observer. maybeAutoLoad's own
+		// throttle prevents this from firing on every scroll event.
+		if (this.isListNearBottom()) {
+			this.maybeAutoLoad('interaction');
+		}
 	}
 
 	private startPrefetchIfNeeded(): void {
@@ -1435,6 +1529,7 @@ export class ImportModal extends Modal {
 		const skip = this.currentRecordings.length;
 		this.prefetchInFlight = true;
 		this.updateProgressUi();
+		this.logScrollDebug('prefetch start', { skip, ...this.scrollStateSnapshot() });
 		void this.client
 			.listRecordings({
 				skip,
@@ -1442,15 +1537,24 @@ export class ImportModal extends Modal {
 			})
 			.then((incoming) => {
 				if (generation !== this.fetchGeneration) {
+					this.logScrollDebug('prefetch resolved (stale, dropped)', { skip });
 					return;
 				}
 				this.prefetchedRecordings = incoming;
+				this.logScrollDebug('prefetch resolved', {
+					skip,
+					received: incoming.length,
+				});
 			})
 			.catch((err) => {
 				if (generation !== this.fetchGeneration) {
 					return;
 				}
 				console.warn('Plaud importer: next-page prefetch failed', err);
+				this.logScrollDebug('prefetch failed', {
+					skip,
+					error: err instanceof Error ? err.message : String(err),
+				});
 				// Prefetch failures are intentionally silent; regular loadMore
 				// still handles user-visible error messages.
 			})
@@ -1461,7 +1565,7 @@ export class ImportModal extends Modal {
 				this.prefetchInFlight = false;
 				this.updateProgressUi();
 				if (this.isListNearBottom()) {
-					this.maybeAutoLoad();
+					this.maybeAutoLoad('prefetch-finally');
 				}
 			});
 	}
@@ -1482,10 +1586,15 @@ export class ImportModal extends Modal {
 		if (typeof IntersectionObserver !== 'undefined') {
 			this.autoLoadObserver = new IntersectionObserver(
 				(entries) => {
-					if (!entries.some((entry) => entry.isIntersecting)) {
+					const intersecting = entries.some((entry) => entry.isIntersecting);
+					this.logScrollDebug('sentinel observer fired', {
+						intersecting,
+						...this.scrollStateSnapshot(),
+					});
+					if (!intersecting) {
 						return;
 					}
-					this.maybeAutoLoad();
+					this.maybeAutoLoad('observer');
 				},
 				{
 					root: this.listEl,
@@ -1500,7 +1609,7 @@ export class ImportModal extends Modal {
 				return;
 			}
 			if (this.isListNearBottom()) {
-				this.maybeAutoLoad();
+				this.maybeAutoLoad('scroll-fallback');
 			}
 		};
 		this.listEl.addEventListener('scroll', this.scrollFallbackHandler);
@@ -1523,27 +1632,59 @@ export class ImportModal extends Modal {
 		this.scrollFallbackHandler = null;
 	}
 
-	private maybeAutoLoad(): void {
-		if (!this.hasMore || this.loadingMore) {
+	private maybeAutoLoad(source: string): void {
+		const reason = this.autoLoadBlockReason();
+		if (reason !== null) {
+			// Throttle blocks are the common case on a fast scroll — logging
+			// them would bury the signal. Log every other block reason, but
+			// only once per distinct reason so a held state (e.g. a stuck
+			// prefetch) doesn't spam a line per scroll event.
+			if (reason !== 'throttle' && reason !== this.lastAutoLoadBlockReason) {
+				this.lastAutoLoadBlockReason = reason;
+				this.logScrollDebug('auto-load blocked', {
+					source,
+					reason,
+					...this.scrollStateSnapshot(),
+				});
+			}
 			return;
 		}
-		if (!this.userStartedScrolling) {
-			return;
-		}
-		if (this.prefetchInFlight && this.prefetchedRecordings === null) {
-			return;
-		}
-		if (this.loadMoreErrorMessage !== null) {
-			return;
-		}
-		const now = Date.now();
-		if (now - this.lastAutoLoadAt < AUTO_LOAD_THROTTLE_MS) {
-			return;
-		}
-		this.lastAutoLoadAt = now;
+		this.lastAutoLoadBlockReason = null;
+		this.lastAutoLoadAt = Date.now();
+		this.logScrollDebug('auto-load firing', {
+			source,
+			...this.scrollStateSnapshot(),
+		});
 		void this.loadMore('auto').catch((err) => {
 			console.error('Plaud importer: unexpected auto-load error', err);
 		});
+	}
+
+	/**
+	 * First gate that currently prevents an auto-load, or null if a load may
+	 * proceed. Centralized (and named) so the scroll debug log can report
+	 * exactly why paging is or is not advancing.
+	 */
+	private autoLoadBlockReason(): string | null {
+		if (!this.hasMore) {
+			return 'no-more';
+		}
+		if (this.loadingMore) {
+			return 'already-loading';
+		}
+		if (!this.userStartedScrolling) {
+			return 'not-scrolled-yet';
+		}
+		if (this.prefetchInFlight && this.prefetchedRecordings === null) {
+			return 'prefetch-in-flight';
+		}
+		if (this.loadMoreErrorMessage !== null) {
+			return 'previous-error';
+		}
+		if (Date.now() - this.lastAutoLoadAt < AUTO_LOAD_THROTTLE_MS) {
+			return 'throttle';
+		}
+		return null;
 	}
 
 	private isListNearBottom(): boolean {
@@ -1553,6 +1694,48 @@ export class ImportModal extends Modal {
 		const remaining =
 			this.listEl.scrollHeight - this.listEl.scrollTop - this.listEl.clientHeight;
 		return remaining <= AUTO_LOAD_ROOT_MARGIN_PX;
+	}
+
+	/**
+	 * Snapshot of the scroll/paging state machine for the debug log. Captures
+	 * every gate maybeAutoLoad consults plus the raw scroll geometry, so a
+	 * frozen-list report can be diagnosed from the log alone.
+	 */
+	private scrollStateSnapshot(): Record<string, unknown> {
+		const remainingPx =
+			this.listEl !== null
+				? this.listEl.scrollHeight -
+				  this.listEl.scrollTop -
+				  this.listEl.clientHeight
+				: null;
+		return {
+			loaded: this.currentRecordings.length,
+			hasMore: this.hasMore,
+			loadingMore: this.loadingMore,
+			prefetchInFlight: this.prefetchInFlight,
+			hasPrefetchedPage: this.prefetchedRecordings !== null,
+			userStartedScrolling: this.userStartedScrolling,
+			loadMoreError: this.loadMoreErrorMessage,
+			nearBottom: this.isListNearBottom(),
+			remainingPx,
+			rootMarginPx: AUTO_LOAD_ROOT_MARGIN_PX,
+			msSinceLastAutoLoad: Date.now() - this.lastAutoLoadAt,
+			throttleMs: AUTO_LOAD_THROTTLE_MS,
+			observerActive: this.autoLoadObserver !== null,
+		};
+	}
+
+	private logScrollDebug(message: string, payload?: unknown): void {
+		const logger = this.noteWriterOptions.debugLogger;
+		if (!logger || !logger.enabled) {
+			return;
+		}
+		logger.log({
+			kind: 'note',
+			endpoint: '/scroll',
+			message,
+			payload,
+		});
 	}
 
 	private async fetchPageWithSilentRetry(
@@ -1658,6 +1841,20 @@ export class ImportModal extends Modal {
 			const recording = selected[i];
 			if (this.importButton) {
 				this.importButton.textContent = `Importing ${i + 1} of ${selected.length}…`;
+			}
+			// Plaud never produced a transcript OR a summary for this
+			// recording — the list metadata already told us so, before the
+			// doomed /ai/transsumm + /file/detail round-trip that would
+			// otherwise return a -12 "start trans task error". There is
+			// nothing to write, so record a benign "no content" skip rather
+			// than letting the error path classify it as a failure.
+			if (!recording.transcriptAvailable && !recording.summaryAvailable) {
+				this.logImportDebug('skipped recording with no content in Plaud', {
+					recordingId: recording.id,
+					recordingTitle: recording.title,
+				});
+				results.push({ kind: 'skipped-no-content', recording });
+				continue;
 			}
 			try {
 				const {
@@ -1989,9 +2186,11 @@ export class ImportModal extends Modal {
 		contentEl.empty();
 
 		const imported = tally.created + tally.overwritten;
+		const noContentClause =
+			tally.noContent > 0 ? `${tally.noContent} no content, ` : '';
 		const summaryLine =
 			`${imported} imported (${tally.created} new, ${tally.overwritten} overwritten), ` +
-			`${tally.skipped} skipped, ${tally.failed} failed.`;
+			`${tally.skipped} skipped, ${noContentClause}${tally.failed} failed.`;
 
 		contentEl.createEl('p', {
 			text: summaryLine,
@@ -2050,6 +2249,31 @@ export class ImportModal extends Modal {
 					}\n\n${payload}`,
 				);
 			});
+		}
+
+		// Informational (non-error) list of recordings Plaud had no content
+		// for. Collapsed by default since these are expected, not problems —
+		// the user selected them but Plaud never transcribed or summarized
+		// them, so there was nothing to write.
+		if (tally.noContentResults.length > 0) {
+			const noContent = contentEl.createEl('details', {
+				cls: 'plaud-importer-nocontent',
+			});
+			noContent.createEl('summary', {
+				text: `${tally.noContentResults.length} skipped — no content in Plaud`,
+			});
+			const list = noContent.createEl('ul');
+			for (const r of tally.noContentResults) {
+				if (r.kind !== 'skipped-no-content') {
+					continue;
+				}
+				const li = list.createEl('li');
+				li.createEl('strong', { text: r.recording.title });
+				li.createEl('span', {
+					text: ` (${r.recording.id})`,
+					cls: 'plaud-importer-failure-id',
+				});
+			}
 		}
 
 		const buttonRow = contentEl.createDiv({ cls: 'plaud-importer-buttons' });

@@ -4,9 +4,12 @@ All notable changes to Plaud Importer will be documented in this file.
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-06-27
+
 ### Added
 
 - Subfolder template for the output folder. A new **Subfolder template** setting files each imported note into a dated subfolder built from the recording date, so a growing library stops piling into one flat folder. Leave it empty to keep the current single-folder layout. Tokens: `{{yyyy}}`, `{{MM}}`, `{{dd}}`, the `{{yyyy-MM}}` shorthand, `{{ww}}` (ISO week number), and `{{Q}}` (calendar quarter). For example, `{{yyyy-MM}}` files a June 2026 recording under `2026-06`, and `{{yyyy}}/W{{ww}}` files by week. Attachments follow their note into the same subfolder. The setting applies to new imports; notes you already imported stay where they are. Re-importing a recording whose template changed updates the existing note in place instead of creating a duplicate.
+- Loading indicator in the recording list while the next page is being fetched as you scroll. It now sits in a footer pinned below the list instead of scrolling away inside it, and the spinner appears the moment the fetch starts (including the background prefetch) rather than flashing only after the data arrives, so a slow load no longer reads as a frozen list.
 
 ### Changed
 
@@ -14,9 +17,12 @@ All notable changes to Plaud Importer will be documented in this file.
 
 ### Fixed
 
+- Imported notes were missing their summary on recordings where Plaud's live summary endpoint was unavailable (common on older recordings, where it returns a "start trans task error"). The importer looked for the stored summary under the wrong key in the detail data, so it silently found nothing and wrote the note without a summary even though the summary was present. It now reads the stored summary correctly, including the newer format where the summary text is wrapped in a small metadata envelope. A summary that cannot be read for any reason no longer affects the transcript: the note still imports with its transcript and the summary is left out rather than failing or losing the transcript. Re-import an affected recording to backfill the missing summary.
 - Older recordings that failed to import with a Plaud "start trans task error" (status -12) now recover from the stored detail data instead of failing outright. The legacy transcript call is treated as best-effort: when it errors but Plaud's detail bundle still holds the transcript or summary, the note imports. A recording with no usable data from either source still reports the original error.
 - A recording whose summary Plaud advertises but cannot deliver (common on older recordings) now imports as long as a transcript exists: the note is written with a "no summary available" placeholder instead of failing the whole recording. Recordings with neither a summary nor a transcript still fail rather than writing an empty note.
 - Older recordings that were never "polished" now import using their raw transcript. The detail data carries both a raw transcript and a polished one; the importer used to follow only the polished entry, so recordings that had only the raw transcript (and also failed the legacy transcript endpoint) imported as empty failures. The raw transcript is now used as a fallback.
+- Recordings Plaud never transcribed or summarized (for example a raw clip you started but never processed) no longer count as failures. There is nothing to import for them, so they are now reported as a separate "no content" skip in the import summary instead of a "start trans task error". This is detected from the recording list up front, so these recordings are skipped without the failed lookup.
+- Plaud's internal transcript, outline, and summary data files (gzipped JSON and markdown) are no longer imported as attachments. On some older recordings these blobs appeared in the download map and leaked into the note as broken `…-assets/<id>-fileN.gz` attachment links. They are now filtered out; real attachments such as summary cards and mindmaps still import. Re-import an affected note to clear the stale `.gz` links.
 
 ## [0.11.0] - 2026-06-21
 
