@@ -82,6 +82,15 @@ describe('buildPlaudIdIndex', () => {
 		expect(buildPlaudIdIndex(app, '/Plaud/').size).toBe(1);
 	});
 
+	it('normalizes Windows-style backslash outputFolder before matching', () => {
+		// Regression for #7: a "\Inbox" setting must match notes Obsidian
+		// stored under "Inbox", so the imported badge and duplicate detection
+		// keep working for Windows users.
+		const app = makeApp([['Inbox/a.md', { 'plaud-id': 'rec-a' }]]);
+		expect(buildPlaudIdIndex(app, '\\Inbox').size).toBe(1);
+		expect(buildPlaudIdIndex(app, '\\Inbox\\').size).toBe(1);
+	});
+
 	it('does NOT match a folder by prefix that shares a name (Plaud-archive vs Plaud)', () => {
 		const app = makeApp([
 			['Plaud-archive/old.md', { 'plaud-id': 'rec-old' }],

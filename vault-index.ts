@@ -77,7 +77,14 @@ export function buildPlaudIdIndex(
 }
 
 function normalizeFolder(folder: string): string {
-	const trimmed = folder.trim().replace(/^\/+|\/+$/g, '');
+	// Match the note writer's normalization: a Windows-style "\Inbox" must
+	// resolve to "Inbox" so the imported-note index finds files under the
+	// folder Obsidian actually created. See normalizeFolderPath in
+	// note-writer.ts for the underlying createFolder/getFolderByPath mismatch.
+	const trimmed = folder
+		.trim()
+		.replace(/\\/g, '/')
+		.replace(/^\/+|\/+$/g, '');
 	return trimmed;
 }
 

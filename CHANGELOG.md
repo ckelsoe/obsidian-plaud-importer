@@ -4,6 +4,12 @@ All notable changes to Plaud Importer will be documented in this file.
 
 ## [Unreleased]
 
+## [0.12.1] - 2026-06-27
+
+### Fixed
+
+- Importing more than one recording into a folder typed with a Windows-style backslash (for example `\Inbox`) no longer fails every import after the first with "Failed to create folder: Folder already exists." The backslash was kept in the stored path, so the folder-exists check never matched the folder Obsidian had actually created and each later import re-attempted the create. Backslash paths are now normalized the same way Obsidian normalizes them, and a folder that already exists is treated as success either way. The same normalization fix also restores the "already imported" badge and duplicate detection for folders configured with a backslash.
+
 ## [0.12.0] - 2026-06-27
 
 ### Added

@@ -1464,10 +1464,18 @@ export class NoteWriter {
 				try {
 					await this.vault.createFolder(partial);
 				} catch (cause) {
+					// Treat "already exists" as success: getFolderByPath and
+					// createFolder can disagree about a path (normalization,
+					// case-insensitive filesystems, or a concurrent import that
+					// created the folder between the check and the create). The
+					// folder we needed is there either way, so this is idempotent.
+					const message =
+						cause instanceof Error ? cause.message : String(cause);
+					if (/already exists/i.test(message)) {
+						continue;
+					}
 					throw new NoteWriterError(
-						`Failed to create folder "${partial}": ${
-							cause instanceof Error ? cause.message : String(cause)
-						}`,
+						`Failed to create folder "${partial}": ${message}`,
 					);
 				}
 			}
@@ -1483,6 +1491,12 @@ export class NoteWriter {
 function normalizeFolderPath(folder: string): string {
 	const cleaned = folder
 		.trim()
+		// Windows users type paths like "\Inbox". Obsidian's createFolder
+		// normalizes "\" to "/" internally, but getFolderByPath does a literal
+		// index lookup — so an un-normalized backslash makes the existence check
+		// miss the folder Obsidian actually created, and every later import
+		// re-attempts the create and fails with "Folder already exists".
+		.replace(/\\/g, '/')
 		.replace(/^\/+|\/+$/g, '')
 		.replace(/\/{2,}/g, '/');
 	const segments = cleaned.split('/').filter((s) => s !== '' && s !== '.');

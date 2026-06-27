@@ -934,6 +934,36 @@ describe('NoteWriter', () => {
 		expect(outcome.path).toBe('Plaud/Morning standup.md');
 	});
 
+	it('normalizes Windows-style backslash folder paths', async () => {
+		// Regression for #7: a "\Inbox" output folder kept its backslash, so the
+		// path never matched what Obsidian's createFolder normalized it to.
+		const vault = makeFakeVault();
+		const writer = new NoteWriter(vault, { outputFolder: '\\Inbox', onDuplicate: 'skip' });
+
+		const outcome = await writer.writeNote(makeRecording(), makeTranscript(), makeSummary());
+
+		expect(outcome.path).toBe('Inbox/Morning standup.md');
+		expect(vault.createFolderCalls).toEqual(['Inbox']);
+	});
+
+	it('does not fail subsequent imports when the output folder already exists', async () => {
+		// Regression for #7: the second import must not throw "Folder already
+		// exists". Simulate Obsidian's real behaviour, where createFolder rejects
+		// an existing path while getFolderByPath disagrees about that path.
+		const vault = makeFakeVault();
+		vault.getFolderByPath = () => null;
+		vault.createFolder = async (path: string) => {
+			vault.createFolderCalls.push(path);
+			throw new Error(`Folder already exists.`);
+		};
+		const writer = new NoteWriter(vault, { outputFolder: 'Inbox', onDuplicate: 'skip' });
+
+		const outcome = await writer.writeNote(makeRecording(), makeTranscript(), makeSummary());
+
+		expect(outcome.status).toBe('created');
+		expect(outcome.path).toBe('Inbox/Morning standup.md');
+	});
+
 	it('throws at construction when outputFolder contains path-traversal segments', () => {
 		const vault = makeFakeVault();
 		// ".." inside a compound path is still a traversal attempt — reject
