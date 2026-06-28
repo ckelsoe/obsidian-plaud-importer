@@ -1,0 +1,55 @@
+name: "CodeQL"
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Weekly re-scan so new query-pack findings surface even with no code changes.
+    # Offset from the OSV weekly cron (Mon 12:00) to spread CI load.
+    - cron: "0 9 * * 4"
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: CodeQL Analyze
+    runs-on: ubuntu-latest
+    permissions:
+      # Upload code-scanning results to the Security tab.
+      security-events: write
+      # The CodeQL action reads workflow run metadata.
+      actions: read
+      contents: read
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # JavaScript and TypeScript share one CodeQL extractor. build-mode
+          # "none" is correct for an interpreted project: CodeQL analyzes the
+          # source directly, so no npm install or build step is needed.
+          - language: javascript-typescript
+            build-mode: none
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+          # security-extended adds higher-signal security queries beyond the
+          # default set. Appropriate for a plugin that makes authenticated
+          # network calls to a reverse-engineered API. Dial back to the default
+          # suite (drop this line) if it proves noisy on this small codebase.
+          queries: security-extended
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:${{ matrix.language }}"
