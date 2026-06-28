@@ -7,7 +7,7 @@ import {
 } from 'obsidian';
 import type { AttachmentAsset } from './plaud-client';
 import { NoopDebugLogger, type DebugLogger } from './debug-logger';
-import type { ArtifactSelection } from './import-modal';
+import type { ArtifactSelection } from './import-core';
 
 // Plaud host bases used to resolve relative asset paths into absolute
 // download candidates. The API host can vary by region (EU accounts get
