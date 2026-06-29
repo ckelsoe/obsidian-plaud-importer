@@ -14,13 +14,11 @@ import type {
 import {
 	NoteWriter,
 	NoteWriterError,
-	NoteWriterCancelledError,
 	type DuplicatePolicy,
 	type DuplicatePromptCallback,
-	buildNoteTags,
 	findTranscriptHeadingLine,
-	type FormatMarkdownOptions,
 } from './note-writer';
+import { runImport } from './import-runner';
 import { buildPlaudIdIndex, type ImportedRecord } from './vault-index';
 import { AttachmentImporter } from './attachment-importer';
 import {
@@ -1451,249 +1449,44 @@ export class ImportModal extends Modal {
 			this.importButton.textContent = `Importing 0 of ${selected.length}…`;
 		}
 
-		// Sequential rather than parallel: Plaud does not document a rate
-		// limit, and sequential ordering is cheap insurance against
-		// throttling. A per-recording failure is caught and recorded but
-		// does not stop the batch — this is the "partial success" semantic
-		// users expect for a multi-select import.
-		const results: ImportResult[] = [];
-		for (let i = 0; i < selected.length; i++) {
-			// Bail on mid-import modal close. Fire a partial Notice so
-			// the user sees what was completed before they hit Esc.
-			if (this.aborted) {
-				new Notice(
-					`${formatImportNotice(tallyImportResults(results))} (cancelled at ${i}/${selected.length})`,
-				);
-				return;
-			}
-
-			const recording = selected[i];
-			if (this.importButton) {
-				this.importButton.textContent = `Importing ${i + 1} of ${selected.length}…`;
-			}
-			// Plaud never produced a transcript OR a summary for this
-			// recording — the list metadata already told us so, before the
-			// doomed /ai/transsumm + /file/detail round-trip that would
-			// otherwise return a -12 "start trans task error". There is
-			// nothing to write, so record a benign "no content" skip rather
-			// than letting the error path classify it as a failure.
-			if (!recording.transcriptAvailable && !recording.summaryAvailable) {
-				this.logImportDebug('skipped recording with no content in Plaud', {
-					recordingId: recording.id,
-					recordingTitle: recording.title,
-				});
-				results.push({ kind: 'skipped-no-content', recording });
-				continue;
-			}
-			try {
-				const {
-					transcript,
-					summary,
-					aiKeywords,
-					chapters,
-					attachments,
-					nestedAssetLinks,
-				} = await this.ensureArtifactsForRecording(recording.id);
-				const summaryLinkedAttachments = this.attachments.extractAttachmentAssetsFromSummaryMarkdown(
-					summary?.text ?? null,
-				);
-				const mergedAttachments = this.attachments.mergeAttachmentAssets(
-					attachments ?? [],
-					summaryLinkedAttachments,
-				);
-				// DD-004: combine Plaud's AI-generated keyword list (from
-				// /file/detail/), the recording's own tags, and the user's
-				// custom tags before the note is rendered. buildNoteTags
-				// owns the mode filtering, namespacing, slug, and dedup
-				// rules; this site just feeds it the sources and settings.
-				// The recording's tags are ALWAYS overwritten with the
-				// built list (even when empty) so a restrictive tag mode
-				// cannot leak the raw Plaud tags into the frontmatter.
-				// formatFrontmatter omits empty tags:/keywords: keys.
-				const tagResult = buildNoteTags(recording.tags, aiKeywords, {
-					tagMode: this.noteWriterOptions.tagMode ?? 'plaud',
-					customTags: this.noteWriterOptions.customTags ?? '',
-					aiKeywordsAsProperty:
-						this.noteWriterOptions.aiKeywordsAsProperty ?? true,
-				});
-				const enrichedRecording = { ...recording, tags: tagResult.tags };
-				const formatOptions: FormatMarkdownOptions = {
-					includeTranscript: selection.includeTranscript,
-					includeSummary: selection.includeSummary,
-					keywords: tagResult.keywords,
-				};
-				const selectedChapters = selection.includeTranscript
-					? chapters
-					: undefined;
-				const writeOutcome = await writer.writeNote(
-					enrichedRecording,
-					transcript,
-					summary,
-					selectedChapters,
-					formatOptions,
-				);
-				this.logImportDebug('note write outcome', {
-					recordingId: recording.id,
-					recordingTitle: recording.title,
-					status: writeOutcome.status,
-					path: writeOutcome.path,
-					attachmentCount: mergedAttachments.length,
-					summaryLinkedAttachmentCount: summaryLinkedAttachments.length,
-				});
-				// Refresh the badge for this row when the write produced a
-				// note (created or overwritten). 'skipped' means the file
-				// already existed and we honored the duplicate policy —
-				// the badge is already there, no work to do.
-				if (writeOutcome.status === 'created' || writeOutcome.status === 'overwritten') {
-					this.updateRowBadge(recording.id);
-				}
-				if (
-					(
-						selection.includeAttachments ||
-						selection.includeMindmap ||
-						selection.includeCard
-					) &&
-					writeOutcome.status !== 'skipped' &&
-					mergedAttachments.length > 0
-				) {
-					await this.attachments.importAttachmentsForNote(
-						writeOutcome.path,
-						mergedAttachments,
-						selection,
-						writeOutcome.status === 'overwritten',
-						recording.id,
-						nestedAssetLinks,
-					);
-				} else {
-					this.logImportDebug('attachment import not started', {
-						recordingId: recording.id,
-						noteStatus: writeOutcome.status,
-						attachmentCount: mergedAttachments.length,
-						summaryLinkedAttachmentCount: summaryLinkedAttachments.length,
-						reason:
-							!(
-								selection.includeAttachments ||
-								selection.includeMindmap ||
-								selection.includeCard
-							)
-								? 'attachments disabled by artifact selection'
-								: writeOutcome.status === 'skipped'
-								? 'note skipped by duplicate policy'
-								: 'no attachments in transcript bundle',
-					});
-				}
-				// Apply transcript folding AFTER all post-write mutations
-				// (including attachment section insertion) so the saved
-				// heading line always matches the final file layout.
-				if (
-					writeOutcome.status !== 'skipped' &&
-					this.noteWriterOptions.foldTranscript !== false
-				) {
-					await this.applyTranscriptFold(writeOutcome.path);
-				}
-				// Report the original recording in the result so any
-				// downstream UI that renders the import summary sees the
-				// same object the modal already knows about. The merged
-				// tags only need to exist long enough to land in the
-				// written note's frontmatter.
-				results.push({ kind: 'written', recording, writeOutcome });
-			} catch (err) {
-				// User cancelled the per-file duplicate prompt. Break the
-				// loop without recording a failure — the current recording
-				// was not written, but the cancellation is user-intent,
-				// not an error condition worth classifying.
-				if (err instanceof NoteWriterCancelledError) {
-					new Notice(
-						`${formatImportNotice(tallyImportResults(results))} (cancelled at ${i}/${selected.length})`,
-					);
-					return;
-				}
-				// Log the full error object (including stack and any wrapped
-				// `cause`) so it's visible in DevTools. TODO: also plumb a
-				// logError(errorIds.IMPORT_RECORDING_FAILED, ...) telemetry
-				// call once the plugin has telemetry infrastructure.
-				console.error(
-					`Plaud importer: import failed for recording ${recording.id} "${recording.title}"`,
-					err,
-				);
-				const classification = classifyError(err);
-
-				// Plaud confirmed (in-band) it has no transcript/summary for this
-				// recording yet. Rather than a bare failure, write a placeholder
-				// note carrying the recording ID and a Plaud link so the user
-				// keeps a breadcrumb; a later successful import replaces it
-				// automatically. Gated by the writePlaceholderForUnprocessed
-				// setting (default on). A failure of the placeholder write itself
-				// falls through to the normal failure path below.
-				if (
-					this.noteWriterOptions.writePlaceholderForUnprocessed !== false &&
-					isPlaudUnprocessedError(err)
-				) {
-					try {
-						// Pass Plaud's own concise error line as the stub's reason
-						// (e.g. "...: status=-12 msg=start trans task error"), not
-						// the full classified paragraph, since the placeholder body
-						// already carries the plain-English explanation.
-						const outcome = await writer.writePlaceholderNote(
-							recording,
-							err instanceof Error ? err.message : classification.message,
-						);
-						this.logImportDebug('placeholder note outcome', {
-							recordingId: recording.id,
-							recordingTitle: recording.title,
-							status: outcome.status,
-							path: outcome.path,
-						});
-						if (outcome.status === 'kept-existing') {
-							// A real note already exists; nothing to write. Report
-							// as a benign skip rather than a placeholder.
-							results.push({
-								kind: 'written',
-								recording,
-								writeOutcome: { status: 'skipped', path: outcome.path },
-							});
-						} else {
-							this.updateRowBadge(recording.id);
-							results.push({
-								kind: 'placeholder-written',
-								recording,
-								outcome,
-								reason: classification.message,
-								classification,
-							});
-						}
-						continue;
-					} catch (placeholderErr) {
-						// The stub write failed (vault error, collision with a
-						// different recording, etc.). Fall through and report the
-						// original Plaud failure so the user still sees something.
-						console.error(
-							`Plaud importer: placeholder write failed for recording ${recording.id}`,
-							placeholderErr,
-						);
+		// Delegate the per-recording loop to the headless runner. The modal
+		// keeps every UI concern: the observer updates the button text and
+		// refreshes row badges, and the outcome drives the summary or the
+		// partial-cancel Notice. fetchArtifacts reuses the warm artifact
+		// cache so a prior "review artifacts" preflight is not re-fetched;
+		// applyFold persists the post-write transcript fold.
+		const outcome = await runImport({
+			recordings: selected,
+			selection,
+			writer,
+			attachments: this.attachments,
+			options: this.noteWriterOptions,
+			fetchArtifacts: (id) => this.ensureArtifactsForRecording(id),
+			applyFold: (filePath) => this.applyTranscriptFold(filePath),
+			observer: {
+				onRecordingStart: (index, total) => {
+					if (this.importButton) {
+						this.importButton.textContent = `Importing ${index} of ${total}…`;
 					}
-				}
+				},
+				onRecordingWritten: (recording) => {
+					this.updateRowBadge(recording.id);
+				},
+				shouldAbort: () => this.aborted,
+			},
+		});
 
-				results.push({
-					kind: 'failed',
-					recording,
-					reason: classification.message,
-					classification,
-					cause: err,
-				});
-			}
-		}
-
-		// Final abort check — if the user closed the modal right after
-		// the last write, we still want the partial Notice to fire.
-		if (this.aborted) {
+		if (outcome.stop !== 'completed') {
+			// 'aborted' (modal closed mid-run) and 'cancelled' (per-file
+			// duplicate prompt dismissed) both surface the same partial
+			// Notice the inline loop used to fire at each stop site.
 			new Notice(
-				`${formatImportNotice(tallyImportResults(results))} (cancelled at ${selected.length}/${selected.length})`,
+				`${formatImportNotice(tallyImportResults(outcome.results))} (cancelled at ${outcome.processed}/${selected.length})`,
 			);
 			return;
 		}
 
-		this.renderSummary(tallyImportResults(results));
+		this.renderSummary(tallyImportResults(outcome.results));
 	}
 
 	private async resolveDuplicatePolicyForImport(
