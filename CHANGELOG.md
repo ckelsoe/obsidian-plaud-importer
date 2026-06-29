@@ -4,6 +4,12 @@ All notable changes to Plaud Importer will be documented in this file.
 
 ## [Unreleased]
 
+## [0.13.1] - 2026-06-29
+
+### Changed
+
+- Internal refactor of the import pipeline for testability. The shared core and the import-run loop were split into separate modules and covered with tests. No user-facing changes.
+
 ## [0.13.0] - 2026-06-27
 
 ### Added
