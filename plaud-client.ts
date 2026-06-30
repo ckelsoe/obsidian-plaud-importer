@@ -79,12 +79,14 @@ export interface TranscriptAndSummary {
 
 /**
  * One AI template output ("consumer note") attached to a recording in Plaud.
- * `tabName` is the section label Plaud shows for it (`data_tab_name`, e.g.
- * "Key Points"); `markdown` is the fetched body. These mirror the user's
- * own Plaud-side template selection, so inclusion is their choice, not ours.
+ * `heading` is the section title, taken from the generating template's name
+ * (`extra.used_template.template_name`, e.g. "Meeting Summary") and falling
+ * back to the tab label then the entry title; `markdown` is the fetched body.
+ * These mirror the user's own Plaud-side template selection, so inclusion is
+ * their choice, not ours.
  */
 export interface ConsumerNote {
-	readonly tabName: string;
+	readonly heading: string;
 	readonly markdown: string;
 }
 

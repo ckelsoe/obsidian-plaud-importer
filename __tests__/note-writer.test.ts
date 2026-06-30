@@ -2761,8 +2761,8 @@ describe('NoteWriter.writeNote superseding a placeholder', () => {
 
 describe('formatMarkdown consumer_note template outputs', () => {
 	const consumerNotes: readonly ConsumerNote[] = [
-		{ tabName: 'Key Points', markdown: '- First point\n- Second point' },
-		{ tabName: 'Daily Journal', markdown: '## Reflections\n\nA good day.' },
+		{ heading: 'Key Points', markdown: '- First point\n- Second point' },
+		{ heading: 'Daily Journal', markdown: '## Reflections\n\nA good day.' },
 	];
 
 	it('renders a Template outputs block with one subsection per output', () => {
@@ -2821,7 +2821,7 @@ describe('formatMarkdown consumer_note template outputs', () => {
 			makeTranscript(),
 			makeSummary(),
 			undefined,
-			{ consumerNotes: [{ tabName: 'Verbatim Transcript', markdown: 'Speaker 1: hello' }] },
+			{ consumerNotes: [{ heading: 'Verbatim Transcript', markdown: 'Speaker 1: hello' }] },
 		);
 		// The user's "Verbatim Transcript" template renders as its own section...
 		expect(md).toContain('### Verbatim Transcript');
@@ -2836,7 +2836,7 @@ describe('formatMarkdown consumer_note template outputs', () => {
 			makeTranscript(),
 			makeSummary(),
 			undefined,
-			{ consumerNotes: [{ tabName: '   ', markdown: 'body' }] },
+			{ consumerNotes: [{ heading: '   ', markdown: 'body' }] },
 		);
 		expect(md).toContain('### Template output');
 	});
@@ -2847,7 +2847,7 @@ describe('formatMarkdown consumer_note template outputs', () => {
 			makeTranscript(),
 			makeSummary(),
 			undefined,
-			{ consumerNotes: [{ tabName: 'Outline', markdown: '# Top\n\n## Sub' }] },
+			{ consumerNotes: [{ heading: 'Outline', markdown: '# Top\n\n## Sub' }] },
 		);
 		const lines = md.split('\n');
 		// Shallowest body heading (H1) shifts to H4; the H2 shifts in step to H5.
@@ -2863,7 +2863,7 @@ describe('formatMarkdown consumer_note template outputs', () => {
 			makeTranscript(),
 			makeSummary(),
 			undefined,
-			{ consumerNotes: [{ tabName: 'Mixed', markdown: body }] },
+			{ consumerNotes: [{ heading: 'Mixed', markdown: body }] },
 		);
 		const lines = md.split('\n');
 		expect(lines).toContain('#### Real heading');
@@ -2876,7 +2876,7 @@ describe('formatMarkdown consumer_note template outputs', () => {
 			makeTranscript(),
 			makeSummary(),
 			undefined,
-			{ consumerNotes: [{ tabName: 'Deep', markdown: '#### Already deep\n\ntext' }] },
+			{ consumerNotes: [{ heading: 'Deep', markdown: '#### Already deep\n\ntext' }] },
 		);
 		expect(md.split('\n')).toContain('#### Already deep');
 	});
@@ -2887,7 +2887,7 @@ describe('formatMarkdown consumer_note template outputs', () => {
 			makeTranscript(),
 			makeSummary(),
 			undefined,
-			{ consumerNotes: [{ tabName: 'Notes', markdown: 'Action items\n---\nFollow up' }] },
+			{ consumerNotes: [{ heading: 'Notes', markdown: 'Action items\n---\nFollow up' }] },
 		);
 		const lines = md.split('\n');
 		const idx = lines.indexOf('Action items');
@@ -2904,7 +2904,7 @@ describe('formatMarkdown consumer_note template outputs', () => {
 			makeTranscript(),
 			makeSummary(),
 			undefined,
-			{ consumerNotes: [{ tabName: 'Config', markdown: body }] },
+			{ consumerNotes: [{ heading: 'Config', markdown: body }] },
 		);
 		// The literal YAML `---` lines inside the fence stay verbatim; the setext
 		// rewrite is fence-aware, so no `***` is produced from this body.
@@ -2920,7 +2920,7 @@ describe('findTemplateOutputsHeadingLine', () => {
 			makeTranscript(),
 			makeSummary(),
 			undefined,
-			{ consumerNotes: [{ tabName: 'Key Points', markdown: 'body' }] },
+			{ consumerNotes: [{ heading: 'Key Points', markdown: 'body' }] },
 		);
 		const line = findTemplateOutputsHeadingLine(md);
 		expect(line).not.toBeNull();

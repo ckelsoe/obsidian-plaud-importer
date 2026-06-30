@@ -1211,7 +1211,7 @@ export function findTemplateOutputsHeadingLine(markdown: string): number | null 
 function formatConsumerNotesSection(consumerNotes: readonly ConsumerNote[]): string {
 	const parts: string[] = [TEMPLATE_OUTPUTS_HEADING, ''];
 	for (const note of consumerNotes) {
-		const title = note.tabName.trim() || 'Template output';
+		const title = note.heading.trim() || 'Template output';
 		// One fence-aware pass nests the body's ATX headings under the `### <tab>`
 		// title and rewrites bare `---` separators (which would otherwise render
 		// as setext headings) to `***`, while leaving code-fence content intact.

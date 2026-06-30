@@ -3447,15 +3447,30 @@ describe('findConsumerNoteEntries', () => {
 		};
 	}
 
-	it('returns the tab name and link for each ready entry, in order', () => {
+	it('returns the template name and link for each ready entry, in order', () => {
 		const journalLink = 'https://s3.amazonaws.com/journal.md?X-Amz-Signature=fake';
 		const raw = fileDetail([
 			consumerNoteItem(),
-			consumerNoteItem({ data_tab_name: 'Daily Journal', data_link: journalLink }),
+			consumerNoteItem({
+				data_link: journalLink,
+				extra: { used_template: { template_name: 'Daily Journal' } },
+			}),
 		]);
 		expect(findConsumerNoteEntries(raw, '/file/detail/abc123')).toEqual([
-			{ tabName: 'Key Points', dataLink: KEY_POINTS_LINK },
-			{ tabName: 'Daily Journal', dataLink: journalLink },
+			{ heading: 'Key Points', dataLink: KEY_POINTS_LINK },
+			{ heading: 'Daily Journal', dataLink: journalLink },
+		]);
+	});
+
+	it('uses the template name as the heading, even when the tab label differs', () => {
+		const raw = fileDetail([
+			consumerNoteItem({
+				data_tab_name: 'Note',
+				extra: { used_template: { template_name: 'Meeting Summary' } },
+			}),
+		]);
+		expect(findConsumerNoteEntries(raw, '/file/detail/abc123')).toEqual([
+			{ heading: 'Meeting Summary', dataLink: KEY_POINTS_LINK },
 		]);
 	});
 
@@ -3479,23 +3494,30 @@ describe('findConsumerNoteEntries', () => {
 			consumerNoteItem(),
 		]);
 		expect(findConsumerNoteEntries(raw, '/file/detail/abc123')).toEqual([
-			{ tabName: 'Key Points', dataLink: KEY_POINTS_LINK },
+			{ heading: 'Key Points', dataLink: KEY_POINTS_LINK },
 		]);
 	});
 
-	it('falls back to data_title, then a generic label, when data_tab_name is absent', () => {
-		const secondLink = 'https://s3.amazonaws.com/x2.md?X-Amz-Signature=fake';
+	it('falls back to tab label, then title, then a generic label, when no template name', () => {
+		const link2 = 'https://s3.amazonaws.com/x2.md?X-Amz-Signature=fake';
+		const link3 = 'https://s3.amazonaws.com/x3.md?X-Amz-Signature=fake';
 		const raw = fileDetail([
-			consumerNoteItem({ data_tab_name: undefined }),
+			// No used_template -> fall back to the tab label.
+			consumerNoteItem({ extra: {} }),
+			// No template name and no tab label -> fall back to the entry title.
+			consumerNoteItem({ extra: {}, data_tab_name: undefined, data_link: link2 }),
+			// Nothing usable -> generic label.
 			consumerNoteItem({
+				extra: {},
 				data_tab_name: undefined,
 				data_title: undefined,
-				data_link: secondLink,
+				data_link: link3,
 			}),
 		]);
 		expect(findConsumerNoteEntries(raw, '/file/detail/abc123')).toEqual([
-			{ tabName: 'Key Points for the meeting', dataLink: KEY_POINTS_LINK },
-			{ tabName: 'Template output', dataLink: secondLink },
+			{ heading: 'Key Points', dataLink: KEY_POINTS_LINK },
+			{ heading: 'Key Points for the meeting', dataLink: link2 },
+			{ heading: 'Template output', dataLink: link3 },
 		]);
 	});
 
@@ -3559,7 +3581,7 @@ describe('getTranscriptAndSummary consumer_note template outputs', () => {
 		const result = await client.getTranscriptAndSummary(ID);
 
 		expect(result.consumerNotes).toEqual([
-			{ tabName: 'Key Points', markdown: '- Point one\n- Point two' },
+			{ heading: 'Key Points', markdown: '- Point one\n- Point two' },
 		]);
 	});
 

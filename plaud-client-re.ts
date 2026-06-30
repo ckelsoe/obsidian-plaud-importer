@@ -585,12 +585,12 @@ export class ReverseEngineeredPlaudClient implements PlaudClient {
 					this.debugLogger.log({
 						kind: 'parsed',
 						endpoint: noteEndpoint,
-						message: `consumer_note "${ref.tabName}" body empty for ${id}; skipping section`,
+						message: `consumer_note "${ref.heading}" body empty for ${id}; skipping section`,
 					});
 				}
 				continue;
 			}
-			notes.push({ tabName: ref.tabName, markdown: body.trim() });
+			notes.push({ heading: ref.heading, markdown: body.trim() });
 		}
 		return notes;
 	}
@@ -1557,18 +1557,20 @@ export function findOutlineLink(
  * because it is text/plain, not part of the detail JSON envelope.
  */
 interface ConsumerNoteRef {
-	readonly tabName: string;
+	readonly heading: string;
 	readonly dataLink: string;
 }
 
 /**
  * Scan a `/file/detail/{id}` response's `content_list` for `consumer_note`
  * entries — the extra AI template outputs (Key Points, Daily Journal, etc.)
- * the user generated in Plaud. Each carries a `data_tab_name` section label
- * and a pre-signed `data_link` whose body is text/plain Markdown. Only ready
- * entries (`task_status === 1`) that carry a link are returned; the body is
- * fetched downstream. Distinct from `findAttachmentAssets`, which excludes
- * `consumer_note` so these never get saved as unreadable binary attachments.
+ * the user generated in Plaud. Each is headed by its generating template's
+ * name (`extra.used_template.template_name`, falling back to the tab label
+ * then the entry title) and carries a pre-signed `data_link` whose body is
+ * text/plain Markdown. Only ready entries (`task_status === 1`) that carry a
+ * link are returned; the body is fetched downstream. Distinct from
+ * `findAttachmentAssets`, which excludes `consumer_note` so these never get
+ * saved as unreadable binary attachments.
  */
 export function findConsumerNoteEntries(
 	raw: unknown,
@@ -1602,9 +1604,19 @@ export function findConsumerNoteEntries(
 			continue;
 		}
 		seen.add(dataLink);
-		const tabName =
-			pickNonEmptyString(item.data_tab_name, item.data_title) ?? 'Template output';
-		out.push({ tabName, dataLink });
+		// Prefer the generating template's name (extra.used_template.template_name)
+		// for the section header; fall back to the tab label then the entry title.
+		const usedTemplate =
+			isRecord(item.extra) && isRecord(item.extra.used_template)
+				? item.extra.used_template
+				: undefined;
+		const heading =
+			pickNonEmptyString(
+				usedTemplate?.template_name,
+				item.data_tab_name,
+				item.data_title,
+			) ?? 'Template output';
+		out.push({ heading, dataLink });
 	}
 	return out;
 }
