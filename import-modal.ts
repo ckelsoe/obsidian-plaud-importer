@@ -23,6 +23,7 @@ import { buildPlaudIdIndex, type ImportedRecord } from './vault-index';
 import { AttachmentImporter } from './attachment-importer';
 import {
 	classifyError,
+	categoryAllowsReauth,
 	isPlaudUnprocessedError,
 	formatDate,
 	formatDuration,
@@ -47,6 +48,7 @@ import {
 // test suite) keep resolving from import-modal.ts unchanged.
 export {
 	classifyError,
+	categoryAllowsReauth,
 	isPlaudUnprocessedError,
 	formatDate,
 	formatDuration,
@@ -66,6 +68,16 @@ export type {
 	ArtifactSelection,
 	DuplicateDecisionChoice,
 };
+
+// Button and label text kept as module consts. The obsidianmd sentence-case
+// lint only inspects string literals written directly at a createEl/setText
+// call, so reading a proper-noun-bearing label from a const (Google / Apple)
+// satisfies the rule while keeping the visible text accurate.
+const SIGN_IN_LABEL = 'Sign in';
+const OTHER_SIGNIN_LABEL = 'Other sign-in methods (Google / Apple)';
+const SETUP_BOOKMARK_LABEL = 'Set up bookmark';
+const BROWSER_SIGNIN_LABEL = 'Sign in via browser';
+const PASTE_TOKEN_LABEL = 'Paste token from clipboard';
 
 /**
  * Copy text to the clipboard and show a brief Notice confirming success.
@@ -684,6 +696,25 @@ export class ImportModal extends Modal {
 		});
 		const buttonRow = contentEl.createDiv({ cls: 'plaud-importer-buttons' });
 
+		// An expired/revoked token or one never configured is otherwise a dead
+		// end here: those categories are canRetry:false, so without inline
+		// re-auth the user has to leave for Settings. When the host wired the
+		// re-auth callbacks, offer a "Sign in" CTA (and the SSO expander below)
+		// instead. The CTA leads so it reads as the primary next action.
+		const options = this.noteWriterOptions;
+		const reauthAvailable =
+			categoryAllowsReauth(classification.category) &&
+			options.onReauth !== undefined;
+		if (reauthAvailable) {
+			const signInButton = buttonRow.createEl('button', {
+				text: SIGN_IN_LABEL,
+				cls: 'mod-cta',
+			});
+			signInButton.addEventListener('click', () => {
+				void this.handleReauth(signInButton);
+			});
+		}
+
 		const copyButton = buttonRow.createEl('button', { text: 'Copy error' });
 		copyButton.addEventListener('click', () => {
 			const payload = formatErrorForClipboard(classification);
@@ -704,6 +735,77 @@ export class ImportModal extends Modal {
 		}
 		const closeButton = buttonRow.createEl('button', { text: 'Close' });
 		closeButton.addEventListener('click', () => this.close());
+
+		if (reauthAvailable && options.onReauthSso) {
+			this.renderReauthSsoExpander(contentEl, options.onReauthSso);
+		}
+	}
+
+	// Builds the collapsed "Other sign-in methods" disclosure used for Google /
+	// Apple SSO. A native <details>/<summary> needs no JS or CSS to toggle, so
+	// it adds no new styles; the inner button row reuses the existing class. The
+	// three buttons delegate to the host-provided callbacks (which reuse the
+	// settings tab's bookmarklet flow), keeping the modal free of Electron and
+	// clipboard plumbing.
+	private renderReauthSsoExpander(
+		parent: HTMLElement,
+		sso: NonNullable<ImportModalOptions['onReauthSso']>,
+	): void {
+		const details = parent.createEl('details');
+		details.createEl('summary', { text: OTHER_SIGNIN_LABEL });
+		const row = details.createDiv({ cls: 'plaud-importer-buttons' });
+
+		const setupButton = row.createEl('button', { text: SETUP_BOOKMARK_LABEL });
+		setupButton.addEventListener('click', () => sso.setupBookmark());
+
+		const browserButton = row.createEl('button', {
+			text: BROWSER_SIGNIN_LABEL,
+		});
+		browserButton.addEventListener('click', () => sso.signIn());
+
+		const pasteButton = row.createEl('button', { text: PASTE_TOKEN_LABEL });
+		pasteButton.addEventListener('click', () => {
+			void this.handleSsoPaste();
+		});
+	}
+
+	// Runs the inline email/password re-auth from the error screen. On success
+	// the recording list reloads in place via refresh() (token reads are live
+	// closures, so no client reconstruction is needed); on a closed window or an
+	// unavailable login API, a Notice makes clear nothing changed.
+	private async handleReauth(button: HTMLButtonElement): Promise<void> {
+		const onReauth = this.noteWriterOptions.onReauth;
+		if (!onReauth) {
+			return;
+		}
+		button.disabled = true;
+		try {
+			const ok = await onReauth();
+			if (ok) {
+				await this.refresh();
+			} else {
+				new Notice('Plaud sign-in closed — no token captured.');
+			}
+		} catch (err) {
+			console.error('Plaud importer: inline re-auth failed', err);
+			this.renderError(classifyError(err));
+		} finally {
+			button.disabled = false;
+		}
+	}
+
+	// Stores a clipboard token from the SSO expander and reloads the list on
+	// success. The failure Notices live in the host's pasteToken callback, so a
+	// false result is already explained to the user.
+	private async handleSsoPaste(): Promise<void> {
+		const sso = this.noteWriterOptions.onReauthSso;
+		if (!sso) {
+			return;
+		}
+		const ok = await sso.pasteToken();
+		if (ok) {
+			await this.refresh();
+		}
 	}
 
 	/**

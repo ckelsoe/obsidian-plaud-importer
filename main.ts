@@ -487,6 +487,18 @@ export default class PlaudImporterPlugin extends Plugin {
 					? this.app.secretStorage.getSecret(this.settings.secretId)
 					: null,
 			getApiBaseUrl: () => this.settings.apiBaseUrl,
+			onReauth: () => this.reauthenticate(),
+			onReauthSso: {
+				setupBookmark: () => {
+					void this.openBookmarkSetupPage();
+				},
+				signIn: () => {
+					new BrowserSignInModal(this.app, () =>
+						this.openPlaudInBrowser(),
+					).open();
+				},
+				pasteToken: () => this.pasteTokenFromClipboard(),
+			},
 		}).open();
 	}
 
@@ -541,6 +553,53 @@ export default class PlaudImporterPlugin extends Plugin {
 		this.settings.secretId = "";
 		await this.saveSettings();
 		return { sessionCleared };
+	}
+
+	// Re-authenticates via the email/password login window and persists the
+	// captured token with the FULL recipe: set the secret, link secretId, and
+	// adopt the redirected region (apiBaseUrl) so a region-redirected user is not
+	// stranded on a stale host. Returns true once a token is captured and saved,
+	// false if the user closed the window or the login API is unavailable on this
+	// build. Shared by the settings tab and the import modal's inline re-auth; it
+	// shows no Notice itself so each caller can phrase its own.
+	async reauthenticate(): Promise<boolean> {
+		const result = await openPlaudLogin(this.app, {
+			debugLogger: this.debugLogger,
+		});
+		if (result === null) {
+			return false;
+		}
+		this.app.secretStorage.setSecret(CAPTURED_SECRET_ID, result.token);
+		this.settings.secretId = CAPTURED_SECRET_ID;
+		if (result.apiBaseUrl !== null) {
+			this.settings.apiBaseUrl = result.apiBaseUrl;
+		}
+		await this.saveSettings();
+		return true;
+	}
+
+	// Reads a token from the clipboard and stores it via storeAccessToken,
+	// showing the same guidance Notices the settings paste button uses. Returns
+	// true on success. Shared by the settings tab and the modal's SSO expander;
+	// the success Notice is left to each caller.
+	async pasteTokenFromClipboard(): Promise<boolean> {
+		let text = "";
+		try {
+			text = await navigator.clipboard.readText();
+		} catch (err) {
+			console.error("Plaud importer: clipboard read failed", err);
+			new Notice(
+				"Could not read the clipboard. Copy the token from the browser popup, then try again.",
+			);
+			return false;
+		}
+		const ok = await this.storeAccessToken(text);
+		if (!ok) {
+			new Notice(
+				"The clipboard did not hold a valid access token. That usually means the wrong request was copied. Copy the token from the popup the bookmarklet shows, which only fires on the right one.",
+			);
+		}
+		return ok;
 	}
 
 	// Opens the Plaud web app in the system browser for the browser-based
@@ -960,25 +1019,14 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 				.onClick(async () => {
 					btn.setDisabled(true);
 					try {
-						const result = await openPlaudLogin(this.app, {
-							debugLogger: this.plugin.debugLogger,
-						});
-						if (result === null) {
+						const ok = await this.plugin.reauthenticate();
+						if (ok) {
+							new Notice("Plaud token captured and saved.");
+							this.signinRefresh?.();
+							this.tokenRefresh?.();
+						} else {
 							new Notice("Plaud sign-in closed — no token captured.");
-							return;
 						}
-						this.app.secretStorage.setSecret(
-							CAPTURED_SECRET_ID,
-							result.token,
-						);
-						this.plugin.settings.secretId = CAPTURED_SECRET_ID;
-						if (result.apiBaseUrl !== null) {
-							this.plugin.settings.apiBaseUrl = result.apiBaseUrl;
-						}
-						await this.plugin.saveSettings();
-						new Notice("Plaud token captured and saved.");
-						this.signinRefresh?.();
-						this.tokenRefresh?.();
 					} finally {
 						btn.setDisabled(false);
 					}
@@ -1021,25 +1069,11 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 		);
 		setting.addButton((btn) =>
 			btn.setButtonText("Paste token from clipboard").onClick(async () => {
-				let text = "";
-				try {
-					text = await navigator.clipboard.readText();
-				} catch (err) {
-					console.error("Plaud importer: clipboard read failed", err);
-					new Notice(
-						"Could not read the clipboard. Copy the token from the browser popup, then try again.",
-					);
-					return;
-				}
-				const ok = await this.plugin.storeAccessToken(text);
+				const ok = await this.plugin.pasteTokenFromClipboard();
 				if (ok) {
 					new Notice("Token saved. Run a connection test to confirm it works.");
 					this.signinRefresh?.();
 					this.tokenRefresh?.();
-				} else {
-					new Notice(
-						"The clipboard did not hold a valid access token. That usually means the wrong request was copied. Copy the token from the popup the bookmarklet shows, which only fires on the right one.",
-					);
 				}
 			}),
 		);
