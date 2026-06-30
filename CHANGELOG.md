@@ -4,6 +4,16 @@ All notable changes to Plaud Importer will be documented in this file.
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-06-30
+
+### Added
+
+- Sign in again without leaving the import window. When your Plaud token has expired or was never set, the import error screen now shows a **Sign in** button (plus an **Other sign-in methods** section for Google and Apple sign-in) instead of sending you to Settings. After you sign in, the recording list reloads in place so you can pick up where you left off.
+
+### Fixed
+
+- The **Import selected** button could stay greyed out and stuck reading "Importing..." after you cancelled a per-file duplicate prompt partway through an import. It now resets to its normal label and re-enables, so you can start another import without reopening the window.
+
 ## [0.14.1] - 2026-06-30
 
 ### Changed
