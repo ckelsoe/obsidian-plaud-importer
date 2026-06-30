@@ -1547,9 +1547,9 @@ export class ImportModal extends Modal {
 
 		// Reset sticky state so choices from a prior run do not leak into
 		// this batch. Only 'prompt' mode consumes this field, but
-		// resetting unconditionally keeps the invariant simple.
+		// resetting unconditionally keeps the invariant simple. currentBatchSize
+		// is set inside runImportBatch so it tracks the slice actually being run.
 		this.stickyDuplicateDecision = null;
-		this.currentBatchSize = selected.length;
 
 		// Disable the Import button so rapid double-clicks don't queue a
 		// second run against the same selection.
@@ -1582,6 +1582,11 @@ export class ImportModal extends Modal {
 		priorResults: ImportResult[],
 		isInitial: boolean,
 	): Promise<void> {
+		// Track the size of THIS batch (the full selection initially, the tail on
+		// a resume). The duplicate prompt gates its batch-level "all remaining"
+		// options on currentBatchSize > 1, so a resumed run must refresh it or a
+		// single-item tail would wrongly offer "overwrite/skip all remaining".
+		this.currentBatchSize = recordings.length;
 		const writer = this.buildImportWriter(duplicatePolicy);
 		if (!writer) {
 			return;
@@ -1719,7 +1724,7 @@ export class ImportModal extends Modal {
 		const processed = priorResults.length;
 		const total = processed + tail.length;
 		box.createEl('p', {
-			text: `Your Plaud session expired during the import. ${processed} of ${total} recordings were processed before it stopped. Sign in to resume the remaining ${tail.length}.`,
+			text: `Plaud rejected your sign-in during the import. ${processed} of ${total} recordings were processed before it stopped. Sign in to resume the remaining ${tail.length}.`,
 			cls: 'plaud-importer-error-message',
 		});
 		const buttonRow = contentEl.createDiv({ cls: 'plaud-importer-buttons' });
