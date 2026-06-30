@@ -981,11 +981,10 @@ function decodeJwtSegment(seg: string): Record<string, unknown> | null {
 	try {
 		const b64 = seg.replace(/-/g, '+').replace(/_/g, '/');
 		const padded = b64 + '='.repeat((4 - (b64.length % 4)) % 4);
-		const bin =
-			typeof atob === 'function'
-				? atob(padded)
-				: Buffer.from(padded, 'base64').toString('binary');
-		return JSON.parse(bin) as Record<string, unknown>;
+		// atob is always present in Obsidian's Electron renderer (and Node 18+);
+		// avoid the Node `Buffer` global, which is untyped in the marketplace
+		// scan's type-checked lint and trips the no-unsafe-* rules.
+		return JSON.parse(atob(padded)) as Record<string, unknown>;
 	} catch {
 		return null;
 	}

@@ -61,11 +61,10 @@ function jwtTyp(value: string): string | null {
 	const seg = match[0].split('.')[0].replace(/-/g, '+').replace(/_/g, '/');
 	const padded = seg + '='.repeat((4 - (seg.length % 4)) % 4);
 	try {
-		const json =
-			typeof atob === 'function'
-				? atob(padded)
-				: Buffer.from(padded, 'base64').toString('binary');
-		const header = JSON.parse(json) as Record<string, unknown>;
+		// atob is always present in Obsidian's Electron renderer (and Node 18+);
+		// avoid the Node `Buffer` global, which is untyped in the marketplace
+		// scan's type-checked lint and trips the no-unsafe-* rules.
+		const header = JSON.parse(atob(padded)) as Record<string, unknown>;
 		return typeof header.typ === 'string' ? header.typ : null;
 	} catch {
 		return null;

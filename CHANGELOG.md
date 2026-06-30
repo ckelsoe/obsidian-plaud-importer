@@ -4,6 +4,12 @@ All notable changes to Plaud Importer will be documented in this file.
 
 ## [Unreleased]
 
+## [0.14.1] - 2026-06-30
+
+### Changed
+
+- Internal type-safety cleanup in token (JWT) decoding: dropped an unused Node `Buffer` base64 fallback in favor of the browser `atob` the plugin already uses. Clears `no-unsafe-*` warnings from the marketplace type-check scan. No behavior change.
+
 ## [0.14.0] - 2026-06-30
 
 ### Fixed
