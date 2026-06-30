@@ -6,7 +6,7 @@ import {
 	type VaultLike,
 	type DuplicatePromptDecision,
 } from '../note-writer';
-import { PlaudApiError } from '../plaud-client-re';
+import { PlaudApiError, PlaudAuthError } from '../plaud-client-re';
 import type { ArtifactSelection, ImportModalOptions } from '../import-core';
 import type {
 	PlaudRecordingId,
@@ -636,5 +636,151 @@ describe('runImport', () => {
 		// Second run skips the duplicate; fold must NOT run on a skip.
 		await runImport(deps);
 		expect(foldPaths).toHaveLength(1);
+	});
+
+	// -------------------------------------------------------------------------
+	// A2: mid-batch token-expiry abort (issue #14). A rejected token part-way
+	// through a multi-select import is a batch-terminal condition: the loop must
+	// stop on the FIRST auth failure (stop:'auth-failed') instead of failing
+	// every remaining recording, and the pre-expiry results must survive so the
+	// modal can resume the unprocessed tail.
+	// -------------------------------------------------------------------------
+
+	it('stops with auth-failed on the first token rejection and does not touch later recordings', async () => {
+		const vault = makeFakeVault();
+		const recA = makeRecording();
+		const recB = makeRecording();
+		const recC = makeRecording();
+		const { fetchArtifacts, calls } = makeFetch(
+			new Map<PlaudRecordingId, TranscriptAndSummary | (() => never)>([
+				[recA.id, makeArtifacts(recA)],
+				[recB.id, (): never => {
+					throw new PlaudAuthError('token_rejected', 'rejected', '/ai/transsumm');
+				}],
+				[recC.id, makeArtifacts(recC)],
+			]),
+		);
+		const { observer, starts, written } = makeObserver();
+
+		const outcome = await runImport({
+			recordings: [recA, recB, recC],
+			selection: SELECTION,
+			writer: makeWriter(vault),
+			attachments: makeAttachmentStub().pipeline,
+			options: OPTIONS,
+			fetchArtifacts,
+			observer,
+		});
+
+		expect(outcome.stop).toBe('auth-failed');
+		// recA finished; recB is the failing index, never written. processed = 1.
+		expect(outcome.processed).toBe(1);
+		expect(outcome.results).toHaveLength(1);
+		expect(outcome.results[0]).toMatchObject({
+			kind: 'written',
+			recording: { id: recA.id },
+		});
+		// The runner did NOT classify recB or recC as a per-recording 'failed'.
+		expect(outcome.results.some((r) => r.kind === 'failed')).toBe(false);
+		// recC was never fetched: the loop returned at recB.
+		expect(calls).toEqual([recA.id, recB.id]);
+		// recB's progress started (fires before the fetch); recC's never did.
+		expect(starts).toEqual([[1, 3], [2, 3]]);
+		expect(written).toEqual([recA.id]);
+	});
+
+	it('reports processed 0 and retains no results when the first recording is rejected', async () => {
+		const vault = makeFakeVault();
+		const recA = makeRecording();
+		const recB = makeRecording();
+		const { fetchArtifacts, calls } = makeFetch(
+			new Map<PlaudRecordingId, TranscriptAndSummary | (() => never)>([
+				[recA.id, (): never => {
+					throw new PlaudAuthError('token_rejected', 'rejected', '/ai/transsumm');
+				}],
+				[recB.id, makeArtifacts(recB)],
+			]),
+		);
+		const { observer, starts } = makeObserver();
+
+		const outcome = await runImport({
+			recordings: [recA, recB],
+			selection: SELECTION,
+			writer: makeWriter(vault),
+			attachments: makeAttachmentStub().pipeline,
+			options: OPTIONS,
+			fetchArtifacts,
+			observer,
+		});
+
+		expect(outcome.stop).toBe('auth-failed');
+		expect(outcome.processed).toBe(0);
+		expect(outcome.results).toHaveLength(0);
+		// recB was never touched.
+		expect(calls).toEqual([recA.id]);
+		expect(starts).toEqual([[1, 2]]);
+	});
+
+	it('aborts on a not-configured auth error too (categoryAllowsReauth, not just token_rejected)', async () => {
+		const vault = makeFakeVault();
+		const recA = makeRecording();
+		const recB = makeRecording();
+		const { fetchArtifacts } = makeFetch(
+			new Map<PlaudRecordingId, TranscriptAndSummary | (() => never)>([
+				[recA.id, makeArtifacts(recA)],
+				[recB.id, (): never => {
+					throw new PlaudAuthError('not_configured', 'no token', '/ai/transsumm');
+				}],
+			]),
+		);
+
+		const outcome = await runImport({
+			recordings: [recA, recB],
+			selection: SELECTION,
+			writer: makeWriter(vault),
+			attachments: makeAttachmentStub().pipeline,
+			options: OPTIONS,
+			fetchArtifacts,
+		});
+
+		expect(outcome.stop).toBe('auth-failed');
+		expect(outcome.processed).toBe(1);
+		expect(outcome.results).toHaveLength(1);
+	});
+
+	it('keeps the partial-success semantic for a non-auth failure (continues the batch)', async () => {
+		const vault = makeFakeVault();
+		const recA = makeRecording();
+		const recB = makeRecording();
+		const recC = makeRecording();
+		const { fetchArtifacts, calls } = makeFetch(
+			new Map<PlaudRecordingId, TranscriptAndSummary | (() => never)>([
+				[recA.id, makeArtifacts(recA)],
+				[recB.id, (): never => {
+					throw new Error('transient network blip');
+				}],
+				[recC.id, makeArtifacts(recC)],
+			]),
+		);
+
+		const outcome = await runImport({
+			recordings: [recA, recB, recC],
+			selection: SELECTION,
+			writer: makeWriter(vault),
+			attachments: makeAttachmentStub().pipeline,
+			options: { ...OPTIONS, writePlaceholderForUnprocessed: false },
+			fetchArtifacts,
+		});
+
+		// A generic failure stays per-recording: the loop runs to completion.
+		expect(outcome.stop).toBe('completed');
+		expect(outcome.processed).toBe(3);
+		expect(outcome.results.map((r) => r.kind)).toEqual([
+			'written',
+			'failed',
+			'written',
+		]);
+		// All three were fetched: the batch did not abort at recB.
+		expect(calls).toEqual([recA.id, recB.id, recC.id]);
 	});
 });
