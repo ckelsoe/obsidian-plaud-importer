@@ -1183,30 +1183,14 @@ export function findTranscriptHeadingLine(
 const TEMPLATE_OUTPUTS_HEADING = '## Template outputs';
 
 /**
- * Find the 0-based line number of the `## Template outputs` heading in a
- * rendered note, or null when the note has no template outputs. import-modal
- * folds this one heading so the whole block opens collapsed by default,
- * mirroring how the wrapping transcript heading is folded.
- */
-export function findTemplateOutputsHeadingLine(markdown: string): number | null {
-	const lines = markdown.split('\n');
-	for (let i = 0; i < lines.length; i++) {
-		if (lines[i] === TEMPLATE_OUTPUTS_HEADING) {
-			return i;
-		}
-	}
-	return null;
-}
-
-/**
  * Render the user's extra Plaud AI template outputs as a single
- * `## Template outputs` block, one `### <tab name>` subsection per output
- * with its Markdown body verbatim. Bodies are trusted Markdown from Plaud and
- * embedded as-is (no callout re-quoting) so headings, lists, and tables
- * render natively. import-modal folds the wrapping H2 so the block opens
- * collapsed. Inclusion mirrors the user's Plaud-side template selection, so a
- * transcript-style tab is rendered too and never de-duplicated against the
- * pipeline transcript.
+ * `## Template outputs` block, one `### <template name>` subsection per output
+ * with its Markdown body. Bodies are trusted Markdown from Plaud and embedded
+ * natively (no callout re-quoting) so headings, lists, and tables render. The
+ * block is left expanded: it sits above the (collapsed) transcript, and folding
+ * its H2 would subsume the deeper transcript heading. Inclusion mirrors the
+ * user's Plaud-side template selection, so a transcript-style template is
+ * rendered too and never de-duplicated against the pipeline transcript.
  */
 function formatConsumerNotesSection(consumerNotes: readonly ConsumerNote[]): string {
 	const parts: string[] = [TEMPLATE_OUTPUTS_HEADING, ''];
@@ -1224,36 +1208,63 @@ function formatConsumerNotesSection(consumerNotes: readonly ConsumerNote[]): str
 	return parts.join('\n').trim();
 }
 
-/** True for a line that opens or closes a fenced code block (``` or ~~~). */
-function isCodeFenceLine(line: string): boolean {
-	return /^\s*(?:```|~~~)/.test(line);
+interface CodeFence {
+	readonly marker: '`' | '~';
+	readonly length: number;
+}
+
+/** Parse a line that opens or closes a fenced code block into its marker. */
+function parseCodeFence(line: string): CodeFence | null {
+	const match = line.match(/^\s*(`{3,}|~{3,})/);
+	if (match === null) {
+		return null;
+	}
+	const run = match[1];
+	return { marker: run[0] === '`' ? '`' : '~', length: run.length };
 }
 
 /**
- * Normalize a consumer_note body for embedding under its `### <tab>` title in a
- * single fence-aware pass:
- *  - Re-level ATX headings so the shallowest sits at H4 (one below the tab
- *    title). Without this a body `#`/`##`/`###` would end the
- *    `## Template outputs` fold early and pollute the note outline as a sibling
- *    of Summary.
+ * Advance fenced-code state by one line. A fence closes only on a line whose
+ * marker matches the opener and whose run is at least as long, so a shorter or
+ * different-marker fence line inside a block (e.g. ``` inside a ~~~ block) stays
+ * content rather than ending the block prematurely.
+ */
+function nextFenceState(active: CodeFence | null, line: string): CodeFence | null {
+	const fence = parseCodeFence(line);
+	if (fence === null) {
+		return active;
+	}
+	if (active === null) {
+		return fence;
+	}
+	return fence.marker === active.marker && fence.length >= active.length
+		? null
+		: active;
+}
+
+/**
+ * Normalize a consumer_note body for embedding under its `### <template>` title
+ * in a single fence-aware pass:
+ *  - Re-level ATX headings so the shallowest sits at H4 (one below the title).
+ *    Without this a body `#`/`##`/`###` would pollute the note outline as a
+ *    sibling of Summary.
  *  - Rewrite a bare `---` dash run (which after a paragraph renders as a giant
  *    setext heading) to a `***` thematic break.
  * Both transforms skip fenced code blocks, so a `#` comment or a literal `---`
- * inside a ``` block is preserved verbatim. This is the fence-aware counterpart
+ * inside a code fence is preserved verbatim. This is the fence-aware counterpart
  * of the summary path's neutralizeSetextDashes. Heading text and code content
  * are preserved; only heading depth and bare dash separators change.
  */
 function normalizeConsumerNoteBody(markdown: string): string {
 	const lines = markdown.split('\n');
 	// First pass: shallowest ATX heading level outside code fences.
-	let inFence = false;
+	let activeFence: CodeFence | null = null;
 	let minLevel = 7;
 	for (const line of lines) {
-		if (isCodeFenceLine(line)) {
-			inFence = !inFence;
-			continue;
-		}
-		if (inFence) {
+		const prevFence = activeFence;
+		activeFence = nextFenceState(prevFence, line);
+		// Skip fence delimiter lines and anything inside a fence.
+		if (prevFence !== null || activeFence !== null) {
 			continue;
 		}
 		const m = line.match(/^(#{1,6})\s/);
@@ -1263,13 +1274,11 @@ function normalizeConsumerNoteBody(markdown: string): string {
 	}
 	const shift = minLevel < 4 ? 4 - minLevel : 0;
 	// Second pass: outside fences, demote headings and neutralize setext dashes.
-	inFence = false;
+	activeFence = null;
 	const out = lines.map((line) => {
-		if (isCodeFenceLine(line)) {
-			inFence = !inFence;
-			return line;
-		}
-		if (inFence) {
+		const prevFence = activeFence;
+		activeFence = nextFenceState(prevFence, line);
+		if (prevFence !== null || activeFence !== null) {
 			return line;
 		}
 		if (shift > 0) {
@@ -1326,7 +1335,7 @@ export interface FormatMarkdownOptions {
 	readonly keywords?: readonly string[];
 	/**
 	 * Extra Plaud AI template outputs (Key Points, Daily Journal, etc.) to
-	 * fold into the note as a `## Template outputs` block. Empty or omitted
+	 * render in the note as a `## Template outputs` block. Empty or omitted
 	 * renders no block. Independent of `includeSummary`: these mirror the
 	 * user's own Plaud-side template selection.
 	 */

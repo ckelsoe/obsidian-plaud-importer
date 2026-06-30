@@ -10,10 +10,22 @@ function asset(overrides: Partial<AttachmentAsset> = {}): AttachmentAsset {
 }
 
 describe('inferAssetExtension', () => {
-	it('maps a text/plain response to .md instead of falling through to .bin', () => {
+	it('maps a non-JSON text/plain response to .md instead of falling through to .bin', () => {
 		expect(
 			inferAssetExtension(asset(), '# Heading\n\nbody', 'text/plain; charset=utf-8'),
 		).toBe('md');
+	});
+
+	it('treats a JSON body served as text/plain as json, not md (nested images still import)', () => {
+		// The text/plain fallback runs AFTER the JSON-body sniff, so a JSON
+		// envelope with a generic text MIME still resolves to json.
+		expect(
+			inferAssetExtension(
+				asset({ url: 'https://s3.test/blob?sig=x' }),
+				'{"picture_link":"https://x/y.png"}',
+				'text/plain; charset=utf-8',
+			),
+		).toBe('json');
 	});
 
 	it('maps a Markdown mime hint to .md', () => {

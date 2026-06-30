@@ -17,7 +17,6 @@ import {
 	type DuplicatePolicy,
 	type DuplicatePromptCallback,
 	findTranscriptHeadingLine,
-	findTemplateOutputsHeadingLine,
 } from './note-writer';
 import { runImport } from './import-runner';
 import { buildPlaudIdIndex, type ImportedRecord } from './vault-index';
@@ -1573,14 +1572,15 @@ export class ImportModal extends Modal {
 	}
 
 	/**
-	 * Persist fold state for the wrapping section headings in a
-	 * freshly-written note so the chaptered transcript and the
-	 * `## Template outputs` block render collapsed by default while the
-	 * summary and chapters callout above them stay visible. Uses Obsidian's
-	 * undocumented but stable internal `app.foldManager.save` API
-	 * (type-augmented in `types.d.ts`) plus a best-effort same-session apply
-	 * via the active MarkdownView's `applyFoldInfo` when the file happens to
-	 * already be open in a leaf.
+	 * Persist fold state for the wrapping transcript heading in a
+	 * freshly-written note so the chaptered transcript renders collapsed by
+	 * default while the summary, template outputs, and chapters callout above
+	 * it stay visible. The `## Template outputs` block is deliberately NOT
+	 * folded: it is an H2 and the transcript heading is deeper, so folding it
+	 * would subsume the transcript. Uses Obsidian's undocumented but stable
+	 * internal `app.foldManager.save` API (type-augmented in `types.d.ts`) plus
+	 * a best-effort same-session apply via the active MarkdownView's
+	 * `applyFoldInfo` when the file happens to already be open in a leaf.
 	 *
 	 * Failure is swallowed with a console warning: a missing
 	 * foldManager (older Obsidian) or an applyFoldInfo rejection
@@ -1596,23 +1596,16 @@ export class ImportModal extends Modal {
 			}
 			const body = await this.app.vault.read(file);
 			const headerLevel = this.noteWriterOptions.transcriptHeaderLevel ?? 4;
-			// Fold the wrapping headings so the note opens with its bulky
-			// sections collapsed: the chaptered transcript and, when present,
-			// the `## Template outputs` block of extra AI outputs. Each is a
-			// single heading whose section Obsidian collapses by document
-			// structure, so folding the wrapper hides everything beneath it.
-			const foldLines: number[] = [];
-			const templateOutputsLine = findTemplateOutputsHeadingLine(body);
-			if (templateOutputsLine !== null) {
-				foldLines.push(templateOutputsLine);
-			}
+			// Fold the wrapping transcript heading so the chaptered transcript
+			// opens collapsed. The transcript is the final section, so this
+			// single heading-fold collapses it to end-of-note. Template outputs
+			// stay expanded (folding their shallower H2 would subsume the
+			// deeper transcript heading).
 			const transcriptHeadingLine = findTranscriptHeadingLine(body, headerLevel);
-			if (transcriptHeadingLine !== null) {
-				foldLines.push(transcriptHeadingLine);
-			}
-			if (foldLines.length === 0) {
+			if (transcriptHeadingLine === null) {
 				return;
 			}
+			const foldLines = [transcriptHeadingLine];
 			const totalLines = body.split('\n').length;
 			const foldInfo = {
 				folds: foldLines.map((line) => ({ from: line, to: line })),

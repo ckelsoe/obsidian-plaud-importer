@@ -7,7 +7,6 @@ import {
 	extractPlaudPlaceholderFlag,
 	extractSpeakers,
 	findTranscriptHeadingLine,
-	findTemplateOutputsHeadingLine,
 	formatChapterIndexSection,
 	formatDurationHoursMinutes,
 	formatFrontmatter,
@@ -2911,24 +2910,20 @@ describe('formatMarkdown consumer_note template outputs', () => {
 		expect(md).toContain('name: x');
 		expect(md).not.toContain('***');
 	});
-});
 
-describe('findTemplateOutputsHeadingLine', () => {
-	it('returns the 0-based line index of the Template outputs heading', () => {
+	it('keeps a fenced block open across a shorter or mismatched fence line', () => {
+		// A ``` line inside a ~~~ block must NOT close it, so the `## Inside`
+		// heading stays code (untouched) while the real `## Real` heading demotes.
+		const body = '~~~text\n```\n## Inside\n~~~\n\n## Real';
 		const md = formatMarkdown(
 			makeRecording(),
 			makeTranscript(),
 			makeSummary(),
 			undefined,
-			{ consumerNotes: [{ heading: 'Key Points', markdown: 'body' }] },
+			{ consumerNotes: [{ heading: 'Fences', markdown: body }] },
 		);
-		const line = findTemplateOutputsHeadingLine(md);
-		expect(line).not.toBeNull();
-		expect(md.split('\n')[line as number]).toBe('## Template outputs');
-	});
-
-	it('returns null when the note has no Template outputs block', () => {
-		const md = formatMarkdown(makeRecording(), makeTranscript(), makeSummary());
-		expect(findTemplateOutputsHeadingLine(md)).toBeNull();
+		const lines = md.split('\n');
+		expect(lines).toContain('## Inside');
+		expect(lines).toContain('#### Real');
 	});
 });

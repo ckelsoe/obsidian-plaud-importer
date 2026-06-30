@@ -1119,6 +1119,7 @@ export function inferAssetExtension(
 	responseContentType: string,
 ): string {
 	const fromMime = `${asset.mimeType ?? ''};${responseContentType}`.toLowerCase();
+	const isPlainTextMime = fromMime.includes('text/plain');
 	if (fromMime.includes('text/html') || fromMime.includes('application/xhtml+xml')) {
 		return 'html';
 	}
@@ -1128,10 +1129,10 @@ export function inferAssetExtension(
 	if (fromMime.includes('gif')) return 'gif';
 	if (fromMime.includes('svg')) return 'svg';
 	if (fromMime.includes('pdf')) return 'pdf';
-	// Defensive: a text/plain or Markdown body must not fall through to the
-	// terminal `.bin`. consumer_note outputs are folded into the note before
-	// they reach here, but any other text asset should still be readable.
-	if (fromMime.includes('text/plain') || fromMime.includes('markdown')) {
+	// An explicit markdown MIME is unambiguously text -> md. A generic
+	// text/plain is handled AFTER the JSON-body sniff below, so a JSON envelope
+	// served as text/plain still resolves to json (and its nested images import).
+	if (fromMime.includes('markdown')) {
 		return 'md';
 	}
 
@@ -1147,6 +1148,11 @@ export function inferAssetExtension(
 
 	if (bodyText.trim().startsWith('{') || bodyText.trim().startsWith('[')) {
 		return 'json';
+	}
+	// text/plain that is not JSON-shaped: prefer md over the terminal bin so a
+	// stray text asset stays readable instead of an unopenable `.bin`.
+	if (isPlainTextMime) {
+		return 'md';
 	}
 	return 'bin';
 }
