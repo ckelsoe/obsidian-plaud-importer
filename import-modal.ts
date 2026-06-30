@@ -73,6 +73,7 @@ export type {
 // lint only inspects string literals written directly at a createEl/setText
 // call, so reading a proper-noun-bearing label from a const (Google / Apple)
 // satisfies the rule while keeping the visible text accurate.
+const IMPORT_BUTTON_LABEL = 'Import selected (defaults)';
 const SIGN_IN_LABEL = 'Sign in';
 const OTHER_SIGNIN_LABEL = 'Other sign-in methods (Google / Apple)';
 const SETUP_BOOKMARK_LABEL = 'Set up bookmark';
@@ -845,7 +846,7 @@ export class ImportModal extends Modal {
 
 		const buttonRow = contentEl.createDiv({ cls: 'plaud-importer-buttons' });
 		this.importButton = buttonRow.createEl('button', {
-			text: 'Import selected (defaults)',
+			text: IMPORT_BUTTON_LABEL,
 			cls: 'mod-cta',
 		});
 		this.importButton.disabled = true;
@@ -1585,6 +1586,15 @@ export class ImportModal extends Modal {
 			new Notice(
 				`${formatImportNotice(tallyImportResults(outcome.results))} (cancelled at ${outcome.processed}/${selected.length})`,
 			);
+			// For 'cancelled' the modal stays open with a live button, but the
+			// loop left it disabled and labeled "Importing X of Y…". Restore the
+			// initial label and re-enable it (respecting the empty-selection
+			// guard). 'aborted' is the modal closing, so its button DOM is gone
+			// and needs no reset. (issue #12)
+			if (outcome.stop === 'cancelled' && this.importButton) {
+				this.importButton.textContent = IMPORT_BUTTON_LABEL;
+				this.updateImportButtonState();
+			}
 			return;
 		}
 
