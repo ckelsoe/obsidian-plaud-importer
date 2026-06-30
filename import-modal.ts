@@ -796,16 +796,24 @@ export class ImportModal extends Modal {
 	}
 
 	// Stores a clipboard token from the SSO expander and reloads the list on
-	// success. The failure Notices live in the host's pasteToken callback, so a
-	// false result is already explained to the user.
+	// success. The failure Notices for an invalid/missing token live in the
+	// host's pasteToken callback, so a false result is already explained. A
+	// thrown error (a saveSettings or refresh failure) is routed through
+	// renderError like the inline re-auth and retry paths, since the click
+	// handler fires this with `void` and would otherwise drop the rejection.
 	private async handleSsoPaste(): Promise<void> {
 		const sso = this.noteWriterOptions.onReauthSso;
 		if (!sso) {
 			return;
 		}
-		const ok = await sso.pasteToken();
-		if (ok) {
-			await this.refresh();
+		try {
+			const ok = await sso.pasteToken();
+			if (ok) {
+				await this.refresh();
+			}
+		} catch (err) {
+			console.error('Plaud importer: SSO token paste failed', err);
+			this.renderError(classifyError(err));
 		}
 	}
 
