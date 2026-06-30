@@ -703,18 +703,11 @@ export class ImportModal extends Modal {
 		// re-auth callbacks, offer a "Sign in" CTA (and the SSO expander below)
 		// instead. The CTA leads so it reads as the primary next action.
 		const options = this.noteWriterOptions;
-		const reauthAvailable =
-			categoryAllowsReauth(classification.category) &&
-			options.onReauth !== undefined;
-		if (reauthAvailable) {
-			const signInButton = buttonRow.createEl('button', {
-				text: SIGN_IN_LABEL,
-				cls: 'mod-cta',
-			});
-			signInButton.addEventListener('click', () => {
-				void this.handleReauth(signInButton);
-			});
-		}
+		const reauthAvailable = this.appendSignInCta(
+			buttonRow,
+			classification.category,
+			() => this.refresh(),
+		);
 
 		const copyButton = buttonRow.createEl('button', { text: 'Copy error' });
 		copyButton.addEventListener('click', () => {
@@ -738,8 +731,36 @@ export class ImportModal extends Modal {
 		closeButton.addEventListener('click', () => this.close());
 
 		if (reauthAvailable && options.onReauthSso) {
-			this.renderReauthSsoExpander(contentEl, options.onReauthSso);
+			this.renderReauthSsoExpander(contentEl, options.onReauthSso, () =>
+				this.refresh(),
+			);
 		}
+	}
+
+	// Adds the leading "Sign in" CTA to an error/interrupt button row when the
+	// host wired re-auth and the category is auth-related. onSuccess runs after a
+	// token is captured (the error screen reloads the list; the auth-interrupted
+	// screen advances to the resume prompt). Returns whether the CTA was added,
+	// so the caller can gate the SSO expander on the same condition.
+	private appendSignInCta(
+		buttonRow: HTMLElement,
+		category: ErrorCategory,
+		onSuccess: () => Promise<void>,
+	): boolean {
+		const reauthAvailable =
+			categoryAllowsReauth(category) &&
+			this.noteWriterOptions.onReauth !== undefined;
+		if (!reauthAvailable) {
+			return false;
+		}
+		const signInButton = buttonRow.createEl('button', {
+			text: SIGN_IN_LABEL,
+			cls: 'mod-cta',
+		});
+		signInButton.addEventListener('click', () => {
+			void this.handleReauth(signInButton, onSuccess);
+		});
+		return true;
 	}
 
 	// Builds the collapsed "Other sign-in methods" disclosure used for Google /
@@ -751,6 +772,7 @@ export class ImportModal extends Modal {
 	private renderReauthSsoExpander(
 		parent: HTMLElement,
 		sso: NonNullable<ImportModalOptions['onReauthSso']>,
+		onSuccess: () => Promise<void>,
 	): void {
 		const details = parent.createEl('details');
 		details.createEl('summary', { text: OTHER_SIGNIN_LABEL });
@@ -766,15 +788,20 @@ export class ImportModal extends Modal {
 
 		const pasteButton = row.createEl('button', { text: PASTE_TOKEN_LABEL });
 		pasteButton.addEventListener('click', () => {
-			void this.handleSsoPaste();
+			void this.handleSsoPaste(onSuccess);
 		});
 	}
 
-	// Runs the inline email/password re-auth from the error screen. On success
-	// the recording list reloads in place via refresh() (token reads are live
-	// closures, so no client reconstruction is needed); on a closed window or an
-	// unavailable login API, a Notice makes clear nothing changed.
-	private async handleReauth(button: HTMLButtonElement): Promise<void> {
+	// Runs the inline email/password re-auth from an error/interrupt screen. On
+	// success the caller-supplied onSuccess runs: the error screen reloads the
+	// list, the auth-interrupted screen advances to the resume prompt. Token
+	// reads are live closures, so no client reconstruction is needed. On a
+	// closed window or an unavailable login API, a Notice makes clear nothing
+	// changed.
+	private async handleReauth(
+		button: HTMLButtonElement,
+		onSuccess: () => Promise<void>,
+	): Promise<void> {
 		const onReauth = this.noteWriterOptions.onReauth;
 		if (!onReauth) {
 			return;
@@ -783,7 +810,7 @@ export class ImportModal extends Modal {
 		try {
 			const ok = await onReauth();
 			if (ok) {
-				await this.refresh();
+				await onSuccess();
 			} else {
 				new Notice('Plaud sign-in closed — no token captured.');
 			}
@@ -795,13 +822,14 @@ export class ImportModal extends Modal {
 		}
 	}
 
-	// Stores a clipboard token from the SSO expander and reloads the list on
-	// success. The failure Notices for an invalid/missing token live in the
-	// host's pasteToken callback, so a false result is already explained. A
-	// thrown error (a saveSettings or refresh failure) is routed through
-	// renderError like the inline re-auth and retry paths, since the click
-	// handler fires this with `void` and would otherwise drop the rejection.
-	private async handleSsoPaste(): Promise<void> {
+	// Stores a clipboard token from the SSO expander and runs onSuccess on
+	// success (the error screen reloads the list; the auth-interrupted screen
+	// advances to the resume prompt). The failure Notices for an invalid/missing
+	// token live in the host's pasteToken callback, so a false result is already
+	// explained. A thrown error (a saveSettings or refresh failure) is routed
+	// through renderError like the inline re-auth and retry paths, since the
+	// click handler fires this with `void` and would otherwise drop the rejection.
+	private async handleSsoPaste(onSuccess: () => Promise<void>): Promise<void> {
 		const sso = this.noteWriterOptions.onReauthSso;
 		if (!sso) {
 			return;
@@ -809,7 +837,7 @@ export class ImportModal extends Modal {
 		try {
 			const ok = await sso.pasteToken();
 			if (ok) {
-				await this.refresh();
+				await onSuccess();
 			}
 		} catch (err) {
 			console.error('Plaud importer: SSO token paste failed', err);
@@ -1523,36 +1551,6 @@ export class ImportModal extends Modal {
 		this.stickyDuplicateDecision = null;
 		this.currentBatchSize = selected.length;
 
-		// Construct the writer lazily. A NoteWriterError here means the
-		// user's config is bad ("..", invalid onDuplicate) — surface via
-		// the error state with the config-error classification so the UI
-		// points at Settings rather than saying "unknown error please
-		// report this." Anything else is a real code bug; re-throw so the
-		// outer click handler's .catch picks it up honestly.
-		let writer: NoteWriter;
-		try {
-			writer = new NoteWriter(this.app.vault, {
-				...this.noteWriterOptions,
-				onDuplicate: duplicatePolicy,
-				promptOnDuplicate:
-					duplicatePolicy === 'prompt' ? this.handleDuplicatePrompt : undefined,
-				// Cross-folder dedup: let the writer find a prior import of the
-				// same recording that lives in a different subfolder (for
-				// example after the subfolder template changed) so it never
-				// writes a second copy. Backed by the vault index, read live so
-				// it reflects notes written earlier in this same run.
-				existingPathForPlaudId: (id) =>
-					this.importedIndex.get(id as PlaudRecordingId)?.path ?? null,
-			});
-		} catch (err) {
-			if (err instanceof NoteWriterError) {
-				console.error('Plaud importer: NoteWriter construction failed', err);
-				this.renderError(classifyError(err));
-				return;
-			}
-			throw err;
-		}
-
 		// Disable the Import button so rapid double-clicks don't queue a
 		// second run against the same selection.
 		if (this.importButton) {
@@ -1560,14 +1558,41 @@ export class ImportModal extends Modal {
 			this.importButton.textContent = `Importing 0 of ${selected.length}…`;
 		}
 
-		// Delegate the per-recording loop to the headless runner. The modal
-		// keeps every UI concern: the observer updates the button text and
-		// refreshes row badges, and the outcome drives the summary or the
-		// partial-cancel Notice. fetchArtifacts reuses the warm artifact
-		// cache so a prior "review artifacts" preflight is not re-fetched;
-		// applyFold persists the post-write transcript fold.
+		// Delegate the per-recording loop AND the terminal UI to the shared
+		// batch runner. isInitial=true keeps the issue #12 cancelled-path button
+		// reset (the modal stays on the selection screen here) and starts the
+		// run with an empty prior-results accumulator.
+		await this.runImportBatch(selected, selection, duplicatePolicy, [], true);
+	}
+
+	/**
+	 * Run the import loop over `recordings` and render the terminal UI. Shared
+	 * by the initial Import click (`isInitial` true: a live Import button, the
+	 * selection screen stays put on a cancel) and the post-re-auth resume
+	 * (`isInitial` false: a state screen, no button). `priorResults` carries the
+	 * results of earlier sub-batches so the final summary and the partial Notice
+	 * count the whole run, not just this slice. On a mid-batch token rejection
+	 * the runner returns stop:'auth-failed'; the modal then surfaces A1's inline
+	 * re-auth and offers to resume the unprocessed tail.
+	 */
+	private async runImportBatch(
+		recordings: Recording[],
+		selection: ArtifactSelection,
+		duplicatePolicy: DuplicatePolicy,
+		priorResults: ImportResult[],
+		isInitial: boolean,
+	): Promise<void> {
+		const writer = this.buildImportWriter(duplicatePolicy);
+		if (!writer) {
+			return;
+		}
+
+		// The observer keeps every UI concern: it updates the (initial-screen)
+		// button text and refreshes row badges. fetchArtifacts reuses the warm
+		// artifact cache so a prior "review artifacts" preflight is not
+		// re-fetched; applyFold persists the post-write transcript fold.
 		const outcome = await runImport({
-			recordings: selected,
+			recordings,
 			selection,
 			writer,
 			attachments: this.attachments,
@@ -1587,26 +1612,208 @@ export class ImportModal extends Modal {
 			},
 		});
 
-		if (outcome.stop !== 'completed') {
-			// 'aborted' (modal closed mid-run) and 'cancelled' (per-file
-			// duplicate prompt dismissed) both surface the same partial
-			// Notice the inline loop used to fire at each stop site.
-			new Notice(
-				`${formatImportNotice(tallyImportResults(outcome.results))} (cancelled at ${outcome.processed}/${selected.length})`,
-			);
-			// For 'cancelled' the modal stays open with a live button, but the
-			// loop left it disabled and labeled "Importing X of Y…". Restore the
-			// initial label and re-enable it (respecting the empty-selection
-			// guard). 'aborted' is the modal closing, so its button DOM is gone
-			// and needs no reset. (issue #12)
-			if (outcome.stop === 'cancelled' && this.importButton) {
-				this.importButton.textContent = IMPORT_BUTTON_LABEL;
-				this.updateImportButtonState();
-			}
+		// Accumulate across resumes so the summary and the partial Notice
+		// reflect the whole run. Every processed recording yields exactly one
+		// result (the auth-failed recording yields none), so combined.length is
+		// the running processed count and combined.length + tail.length equals
+		// the original total.
+		const combined = [...priorResults, ...outcome.results];
+
+		if (outcome.stop === 'auth-failed') {
+			// The token was rejected mid-batch. recordings[processed] onward
+			// were never attempted; carry that tail so a successful re-auth can
+			// resume exactly where the run stopped.
+			const tail = recordings.slice(outcome.processed);
+			this.renderAuthInterrupted(tail, selection, duplicatePolicy, combined);
 			return;
 		}
 
-		this.renderSummary(tallyImportResults(outcome.results));
+		if (outcome.stop !== 'completed') {
+			// 'aborted' (modal closed mid-run) and 'cancelled' (per-file
+			// duplicate prompt dismissed) both surface the same partial Notice.
+			const total = priorResults.length + recordings.length;
+			new Notice(
+				`${formatImportNotice(tallyImportResults(combined))} (cancelled at ${combined.length}/${total})`,
+			);
+			if (outcome.stop === 'cancelled') {
+				// issue #12: on the initial selection screen the loop left the
+				// Import button disabled and labeled "Importing X of Y…"; restore
+				// the initial label and re-enable it.
+				if (isInitial && this.importButton) {
+					this.importButton.textContent = IMPORT_BUTTON_LABEL;
+					this.updateImportButtonState();
+				} else if (!isInitial) {
+					// A resumed batch has no selection screen to fall back to. The
+					// user stopped at a duplicate prompt, so re-offer the still
+					// unprocessed tail (resume or go back to the list) rather than
+					// rendering a success summary, which would auto-close the modal
+					// and fire a second Notice. recordings[processed] (the one they
+					// cancelled on) is included so resuming re-attempts it.
+					const remaining = recordings.slice(outcome.processed);
+					this.renderResumeReady(
+						remaining,
+						selection,
+						duplicatePolicy,
+						combined,
+						`Import stopped. ${remaining.length} recordings remain.`,
+					);
+				}
+			}
+			// 'aborted' is the modal closing; nothing to render in either case.
+			return;
+		}
+
+		this.renderSummary(tallyImportResults(combined));
+	}
+
+	/**
+	 * Build the per-run NoteWriter. A NoteWriterError means the user's config is
+	 * bad ("..", invalid onDuplicate): surface it via the error screen pointing
+	 * at Settings (not "unknown error please report this") and return null so
+	 * the caller stops. Anything else is a real code bug; re-throw so the outer
+	 * click handler's .catch reports it honestly. Shared by the initial import
+	 * and a resumed batch so both wire the same duplicate policy, prompt
+	 * callback, and cross-folder dedup lookup.
+	 */
+	private buildImportWriter(duplicatePolicy: DuplicatePolicy): NoteWriter | null {
+		try {
+			return new NoteWriter(this.app.vault, {
+				...this.noteWriterOptions,
+				onDuplicate: duplicatePolicy,
+				promptOnDuplicate:
+					duplicatePolicy === 'prompt' ? this.handleDuplicatePrompt : undefined,
+				// Cross-folder dedup: let the writer find a prior import of the
+				// same recording that lives in a different subfolder (for example
+				// after the subfolder template changed) so it never writes a
+				// second copy. Backed by the vault index, read live so it reflects
+				// notes written earlier in this same run.
+				existingPathForPlaudId: (id) =>
+					this.importedIndex.get(id as PlaudRecordingId)?.path ?? null,
+			});
+		} catch (err) {
+			if (err instanceof NoteWriterError) {
+				console.error('Plaud importer: NoteWriter construction failed', err);
+				this.renderError(classifyError(err));
+				return null;
+			}
+			throw err;
+		}
+	}
+
+	/**
+	 * The token was rejected mid-batch (an expired/revoked ~24h session). Show
+	 * how much completed and surface A1's inline re-auth (the Sign-in CTA and the
+	 * SSO expander). A successful sign-in does NOT auto-resume; it advances to
+	 * renderResumeReady so the user explicitly chooses to resume the unprocessed
+	 * tail or go back to the list.
+	 */
+	private renderAuthInterrupted(
+		tail: Recording[],
+		selection: ArtifactSelection,
+		duplicatePolicy: DuplicatePolicy,
+		priorResults: ImportResult[],
+	): void {
+		const { contentEl } = this;
+		contentEl.empty();
+		const box = contentEl.createDiv({ cls: 'plaud-importer-state' });
+		const processed = priorResults.length;
+		const total = processed + tail.length;
+		box.createEl('p', {
+			text: `Your Plaud session expired during the import. ${processed} of ${total} recordings were processed before it stopped. Sign in to resume the remaining ${tail.length}.`,
+			cls: 'plaud-importer-error-message',
+		});
+		const buttonRow = contentEl.createDiv({ cls: 'plaud-importer-buttons' });
+
+		const onSuccess = (): Promise<void> => {
+			this.renderResumeReady(
+				tail,
+				selection,
+				duplicatePolicy,
+				priorResults,
+				`Signed back in. ${tail.length} recordings remain.`,
+			);
+			return Promise.resolve();
+		};
+		const reauthAvailable = this.appendSignInCta(
+			buttonRow,
+			'token-rejected',
+			onSuccess,
+		);
+
+		const closeButton = buttonRow.createEl('button', { text: 'Close' });
+		closeButton.addEventListener('click', () => this.close());
+
+		const sso = this.noteWriterOptions.onReauthSso;
+		if (reauthAvailable && sso) {
+			this.renderReauthSsoExpander(contentEl, sso, onSuccess);
+		}
+	}
+
+	/**
+	 * After a successful re-auth on the auth-interrupted screen, offer the
+	 * explicit choice: resume the unprocessed tail, or go back to the list
+	 * (re-run). Explicit rather than auto-resume so the user confirms before
+	 * another network batch starts.
+	 */
+	private renderResumeReady(
+		tail: Recording[],
+		selection: ArtifactSelection,
+		duplicatePolicy: DuplicatePolicy,
+		priorResults: ImportResult[],
+		headline: string,
+	): void {
+		const { contentEl } = this;
+		contentEl.empty();
+		const box = contentEl.createDiv({ cls: 'plaud-importer-state' });
+		box.createEl('p', {
+			text: `${headline} Resume the import, or go back to the list.`,
+			cls: 'plaud-importer-loading',
+		});
+		const buttonRow = contentEl.createDiv({ cls: 'plaud-importer-buttons' });
+
+		const resumeButton = buttonRow.createEl('button', {
+			text: `Resume remaining (${tail.length})`,
+			cls: 'mod-cta',
+		});
+		resumeButton.addEventListener('click', () => {
+			resumeButton.disabled = true;
+			// The resumed batch has no Import button to carry the progress
+			// counter, so show a lightweight progress state in its place.
+			this.renderImporting(tail.length);
+			this.runImportBatch(
+				tail,
+				selection,
+				duplicatePolicy,
+				priorResults,
+				false,
+			).catch((err) => {
+				console.error('Plaud importer: resume import failed', err);
+				this.renderError(classifyError(err));
+			});
+		});
+
+		const backButton = buttonRow.createEl('button', { text: 'Back to list' });
+		backButton.addEventListener('click', () => {
+			this.refresh().catch((err) => {
+				console.error('Plaud importer: reload after re-auth failed', err);
+				this.renderError(classifyError(err));
+			});
+		});
+	}
+
+	/**
+	 * Minimal work-in-progress state shown while a resumed batch runs. The
+	 * resume path has no Import button to carry the "Importing i of n" counter,
+	 * so this stands in until the summary replaces it.
+	 */
+	private renderImporting(count: number): void {
+		const { contentEl } = this;
+		contentEl.empty();
+		const box = contentEl.createDiv({ cls: 'plaud-importer-state' });
+		box.createEl('p', {
+			text: `Importing ${count} remaining recordings…`,
+			cls: 'plaud-importer-loading',
+		});
 	}
 
 	private async resolveDuplicatePolicyForImport(

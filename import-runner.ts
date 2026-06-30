@@ -29,6 +29,7 @@ import {
 } from './note-writer';
 import {
 	classifyError,
+	categoryAllowsReauth,
 	isPlaudUnprocessedError,
 	type ImportResult,
 	type ArtifactSelection,
@@ -105,11 +106,17 @@ export interface ImportRunDeps {
  *   - 'completed': every selected recording was processed.
  *   - 'aborted': `observer.shouldAbort()` was truthy (modal closed mid-run).
  *   - 'cancelled': the user cancelled a per-file duplicate prompt.
+ *   - 'auth-failed': the token was rejected mid-batch (an expired or revoked
+ *     ~24h session). The loop stops on the FIRST auth failure instead of
+ *     failing every remaining recording with the same error; the modal offers
+ *     inline re-auth + resume on this stop.
  * 'aborted' and 'cancelled' both produce the modal's "(cancelled at x/y)"
  * partial Notice; they are distinguished so headless callers can tell a
- * user-driven stop from an interrupted one.
+ * user-driven stop from an interrupted one. 'auth-failed' is a batch-terminal
+ * condition a headless caller (auto-sync, Phase 2) can use to drive an
+ * auth-pause state machine.
  */
-export type ImportRunStop = 'completed' | 'aborted' | 'cancelled';
+export type ImportRunStop = 'completed' | 'aborted' | 'cancelled' | 'auth-failed';
 
 export interface ImportRunOutcome {
 	readonly results: ImportResult[];
@@ -306,6 +313,21 @@ export async function runImport(deps: ImportRunDeps): Promise<ImportRunOutcome> 
 				err,
 			);
 			const classification = classifyError(err);
+
+			// A rejected token mid-batch (an expired or revoked ~24h session) is
+			// a batch-level terminal condition, not a per-recording failure:
+			// continuing the loop would fail every remaining recording with the
+			// same auth error and still report stop:'completed'. Stop on the
+			// FIRST one so the modal can offer inline re-auth + resume.
+			// recordings[i] was not written, so processed = i and the unprocessed
+			// tail (this recording included) is recordings.slice(i). The pre-auth
+			// results stay in `results` for the caller's partial summary.
+			// categoryAllowsReauth is the same predicate the modal's A1 Sign-in
+			// gate uses, kept single-sourced so the runner-abort and the
+			// modal-reauth conditions cannot drift apart.
+			if (categoryAllowsReauth(classification.category)) {
+				return { results, stop: 'auth-failed', processed: i };
+			}
 
 			// Plaud confirmed (in-band) it has no transcript/summary for this
 			// recording yet. Rather than a bare failure, write a placeholder

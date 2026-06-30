@@ -4,6 +4,10 @@ All notable changes to Plaud Importer will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- If your Plaud session expired partway through a multi-select import, every remaining recording failed with the same "Plaud rejected your token" error and the run still reported as completed. The import now stops at the first recording that fails to authenticate, keeps the recordings it already imported, and shows how many were done. You can sign in again right there (email or Google/Apple), then a **Resume remaining** button finishes the recordings that were left, picking up exactly where it stopped.
+
 ## [0.15.0] - 2026-06-30
 
 ### Added
