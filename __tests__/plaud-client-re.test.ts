@@ -5,6 +5,7 @@ import {
 	ReverseEngineeredPlaudClient,
 	findAiKeywords,
 	findAttachmentAssets,
+	findConsumerNoteEntries,
 	findNewerSummaryMarkdown,
 	findOutlineLink,
 	findTransactionPolishLink,
@@ -3415,5 +3416,184 @@ describe('parseOutlineBody', () => {
 			{ title: 'First', startSeconds: 0 },
 			{ title: 'Second', startSeconds: 60 },
 		]);
+	});
+});
+
+describe('findConsumerNoteEntries', () => {
+	function fileDetail(contentList: unknown[]): Record<string, unknown> {
+		return {
+			status: 0,
+			data: { file_id: 'abc123', content_list: contentList },
+		};
+	}
+
+	const KEY_POINTS_LINK =
+		'https://s3.amazonaws.com/key-points.md?X-Amz-Signature=fake';
+
+	function consumerNoteItem(
+		overrides: Record<string, unknown> = {},
+	): Record<string, unknown> {
+		return {
+			data_id: 'note:899720e9:abc123',
+			data_type: 'consumer_note',
+			task_status: 1,
+			data_tab_name: 'Key Points',
+			data_title: 'Key Points for the meeting',
+			data_link: KEY_POINTS_LINK,
+			extra: {
+				used_template: { template_name: 'Key Points', template_type: 'official' },
+			},
+			...overrides,
+		};
+	}
+
+	it('returns the template name and link for each ready entry, in order', () => {
+		const journalLink = 'https://s3.amazonaws.com/journal.md?X-Amz-Signature=fake';
+		const raw = fileDetail([
+			consumerNoteItem(),
+			consumerNoteItem({
+				data_link: journalLink,
+				extra: { used_template: { template_name: 'Daily Journal' } },
+			}),
+		]);
+		expect(findConsumerNoteEntries(raw, '/file/detail/abc123')).toEqual([
+			{ heading: 'Key Points', dataLink: KEY_POINTS_LINK },
+			{ heading: 'Daily Journal', dataLink: journalLink },
+		]);
+	});
+
+	it('uses the template name as the heading, even when the tab label differs', () => {
+		const raw = fileDetail([
+			consumerNoteItem({
+				data_tab_name: 'Note',
+				extra: { used_template: { template_name: 'Meeting Summary' } },
+			}),
+		]);
+		expect(findConsumerNoteEntries(raw, '/file/detail/abc123')).toEqual([
+			{ heading: 'Meeting Summary', dataLink: KEY_POINTS_LINK },
+		]);
+	});
+
+	it('skips entries that are not yet ready (task_status !== 1)', () => {
+		const raw = fileDetail([consumerNoteItem({ task_status: 0 })]);
+		expect(findConsumerNoteEntries(raw, '/file/detail/abc123')).toEqual([]);
+	});
+
+	it('skips entries with no usable data_link', () => {
+		const raw = fileDetail([consumerNoteItem({ data_link: '' })]);
+		expect(findConsumerNoteEntries(raw, '/file/detail/abc123')).toEqual([]);
+	});
+
+	it('ignores content types other than consumer_note', () => {
+		const raw = fileDetail([
+			{
+				data_type: 'transaction',
+				task_status: 1,
+				data_link: 'https://s3.amazonaws.com/raw.json?X-Amz-Signature=fake',
+			},
+			consumerNoteItem(),
+		]);
+		expect(findConsumerNoteEntries(raw, '/file/detail/abc123')).toEqual([
+			{ heading: 'Key Points', dataLink: KEY_POINTS_LINK },
+		]);
+	});
+
+	it('falls back to tab label, then title, then a generic label, when no template name', () => {
+		const link2 = 'https://s3.amazonaws.com/x2.md?X-Amz-Signature=fake';
+		const link3 = 'https://s3.amazonaws.com/x3.md?X-Amz-Signature=fake';
+		const raw = fileDetail([
+			// No used_template -> fall back to the tab label.
+			consumerNoteItem({ extra: {} }),
+			// No template name and no tab label -> fall back to the entry title.
+			consumerNoteItem({ extra: {}, data_tab_name: undefined, data_link: link2 }),
+			// Nothing usable -> generic label.
+			consumerNoteItem({
+				extra: {},
+				data_tab_name: undefined,
+				data_title: undefined,
+				data_link: link3,
+			}),
+		]);
+		expect(findConsumerNoteEntries(raw, '/file/detail/abc123')).toEqual([
+			{ heading: 'Key Points', dataLink: KEY_POINTS_LINK },
+			{ heading: 'Key Points for the meeting', dataLink: link2 },
+			{ heading: 'Template output', dataLink: link3 },
+		]);
+	});
+
+	it('de-duplicates entries that share a data_link', () => {
+		const raw = fileDetail([consumerNoteItem(), consumerNoteItem()]);
+		expect(findConsumerNoteEntries(raw, '/file/detail/abc123')).toHaveLength(1);
+	});
+
+	it('returns [] when content_list is absent', () => {
+		const raw = { status: 0, data: { file_id: 'abc123' } };
+		expect(findConsumerNoteEntries(raw, '/file/detail/abc123')).toEqual([]);
+	});
+
+	it('is excluded from findAttachmentAssets so it never downloads as a binary file', () => {
+		const raw = fileDetail([
+			consumerNoteItem(),
+			{
+				data_type: 'screenshot',
+				task_status: 1,
+				data_link: 'https://s3.amazonaws.com/shot.png?X-Amz-Signature=fake',
+			},
+		]);
+		const dataTypes = findAttachmentAssets(raw, '/file/detail/abc123').map(
+			(asset) => asset.dataType,
+		);
+		expect(dataTypes).not.toContain('consumer_note');
+		expect(dataTypes).toContain('screenshot');
+	});
+});
+
+describe('getTranscriptAndSummary consumer_note template outputs', () => {
+	it('fetches each consumer_note body and surfaces it on the returned bundle', async () => {
+		// Regression guard: the bundle assembled inside fetchFileDetailBundle
+		// must actually be surfaced on the TranscriptAndSummary return. Because
+		// consumerNotes is optional, an omission compiles clean — this end-to-end
+		// test is what proves the field reaches the caller.
+		const detail = ok({
+			status: 0,
+			msg: 'success',
+			data: {
+				file_id: 'abc123',
+				content_list: [
+					{
+						data_type: 'consumer_note',
+						task_status: 1,
+						data_tab_name: 'Key Points',
+						data_link: 'https://s3/key-points.md?sig=x',
+					},
+				],
+			},
+		});
+		const { fetcher } = routeFetcher({
+			transsumm: ok(transsummEnvelope()),
+			detail,
+			// The consumer_note body is the only non-transsumm/non-detail fetch,
+			// so it routes here; served as raw text/plain Markdown, not JSON.
+			polish: { status: 200, json: null, text: '- Point one\n- Point two' },
+		});
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+
+		const result = await client.getTranscriptAndSummary(ID);
+
+		expect(result.consumerNotes).toEqual([
+			{ heading: 'Key Points', markdown: '- Point one\n- Point two' },
+		]);
+	});
+
+	it('omits consumerNotes when the recording has none', async () => {
+		const { fetcher } = routeFetcher({
+			transsumm: ok(transsummEnvelope()),
+			detail: ok({ status: 0, data: { file_id: 'abc123', content_list: [] } }),
+		});
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+
+		const result = await client.getTranscriptAndSummary(ID);
+
+		expect(result.consumerNotes).toBeUndefined();
 	});
 });

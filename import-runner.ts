@@ -184,6 +184,7 @@ export async function runImport(deps: ImportRunDeps): Promise<ImportRunOutcome> 
 				chapters,
 				attachments,
 				nestedAssetLinks,
+				consumerNotes,
 			} = await deps.fetchArtifacts(recording.id);
 			const summaryLinkedAttachments = deps.attachments.extractAttachmentAssetsFromSummaryMarkdown(
 				summary?.text ?? null,
@@ -211,6 +212,7 @@ export async function runImport(deps: ImportRunDeps): Promise<ImportRunOutcome> 
 				includeTranscript: selection.includeTranscript,
 				includeSummary: selection.includeSummary,
 				keywords: tagResult.keywords,
+				consumerNotes,
 			};
 			const selectedChapters = selection.includeTranscript
 				? chapters

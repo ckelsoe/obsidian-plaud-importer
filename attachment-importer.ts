@@ -211,7 +211,7 @@ export class AttachmentImporter {
 						continue;
 				}
 				const bodyText = blob.text ?? '';
-				const ext = this.inferAssetExtension(asset, bodyText, contentType ?? '');
+				const ext = inferAssetExtension(asset, bodyText, contentType ?? '');
 				this.logAttachmentDebug('resolved primary attachment extension', {
 					assetLabel,
 						candidate: this.sanitizeUrlForDebug(candidate),
@@ -531,38 +531,6 @@ export class AttachmentImporter {
 			return new TextEncoder().encode(response.text).buffer;
 		}
 		return null;
-	}
-
-	private inferAssetExtension(
-		asset: AttachmentAsset,
-		bodyText: string,
-		responseContentType: string,
-	): string {
-		const fromMime = `${asset.mimeType ?? ''};${responseContentType}`.toLowerCase();
-		if (fromMime.includes('text/html') || fromMime.includes('application/xhtml+xml')) {
-			return 'html';
-		}
-		if (fromMime.includes('png')) return 'png';
-		if (fromMime.includes('jpeg') || fromMime.includes('jpg')) return 'jpg';
-		if (fromMime.includes('webp')) return 'webp';
-		if (fromMime.includes('gif')) return 'gif';
-		if (fromMime.includes('svg')) return 'svg';
-		if (fromMime.includes('pdf')) return 'pdf';
-
-		try {
-			const pathname = new URL(asset.url).pathname.toLowerCase();
-			const m = pathname.match(/\.([a-z0-9]{2,6})$/);
-			if (m) {
-				return m[1];
-			}
-		} catch {
-			// ignore parse failures and use fallbacks below
-		}
-
-		if (bodyText.trim().startsWith('{') || bodyText.trim().startsWith('[')) {
-			return 'json';
-		}
-		return 'bin';
 	}
 
 	private isImageExtension(ext: string): boolean {
@@ -1119,14 +1087,73 @@ export class AttachmentImporter {
 	}
 
 	private insertManagedAttachmentsSection(content: string, section: string): string {
-		const transcriptMatch = content.match(/\n#{1,6} Transcript\s*\n/);
-		if (transcriptMatch && transcriptMatch.index !== undefined) {
-			const insertAt = transcriptMatch.index;
+		// Anchor on the LAST `Transcript` heading: it is always the real
+		// transcript (the final section). A consumer_note template output that
+		// renders a `### Transcript`/`#### Transcript` heading earlier in the
+		// note must not capture the anchor and split the Template outputs block.
+		const re = /\n#{1,6} Transcript\s*\n/g;
+		let insertAt = -1;
+		let match: RegExpExecArray | null;
+		while ((match = re.exec(content)) !== null) {
+			insertAt = match.index;
+		}
+		if (insertAt !== -1) {
 			const before = content.slice(0, insertAt).replace(/\s+$/, '');
 			const after = content.slice(insertAt).replace(/^\s*/, '');
 			return `${before}\n\n${section}\n\n${after}\n`;
 		}
 		return `${content}\n\n${section}\n`;
 	}
+}
+
+/**
+ * Choose a file extension for a downloaded attachment from its MIME hint,
+ * URL, and body. Mime wins, then a real extension on the URL, then a JSON
+ * body sniff; anything else is treated as opaque binary (`bin`). Exported as
+ * a pure function so the extension logic is unit-testable independent of the
+ * vault/network plumbing in AttachmentImporter.
+ */
+export function inferAssetExtension(
+	asset: AttachmentAsset,
+	bodyText: string,
+	responseContentType: string,
+): string {
+	const fromMime = `${asset.mimeType ?? ''};${responseContentType}`.toLowerCase();
+	const isPlainTextMime = fromMime.includes('text/plain');
+	if (fromMime.includes('text/html') || fromMime.includes('application/xhtml+xml')) {
+		return 'html';
+	}
+	if (fromMime.includes('png')) return 'png';
+	if (fromMime.includes('jpeg') || fromMime.includes('jpg')) return 'jpg';
+	if (fromMime.includes('webp')) return 'webp';
+	if (fromMime.includes('gif')) return 'gif';
+	if (fromMime.includes('svg')) return 'svg';
+	if (fromMime.includes('pdf')) return 'pdf';
+	// An explicit markdown MIME is unambiguously text -> md. A generic
+	// text/plain is handled AFTER the JSON-body sniff below, so a JSON envelope
+	// served as text/plain still resolves to json (and its nested images import).
+	if (fromMime.includes('markdown')) {
+		return 'md';
+	}
+
+	try {
+		const pathname = new URL(asset.url).pathname.toLowerCase();
+		const m = pathname.match(/\.([a-z0-9]{2,6})$/);
+		if (m) {
+			return m[1];
+		}
+	} catch {
+		// ignore parse failures and use fallbacks below
+	}
+
+	if (bodyText.trim().startsWith('{') || bodyText.trim().startsWith('[')) {
+		return 'json';
+	}
+	// text/plain that is not JSON-shaped: prefer md over the terminal bin so a
+	// stray text asset stays readable instead of an unopenable `.bin`.
+	if (isPlainTextMime) {
+		return 'md';
+	}
+	return 'bin';
 }
 

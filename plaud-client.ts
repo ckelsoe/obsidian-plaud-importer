@@ -65,6 +65,29 @@ export interface TranscriptAndSummary {
 	 * links expire quickly.
 	 */
 	readonly attachments?: readonly AttachmentAsset[];
+	/**
+	 * Additional AI template outputs the user generated in Plaud (Key Points,
+	 * Daily Journal, Meeting Summary, etc.). Each is a `content_list` entry of
+	 * `data_type: consumer_note` whose pre-signed S3 link serves a `text/plain`
+	 * Markdown body. The RE client fetches each body during the detail pass and
+	 * surfaces it here so note-writer can fold it into the note as a section
+	 * rather than the import pipeline saving it as an unreadable `.bin`
+	 * attachment. Left undefined when the recording has none.
+	 */
+	readonly consumerNotes?: readonly ConsumerNote[];
+}
+
+/**
+ * One AI template output ("consumer note") attached to a recording in Plaud.
+ * `heading` is the section title, taken from the generating template's name
+ * (`extra.used_template.template_name`, e.g. "Meeting Summary") and falling
+ * back to the tab label then the entry title; `markdown` is the fetched body.
+ * These mirror the user's own Plaud-side template selection, so inclusion is
+ * their choice, not ours.
+ */
+export interface ConsumerNote {
+	readonly heading: string;
+	readonly markdown: string;
 }
 
 /**

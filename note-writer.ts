@@ -27,6 +27,7 @@
 
 import type {
 	Chapter,
+	ConsumerNote,
 	Recording,
 	Summary,
 	Transcript,
@@ -905,7 +906,7 @@ function formatSummaryBody(summary: Summary | null): string {
 			.map((section) => `### ${section.heading}\n\n${section.body.trim()}`)
 			.join('\n\n');
 	}
-	return normalizeSummaryMarkdown(stripLeadingSummaryHeading(summary.text.trim()));
+	return neutralizeSetextDashes(stripLeadingSummaryHeading(summary.text.trim()));
 }
 
 function stripLeadingSummaryHeading(text: string): string {
@@ -916,11 +917,12 @@ function stripLeadingSummaryHeading(text: string): string {
 	return withoutHeading.trim().length > 0 ? withoutHeading.trim() : text;
 }
 
-function normalizeSummaryMarkdown(text: string): string {
+function neutralizeSetextDashes(text: string): string {
 	// A line of dashes directly after a paragraph is interpreted as a setext
 	// heading underline in markdown, which incorrectly turns the preceding
 	// paragraph into a giant heading. Convert dashed separators to `***`
-	// thematic breaks to preserve normal paragraph rendering.
+	// thematic breaks to preserve normal paragraph rendering. The consumer_note
+	// path uses normalizeConsumerNoteBody (fence-aware) instead of this helper.
 	return text.replace(/^-{3,}\s*$/gm, '***');
 }
 
@@ -1162,12 +1164,135 @@ export function findTranscriptHeadingLine(
 ): number | null {
 	const prefix = `${'#'.repeat(headerLevel)} Transcript`;
 	const lines = markdown.split('\n');
-	for (let i = 0; i < lines.length; i++) {
+	// Search from the end: the transcript is always the final section, so the
+	// last exact match is the real wrapping heading. A consumer_note body
+	// heading that demotes to the same text (e.g. `#### Transcript`) renders
+	// earlier in the note and must not shadow the real fold target.
+	for (let i = lines.length - 1; i >= 0; i--) {
 		if (lines[i] === prefix) {
 			return i;
 		}
 	}
 	return null;
+}
+
+/**
+ * The fixed H2 heading that wraps all consumer_note template outputs. Defined
+ * once so the renderer and the fold-line finder agree on the exact string.
+ */
+const TEMPLATE_OUTPUTS_HEADING = '## Template outputs';
+
+/**
+ * Render the user's extra Plaud AI template outputs as a single
+ * `## Template outputs` block, one `### <template name>` subsection per output
+ * with its Markdown body. Bodies are trusted Markdown from Plaud and embedded
+ * natively (no callout re-quoting) so headings, lists, and tables render. The
+ * block is left expanded: it sits above the (collapsed) transcript, and folding
+ * its H2 would subsume the deeper transcript heading. Inclusion mirrors the
+ * user's Plaud-side template selection, so a transcript-style template is
+ * rendered too and never de-duplicated against the pipeline transcript.
+ */
+function formatConsumerNotesSection(consumerNotes: readonly ConsumerNote[]): string {
+	const parts: string[] = [TEMPLATE_OUTPUTS_HEADING, ''];
+	for (const note of consumerNotes) {
+		const title = note.heading.trim() || 'Template output';
+		// One fence-aware pass nests the body's ATX headings under the `### <tab>`
+		// title and rewrites bare `---` separators (which would otherwise render
+		// as setext headings) to `***`, while leaving code-fence content intact.
+		const body = normalizeConsumerNoteBody(note.markdown.trim());
+		parts.push(`### ${title}`, '', body, '');
+	}
+	// The block always starts with the heading (no leading whitespace), so
+	// trim() only strips the trailing blank line; formatMarkdown adds its own
+	// separator after the section.
+	return parts.join('\n').trim();
+}
+
+interface CodeFence {
+	readonly marker: '`' | '~';
+	readonly length: number;
+}
+
+/** Parse a line that opens or closes a fenced code block into its marker. */
+function parseCodeFence(line: string): CodeFence | null {
+	const match = line.match(/^\s*(`{3,}|~{3,})/);
+	if (match === null) {
+		return null;
+	}
+	const run = match[1];
+	return { marker: run[0] === '`' ? '`' : '~', length: run.length };
+}
+
+/**
+ * Advance fenced-code state by one line. A fence closes only on a line whose
+ * marker matches the opener and whose run is at least as long, so a shorter or
+ * different-marker fence line inside a block (e.g. ``` inside a ~~~ block) stays
+ * content rather than ending the block prematurely.
+ */
+function nextFenceState(active: CodeFence | null, line: string): CodeFence | null {
+	const fence = parseCodeFence(line);
+	if (fence === null) {
+		return active;
+	}
+	if (active === null) {
+		return fence;
+	}
+	return fence.marker === active.marker && fence.length >= active.length
+		? null
+		: active;
+}
+
+/**
+ * Normalize a consumer_note body for embedding under its `### <template>` title
+ * in a single fence-aware pass:
+ *  - Re-level ATX headings so the shallowest sits at H4 (one below the title).
+ *    Without this a body `#`/`##`/`###` would pollute the note outline as a
+ *    sibling of Summary.
+ *  - Rewrite a bare `---` dash run (which after a paragraph renders as a giant
+ *    setext heading) to a `***` thematic break.
+ * Both transforms skip fenced code blocks, so a `#` comment or a literal `---`
+ * inside a code fence is preserved verbatim. This is the fence-aware counterpart
+ * of the summary path's neutralizeSetextDashes. Heading text and code content
+ * are preserved; only heading depth and bare dash separators change.
+ */
+function normalizeConsumerNoteBody(markdown: string): string {
+	const lines = markdown.split('\n');
+	// First pass: shallowest ATX heading level outside code fences.
+	let activeFence: CodeFence | null = null;
+	let minLevel = 7;
+	for (const line of lines) {
+		const prevFence = activeFence;
+		activeFence = nextFenceState(prevFence, line);
+		// Skip fence delimiter lines and anything inside a fence.
+		if (prevFence !== null || activeFence !== null) {
+			continue;
+		}
+		const m = line.match(/^(#{1,6})\s/);
+		if (m) {
+			minLevel = Math.min(minLevel, m[1].length);
+		}
+	}
+	const shift = minLevel < 4 ? 4 - minLevel : 0;
+	// Second pass: outside fences, demote headings and neutralize setext dashes.
+	activeFence = null;
+	const out = lines.map((line) => {
+		const prevFence = activeFence;
+		activeFence = nextFenceState(prevFence, line);
+		if (prevFence !== null || activeFence !== null) {
+			return line;
+		}
+		if (shift > 0) {
+			const heading = line.match(/^(#{1,6})(\s.*)$/);
+			if (heading !== null) {
+				return `${'#'.repeat(Math.min(6, heading[1].length + shift))}${heading[2]}`;
+			}
+		}
+		if (/^-{3,}\s*$/.test(line)) {
+			return '***';
+		}
+		return line;
+	});
+	return out.join('\n');
 }
 
 function formatTranscriptLine(segment: TranscriptSegment): string {
@@ -1208,6 +1333,13 @@ export interface FormatMarkdownOptions {
 	 * from `tags:` and the keep-as-property setting is on.
 	 */
 	readonly keywords?: readonly string[];
+	/**
+	 * Extra Plaud AI template outputs (Key Points, Daily Journal, etc.) to
+	 * render in the note as a `## Template outputs` block. Empty or omitted
+	 * renders no block. Independent of `includeSummary`: these mirror the
+	 * user's own Plaud-side template selection.
+	 */
+	readonly consumerNotes?: readonly ConsumerNote[];
 }
 
 export function formatMarkdown(
@@ -1258,6 +1390,10 @@ export function formatMarkdown(
 			).trim();
 			parts.push('## AI Suggestions', '', renderedSuggestion, '');
 		}
+	}
+	const consumerNotes = options.consumerNotes ?? [];
+	if (consumerNotes.length > 0) {
+		parts.push(formatConsumerNotesSection(consumerNotes), '');
 	}
 	if (transcriptSection.length > 0) {
 		parts.push('---', '', transcriptSection, '');
