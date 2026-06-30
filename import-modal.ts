@@ -17,6 +17,7 @@ import {
 	type DuplicatePolicy,
 	type DuplicatePromptCallback,
 	findTranscriptHeadingLine,
+	findTemplateOutputsHeadingLine,
 } from './note-writer';
 import { runImport } from './import-runner';
 import { buildPlaudIdIndex, type ImportedRecord } from './vault-index';
@@ -1462,7 +1463,7 @@ export class ImportModal extends Modal {
 			attachments: this.attachments,
 			options: this.noteWriterOptions,
 			fetchArtifacts: (id) => this.ensureArtifactsForRecording(id),
-			applyFold: (filePath) => this.applyTranscriptFold(filePath),
+			applyFold: (filePath) => this.applyNoteFolds(filePath),
 			observer: {
 				onRecordingStart: (index, total) => {
 					if (this.importButton) {
@@ -1572,13 +1573,13 @@ export class ImportModal extends Modal {
 	}
 
 	/**
-	 * Persist fold state for the wrapping transcript heading in a
-	 * freshly-written note so the chaptered transcript renders
-	 * collapsed by default while the external chapters callout stays
-	 * visible above it. Uses Obsidian's undocumented but stable
-	 * internal `app.foldManager.save` API (type-augmented in
-	 * `types.d.ts`) plus a best-effort same-session apply via the
-	 * active MarkdownView's `applyFoldInfo` when the file happens to
+	 * Persist fold state for the wrapping section headings in a
+	 * freshly-written note so the chaptered transcript and the
+	 * `## Template outputs` block render collapsed by default while the
+	 * summary and chapters callout above them stay visible. Uses Obsidian's
+	 * undocumented but stable internal `app.foldManager.save` API
+	 * (type-augmented in `types.d.ts`) plus a best-effort same-session apply
+	 * via the active MarkdownView's `applyFoldInfo` when the file happens to
 	 * already be open in a leaf.
 	 *
 	 * Failure is swallowed with a console warning: a missing
@@ -1587,7 +1588,7 @@ export class ImportModal extends Modal {
 	 * breaks the import. This method must never throw into the
 	 * import loop.
 	 */
-	private async applyTranscriptFold(path: string): Promise<void> {
+	private async applyNoteFolds(path: string): Promise<void> {
 		try {
 			const file = this.app.vault.getFileByPath(path);
 			if (!(file instanceof TFile)) {
@@ -1595,18 +1596,26 @@ export class ImportModal extends Modal {
 			}
 			const body = await this.app.vault.read(file);
 			const headerLevel = this.noteWriterOptions.transcriptHeaderLevel ?? 4;
+			// Fold the wrapping headings so the note opens with its bulky
+			// sections collapsed: the chaptered transcript and, when present,
+			// the `## Template outputs` block of extra AI outputs. Each is a
+			// single heading whose section Obsidian collapses by document
+			// structure, so folding the wrapper hides everything beneath it.
+			const foldLines: number[] = [];
+			const templateOutputsLine = findTemplateOutputsHeadingLine(body);
+			if (templateOutputsLine !== null) {
+				foldLines.push(templateOutputsLine);
+			}
 			const transcriptHeadingLine = findTranscriptHeadingLine(body, headerLevel);
-			if (transcriptHeadingLine === null) {
+			if (transcriptHeadingLine !== null) {
+				foldLines.push(transcriptHeadingLine);
+			}
+			if (foldLines.length === 0) {
 				return;
 			}
 			const totalLines = body.split('\n').length;
 			const foldInfo = {
-				folds: [
-					{
-						from: transcriptHeadingLine,
-						to: transcriptHeadingLine,
-					},
-				],
+				folds: foldLines.map((line) => ({ from: line, to: line })),
 				lines: totalLines,
 			};
 			// Persist the fold state so the next file-open applies it.
@@ -1634,7 +1643,7 @@ export class ImportModal extends Modal {
 			}
 		} catch (err) {
 			console.warn(
-				`Plaud importer: failed to apply transcript fold state for ${path}`,
+				`Plaud importer: failed to apply fold state for ${path}`,
 				err,
 			);
 		}

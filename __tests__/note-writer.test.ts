@@ -7,6 +7,7 @@ import {
 	extractPlaudPlaceholderFlag,
 	extractSpeakers,
 	findTranscriptHeadingLine,
+	findTemplateOutputsHeadingLine,
 	formatChapterIndexSection,
 	formatDurationHoursMinutes,
 	formatFrontmatter,
@@ -29,6 +30,7 @@ import {
 } from '../note-writer';
 import type {
 	Chapter,
+	ConsumerNote,
 	PlaudRecordingId,
 	Recording,
 	Summary,
@@ -2441,6 +2443,25 @@ describe('findTranscriptHeadingLine', () => {
 		expect(findTranscriptHeadingLine(md, 4)).toBe(6);
 	});
 
+	it('returns the LAST match so an earlier duplicate heading cannot shadow the real transcript', () => {
+		// A consumer_note body heading can demote to exactly `#### Transcript`
+		// and render before the real wrapping transcript heading. The real one
+		// is always the final section, so the last match is the correct fold target.
+		const md = [
+			'## Template outputs',
+			'### Verbatim',
+			'#### Transcript',
+			'decoy body',
+			'',
+			'---',
+			'',
+			'#### Transcript',
+			'',
+			'##### 00:00 Intro',
+		].join('\n');
+		expect(findTranscriptHeadingLine(md, 4)).toBe(7);
+	});
+
 	it('returns null when no wrapping heading matches at the given level', () => {
 		const md = '## Summary\n\nbody\n\n> [!note]- Transcript\n> **[00:00]** A: hi';
 		expect(findTranscriptHeadingLine(md, 4)).toBeNull();
@@ -2731,5 +2752,183 @@ describe('NoteWriter.writeNote superseding a placeholder', () => {
 		expect(outcome.status).toBe('overwritten');
 		// Replacing our own stub needs no user decision.
 		expect(promptOnDuplicate).not.toHaveBeenCalled();
+	});
+});
+
+// ---------------------------------------------------------------------------
+// consumer_note template outputs — folded into the note as a section (#15)
+// ---------------------------------------------------------------------------
+
+describe('formatMarkdown consumer_note template outputs', () => {
+	const consumerNotes: readonly ConsumerNote[] = [
+		{ tabName: 'Key Points', markdown: '- First point\n- Second point' },
+		{ tabName: 'Daily Journal', markdown: '## Reflections\n\nA good day.' },
+	];
+
+	it('renders a Template outputs block with one subsection per output', () => {
+		const md = formatMarkdown(
+			makeRecording(),
+			makeTranscript(),
+			makeSummary(),
+			undefined,
+			{ consumerNotes },
+		);
+		expect(md).toContain('## Template outputs');
+		expect(md).toContain('### Key Points');
+		expect(md).toContain('### Daily Journal');
+		// Bodies are embedded as native Markdown, not re-quoted into a callout.
+		expect(md).toContain('- First point');
+		// A body heading is demoted to nest under its `### <tab>` title (the
+		// shallowest body heading lands at H4) so it cannot end the fold early.
+		expect(md.split('\n')).toContain('#### Reflections');
+		expect(md.split('\n')).not.toContain('## Reflections');
+	});
+
+	it('renders no block when there are no template outputs', () => {
+		const md = formatMarkdown(makeRecording(), makeTranscript(), makeSummary());
+		expect(md).not.toContain('## Template outputs');
+	});
+
+	it('renders no block when consumerNotes is an empty array', () => {
+		const md = formatMarkdown(
+			makeRecording(),
+			makeTranscript(),
+			makeSummary(),
+			undefined,
+			{ consumerNotes: [] },
+		);
+		expect(md).not.toContain('## Template outputs');
+	});
+
+	it('places the block after the Summary and before the transcript', () => {
+		const md = formatMarkdown(
+			makeRecording(),
+			makeTranscript(),
+			makeSummary(),
+			undefined,
+			{ consumerNotes },
+		);
+		const summaryAt = md.indexOf('## Summary');
+		const templatesAt = md.indexOf('## Template outputs');
+		const transcriptAt = md.indexOf('> [!note]- Transcript');
+		expect(summaryAt).toBeLessThan(templatesAt);
+		expect(templatesAt).toBeLessThan(transcriptAt);
+	});
+
+	it('does not de-duplicate a transcript-style tab against the pipeline transcript', () => {
+		const md = formatMarkdown(
+			makeRecording(),
+			makeTranscript(),
+			makeSummary(),
+			undefined,
+			{ consumerNotes: [{ tabName: 'Verbatim Transcript', markdown: 'Speaker 1: hello' }] },
+		);
+		// The user's "Verbatim Transcript" template renders as its own section...
+		expect(md).toContain('### Verbatim Transcript');
+		expect(md).toContain('Speaker 1: hello');
+		// ...while the pipeline transcript callout is still present below it.
+		expect(md).toContain('> [!note]- Transcript');
+	});
+
+	it('falls back to a generic title when a tab name is blank', () => {
+		const md = formatMarkdown(
+			makeRecording(),
+			makeTranscript(),
+			makeSummary(),
+			undefined,
+			{ consumerNotes: [{ tabName: '   ', markdown: 'body' }] },
+		);
+		expect(md).toContain('### Template output');
+	});
+
+	it('demotes a top-level body heading so it nests under its tab title', () => {
+		const md = formatMarkdown(
+			makeRecording(),
+			makeTranscript(),
+			makeSummary(),
+			undefined,
+			{ consumerNotes: [{ tabName: 'Outline', markdown: '# Top\n\n## Sub' }] },
+		);
+		const lines = md.split('\n');
+		// Shallowest body heading (H1) shifts to H4; the H2 shifts in step to H5.
+		expect(lines).toContain('#### Top');
+		expect(lines).toContain('##### Sub');
+		expect(lines).not.toContain('# Top');
+	});
+
+	it('leaves a # inside a fenced code block untouched while demoting real headings', () => {
+		const body = '## Real heading\n\n```\n# not a heading\n```';
+		const md = formatMarkdown(
+			makeRecording(),
+			makeTranscript(),
+			makeSummary(),
+			undefined,
+			{ consumerNotes: [{ tabName: 'Mixed', markdown: body }] },
+		);
+		const lines = md.split('\n');
+		expect(lines).toContain('#### Real heading');
+		expect(lines).toContain('# not a heading');
+	});
+
+	it('leaves a body whose headings are already H4 or deeper unchanged', () => {
+		const md = formatMarkdown(
+			makeRecording(),
+			makeTranscript(),
+			makeSummary(),
+			undefined,
+			{ consumerNotes: [{ tabName: 'Deep', markdown: '#### Already deep\n\ntext' }] },
+		);
+		expect(md.split('\n')).toContain('#### Already deep');
+	});
+
+	it('neutralizes a dash separator in a body so it is not read as a setext heading', () => {
+		const md = formatMarkdown(
+			makeRecording(),
+			makeTranscript(),
+			makeSummary(),
+			undefined,
+			{ consumerNotes: [{ tabName: 'Notes', markdown: 'Action items\n---\nFollow up' }] },
+		);
+		const lines = md.split('\n');
+		const idx = lines.indexOf('Action items');
+		expect(idx).toBeGreaterThan(-1);
+		// The line after the paragraph is a thematic break, not a setext underline,
+		// so 'Action items' renders as a paragraph rather than a giant H2.
+		expect(lines[idx + 1]).toBe('***');
+	});
+
+	it('preserves a dash line inside a fenced code block (does not rewrite it to ***)', () => {
+		const body = 'Config example:\n\n```yaml\n---\nname: x\n---\n```';
+		const md = formatMarkdown(
+			makeRecording(),
+			makeTranscript(),
+			makeSummary(),
+			undefined,
+			{ consumerNotes: [{ tabName: 'Config', markdown: body }] },
+		);
+		// The literal YAML `---` lines inside the fence stay verbatim; the setext
+		// rewrite is fence-aware, so no `***` is produced from this body.
+		expect(md).toContain('name: x');
+		expect(md).not.toContain('***');
+	});
+});
+
+describe('findTemplateOutputsHeadingLine', () => {
+	it('returns the 0-based line index of the Template outputs heading', () => {
+		const md = formatMarkdown(
+			makeRecording(),
+			makeTranscript(),
+			makeSummary(),
+			undefined,
+			{ consumerNotes: [{ tabName: 'Key Points', markdown: 'body' }] },
+		);
+		const line = findTemplateOutputsHeadingLine(md);
+		expect(line).not.toBeNull();
+		expect(md.split('\n')[line as number]).toBe('## Template outputs');
+	});
+
+	it('returns null when the note has no Template outputs block', () => {
+		const md = formatMarkdown(makeRecording(), makeTranscript(), makeSummary());
+		expect(findTemplateOutputsHeadingLine(md)).toBeNull();
 	});
 });

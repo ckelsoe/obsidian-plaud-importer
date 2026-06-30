@@ -4,6 +4,10 @@ All notable changes to Plaud Importer will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- Extra AI template outputs generated in Plaud (Key Points, Daily Journal, Meeting Summary, and other per-recording templates) were imported as unreadable `.bin` files in the note's attachments folder. They now fold into the note as a collapsible **Template outputs** section, one subsection per template titled by its Plaud tab name, with the Markdown body rendered inline. The section sits below the summary and opens collapsed so it does not bury the transcript. Whatever templates you selected in Plaud are mirrored, including a verbatim-transcript template if you generated one.
+
 ## [0.13.1] - 2026-06-29
 
 ### Changed

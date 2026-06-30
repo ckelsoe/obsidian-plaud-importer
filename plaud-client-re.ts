@@ -11,6 +11,7 @@
 import type {
 	AttachmentAsset,
 	Chapter,
+	ConsumerNote,
 	PlaudClient,
 	PlaudRecordingId,
 	Recording,
@@ -292,6 +293,7 @@ export class ReverseEngineeredPlaudClient implements PlaudClient {
 			nestedAssetLinks: {},
 			detailDataTypes: [],
 			attachmentDataTypes: [],
+			consumerNotes: [],
 		};
 		let bundleError: unknown = null;
 		try {
@@ -367,6 +369,8 @@ export class ReverseEngineeredPlaudClient implements PlaudClient {
 			chapters: bundle.chapters.length > 0 ? bundle.chapters : undefined,
 			attachments:
 				bundle.attachments.length > 0 ? bundle.attachments : undefined,
+			consumerNotes:
+				bundle.consumerNotes.length > 0 ? bundle.consumerNotes : undefined,
 		};
 	}
 
@@ -507,6 +511,25 @@ export class ReverseEngineeredPlaudClient implements PlaudClient {
 			}
 		}
 
+		// Additional AI template outputs (Key Points, Daily Journal, etc.) live
+		// as `consumer_note` content_list entries whose S3 links serve text/plain
+		// Markdown. Fetch each body now so note-writer can fold them into the
+		// note. Isolated like the newer-summary extraction: a failure here must
+		// never abort the bundle and drag the transcript/summary down with it.
+		let consumerNotes: readonly ConsumerNote[] = [];
+		try {
+			consumerNotes = await this.fetchConsumerNotes(rawDetail, detailEndpoint, id);
+		} catch (err) {
+			if (this.debugLogger?.enabled === true) {
+				this.debugLogger.log({
+					kind: 'parsed',
+					endpoint: detailEndpoint,
+					message: `consumer_note extraction failed for ${id}; continuing without template outputs: ${describeUnknownError(err)}`,
+					payload: { consumerNoteError: describeUnknownError(err) },
+				});
+			}
+		}
+
 		if (this.debugLogger?.enabled === true) {
 			this.debugLogger.log({
 				kind: 'parsed',
@@ -534,7 +557,82 @@ export class ReverseEngineeredPlaudClient implements PlaudClient {
 			nestedAssetLinks,
 			detailDataTypes,
 			attachmentDataTypes,
+			consumerNotes,
 		};
+	}
+
+	/**
+	 * Fetch the Markdown body of every `consumer_note` template output on a
+	 * recording. Each entry's `data_link` is a short-lived pre-signed S3 URL
+	 * serving `text/plain`, so the fetch is authless (the URL carries its own
+	 * signature) and best-effort: a dead link or empty body drops that one
+	 * section, never the whole bundle. Fetched sequentially to match the
+	 * back-to-back transcript/outline pattern above and avoid hammering S3.
+	 */
+	private async fetchConsumerNotes(
+		rawDetail: unknown,
+		detailEndpoint: string,
+		id: PlaudRecordingId,
+	): Promise<readonly ConsumerNote[]> {
+		const refs = findConsumerNoteEntries(rawDetail, detailEndpoint);
+		const notes: ConsumerNote[] = [];
+		for (let i = 0; i < refs.length; i++) {
+			const ref = refs[i];
+			const noteEndpoint = `/s3/file_consumer_note_${i}/${encodeURIComponent(id)}`;
+			const body = await this.fetchTextBody(ref.dataLink, noteEndpoint);
+			if (body === null || body.trim().length === 0) {
+				if (this.debugLogger?.enabled === true) {
+					this.debugLogger.log({
+						kind: 'parsed',
+						endpoint: noteEndpoint,
+						message: `consumer_note "${ref.tabName}" body empty for ${id}; skipping section`,
+					});
+				}
+				continue;
+			}
+			notes.push({ tabName: ref.tabName, markdown: body.trim() });
+		}
+		return notes;
+	}
+
+	/**
+	 * Fetch a pre-signed S3 URL as raw text. Unlike `fetchJson`, this asserts
+	 * nothing about the body shape (consumer_note bodies are Markdown, not
+	 * JSON), so it must not route through the JSON parser. Authless: the URL
+	 * carries its own `X-Amz-Signature` and a Bearer token would be rejected.
+	 * Returns null on any network or non-2xx failure so callers stay
+	 * best-effort.
+	 */
+	private async fetchTextBody(
+		url: string,
+		endpoint: string,
+	): Promise<string | null> {
+		let response: PlaudHttpResponse;
+		try {
+			response = await this.fetcher({
+				url,
+				method: 'GET',
+				headers: {
+					Accept: 'text/plain, text/markdown, */*',
+					'User-Agent': USER_AGENT,
+				},
+			});
+		} catch (err) {
+			if (this.debugLogger?.enabled === true) {
+				this.debugLogger.log({
+					kind: 'error',
+					endpoint,
+					message: `GET ${endpoint} fetcher rejected: ${
+						err instanceof Error ? err.message : String(err)
+					}`,
+				});
+			}
+			return null;
+		}
+		if (response.status < 200 || response.status >= 300) {
+			return null;
+		}
+		return response.text ?? null;
 	}
 
 	private async fetchJson(
@@ -1189,6 +1287,7 @@ export interface FileDetailBundle {
 	readonly nestedAssetLinks: Readonly<Record<string, string>>;
 	readonly detailDataTypes: readonly string[];
 	readonly attachmentDataTypes: readonly string[];
+	readonly consumerNotes: readonly ConsumerNote[];
 }
 
 /**
@@ -1452,6 +1551,65 @@ export function findOutlineLink(
 }
 
 /**
+ * Reference to one `consumer_note` template output discovered in a
+ * `/file/detail/{id}` response: the section label plus the pre-signed S3
+ * link whose body is the Markdown. The body itself is fetched separately
+ * because it is text/plain, not part of the detail JSON envelope.
+ */
+interface ConsumerNoteRef {
+	readonly tabName: string;
+	readonly dataLink: string;
+}
+
+/**
+ * Scan a `/file/detail/{id}` response's `content_list` for `consumer_note`
+ * entries — the extra AI template outputs (Key Points, Daily Journal, etc.)
+ * the user generated in Plaud. Each carries a `data_tab_name` section label
+ * and a pre-signed `data_link` whose body is text/plain Markdown. Only ready
+ * entries (`task_status === 1`) that carry a link are returned; the body is
+ * fetched downstream. Distinct from `findAttachmentAssets`, which excludes
+ * `consumer_note` so these never get saved as unreadable binary attachments.
+ */
+export function findConsumerNoteEntries(
+	raw: unknown,
+	endpoint: string,
+): readonly ConsumerNoteRef[] {
+	const data = requireDataEnvelope(raw, endpoint);
+	const out: ConsumerNoteRef[] = [];
+	const seen = new Set<string>();
+	const list = data.content_list;
+	if (!Array.isArray(list)) {
+		return out;
+	}
+	for (const item of list) {
+		if (!isRecord(item)) {
+			continue;
+		}
+		if (pickNonEmptyString(item.data_type) !== 'consumer_note') {
+			continue;
+		}
+		// task_status 1 = ready. Skip in-flight or errored outputs so a
+		// half-generated template never lands a broken section in the note.
+		if (item.task_status !== undefined && item.task_status !== 1) {
+			continue;
+		}
+		const links = collectAttachmentUrls(item.data_link);
+		if (links.length === 0) {
+			continue;
+		}
+		const dataLink = links[0];
+		if (seen.has(dataLink)) {
+			continue;
+		}
+		seen.add(dataLink);
+		const tabName =
+			pickNonEmptyString(item.data_tab_name, item.data_title) ?? 'Template output';
+		out.push({ tabName, dataLink });
+	}
+	return out;
+}
+
+/**
  * Discover downloadable supplemental assets from `/file/detail/{id}`.
  *
  * We scan both `content_list` and `pre_download_content_list` for entries
@@ -1471,6 +1629,10 @@ export function findAttachmentAssets(
 		'transaction_polish',
 		'outline',
 		'auto_sum_note',
+		// consumer_note bodies are text/plain Markdown folded into the note by
+		// note-writer (see findConsumerNoteEntries); never download them as
+		// binary attachments or they land as unreadable `.bin` files.
+		'consumer_note',
 	]);
 
 	const collectFrom = (list: unknown): void => {
