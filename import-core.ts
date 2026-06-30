@@ -95,6 +95,27 @@ export interface ImportModalOptions extends NoteWriterOptions {
 	 * copy one coherent troubleshooting log.
 	 */
 	readonly debugLogger?: DebugLogger;
+	/**
+	 * Optional inline re-authentication via the email/password login window.
+	 * Resolves true once a fresh token is captured and saved, false if the user
+	 * closed the window or the login API is unavailable on this build. When
+	 * supplied, the modal's error screen offers a "Sign in" CTA for the
+	 * token-rejected / not-configured categories instead of dead-ending.
+	 */
+	readonly onReauth?: () => Promise<boolean>;
+	/**
+	 * Optional Google/Apple SSO affordances mirroring the settings tab's
+	 * bookmarklet flow. When supplied alongside onReauth, the error screen adds
+	 * an "Other sign-in methods" expander wiring these three callbacks.
+	 */
+	readonly onReauthSso?: {
+		/** Open the one-time bookmarklet setup page in the system browser. */
+		readonly setupBookmark: () => void;
+		/** Launch the browser sign-in walkthrough (Google/Apple/password). */
+		readonly signIn: () => void;
+		/** Read a token from the clipboard and store it; resolves true on success. */
+		readonly pasteToken: () => Promise<boolean>;
+	};
 }
 
 // -----------------------------------------------------------------------------
@@ -120,6 +141,16 @@ export interface ErrorClassification {
 	readonly category: ErrorCategory;
 	readonly message: string;
 	readonly canRetry: boolean;
+}
+
+/**
+ * Whether an error category represents an authentication problem the user can
+ * resolve by re-authenticating (an expired/revoked token, or none configured).
+ * The import modal shows its inline "Sign in" CTA only for these categories.
+ * Pure and exported so it can be unit-tested without a DOM harness.
+ */
+export function categoryAllowsReauth(category: ErrorCategory): boolean {
+	return category === 'token-rejected' || category === 'not-configured';
 }
 
 const NOT_CONFIGURED_MESSAGE =

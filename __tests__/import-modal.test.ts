@@ -1,5 +1,6 @@
 import {
 	classifyError,
+	categoryAllowsReauth,
 	filterVisibleRecordings,
 	formatDate,
 	formatDuration,
@@ -8,6 +9,7 @@ import {
 	mergeRecordings,
 	tallyImportResults,
 	type ImportResult,
+	type ErrorCategory,
 	type ErrorClassification,
 } from '../import-modal';
 import {
@@ -667,5 +669,44 @@ describe('formatImportNotice', () => {
 		// "1 recording imported" so pluralization isn't required.
 		const tally = tallyImportResults([written('a', 'created')]);
 		expect(formatImportNotice(tally)).toBe('Plaud importer: 1 imported.');
+	});
+});
+
+// categoryAllowsReauth --------------------------------------------------------
+
+describe('categoryAllowsReauth', () => {
+	// The import modal shows its inline "Sign in" CTA only for auth-fixable
+	// categories. Enumerate the FULL ErrorCategory union so adding a new
+	// category to the auth set (or accidentally widening the predicate) breaks
+	// this test rather than silently changing the modal's gating.
+	// A Record (not an array) so the type checker forces every ErrorCategory to
+	// appear: adding a category to the union without listing it here is a compile
+	// error, which is the "full union" guarantee this suite relies on.
+	const cases: Record<ErrorCategory, boolean> = {
+		'not-configured': true,
+		'token-rejected': true,
+		'rate-limited': false,
+		'server-error': false,
+		'parse-error': false,
+		'api-error': false,
+		'network-error': false,
+		'config-error': false,
+		'write-collision': false,
+		'write-failed': false,
+		unknown: false,
+	};
+	const entries = Object.entries(cases) as Array<[ErrorCategory, boolean]>;
+
+	for (const [category, expected] of entries) {
+		it(`${expected ? 'offers' : 'withholds'} re-auth for ${category}`, () => {
+			expect(categoryAllowsReauth(category)).toBe(expected);
+		});
+	}
+
+	it('allows re-auth only for the two authentication categories', () => {
+		const allowed = entries
+			.filter(([, expected]) => expected)
+			.map(([category]) => category);
+		expect(allowed).toEqual(['not-configured', 'token-rejected']);
 	});
 });
