@@ -174,6 +174,11 @@ interface PlaudImporterSettings {
 	defaultIncludeAttachments: boolean;
 	defaultIncludeMindmap: boolean;
 	defaultIncludeCard: boolean;
+	// Download the original recording audio (Opus/Ogg) as a note attachment.
+	// Off by default and the only default-false artifact: audio is large
+	// (~15 MB per recording-hour) and grows the vault fast, so it is strictly
+	// opt-in per import and per default.
+	defaultIncludeAudio: boolean;
 	foldTranscript: boolean;
 	transcriptHeaderLevel: 1 | 2 | 3 | 4 | 5 | 6;
 	tagMode: TagMode;
@@ -206,6 +211,7 @@ const DEFAULT_SETTINGS: PlaudImporterSettings = {
 	defaultIncludeAttachments: true,
 	defaultIncludeMindmap: true,
 	defaultIncludeCard: true,
+	defaultIncludeAudio: false,
 	foldTranscript: true,
 	transcriptHeaderLevel: 4,
 	// 'plaud' keeps human-set Plaud tags but drops the AI keyword guesses
@@ -473,6 +479,7 @@ export default class PlaudImporterPlugin extends Plugin {
 			defaultIncludeAttachments: this.settings.defaultIncludeAttachments,
 			defaultIncludeMindmap: this.settings.defaultIncludeMindmap,
 			defaultIncludeCard: this.settings.defaultIncludeCard,
+			defaultIncludeAudio: this.settings.defaultIncludeAudio,
 			tagMode: this.settings.tagMode,
 			customTags: this.settings.customTags,
 			aiKeywordsAsProperty: this.settings.aiKeywordsAsProperty,
@@ -877,6 +884,12 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 			"Card",
 			"Checked by default in import actions when a card artifact is available.",
 			"defaultIncludeCard",
+		);
+		this.addToggleRow(
+			containerEl,
+			"Audio",
+			"Off by default. Downloads the original recording audio (about 15 MB per hour) for every recording you import, which can grow your vault by gigabytes and slow Obsidian Sync and backups. Leave off unless you want the audio in your vault.",
+			"defaultIncludeAudio",
 		);
 
 		new Setting(containerEl).setName("Tags").setHeading();
@@ -1427,6 +1440,11 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 						name: "Card",
 						desc: "Checked by default in import actions when a card artifact is available.",
 						control: { type: "toggle", key: "defaultIncludeCard" },
+					},
+					{
+						name: "Audio",
+						desc: "Off by default. Downloads the original recording audio (about 15 MB per hour) for every recording you import, which can grow your vault by gigabytes and slow Obsidian Sync and backups. Leave off unless you want the audio in your vault.",
+						control: { type: "toggle", key: "defaultIncludeAudio" },
 					},
 				],
 			},

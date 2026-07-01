@@ -129,6 +129,14 @@ export interface AttachmentAsset {
 export interface PlaudClient {
 	listRecordings(filter?: RecordingFilter): Promise<readonly Recording[]>;
 	getTranscriptAndSummary(id: PlaudRecordingId): Promise<TranscriptAndSummary>;
+	/**
+	 * Resolve the pre-signed download URL for a recording's original audio
+	 * (Opus in an Ogg container). Returns null when Plaud exposes no audio
+	 * URL for the recording, so callers treat audio as best-effort and never
+	 * fail an import over a missing URL. The returned URL is a presigned S3
+	 * link carrying its own signature, so download it WITHOUT the Plaud bearer.
+	 */
+	getAudioTempUrl(id: PlaudRecordingId): Promise<string | null>;
 }
 
 export interface RecordingFilter {

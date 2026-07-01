@@ -375,6 +375,23 @@ export class ReverseEngineeredPlaudClient implements PlaudClient {
 	}
 
 	/**
+	 * Resolve a recording's original-audio download URL via
+	 * `GET /file/temp-url/{id}`. The response envelope carries `temp_url`
+	 * (a presigned S3 link to the Opus/Ogg audio) and a mostly-empty legacy
+	 * `temp_url_opus`. Returns null (not an error) when the recording has
+	 * no usable `temp_url`, so a missing URL never fails an import. The
+	 * metadata call itself is authenticated (bearer); the presigned URL it
+	 * returns must be downloaded WITHOUT the bearer (it carries its own
+	 * signature), which AttachmentImporter enforces via shouldSendAuthHeader.
+	 */
+	async getAudioTempUrl(id: PlaudRecordingId): Promise<string | null> {
+		const endpoint = `/file/temp-url/${encodeURIComponent(id)}`;
+		const url = `${this.baseUrl}${endpoint}`;
+		const raw = await this.fetchJson(url, endpoint);
+		return parseAudioTempUrl(raw, endpoint);
+	}
+
+	/**
 	 * Fetch the raw transcript + summary bundle via the legacy POST
 	 * /ai/transsumm/{id} endpoint. This is the original path the plugin
 	 * has always used. It returns the RAW transcript — speaker renames
@@ -1324,6 +1341,32 @@ export interface FileDetailBundle {
  * the body must be an object carrying an object `data` field; anything
  * else is structurally corrupt and surfaces as a PlaudParseError.
  */
+/**
+ * Extract the original-audio download URL from a `/file/temp-url/{id}`
+ * response. The envelope's `data.temp_url` is the presigned S3 link; a
+ * missing, non-string, or empty value means no audio URL is available and
+ * returns null (not an error). Exported as a pure function so the URL
+ * extraction is unit-testable without the fetch plumbing.
+ */
+export function parseAudioTempUrl(raw: unknown, endpoint: string): string | null {
+	if (!isRecord(raw)) {
+		throw new PlaudParseError(
+			`Response body for ${endpoint} is not an object`,
+			endpoint,
+		);
+	}
+	// Unlike /file/detail this endpoint returns temp_url at the TOP LEVEL of
+	// the response ({ status, temp_url, temp_url_opus }), NOT inside the usual
+	// { data: {...} } envelope. Read the top level; fall back to a data-wrapped
+	// value defensively in case Plaud ever normalizes the shape.
+	const dataRecord = isRecord(raw.data) ? raw.data : undefined;
+	const tempUrl = raw.temp_url ?? dataRecord?.temp_url;
+	if (typeof tempUrl !== 'string' || tempUrl.trim().length === 0) {
+		return null;
+	}
+	return tempUrl;
+}
+
 function requireDataEnvelope(
 	raw: unknown,
 	endpoint: string,
