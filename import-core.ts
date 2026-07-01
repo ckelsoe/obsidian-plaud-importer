@@ -117,6 +117,12 @@ export interface ImportModalOptions extends NoteWriterOptions {
 		/** Read a token from the clipboard and store it; resolves true on success. */
 		readonly pasteToken: () => Promise<boolean>;
 	};
+	/**
+	 * Fired once when the import modal closes. The plugin uses it to release the
+	 * shared import gate so a background auto-sync tick can resume; auto-sync
+	 * ticks are suppressed for the modal's whole open lifetime.
+	 */
+	readonly onClosed?: () => void;
 }
 
 // -----------------------------------------------------------------------------
