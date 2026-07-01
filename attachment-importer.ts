@@ -543,9 +543,20 @@ export class AttachmentImporter {
 			return null;
 		}
 		const folderPath = notePath.replace(/\.md$/i, '-assets');
+		// Best-effort contract: createFolder can throw (a race, or a non-folder
+		// already at that path). Keep the throw inside the method so a failure
+		// returns null instead of escaping, same as the download/write paths.
 		if (this.app.vault.getFolderByPath(folderPath) === null) {
-			await this.app.vault.createFolder(folderPath);
-			this.logAttachmentDebug('created attachment folder for audio', { folderPath });
+			try {
+				await this.app.vault.createFolder(folderPath);
+				this.logAttachmentDebug('created attachment folder for audio', { folderPath });
+			} catch (err) {
+				this.logAttachmentDebug('audio import aborted: could not create assets folder', {
+					folderPath,
+					error: err instanceof Error ? err.message : String(err),
+				});
+				return null;
+			}
 		}
 		const idPrefix = this.getAttachmentIdPrefix(recordingId);
 		const audioBase = idPrefix.length > 0 ? `${idPrefix}-audio` : 'audio';
