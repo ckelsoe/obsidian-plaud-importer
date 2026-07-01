@@ -543,9 +543,31 @@ export class AttachmentImporter {
 			return null;
 		}
 		const folderPath = notePath.replace(/\.md$/i, '-assets');
+		// Best-effort contract: createFolder can throw. Keep the throw inside the
+		// method so a real failure returns null instead of escaping. But an
+		// "already exists" throw is NOT a failure: getFolderByPath and
+		// createFolder can disagree (path normalization, a case-insensitive
+		// filesystem, or a concurrent import that created the folder between the
+		// check and the create). Key off the error message, exactly like
+		// NoteWriter.ensureFolder, rather than a re-lookup that can disagree too;
+		// only a genuine create failure returns null.
 		if (this.app.vault.getFolderByPath(folderPath) === null) {
-			await this.app.vault.createFolder(folderPath);
-			this.logAttachmentDebug('created attachment folder for audio', { folderPath });
+			try {
+				await this.app.vault.createFolder(folderPath);
+				this.logAttachmentDebug('created attachment folder for audio', { folderPath });
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				if (!/already exists/i.test(message)) {
+					this.logAttachmentDebug('audio import aborted: could not create assets folder', {
+						folderPath,
+						error: message,
+					});
+					return null;
+				}
+				this.logAttachmentDebug('assets folder already present (create race)', {
+					folderPath,
+				});
+			}
 		}
 		const idPrefix = this.getAttachmentIdPrefix(recordingId);
 		const audioBase = idPrefix.length > 0 ? `${idPrefix}-audio` : 'audio';

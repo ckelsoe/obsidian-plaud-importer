@@ -4,6 +4,16 @@ All notable changes to Plaud Importer will be documented in this file.
 
 ## [Unreleased]
 
+## [0.17.1] - 2026-07-01
+
+### Fixed
+
+- Audio import is now fully best-effort: if the note's attachment folder cannot be created, the audio step logs and skips instead of letting the error escape, so a folder problem never fails the recording's import. Internal, no change to a normal import.
+
+### Changed
+
+- Documentation only: corrected the `parseAudioTempUrl` code comment (the audio URL is at the top level of the response, not inside a `data` envelope) and reattached a comment that had detached from its function. No behavior change.
+
 ## [0.17.0] - 2026-07-01
 
 ### Added

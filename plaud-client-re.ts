@@ -1336,17 +1336,13 @@ export interface FileDetailBundle {
  * See `dev-docs/deferred-decisions.md` DD-004 for the field inventory.
  */
 /**
- * Validate the standard Plaud response envelope and return its `data`
- * object. Every `/file/detail/{id}`-shaped parser shares this prologue:
- * the body must be an object carrying an object `data` field; anything
- * else is structurally corrupt and surfaces as a PlaudParseError.
- */
-/**
  * Extract the original-audio download URL from a `/file/temp-url/{id}`
- * response. The envelope's `data.temp_url` is the presigned S3 link; a
- * missing, non-string, or empty value means no audio URL is available and
- * returns null (not an error). Exported as a pure function so the URL
- * extraction is unit-testable without the fetch plumbing.
+ * response. Unlike the `/file/detail/{id}` endpoints, `temp_url` sits at the
+ * TOP LEVEL of the response ({ status, temp_url, temp_url_opus }), NOT inside a
+ * `data` envelope; this reads the top level and falls back to a data-wrapped
+ * value defensively. A missing, non-string, or empty value means no audio URL
+ * is available and returns null (not an error). Exported as a pure function so
+ * the URL extraction is unit-testable without the fetch plumbing.
  */
 export function parseAudioTempUrl(raw: unknown, endpoint: string): string | null {
 	if (!isRecord(raw)) {
@@ -1367,6 +1363,12 @@ export function parseAudioTempUrl(raw: unknown, endpoint: string): string | null
 	return tempUrl;
 }
 
+/**
+ * Validate the standard Plaud response envelope and return its `data`
+ * object. Every `/file/detail/{id}`-shaped parser shares this prologue:
+ * the body must be an object carrying an object `data` field; anything
+ * else is structurally corrupt and surfaces as a PlaudParseError.
+ */
 function requireDataEnvelope(
 	raw: unknown,
 	endpoint: string,
