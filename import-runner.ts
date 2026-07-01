@@ -57,6 +57,7 @@ export interface AttachmentPipeline {
 		recordingId: string,
 		nestedAssetLinks?: Readonly<Record<string, string>>,
 	): Promise<void>;
+	importAudioForNote(notePath: string, audioUrl: string): Promise<number | null>;
 }
 
 /**
@@ -96,6 +97,12 @@ export interface ImportRunDeps {
 	 * artifacts" preflight is not re-fetched.
 	 */
 	fetchArtifacts(recordingId: PlaudRecordingId): Promise<TranscriptAndSummary>;
+	/**
+	 * Resolves one recording's original-audio download URL, or null when Plaud
+	 * exposes none. Only invoked when `selection.includeAudio` is set, so a
+	 * caller that never imports audio (or a headless auto-sync) may omit it.
+	 */
+	fetchAudioUrl?(recordingId: PlaudRecordingId): Promise<string | null>;
 	/** Optional post-write transcript fold. Omitted by headless callers. */
 	applyFold?(path: string): Promise<void>;
 	readonly observer?: ImportRunObserver;
@@ -281,6 +288,48 @@ export async function runImport(deps: ImportRunDeps): Promise<ImportRunOutcome> 
 							? 'note skipped by duplicate policy'
 							: 'no attachments in transcript bundle',
 				});
+			}
+			// Audio download is a separate, opt-in artifact: it is not a
+			// file-detail attachment (dedicated temp-url), embeds as an
+			// inline player, and is off by default. Runs after attachments
+			// so the assets folder already exists, and before the fold so
+			// the managed section is in place when heading lines are saved.
+			if (
+				selection.includeAudio &&
+				writeOutcome.status !== 'skipped' &&
+				deps.fetchAudioUrl !== undefined
+			) {
+				try {
+					const audioUrl = await deps.fetchAudioUrl(recording.id);
+					if (audioUrl !== null) {
+						const audioBytes = await deps.attachments.importAudioForNote(
+							writeOutcome.path,
+							audioUrl,
+						);
+						emitImportDebug(options, 'audio import outcome', {
+							recordingId: recording.id,
+							bytesWritten: audioBytes,
+						});
+					} else {
+						emitImportDebug(options, 'audio import skipped: no temp-url', {
+							recordingId: recording.id,
+						});
+					}
+				} catch (audioErr) {
+					// Audio is best-effort: the note and transcript already
+					// landed, so a download/write failure must not fail the
+					// recording. But a mid-batch auth expiry is batch-terminal
+					// (every later recording fails the same way), so rethrow
+					// those to the outer handler that stops the batch and
+					// offers inline re-auth.
+					if (categoryAllowsReauth(classifyError(audioErr).category)) {
+						throw audioErr;
+					}
+					console.error(
+						`Plaud importer: audio import failed for recording ${recording.id} "${recording.title}"`,
+						audioErr,
+					);
+				}
 			}
 			// Apply transcript folding AFTER all post-write mutations
 			// (including attachment section insertion) so the saved

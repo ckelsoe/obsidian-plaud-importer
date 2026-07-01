@@ -9,6 +9,7 @@ import {
 	findNewerSummaryMarkdown,
 	findOutlineLink,
 	findTransactionPolishLink,
+	parseAudioTempUrl,
 	parseOutlineBody,
 	type PlaudHttpFetcher,
 	type PlaudHttpRequest,
@@ -3595,5 +3596,86 @@ describe('getTranscriptAndSummary consumer_note template outputs', () => {
 		const result = await client.getTranscriptAndSummary(ID);
 
 		expect(result.consumerNotes).toBeUndefined();
+	});
+});
+
+// ---------------------------------------------------------------------------
+// getAudioTempUrl: GET /file/temp-url/{id}
+// ---------------------------------------------------------------------------
+
+function audioTempUrlEnvelope(
+	overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
+	return {
+		status: 0,
+		msg: 'success',
+		data: {
+			temp_url: 'https://s3.amazonaws.com/rec.ogg?X-Amz-Signature=fake',
+			temp_url_opus: '',
+			...overrides,
+		},
+	};
+}
+
+describe('getAudioTempUrl request shape', () => {
+	it('issues an authenticated GET against /file/temp-url/{id}', async () => {
+		const { fetcher, lastRequest } = captureFetcher(ok(audioTempUrlEnvelope()));
+		const client = new ReverseEngineeredPlaudClient(() => 'my-jwt', fetcher);
+
+		await client.getAudioTempUrl(ID);
+
+		const req = lastRequest();
+		expect(req?.method ?? 'GET').toBe('GET');
+		expect(req?.url).toBe('https://api.plaud.ai/file/temp-url/rec-abc-123');
+		expect(req?.headers.Authorization).toBe('Bearer my-jwt');
+	});
+
+	it('URL-encodes the recording id', async () => {
+		const { fetcher, lastRequest } = captureFetcher(ok(audioTempUrlEnvelope()));
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+
+		await client.getAudioTempUrl('id with/slash' as PlaudRecordingId);
+
+		expect(lastRequest()?.url).toBe(
+			'https://api.plaud.ai/file/temp-url/id%20with%2Fslash',
+		);
+	});
+
+	it('returns the presigned temp_url from the data envelope', async () => {
+		const { fetcher } = captureFetcher(ok(audioTempUrlEnvelope()));
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+
+		const url = await client.getAudioTempUrl(ID);
+
+		expect(url).toBe('https://s3.amazonaws.com/rec.ogg?X-Amz-Signature=fake');
+	});
+
+	it('returns null when temp_url is missing or empty', async () => {
+		const { fetcher } = captureFetcher(ok(audioTempUrlEnvelope({ temp_url: '' })));
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+
+		expect(await client.getAudioTempUrl(ID)).toBeNull();
+	});
+});
+
+describe('parseAudioTempUrl', () => {
+	it('extracts temp_url from a well-formed envelope', () => {
+		expect(
+			parseAudioTempUrl(
+				{ data: { temp_url: 'https://s3/audio.ogg' } },
+				'/file/temp-url/x',
+			),
+		).toBe('https://s3/audio.ogg');
+	});
+
+	it('returns null for a missing, empty, or non-string temp_url', () => {
+		expect(parseAudioTempUrl({ data: {} }, '/file/temp-url/x')).toBeNull();
+		expect(parseAudioTempUrl({ data: { temp_url: '   ' } }, '/file/temp-url/x')).toBeNull();
+		expect(parseAudioTempUrl({ data: { temp_url: 42 } }, '/file/temp-url/x')).toBeNull();
+	});
+
+	it('throws PlaudParseError on a structurally invalid envelope', () => {
+		expect(() => parseAudioTempUrl({}, '/file/temp-url/x')).toThrow(PlaudParseError);
+		expect(() => parseAudioTempUrl(null, '/file/temp-url/x')).toThrow(PlaudParseError);
 	});
 });

@@ -508,6 +508,103 @@ export class AttachmentImporter {
 		});
 	}
 
+	/**
+	 * Download one recording's original audio into the note's `-assets` folder
+	 * as `<note-basename>.ogg` and embed a playable transclude under a managed
+	 * `## Audio` section. Returns the number of bytes written, or null when the
+	 * download failed or produced no bytes, so the note is left intact and a
+	 * missing or expired audio URL never breaks an import.
+	 *
+	 * Kept separate from importAttachmentsForNote because audio is not a
+	 * file-detail asset: it comes from a dedicated temp-url, embeds as
+	 * `![[...]]` (an inline player) rather than a file link, and is off by
+	 * default. This never clears the assets folder (attachments own the
+	 * overwrite-clear and run first in the import loop); on an overwrite it
+	 * replaces only its own `<basename>.ogg` in place, so re-imports never
+	 * accumulate `<name>-2.ogg` duplicates of the same recording.
+	 */
+	async importAudioForNote(
+		notePath: string,
+		audioUrl: string,
+	): Promise<number | null> {
+		const noteFile = this.app.vault.getFileByPath(notePath);
+		if (!(noteFile instanceof TFile)) {
+			this.logAttachmentDebug('audio import aborted: note file not found', {
+				notePath,
+			});
+			return null;
+		}
+		const folderPath = notePath.replace(/\.md$/i, '-assets');
+		if (this.app.vault.getFolderByPath(folderPath) === null) {
+			await this.app.vault.createFolder(folderPath);
+			this.logAttachmentDebug('created attachment folder for audio', { folderPath });
+		}
+		const audioPath = `${folderPath}/${noteFile.basename}.ogg`;
+
+		const headers: Record<string, string> = { Accept: '*/*' };
+		const token = this.resolveAuthToken()?.trim();
+		// The temp-url is a presigned S3 link carrying its own signature;
+		// shouldSendAuthHeader returns false for it so no bearer is attached.
+		if (token && token.length > 0 && this.shouldSendAuthHeader(audioUrl)) {
+			headers.Authorization = `Bearer ${token}`;
+		}
+		let response: RequestUrlResponse;
+		try {
+			response = await requestUrl({
+				url: audioUrl,
+				method: 'GET',
+				throw: false,
+				headers,
+			});
+		} catch (err) {
+			this.logAttachmentDebug('audio download threw', {
+				notePath,
+				url: this.sanitizeUrlForDebug(audioUrl),
+				error: err instanceof Error ? err.message : String(err),
+			});
+			return null;
+		}
+		if (response.status < 200 || response.status >= 300) {
+			this.logAttachmentDebug('audio download returned non-2xx status', {
+				notePath,
+				url: this.sanitizeUrlForDebug(audioUrl),
+				status: response.status,
+			});
+			return null;
+		}
+		const bytes = this.responseToArrayBuffer(response);
+		if (bytes === null || bytes.byteLength === 0) {
+			this.logAttachmentDebug('audio download produced no bytes', { notePath });
+			return null;
+		}
+
+		const existing = this.app.vault.getFileByPath(audioPath);
+		if (existing instanceof TFile) {
+			await this.app.vault.modifyBinary(existing, bytes);
+		} else {
+			await this.app.vault.createBinary(audioPath, bytes);
+		}
+
+		await this.app.vault.process(noteFile, (content) => {
+			const withoutManaged = this.stripManagedAudioSection(content);
+			const trimmed = withoutManaged.replace(/\s+$/, '');
+			const section = [
+				'## Audio',
+				'',
+				'_Original recording audio downloaded from Plaud at import time._',
+				'',
+				`![[${audioPath}]]`,
+			].join('\n');
+			return this.insertSectionBeforeTranscript(trimmed, section);
+		});
+		this.logAttachmentDebug('audio section appended to note', {
+			notePath,
+			audioPath,
+			byteLength: bytes.byteLength,
+		});
+		return bytes.byteLength;
+	}
+
 	private async clearAttachmentFolder(folder: TFolder): Promise<void> {
 		const children = [...folder.children];
 		for (const child of children) {
@@ -1087,10 +1184,18 @@ export class AttachmentImporter {
 	}
 
 	private insertManagedAttachmentsSection(content: string, section: string): string {
-		// Anchor on the LAST `Transcript` heading: it is always the real
-		// transcript (the final section). A consumer_note template output that
-		// renders a `### Transcript`/`#### Transcript` heading earlier in the
-		// note must not capture the anchor and split the Template outputs block.
+		return this.insertSectionBeforeTranscript(content, section);
+	}
+
+	/**
+	 * Insert a managed section just before the note's real transcript.
+	 * Anchors on the LAST `Transcript` heading: it is always the real
+	 * transcript (the final section). A consumer_note template output that
+	 * renders a `### Transcript`/`#### Transcript` heading earlier in the
+	 * note must not capture the anchor and split the Template outputs block.
+	 * Shared by the attachments and audio sections.
+	 */
+	private insertSectionBeforeTranscript(content: string, section: string): string {
 		const re = /\n#{1,6} Transcript\s*\n/g;
 		let insertAt = -1;
 		let match: RegExpExecArray | null;
@@ -1103,6 +1208,16 @@ export class AttachmentImporter {
 			return `${before}\n\n${section}\n\n${after}\n`;
 		}
 		return `${content}\n\n${section}\n`;
+	}
+
+	private stripManagedAudioSection(content: string): string {
+		// Precise-shape match (NOT greedy-to-EOF like the attachments strip)
+		// so a re-import replaces only the managed Audio block and never eats
+		// the neighbouring attachments or transcript sections.
+		return content.replace(
+			/\n## Audio\n\n_Original recording audio downloaded from Plaud at import time\._\n\n!\[\[[^\n]*\]\]\n?/,
+			'\n',
+		);
 	}
 }
 

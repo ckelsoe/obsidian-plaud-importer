@@ -113,6 +113,11 @@ interface ArtifactAvailability {
 	readonly attachmentsCount: number;
 	readonly mindmapCount: number;
 	readonly cardCount: number;
+	// Unlike the other artifacts, audio is not discovered from the preflight
+	// bundle: Plaud serves original audio for every recording, and the
+	// temp-url is resolved lazily at import time (and null-handled if absent).
+	// So this equals the selected count rather than a per-bundle probe.
+	readonly audioCount: number;
 }
 
 class ArtifactSelectionModal extends Modal {
@@ -157,6 +162,7 @@ class ArtifactSelectionModal extends Modal {
 			'includeAttachments',
 			this.availability.attachmentsCount,
 		);
+		this.renderOption(contentEl, 'Audio (large)', 'includeAudio', this.availability.audioCount);
 
 		const buttonRow = contentEl.createDiv({ cls: 'plaud-importer-buttons' });
 		const importButton = buttonRow.createEl('button', {
@@ -1031,6 +1037,9 @@ export class ImportModal extends Modal {
 			includeAttachments: this.noteWriterOptions.defaultIncludeAttachments !== false,
 			includeMindmap: this.noteWriterOptions.defaultIncludeMindmap !== false,
 			includeCard: this.noteWriterOptions.defaultIncludeCard !== false,
+			// Opt-in: audio defaults OFF unless the user turned the setting on,
+			// so use === true rather than the "on unless false" idiom above.
+			includeAudio: this.noteWriterOptions.defaultIncludeAudio === true,
 		};
 	}
 
@@ -1055,6 +1064,7 @@ export class ImportModal extends Modal {
 					defaults.includeAttachments && availability.attachmentsCount > 0,
 				includeMindmap: defaults.includeMindmap && availability.mindmapCount > 0,
 				includeCard: defaults.includeCard && availability.cardCount > 0,
+				includeAudio: defaults.includeAudio && availability.audioCount > 0,
 			};
 			const selection = await this.promptArtifactSelection(availability, initialSelection);
 			if (selection === null) {
@@ -1131,6 +1141,10 @@ export class ImportModal extends Modal {
 			attachmentsCount,
 			mindmapCount,
 			cardCount,
+			// Every recording has downloadable audio in Plaud; the temp-url is
+			// resolved lazily at import (and null-handled), so all selected
+			// recordings count as audio-available.
+			audioCount: selected.length,
 		};
 	}
 
@@ -1603,6 +1617,7 @@ export class ImportModal extends Modal {
 			attachments: this.attachments,
 			options: this.noteWriterOptions,
 			fetchArtifacts: (id) => this.ensureArtifactsForRecording(id),
+			fetchAudioUrl: (id) => this.client.getAudioTempUrl(id),
 			applyFold: (filePath) => this.applyNoteFolds(filePath),
 			observer: {
 				onRecordingStart: (index, total) => {

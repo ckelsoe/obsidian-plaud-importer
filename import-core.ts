@@ -75,6 +75,7 @@ export interface ImportModalOptions extends NoteWriterOptions {
 	readonly defaultIncludeAttachments?: boolean;
 	readonly defaultIncludeMindmap?: boolean;
 	readonly defaultIncludeCard?: boolean;
+	readonly defaultIncludeAudio?: boolean;
 	/**
 	 * Optional token provider used for follow-up attachment fetches that
 	 * may require authenticated Plaud API calls (for example, image paths
@@ -574,6 +575,7 @@ export interface ArtifactSelection {
 	readonly includeAttachments: boolean;
 	readonly includeMindmap: boolean;
 	readonly includeCard: boolean;
+	readonly includeAudio: boolean;
 }
 
 /**

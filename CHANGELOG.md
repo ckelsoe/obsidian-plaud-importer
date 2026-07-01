@@ -4,6 +4,10 @@ All notable changes to Plaud Importer will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- Optionally download the original recording audio into your vault. A new **Audio** artifact appears in the import picker and as an **Audio** default in settings, both off by default. When you turn it on, each imported recording's audio file is saved next to the note and embedded as a playable clip under an **Audio** heading, so you can listen inline. Audio is large, roughly 15 MB per hour of recording, and it can grow your vault by gigabytes and slow Obsidian Sync and backups, so it stays off unless you opt in. Missing or expired audio never fails an import; the note and transcript still land.
+
 ## [0.16.0] - 2026-06-30
 
 ### Fixed

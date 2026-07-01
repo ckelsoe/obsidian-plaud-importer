@@ -120,6 +120,7 @@ const SELECTION: ArtifactSelection = {
 	includeAttachments: true,
 	includeMindmap: true,
 	includeCard: true,
+	includeAudio: false,
 };
 
 const OPTIONS: ImportModalOptions = {
@@ -130,20 +131,26 @@ const OPTIONS: ImportModalOptions = {
 function makeAttachmentStub(): {
 	pipeline: AttachmentPipeline;
 	importCalls: Array<{ notePath: string; replaceExisting: boolean; recordingId: string }>;
+	audioCalls: Array<{ notePath: string; audioUrl: string }>;
 } {
 	const importCalls: Array<{
 		notePath: string;
 		replaceExisting: boolean;
 		recordingId: string;
 	}> = [];
+	const audioCalls: Array<{ notePath: string; audioUrl: string }> = [];
 	const pipeline: AttachmentPipeline = {
 		extractAttachmentAssetsFromSummaryMarkdown: () => [],
 		mergeAttachmentAssets: (base, extra) => [...base, ...extra],
 		importAttachmentsForNote: async (notePath, _attachments, _selection, replaceExisting, recordingId) => {
 			importCalls.push({ notePath, replaceExisting, recordingId });
 		},
+		importAudioForNote: async (notePath, audioUrl) => {
+			audioCalls.push({ notePath, audioUrl });
+			return 1234;
+		},
 	};
-	return { pipeline, importCalls };
+	return { pipeline, importCalls, audioCalls };
 }
 
 function makeFetch(
@@ -782,5 +789,109 @@ describe('runImport', () => {
 		]);
 		// All three were fetched: the batch did not abort at recB.
 		expect(calls).toEqual([recA.id, recB.id, recC.id]);
+	});
+});
+
+describe('runImport audio artifact', () => {
+	const withAudio: ArtifactSelection = { ...SELECTION, includeAudio: true };
+	const AUDIO_URL = 'https://s3.example/audio.ogg?X-Amz-Signature=abc';
+
+	it('fetches the temp-url and imports audio when includeAudio is on', async () => {
+		const vault = makeFakeVault();
+		const recording = makeRecording();
+		const { fetchArtifacts } = makeFetch(
+			new Map([[recording.id, makeArtifacts(recording)]]),
+		);
+		const { pipeline, audioCalls } = makeAttachmentStub();
+		const audioFetches: PlaudRecordingId[] = [];
+
+		const outcome = await runImport({
+			recordings: [recording],
+			selection: withAudio,
+			writer: makeWriter(vault),
+			attachments: pipeline,
+			options: OPTIONS,
+			fetchArtifacts,
+			fetchAudioUrl: async (id) => {
+				audioFetches.push(id);
+				return AUDIO_URL;
+			},
+		});
+
+		expect(outcome.stop).toBe('completed');
+		expect(audioFetches).toEqual([recording.id]);
+		expect(audioCalls).toHaveLength(1);
+		expect(audioCalls[0].audioUrl).toBe(AUDIO_URL);
+	});
+
+	it('does not fetch or import audio when includeAudio is off', async () => {
+		const vault = makeFakeVault();
+		const recording = makeRecording();
+		const { fetchArtifacts } = makeFetch(
+			new Map([[recording.id, makeArtifacts(recording)]]),
+		);
+		const { pipeline, audioCalls } = makeAttachmentStub();
+		let audioFetchCount = 0;
+
+		await runImport({
+			recordings: [recording],
+			selection: SELECTION, // includeAudio: false
+			writer: makeWriter(vault),
+			attachments: pipeline,
+			options: OPTIONS,
+			fetchArtifacts,
+			fetchAudioUrl: async () => {
+				audioFetchCount += 1;
+				return AUDIO_URL;
+			},
+		});
+
+		expect(audioFetchCount).toBe(0);
+		expect(audioCalls).toEqual([]);
+	});
+
+	it('writes no audio when Plaud exposes no temp-url', async () => {
+		const vault = makeFakeVault();
+		const recording = makeRecording();
+		const { fetchArtifacts } = makeFetch(
+			new Map([[recording.id, makeArtifacts(recording)]]),
+		);
+		const { pipeline, audioCalls } = makeAttachmentStub();
+
+		await runImport({
+			recordings: [recording],
+			selection: withAudio,
+			writer: makeWriter(vault),
+			attachments: pipeline,
+			options: OPTIONS,
+			fetchArtifacts,
+			fetchAudioUrl: async () => null,
+		});
+
+		expect(audioCalls).toEqual([]);
+	});
+
+	it('imports no audio for a note skipped by the duplicate policy', async () => {
+		const vault = makeFakeVault();
+		const recording = makeRecording();
+		const writer = makeWriter(vault, { onDuplicate: 'skip' });
+		const { fetchArtifacts } = makeFetch(
+			new Map([[recording.id, makeArtifacts(recording)]]),
+		);
+		const { pipeline, audioCalls } = makeAttachmentStub();
+		const deps: ImportRunDeps = {
+			recordings: [recording],
+			selection: withAudio,
+			writer,
+			attachments: pipeline,
+			options: OPTIONS,
+			fetchArtifacts,
+			fetchAudioUrl: async () => AUDIO_URL,
+		};
+
+		await runImport(deps); // first run: note created, audio imported
+		expect(audioCalls).toHaveLength(1);
+		await runImport(deps); // second run: note skipped, no new audio
+		expect(audioCalls).toHaveLength(1);
 	});
 });
