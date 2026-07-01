@@ -510,22 +510,30 @@ export class AttachmentImporter {
 
 	/**
 	 * Download one recording's original audio into the note's `-assets` folder
-	 * as `<note-basename>.ogg` and embed a playable transclude under a managed
+	 * as `<idPrefix>-audio.ogg` and embed a playable transclude under a managed
 	 * `## Audio` section. Returns the number of bytes written, or null when the
 	 * download failed or produced no bytes, so the note is left intact and a
 	 * missing or expired audio URL never breaks an import.
+	 *
+	 * The filename uses the short recording-id prefix (same scheme as image
+	 * attachments), NOT the note title. The `-assets` folder is already named
+	 * after the (often long) note title, so repeating the title in the audio
+	 * filename pushed the absolute path over Windows' 260-char limit, and
+	 * Obsidian's audio player then served no data (player stuck at 0:00). A
+	 * short filename keeps the path well under the limit.
 	 *
 	 * Kept separate from importAttachmentsForNote because audio is not a
 	 * file-detail asset: it comes from a dedicated temp-url, embeds as
 	 * `![[...]]` (an inline player) rather than a file link, and is off by
 	 * default. This never clears the assets folder (attachments own the
 	 * overwrite-clear and run first in the import loop); on an overwrite it
-	 * replaces only its own `<basename>.ogg` in place, so re-imports never
-	 * accumulate `<name>-2.ogg` duplicates of the same recording.
+	 * replaces its own `<idPrefix>-audio.ogg` in place, so re-imports never
+	 * accumulate duplicate copies of the same recording.
 	 */
 	async importAudioForNote(
 		notePath: string,
 		audioUrl: string,
+		recordingId: string,
 	): Promise<number | null> {
 		const noteFile = this.app.vault.getFileByPath(notePath);
 		if (!(noteFile instanceof TFile)) {
@@ -539,7 +547,9 @@ export class AttachmentImporter {
 			await this.app.vault.createFolder(folderPath);
 			this.logAttachmentDebug('created attachment folder for audio', { folderPath });
 		}
-		const audioPath = `${folderPath}/${noteFile.basename}.ogg`;
+		const idPrefix = this.getAttachmentIdPrefix(recordingId);
+		const audioBase = idPrefix.length > 0 ? `${idPrefix}-audio` : 'audio';
+		const audioPath = `${folderPath}/${audioBase}.ogg`;
 
 		const headers: Record<string, string> = { Accept: '*/*' };
 		const token = this.resolveAuthToken()?.trim();

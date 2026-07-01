@@ -57,7 +57,11 @@ export interface AttachmentPipeline {
 		recordingId: string,
 		nestedAssetLinks?: Readonly<Record<string, string>>,
 	): Promise<void>;
-	importAudioForNote(notePath: string, audioUrl: string): Promise<number | null>;
+	importAudioForNote(
+		notePath: string,
+		audioUrl: string,
+		recordingId: string,
+	): Promise<number | null>;
 }
 
 /**
@@ -305,6 +309,7 @@ export async function runImport(deps: ImportRunDeps): Promise<ImportRunOutcome> 
 						const audioBytes = await deps.attachments.importAudioForNote(
 							writeOutcome.path,
 							audioUrl,
+							recording.id,
 						);
 						emitImportDebug(options, 'audio import outcome', {
 							recordingId: recording.id,
