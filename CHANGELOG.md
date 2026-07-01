@@ -4,6 +4,14 @@ All notable changes to Plaud Importer will be documented in this file.
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-07-01
+
+### Added
+
+- Optional background auto-sync (off by default). When enabled, the plugin checks Plaud on a schedule (15 minutes to once a day) and imports new recordings automatically using your default import options. It also re-imports a recording you changed in Plaud, such as corrected speaker names or an edited transcript, including old recordings edited today. **A re-import overwrites that note and its downloaded artifacts with Plaud's current version, so edits you made to a synced note are replaced.** Only recordings that actually changed are touched; unchanged notes are never modified. The background job pauses with one notice if your Plaud session expires and resumes when you reconnect (test connection, re-import, re-enter your token, or toggle it off and on). Desktop only.
+- **Backfill version markers for auto-sync** command. Notes imported before this release do not carry the marker auto-sync compares against, so their edits are not detected until the marker exists. Run this once after enabling auto-sync to make your existing library edit-detectable. It only adds a frontmatter marker and never rewrites note content.
+- The import window now shows an **Update available** badge next to already-imported recordings that changed in Plaud since you imported them, so you can spot and re-import a stale note by hand.
+
 ## [0.17.1] - 2026-07-01
 
 ### Fixed
