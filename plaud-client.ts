@@ -154,6 +154,13 @@ export interface RecordingFilter {
 	readonly until?: Date;
 	readonly folderId?: string;
 	readonly hasTranscript?: boolean;
+	/**
+	 * Sort dimension for the list endpoint. `'start_time'` (default) is
+	 * recording-creation order, newest first. `'edit_time'` is last-EDITED
+	 * order, used by auto-sync so a recording edited today (even an old one)
+	 * sorts to the top and its `version_ms` can be compared against the vault.
+	 */
+	readonly sortBy?: 'start_time' | 'edit_time';
 }
 
 export interface Recording {
@@ -183,6 +190,21 @@ export interface Recording {
 	readonly isTrashed: boolean;
 	readonly folderId?: string;
 	readonly tags?: readonly string[];
+	/**
+	 * Plaud's edit version for the recording, in unix milliseconds (the list's
+	 * `version_ms`, equal to `edit_time * 1000`). Advances whenever the
+	 * recording is edited or (re)processed in Plaud. Auto-sync stores this in
+	 * frontmatter (`plaud-version-ms`) and compares it against the list to
+	 * detect changed recordings. Optional: older list payloads may omit it.
+	 */
+	readonly versionMs?: number;
+	/**
+	 * True when the recording is still syncing from the capture device
+	 * (`wait_pull === 1`): its content may be incomplete, so auto-sync skips it
+	 * and picks it up on a later tick. Defaults to false when the flag is
+	 * absent.
+	 */
+	readonly waitPull?: boolean;
 }
 
 export interface Transcript {
