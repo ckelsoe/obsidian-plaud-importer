@@ -543,19 +543,28 @@ export class AttachmentImporter {
 			return null;
 		}
 		const folderPath = notePath.replace(/\.md$/i, '-assets');
-		// Best-effort contract: createFolder can throw (a race, or a non-folder
-		// already at that path). Keep the throw inside the method so a failure
-		// returns null instead of escaping, same as the download/write paths.
+		// Best-effort contract: createFolder can throw. Keep the throw inside the
+		// method so a real failure returns null instead of escaping. But a throw
+		// does NOT always mean failure: a benign race (concurrent creation, a
+		// case-insensitive FS, path normalization) can throw even though the
+		// folder ends up existing. Treat "folder present after the throw" as
+		// success and proceed, like note-writer's ensureFolder; only bail if it
+		// genuinely is not there.
 		if (this.app.vault.getFolderByPath(folderPath) === null) {
 			try {
 				await this.app.vault.createFolder(folderPath);
 				this.logAttachmentDebug('created attachment folder for audio', { folderPath });
 			} catch (err) {
-				this.logAttachmentDebug('audio import aborted: could not create assets folder', {
+				if (this.app.vault.getFolderByPath(folderPath) === null) {
+					this.logAttachmentDebug('audio import aborted: could not create assets folder', {
+						folderPath,
+						error: err instanceof Error ? err.message : String(err),
+					});
+					return null;
+				}
+				this.logAttachmentDebug('assets folder already present after create race', {
 					folderPath,
-					error: err instanceof Error ? err.message : String(err),
 				});
-				return null;
 			}
 		}
 		const idPrefix = this.getAttachmentIdPrefix(recordingId);
