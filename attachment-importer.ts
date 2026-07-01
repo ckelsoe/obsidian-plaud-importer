@@ -544,25 +544,27 @@ export class AttachmentImporter {
 		}
 		const folderPath = notePath.replace(/\.md$/i, '-assets');
 		// Best-effort contract: createFolder can throw. Keep the throw inside the
-		// method so a real failure returns null instead of escaping. But a throw
-		// does NOT always mean failure: a benign race (concurrent creation, a
-		// case-insensitive FS, path normalization) can throw even though the
-		// folder ends up existing. Treat "folder present after the throw" as
-		// success and proceed, like note-writer's ensureFolder; only bail if it
-		// genuinely is not there.
+		// method so a real failure returns null instead of escaping. But an
+		// "already exists" throw is NOT a failure: getFolderByPath and
+		// createFolder can disagree (path normalization, a case-insensitive
+		// filesystem, or a concurrent import that created the folder between the
+		// check and the create). Key off the error message, exactly like
+		// NoteWriter.ensureFolder, rather than a re-lookup that can disagree too;
+		// only a genuine create failure returns null.
 		if (this.app.vault.getFolderByPath(folderPath) === null) {
 			try {
 				await this.app.vault.createFolder(folderPath);
 				this.logAttachmentDebug('created attachment folder for audio', { folderPath });
 			} catch (err) {
-				if (this.app.vault.getFolderByPath(folderPath) === null) {
+				const message = err instanceof Error ? err.message : String(err);
+				if (!/already exists/i.test(message)) {
 					this.logAttachmentDebug('audio import aborted: could not create assets folder', {
 						folderPath,
-						error: err instanceof Error ? err.message : String(err),
+						error: message,
 					});
 					return null;
 				}
-				this.logAttachmentDebug('assets folder already present after create race', {
+				this.logAttachmentDebug('assets folder already present (create race)', {
 					folderPath,
 				});
 			}
