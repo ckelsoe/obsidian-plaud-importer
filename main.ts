@@ -27,7 +27,7 @@ import {
 } from "./plaud-login";
 import { NoteWriter, type TagMode } from "./note-writer";
 import { AttachmentImporter } from "./attachment-importer";
-import { buildPlaudIdIndex } from "./vault-index";
+import { buildPlaudIdIndex, type ImportedRecord } from "./vault-index";
 import { runImport } from "./import-runner";
 import {
 	PAGE_SIZE,
@@ -333,10 +333,12 @@ export default class PlaudImporterPlugin extends Plugin {
 	private autoSyncIntervalId: number | undefined;
 	private autoSyncFirstRunTimeoutId: number | undefined;
 	private autoSyncState: AutoSyncState = INITIAL_AUTO_SYNC_STATE;
-	// Shared single-flight gate: held while an import modal is open OR an
-	// auto-sync tick runs, so a background tick never overlaps a manual import.
-	// The modal releases it via ImportModalOptions.onClosed.
-	private importGateHeld = false;
+	// Single-flight coordination between the manual modal and background ticks.
+	// Two independent flags rather than one shared boolean, so the modal's
+	// open/close never clobbers a tick's in-flight state and vice versa. An
+	// auto-sync tick starts only when BOTH are clear.
+	private importModalOpen = false;
+	private autoSyncTickInFlight = false;
 
 	async onload() {
 		await this.loadSettings();
@@ -542,12 +544,15 @@ export default class PlaudImporterPlugin extends Plugin {
 	private async importAutoSyncCandidates(
 		newRecs: readonly Recording[],
 		changedRecs: readonly Recording[],
+		index: Map<PlaudRecordingId, ImportedRecord>,
 	): Promise<{ imported: number; updated: number }> {
 		const client = this.client;
 		if (client === undefined) return { imported: 0, updated: 0 };
 		const options = this.buildImportRuntimeOptions();
 		const selection = this.autoSyncSelection();
-		const index = buildPlaudIdIndex(this.app, this.settings.outputFolder);
+		// Reuse the tick's index (passed in) rather than rebuilding: one snapshot
+		// backs both classification and the writer's cross-folder dedup, and a
+		// cold/partial metadataCache cannot diverge between the two.
 		const attachments = new AttachmentImporter({
 			app: this.app,
 			getAuthToken: options.getAuthToken,
@@ -613,7 +618,7 @@ export default class PlaudImporterPlugin extends Plugin {
 			this.logAutoSync("tick skipped: paused for re-auth");
 			return;
 		}
-		if (this.importGateHeld) {
+		if (this.importModalOpen || this.autoSyncTickInFlight) {
 			this.logAutoSync("tick skipped: an import is already running");
 			return;
 		}
@@ -631,7 +636,7 @@ export default class PlaudImporterPlugin extends Plugin {
 			return;
 		}
 
-		this.importGateHeld = true;
+		this.autoSyncTickInFlight = true;
 		try {
 			const result = await runAutoSyncTick({
 				pageSize: PAGE_SIZE,
@@ -640,7 +645,9 @@ export default class PlaudImporterPlugin extends Plugin {
 				listPage: (skip, limit) =>
 					client.listRecordings({ sortBy: "edit_time", skip, limit }),
 				buildIndex: () => index,
-				importCandidates: (n, c) => this.importAutoSyncCandidates(n, c),
+				// Reuse the index this tick already built (and cold-cache-guarded)
+				// so classification and the writer's dedup share one snapshot.
+				importCandidates: (n, c) => this.importAutoSyncCandidates(n, c, index),
 				log: (m, p) => this.logAutoSync(m, p),
 			});
 			this.autoSyncState = nextAutoSyncState(this.autoSyncState, "ok");
@@ -664,7 +671,7 @@ export default class PlaudImporterPlugin extends Plugin {
 				message: classification.message,
 			});
 		} finally {
-			this.importGateHeld = false;
+			this.autoSyncTickInFlight = false;
 		}
 	}
 
@@ -820,10 +827,10 @@ export default class PlaudImporterPlugin extends Plugin {
 				message: `user invoked 'Import recent recordings' via ${source}`,
 			});
 		}
-		// Hold the shared import gate for the modal's whole open lifetime so a
-		// background auto-sync tick never runs alongside a manual import. Released
-		// from onClosed below.
-		this.importGateHeld = true;
+		// Mark the modal open for its whole lifetime so a background auto-sync
+		// tick does not start alongside a manual import. Cleared from onClosed
+		// below. Uses its own flag (not the tick's) so the two never clobber.
+		this.importModalOpen = true;
 		// Snapshot settings at invocation time (via buildImportRuntimeOptions, the
 		// same builder the headless auto-sync path uses) so changes in the
 		// settings tab take effect on the next click without reinstantiation.
@@ -842,7 +849,7 @@ export default class PlaudImporterPlugin extends Plugin {
 				pasteToken: () => this.pasteTokenFromClipboard(),
 			},
 			onClosed: () => {
-				this.importGateHeld = false;
+				this.importModalOpen = false;
 			},
 		}).open();
 	}

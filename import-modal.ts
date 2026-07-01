@@ -480,13 +480,14 @@ export class ImportModal extends Modal {
 	}
 
 	onClose(): void {
-		// Release the shared import gate first so a background auto-sync tick can
-		// resume even if the rest of teardown throws.
-		this.noteWriterOptions.onClosed?.();
-		// Signal any in-flight import loop to stop writing. The loop
-		// checks `this.aborted` between iterations and fires a partial
-		// Notice if it was interrupted.
+		// Signal any in-flight import loop to stop writing FIRST, then release
+		// the shared gate. Ordering matters: releasing before aborting would let
+		// a background auto-sync tick start while this modal's loop is still
+		// winding down. `aborted = true` is a plain assignment that cannot throw,
+		// so onClosed still fires. The loop checks `aborted` between iterations
+		// and fires a partial Notice if it was interrupted.
 		this.aborted = true;
+		this.noteWriterOptions.onClosed?.();
 		this.cancelAutoClose();
 		this.contentEl.empty();
 		this.selectedIds.clear();
