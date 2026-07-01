@@ -26,14 +26,17 @@ import type { PlaudRecordingId } from './plaud-client';
 
 /**
  * Lightweight pointer back to an imported note. The path is the only
- * load-bearing field — `openLinkText` uses it for click-through. The
- * summary metadata is captured for future "update available" detection
- * but not used in phase 1.
+ * load-bearing field — `openLinkText` uses it for click-through.
+ * `versionMs` is the stored auto-sync cursor (`plaud-version-ms`): a listed
+ * recording whose `version_ms` exceeds it is a CHANGED note to re-import; a
+ * missing `versionMs` is treated as current (no re-import) so enabling
+ * auto-sync never mass-overwrites a pre-existing library.
  */
 export interface ImportedRecord {
 	readonly path: string;
 	readonly summaryVersion?: string;
 	readonly summaryId?: string;
+	readonly versionMs?: number;
 }
 
 /**
@@ -70,6 +73,7 @@ export function buildPlaudIdIndex(
 			path: file.path,
 			summaryVersion: pickFrontmatterString(rawFm['plaud-summary-version']),
 			summaryId: pickFrontmatterString(rawFm['plaud-summary-id']),
+			versionMs: pickFrontmatterNumber(rawFm['plaud-version-ms']),
 		};
 		out.set(id as PlaudRecordingId, record);
 	}
@@ -104,6 +108,21 @@ function pickFrontmatterString(value: unknown): string | undefined {
 	if (typeof value !== 'string') return undefined;
 	const trimmed = value.trim();
 	return trimmed.length > 0 ? trimmed : undefined;
+}
+
+// plaud-version-ms is written as a raw number, so metadataCache usually
+// surfaces it as a number. Accept a numeric string too (a user or a YAML
+// quirk could quote it), and reject anything non-finite so a malformed marker
+// stays undefined (treated as "current", never a spurious re-import).
+function pickFrontmatterNumber(value: unknown): number | undefined {
+	if (typeof value === 'number') {
+		return Number.isFinite(value) ? value : undefined;
+	}
+	if (typeof value === 'string') {
+		const n = Number(value.trim());
+		return value.trim().length > 0 && Number.isFinite(n) ? n : undefined;
+	}
+	return undefined;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -82,6 +82,20 @@ describe('buildPlaudIdIndex', () => {
 		expect(buildPlaudIdIndex(app, '/Plaud/').size).toBe(1);
 	});
 
+	it('reads plaud-version-ms into versionMs; absent or malformed stays undefined', () => {
+		const app = makeApp([
+			['Plaud/num.md', { 'plaud-id': 'rec-num', 'plaud-version-ms': 1782918853105 }],
+			['Plaud/str.md', { 'plaud-id': 'rec-str', 'plaud-version-ms': '1744628400000' }],
+			['Plaud/none.md', { 'plaud-id': 'rec-none' }],
+			['Plaud/bad.md', { 'plaud-id': 'rec-bad', 'plaud-version-ms': 'not-a-number' }],
+		]);
+		const index = buildPlaudIdIndex(app, 'Plaud');
+		expect(index.get('rec-num' as PlaudRecordingId)?.versionMs).toBe(1782918853105);
+		expect(index.get('rec-str' as PlaudRecordingId)?.versionMs).toBe(1744628400000);
+		expect(index.get('rec-none' as PlaudRecordingId)?.versionMs).toBeUndefined();
+		expect(index.get('rec-bad' as PlaudRecordingId)?.versionMs).toBeUndefined();
+	});
+
 	it('normalizes Windows-style backslash outputFolder before matching', () => {
 		// Regression for #7: a "\Inbox" setting must match notes Obsidian
 		// stored under "Inbox", so the imported badge and duplicate detection

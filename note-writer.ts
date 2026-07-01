@@ -807,6 +807,14 @@ export function formatFrontmatter(
 		lines.push(`keywords: ${yamlArray(keywords)}`);
 	}
 	lines.push('source: plaud');
+	// Auto-sync change cursor: the recording's edit version (unix ms). Stored so
+	// a later sync can compare the list's current version_ms against it and
+	// re-import only when Plaud actually changed the recording. Emitted as a raw
+	// number (no quoting) so metadataCache surfaces it as a number. Absent for
+	// recordings whose list payload omitted version_ms.
+	if (recording.versionMs !== undefined) {
+		lines.push(`plaud-version-ms: ${recording.versionMs}`);
+	}
 
 	// Optional Plaud summary extras. Each line is emitted only when the
 	// corresponding field is present on the Summary. Missing summary or
