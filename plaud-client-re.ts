@@ -1349,8 +1349,18 @@ export interface FileDetailBundle {
  * extraction is unit-testable without the fetch plumbing.
  */
 export function parseAudioTempUrl(raw: unknown, endpoint: string): string | null {
-	const data = requireDataEnvelope(raw, endpoint);
-	const tempUrl = data.temp_url;
+	if (!isRecord(raw)) {
+		throw new PlaudParseError(
+			`Response body for ${endpoint} is not an object`,
+			endpoint,
+		);
+	}
+	// Unlike /file/detail this endpoint returns temp_url at the TOP LEVEL of
+	// the response ({ status, temp_url, temp_url_opus }), NOT inside the usual
+	// { data: {...} } envelope. Read the top level; fall back to a data-wrapped
+	// value defensively in case Plaud ever normalizes the shape.
+	const dataRecord = isRecord(raw.data) ? raw.data : undefined;
+	const tempUrl = raw.temp_url ?? dataRecord?.temp_url;
 	if (typeof tempUrl !== 'string' || tempUrl.trim().length === 0) {
 		return null;
 	}
