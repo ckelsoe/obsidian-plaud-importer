@@ -325,10 +325,16 @@ export async function runImport(deps: ImportRunDeps): Promise<ImportRunOutcome> 
 					if (categoryAllowsReauth(classifyError(audioErr).category)) {
 						throw audioErr;
 					}
-					console.error(
-						`Plaud importer: audio import failed for recording ${recording.id} "${recording.title}"`,
-						audioErr,
-					);
+					// Log into the debug session (not just the DevTools console)
+					// so an exported session shows why audio was skipped.
+					emitImportDebug(options, 'audio import failed', {
+						recordingId: recording.id,
+						recordingTitle: recording.title,
+						error:
+							audioErr instanceof Error
+								? audioErr.message
+								: String(audioErr),
+					});
 				}
 			}
 			// Apply transcript folding AFTER all post-write mutations

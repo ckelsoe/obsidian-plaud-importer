@@ -545,9 +545,17 @@ export class AttachmentImporter {
 		const token = this.resolveAuthToken()?.trim();
 		// The temp-url is a presigned S3 link carrying its own signature;
 		// shouldSendAuthHeader returns false for it so no bearer is attached.
-		if (token && token.length > 0 && this.shouldSendAuthHeader(audioUrl)) {
+		const sendAuth =
+			!!token && token.length > 0 && this.shouldSendAuthHeader(audioUrl);
+		if (sendAuth && token) {
 			headers.Authorization = `Bearer ${token}`;
 		}
+		this.logAttachmentDebug('downloading audio', {
+			notePath,
+			audioPath,
+			url: this.sanitizeUrlForDebug(audioUrl),
+			sendAuth,
+		});
 		let response: RequestUrlResponse;
 		try {
 			response = await requestUrl({
@@ -564,6 +572,13 @@ export class AttachmentImporter {
 			});
 			return null;
 		}
+		const bytes = this.responseToArrayBuffer(response);
+		this.logAttachmentDebug('audio download response', {
+			notePath,
+			status: response.status,
+			contentType: this.getResponseHeader(response, 'content-type') ?? null,
+			byteLength: bytes?.byteLength ?? 0,
+		});
 		if (response.status < 200 || response.status >= 300) {
 			this.logAttachmentDebug('audio download returned non-2xx status', {
 				notePath,
@@ -572,31 +587,43 @@ export class AttachmentImporter {
 			});
 			return null;
 		}
-		const bytes = this.responseToArrayBuffer(response);
 		if (bytes === null || bytes.byteLength === 0) {
 			this.logAttachmentDebug('audio download produced no bytes', { notePath });
 			return null;
 		}
 
-		const existing = this.app.vault.getFileByPath(audioPath);
-		if (existing instanceof TFile) {
-			await this.app.vault.modifyBinary(existing, bytes);
-		} else {
-			await this.app.vault.createBinary(audioPath, bytes);
-		}
+		// Vault writes can throw (path issues, a racing external edit). Keep
+		// audio best-effort: log and return null rather than letting the throw
+		// escape into the runner, which would otherwise surface only in the
+		// DevTools console and never in the exportable debug session.
+		try {
+			const existing = this.app.vault.getFileByPath(audioPath);
+			if (existing instanceof TFile) {
+				await this.app.vault.modifyBinary(existing, bytes);
+			} else {
+				await this.app.vault.createBinary(audioPath, bytes);
+			}
 
-		await this.app.vault.process(noteFile, (content) => {
-			const withoutManaged = this.stripManagedAudioSection(content);
-			const trimmed = withoutManaged.replace(/\s+$/, '');
-			const section = [
-				'## Audio',
-				'',
-				'_Original recording audio downloaded from Plaud at import time._',
-				'',
-				`![[${audioPath}]]`,
-			].join('\n');
-			return this.insertSectionBeforeTranscript(trimmed, section);
-		});
+			await this.app.vault.process(noteFile, (content) => {
+				const withoutManaged = this.stripManagedAudioSection(content);
+				const trimmed = withoutManaged.replace(/\s+$/, '');
+				const section = [
+					'## Audio',
+					'',
+					'_Original recording audio downloaded from Plaud at import time._',
+					'',
+					`![[${audioPath}]]`,
+				].join('\n');
+				return this.insertSectionBeforeTranscript(trimmed, section);
+			});
+		} catch (err) {
+			this.logAttachmentDebug('audio write failed', {
+				notePath,
+				audioPath,
+				error: err instanceof Error ? err.message : String(err),
+			});
+			return null;
+		}
 		this.logAttachmentDebug('audio section appended to note', {
 			notePath,
 			audioPath,
