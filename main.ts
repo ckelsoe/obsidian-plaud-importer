@@ -6,6 +6,7 @@ import {
 	PluginSettingTab,
 	SecretComponent,
 	Setting,
+	TFile,
 	type SettingDefinitionItem,
 	type ObsidianProtocolData,
 	requestUrl,
@@ -358,6 +359,14 @@ export default class PlaudImporterPlugin extends Plugin {
 			callback: () => this.launchImportModal("command"),
 		});
 
+		this.addCommand({
+			id: "backfill-version-markers",
+			name: "Backfill version markers for auto-sync",
+			callback: () => {
+				void this.backfillVersionMarkers();
+			},
+		});
+
 		// Render the left-rail ribbon icon only when the user has opted
 		// in via settings. updateRibbonIcon() is idempotent and is also
 		// called from the settings toggle so enabling/disabling takes
@@ -699,6 +708,64 @@ export default class PlaudImporterPlugin extends Plugin {
 			window.setTimeout(() => {
 				void this.runAutoSyncTickSafe();
 			}, 1000);
+		}
+	}
+
+	/**
+	 * One-time backfill of `plaud-version-ms` into notes imported before
+	 * auto-sync existed. Reads each recording's current `version_ms` from the
+	 * list and writes ONLY the frontmatter marker (no body rewrite), so those
+	 * notes become edit-detectable. Without it, auto-sync treats a legacy note's
+	 * edits as un-detectable (missing marker = current). Safe to re-run: notes
+	 * that already have a marker are skipped.
+	 */
+	private async backfillVersionMarkers(): Promise<void> {
+		const client = this.client;
+		if (client === undefined) {
+			new Notice("Plaud importer: still starting up. Try again in a moment.");
+			return;
+		}
+		new Notice("Plaud importer: backfilling version markers...");
+		try {
+			// Build id -> version_ms from the full list (bounded page loop).
+			const versionById = new Map<PlaudRecordingId, number>();
+			let skip = 0;
+			for (let page = 0; page < 500; page++) {
+				const recs = await client.listRecordings({
+					sortBy: "edit_time",
+					skip,
+					limit: PAGE_SIZE,
+				});
+				if (recs.length === 0) break;
+				for (const r of recs) {
+					if (r.versionMs !== undefined) versionById.set(r.id, r.versionMs);
+				}
+				if (recs.length < PAGE_SIZE) break;
+				skip += recs.length;
+			}
+
+			const index = buildPlaudIdIndex(this.app, this.settings.outputFolder);
+			let written = 0;
+			for (const [id, record] of index) {
+				if (record.versionMs !== undefined) continue; // already has a marker
+				const versionMs = versionById.get(id);
+				if (versionMs === undefined) continue; // recording no longer listed
+				const file = this.app.vault.getFileByPath(record.path);
+				if (!(file instanceof TFile)) continue;
+				await this.app.fileManager.processFrontMatter(
+					file,
+					(fm: Record<string, unknown>) => {
+						fm["plaud-version-ms"] = versionMs;
+					},
+				);
+				written += 1;
+			}
+			new Notice(
+				`Plaud importer: backfilled ${written} version marker${written === 1 ? "" : "s"}.`,
+			);
+			this.logAutoSync("backfill complete", { written, listed: versionById.size });
+		} catch (err) {
+			new Notice(`Plaud importer: backfill failed — ${classifyError(err).message}`);
 		}
 	}
 

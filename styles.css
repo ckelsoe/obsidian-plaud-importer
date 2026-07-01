@@ -73,6 +73,17 @@
 	text-decoration: none;
 }
 
+.plaud-importer-update-badge {
+	display: inline-block;
+	padding: 0.05em 0.5em;
+	font-size: 0.75em;
+	font-weight: 500;
+	color: var(--text-on-accent);
+	background: var(--color-orange);
+	border-radius: 0.7em;
+	flex-shrink: 0;
+}
+
 .plaud-importer-footer {
 	text-align: center;
 	opacity: 0.8;

@@ -66,6 +66,24 @@ export function classifyRecording(
 		: 'up-to-date-boundary';
 }
 
+/**
+ * True when an already-imported recording has changed in Plaud since import:
+ * both the listed and the stored `version_ms` are known and the listed one is
+ * greater. Used by the import dialog's "update available" badge (a manual-
+ * import cue) and mirrors the `changed` classification. A missing stored marker
+ * (legacy note) is NOT flagged, matching the migration rule.
+ */
+export function isUpdateAvailable(
+	listedVersionMs: number | undefined,
+	storedVersionMs: number | undefined,
+): boolean {
+	return (
+		listedVersionMs !== undefined &&
+		storedVersionMs !== undefined &&
+		listedVersionMs > storedVersionMs
+	);
+}
+
 export interface AutoSyncCandidate {
 	readonly recording: Recording;
 	/** Drives the headless duplicate policy: skip-for-new, overwrite-for-changed. */

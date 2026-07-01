@@ -6,6 +6,7 @@ import {
 	nextAutoSyncState,
 	tickOutcomeForCategory,
 	coerceIntervalMinutes,
+	isUpdateAvailable,
 	INITIAL_AUTO_SYNC_STATE,
 } from '../auto-sync';
 
@@ -163,6 +164,20 @@ describe('tickOutcomeForCategory', () => {
 		for (const c of ['rate-limited', 'server-error', 'network-error', 'parse-error', 'api-error'] as const) {
 			expect(tickOutcomeForCategory(c)).toBe('transient');
 		}
+	});
+});
+
+describe('isUpdateAvailable', () => {
+	it('is true only when both versions are known and listed > stored', () => {
+		expect(isUpdateAvailable(200, 100)).toBe(true);
+		expect(isUpdateAvailable(100, 100)).toBe(false);
+		expect(isUpdateAvailable(50, 100)).toBe(false);
+	});
+
+	it('is false when either version is missing (legacy note or omitted)', () => {
+		expect(isUpdateAvailable(200, undefined)).toBe(false);
+		expect(isUpdateAvailable(undefined, 100)).toBe(false);
+		expect(isUpdateAvailable(undefined, undefined)).toBe(false);
 	});
 });
 

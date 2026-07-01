@@ -20,6 +20,7 @@ import {
 } from './note-writer';
 import { runImport } from './import-runner';
 import { buildPlaudIdIndex, type ImportedRecord } from './vault-index';
+import { isUpdateAvailable } from './auto-sync';
 import { AttachmentImporter } from './attachment-importer';
 import {
 	classifyError,
@@ -963,6 +964,12 @@ export class ImportModal extends Modal {
 		const existing = this.importedIndex.get(rec.id);
 		if (existing !== undefined) {
 			this.renderImportedBadge(titleRow, existing);
+			// Manual-import cue: this note is stale (the recording changed in
+			// Plaud since it was imported). Re-importing it overwrites the note
+			// with Plaud's current version.
+			if (isUpdateAvailable(rec.versionMs, existing.versionMs)) {
+				this.renderUpdateAvailableBadge(titleRow);
+			}
 		}
 
 		const meta = labelWrap.createDiv({ cls: 'plaud-importer-meta' });
@@ -1001,6 +1008,9 @@ export class ImportModal extends Modal {
 		if (row === null) return;
 		const titleRow = row.querySelector('.plaud-importer-title-row');
 		if (titleRow === null) return;
+		// The note was just written, so it is current: drop any stale
+		// "update available" badge.
+		titleRow.querySelector('.plaud-importer-update-badge')?.remove();
 		const existingBadge = titleRow.querySelector('.plaud-importer-imported-badge');
 		if (existingBadge !== null) return;
 		this.renderImportedBadge(titleRow as HTMLElement, existing);
@@ -1020,6 +1030,21 @@ export class ImportModal extends Modal {
 			evt.preventDefault();
 			evt.stopPropagation();
 			void this.app.workspace.openLinkText(record.path, '', false);
+		});
+	}
+
+	// A non-interactive "Update available" badge shown next to "Imported" when
+	// the recording changed in Plaud since import. Re-importing overwrites the
+	// note with Plaud's current version.
+	private renderUpdateAvailableBadge(parent: HTMLElement): void {
+		if (parent.querySelector('.plaud-importer-update-badge') !== null) return;
+		parent.createSpan({
+			cls: 'plaud-importer-update-badge',
+			text: 'Update available',
+			attr: {
+				'aria-label': 'This recording changed in Plaud since it was imported',
+				title: 'Changed in Plaud since import — re-importing overwrites this note',
+			},
 		});
 	}
 
