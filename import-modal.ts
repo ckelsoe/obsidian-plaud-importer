@@ -2135,7 +2135,7 @@ export class ImportModal extends Modal {
 				}
 				const li = list.createEl('li');
 				li.createEl('strong', { text: f.recording.title });
-				li.createEl('span', {
+				li.createSpan({
 					text: ` (${f.recording.id})`,
 					cls: 'plaud-importer-failure-id',
 				});
@@ -2187,7 +2187,7 @@ export class ImportModal extends Modal {
 				}
 				const li = list.createEl('li');
 				li.createEl('strong', { text: r.recording.title });
-				li.createEl('span', {
+				li.createSpan({
 					text: ` (${r.recording.id})`,
 					cls: 'plaud-importer-failure-id',
 				});
@@ -2220,7 +2220,7 @@ export class ImportModal extends Modal {
 				}
 				const li = list.createEl('li');
 				li.createEl('strong', { text: r.recording.title });
-				li.createEl('span', {
+				li.createSpan({
 					text: ` (${r.recording.id})`,
 					cls: 'plaud-importer-failure-id',
 				});
