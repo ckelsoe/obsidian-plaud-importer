@@ -1635,16 +1635,6 @@ export class ImportModal extends Modal {
 	}
 
 	/**
-	 * Run the import loop over `recordings` and render the terminal UI. Shared
-	 * by the initial Import click (`isInitial` true: a live Import button, the
-	 * selection screen stays put on a cancel) and the post-re-auth resume
-	 * (`isInitial` false: a state screen, no button). `priorResults` carries the
-	 * results of earlier sub-batches so the final summary and the partial Notice
-	 * count the whole run, not just this slice. On a mid-batch token rejection
-	 * the runner returns stop:'auth-failed'; the modal then surfaces A1's inline
-	 * re-auth and offers to resume the unprocessed tail.
-	 */
-	/**
 	 * Record `run` as the active import loop for its lifetime so onClose can wait
 	 * for it to settle before releasing the shared gate. Self-clears on settle
 	 * (only if it is still the current run, so a resume that replaced it wins).
@@ -1657,6 +1647,16 @@ export class ImportModal extends Modal {
 		return tracked;
 	}
 
+	/**
+	 * Run the import loop over `recordings` and render the terminal UI. Shared
+	 * by the initial Import click (`isInitial` true: a live Import button, the
+	 * selection screen stays put on a cancel) and the post-re-auth resume
+	 * (`isInitial` false: a state screen, no button). `priorResults` carries the
+	 * results of earlier sub-batches so the final summary and the partial Notice
+	 * count the whole run, not just this slice. On a mid-batch token rejection
+	 * the runner returns stop:'auth-failed'; the modal then surfaces A1's inline
+	 * re-auth and offers to resume the unprocessed tail.
+	 */
 	private async runImportBatch(
 		recordings: Recording[],
 		selection: ArtifactSelection,
