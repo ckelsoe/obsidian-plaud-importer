@@ -431,6 +431,12 @@ export class ImportModal extends Modal {
 	// stop writing to the vault without continuing through the rest of the
 	// selected recordings. Checked between iterations in onImportClick.
 	private aborted = false;
+	// The in-flight import loop, if one is running. onClose sets `aborted` (which
+	// only stops the loop BETWEEN recordings, so the current write can still be
+	// finishing) and then defers the shared-gate release (onClosed) until this
+	// settles, so a background auto-sync tick cannot start mid-write and defeat
+	// the single-flight guarantee. Null when no import is running.
+	private activeImportRun: Promise<void> | null = null;
 	// Interval id for the summary auto-close countdown. Held on the modal
 	// so onClose can clear it whether the countdown finished, the user
 	// clicked Done, or they dismissed the modal some other way.
@@ -480,19 +486,31 @@ export class ImportModal extends Modal {
 	}
 
 	onClose(): void {
-		// Signal any in-flight import loop to stop writing FIRST, then release
-		// the shared gate. Ordering matters: releasing before aborting would let
-		// a background auto-sync tick start while this modal's loop is still
-		// winding down. `aborted = true` is a plain assignment that cannot throw,
-		// so onClosed still fires. The loop checks `aborted` between iterations
-		// and fires a partial Notice if it was interrupted.
+		// Signal any in-flight import loop to stop writing. `aborted` is only
+		// checked BETWEEN recordings, so the current write can still be finishing
+		// after this returns; the gate release is therefore deferred until the
+		// loop actually settles (below), so a background auto-sync tick cannot
+		// start mid-write. `aborted = true` is a plain assignment that cannot
+		// throw. The loop fires a partial Notice if it was interrupted.
 		this.aborted = true;
-		// onClosed is an injected callback; a throw from it must not abort the
-		// rest of teardown (leaving the shared gate held and DOM/state leaked).
-		try {
-			this.noteWriterOptions.onClosed?.();
-		} catch (err) {
-			console.error('Plaud importer: onClosed callback threw during teardown', err);
+		// Release the shared gate (onClosed) only after any in-flight import loop
+		// settles; if none is running, release now. onClosed is an injected
+		// callback, so a throw from it must not escape teardown.
+		const releaseGate = (): void => {
+			try {
+				this.noteWriterOptions.onClosed?.();
+			} catch (err) {
+				console.error(
+					'Plaud importer: onClosed callback threw during teardown',
+					err,
+				);
+			}
+		};
+		const run = this.activeImportRun;
+		if (run) {
+			void run.then(releaseGate, releaseGate);
+		} else {
+			releaseGate();
 		}
 		this.cancelAutoClose();
 		this.contentEl.empty();
@@ -1611,7 +1629,9 @@ export class ImportModal extends Modal {
 		// batch runner. isInitial=true keeps the issue #12 cancelled-path button
 		// reset (the modal stays on the selection screen here) and starts the
 		// run with an empty prior-results accumulator.
-		await this.runImportBatch(selected, selection, duplicatePolicy, [], true);
+		await this.trackImportRun(
+			this.runImportBatch(selected, selection, duplicatePolicy, [], true),
+		);
 	}
 
 	/**
@@ -1624,6 +1644,19 @@ export class ImportModal extends Modal {
 	 * the runner returns stop:'auth-failed'; the modal then surfaces A1's inline
 	 * re-auth and offers to resume the unprocessed tail.
 	 */
+	/**
+	 * Record `run` as the active import loop for its lifetime so onClose can wait
+	 * for it to settle before releasing the shared gate. Self-clears on settle
+	 * (only if it is still the current run, so a resume that replaced it wins).
+	 */
+	private trackImportRun(run: Promise<void>): Promise<void> {
+		const tracked = run.finally(() => {
+			if (this.activeImportRun === tracked) this.activeImportRun = null;
+		});
+		this.activeImportRun = tracked;
+		return tracked;
+	}
+
 	private async runImportBatch(
 		recordings: Recording[],
 		selection: ArtifactSelection,
@@ -1835,12 +1868,14 @@ export class ImportModal extends Modal {
 			// The resumed batch has no Import button to carry the progress
 			// counter, so show a lightweight progress state in its place.
 			this.renderImporting(tail.length);
-			this.runImportBatch(
-				tail,
-				selection,
-				duplicatePolicy,
-				priorResults,
-				false,
+			this.trackImportRun(
+				this.runImportBatch(
+					tail,
+					selection,
+					duplicatePolicy,
+					priorResults,
+					false,
+				),
 			).catch((err) => {
 				console.error('Plaud importer: resume import failed', err);
 				this.renderError(classifyError(err));
