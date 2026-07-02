@@ -730,11 +730,18 @@ export default class PlaudImporterPlugin extends Plugin {
 		if (!this.autoSyncState.paused) return;
 		this.autoSyncState = nextAutoSyncState(this.autoSyncState, "ok");
 		this.logAutoSync("auto-sync resumed after re-auth");
-		if (this.settings.autoSyncEnabled) {
-			window.setTimeout(() => {
-				void this.runAutoSyncTickSafe();
-			}, 1000);
+		if (!this.settings.autoSyncEnabled) return;
+		// Track this deferred tick in the same slot as the scheduled first run so
+		// reconcileAutoSync() and onunload() clear it. An untracked setTimeout
+		// could otherwise fire after auto-sync is disabled/rescheduled or during
+		// unload and run an unexpected tick.
+		if (this.autoSyncFirstRunTimeoutId !== undefined) {
+			window.clearTimeout(this.autoSyncFirstRunTimeoutId);
 		}
+		this.autoSyncFirstRunTimeoutId = window.setTimeout(() => {
+			this.autoSyncFirstRunTimeoutId = undefined;
+			void this.runAutoSyncTickSafe();
+		}, 1000);
 	}
 
 	/**
@@ -810,9 +817,11 @@ export default class PlaudImporterPlugin extends Plugin {
 				);
 				written += 1;
 			}
+			// The scan always restarts from the newest page, so re-running does not
+			// advance past the cap; say what happened without promising a fix.
 			const capNote = reachedListEnd
 				? ""
-				: " Stopped at the scan limit, so some older recordings were not checked; run backfill again to continue.";
+				: " Stopped at the scan limit; the least recently updated recordings were not checked, so a few legacy notes may still lack a marker.";
 			new Notice(
 				`Plaud importer: backfilled ${written} version marker${written === 1 ? "" : "s"}.${capNote}`,
 			);
@@ -881,6 +890,17 @@ export default class PlaudImporterPlugin extends Plugin {
 				message: `user invoked 'Import recent recordings' via ${source}`,
 			});
 		}
+		// Refuse to launch while another import is active: a second modal, or a
+		// modal opened over an in-flight auto-sync/backfill, would clobber the
+		// shared single-flight gate (importModalOpen / autoSyncTickInFlight).
+		if (this.importModalOpen) {
+			new Notice("Plaud importer: an import window is already open.");
+			return;
+		}
+		if (this.autoSyncTickInFlight) {
+			new Notice("Plaud importer: auto-sync is running. Try again shortly.");
+			return;
+		}
 		// Mark the modal open for its whole lifetime so a background auto-sync
 		// tick does not start alongside a manual import. Cleared from onClosed
 		// below. Uses its own flag (not the tick's) so the two never clobber.
@@ -891,7 +911,13 @@ export default class PlaudImporterPlugin extends Plugin {
 			// settings tab take effect on the next click without reinstantiation.
 			new ImportModal(this.app, this.client, {
 				...this.buildImportRuntimeOptions(),
-				onReauth: () => this.reauthenticate(),
+				// After a successful in-modal re-auth, clear any auth pause so
+				// background sync resumes without waiting for the settings tab.
+				onReauth: async () => {
+					const ok = await this.reauthenticate();
+					if (ok) this.resumeAutoSyncIfPaused();
+					return ok;
+				},
 				onReauthSso: {
 					setupBookmark: () => {
 						void this.openBookmarkSetupPage();
@@ -901,7 +927,11 @@ export default class PlaudImporterPlugin extends Plugin {
 							this.openPlaudInBrowser(),
 						).open();
 					},
-					pasteToken: () => this.pasteTokenFromClipboard(),
+					pasteToken: async () => {
+						const ok = await this.pasteTokenFromClipboard();
+						if (ok) this.resumeAutoSyncIfPaused();
+						return ok;
+					},
 				},
 				onClosed: () => {
 					this.importModalOpen = false;
