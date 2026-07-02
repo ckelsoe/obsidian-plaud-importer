@@ -1131,8 +1131,11 @@ function parseListResponse(raw: unknown, endpoint: string): readonly RawRecordin
 interface RawFiletag {
 	readonly id: string;
 	readonly name: string;
-	readonly icon?: string;
-	readonly color?: string;
+	// icon/color may be null on the wire: Plaud returns null for a folder with
+	// no custom styling. Accept null so such a folder is not dropped, then
+	// coerce it to undefined when building the clean PlaudFolder below.
+	readonly icon?: string | null;
+	readonly color?: string | null;
 }
 
 function isRawFiletag(value: unknown): value is RawFiletag {
@@ -1141,8 +1144,8 @@ function isRawFiletag(value: unknown): value is RawFiletag {
 		typeof value.id === 'string' &&
 		value.id.length > 0 &&
 		typeof value.name === 'string' &&
-		(value.icon === undefined || typeof value.icon === 'string') &&
-		(value.color === undefined || typeof value.color === 'string')
+		(value.icon === undefined || value.icon === null || typeof value.icon === 'string') &&
+		(value.color === undefined || value.color === null || typeof value.color === 'string')
 	);
 }
 
@@ -1175,8 +1178,10 @@ function parseFolderCatalog(
 		catalog.push({
 			id: item.id,
 			name: item.name,
-			icon: item.icon,
-			color: item.color,
+			// null (no custom styling) collapses to undefined so PlaudFolder
+			// stays string | undefined.
+			icon: typeof item.icon === 'string' ? item.icon : undefined,
+			color: typeof item.color === 'string' ? item.color : undefined,
 		});
 	}
 	return { catalog, skipped };

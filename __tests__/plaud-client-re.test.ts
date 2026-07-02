@@ -3757,6 +3757,19 @@ describe('getFolderCatalog', () => {
 		expect(allRequests().length).toBe(1);
 	});
 
+	it('keeps a filetag whose icon/color are null (no custom styling)', async () => {
+		const { fetcher } = captureFetcher(
+			ok(filetagEnvelope([{ id: 'a', name: 'Work', icon: null, color: null }])),
+		);
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+		const catalog = await client.getFolderCatalog();
+		expect(catalog).toHaveLength(1);
+		expect(catalog[0].id).toBe('a');
+		expect(catalog[0].name).toBe('Work');
+		expect(catalog[0].icon).toBeUndefined();
+		expect(catalog[0].color).toBeUndefined();
+	});
+
 	it('skips malformed entries instead of failing the whole catalog', async () => {
 		const { fetcher } = captureFetcher(
 			ok(
