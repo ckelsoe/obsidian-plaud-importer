@@ -54,12 +54,17 @@ Plaud does not offer an official API yet, so this plugin works by using Plaud's 
   - YAML frontmatter (Plaud ID, date, duration, speakers, tags, Plaud web URL) plus a layered set of optional fields surfaced from Plaud's flat GPT-5 schema (`plaud-headline`, `plaud-category`, `plaud-language`, `plaud-template`, `plaud-model`, `plaud-note-id`, `plaud-summary-id`, `plaud-summary-version`) — emitted only when present, never load-bearing.
   - Plaud's AI summary
   - An `AI Suggestions` section pulled from Plaud's `ai_suggestion` field when the response includes one (separate from the main summary)
+  - A `Template outputs` section that renders any extra AI templates you generated in Plaud (Key Points, Daily Journal, Meeting Summary, and so on), one foldable subsection per template, instead of dropping them as unreadable `.bin` attachments
   - An inline chapter index with jump-links into the transcript
   - A heading-based transcript section with per-chapter `Back to Chapters` links
   - An `Open in Plaud` link under the H1 for quick round-tripping
 - **Downloads attachments** (images, mind-map PNGs, card PNGs, other files) into a `<note-name>-assets/` folder and references them from the note.
+- **Optional audio download.** Turn on **Audio** to save each recording's original audio next to the note and embed it as a playable clip under an `Audio` heading. Off by default because audio is large (roughly 15 MB per hour). Missing or expired audio never fails an import.
+- **Background auto-sync (optional, off by default).** Checks Plaud on a schedule and imports new recordings automatically, and re-imports recordings you changed in Plaud (edited transcript, corrected speaker names). A re-import overwrites that note and its artifacts with Plaud's current version; unchanged notes are never touched. See [Auto-sync](#auto-sync).
+- **Placeholder notes for unprocessed recordings.** When Plaud has a recording but no transcript or summary yet, the importer writes a small placeholder note (recording ID plus a link back to Plaud) instead of a bare failure, and a later import replaces it automatically. Optional, on by default.
 - **Organize into dated subfolders** — an optional path template (for example `{{yyyy-MM}}`) files notes into per-month, per-week, or per-quarter folders built from the recording date, instead of one flat folder. Attachments follow their note.
-- **"Imported" badge in the recording list** — each row whose `plaud-id` already exists in your output folder shows an Imported pill. Click it to open the existing note. Re-importing is still possible and honors your duplicate-handling setting.
+- **"Imported" and "Update available" badges in the recording list.** Each row whose `plaud-id` already exists in your output folder shows an Imported pill; click it to open the existing note. If that recording changed in Plaud since you imported it, the row shows an Update available badge instead, so you can spot and re-import a stale note by hand. Re-importing is still possible and honors your duplicate-handling setting.
+- **Resume an interrupted import.** If your Plaud session expires partway through a multi-select import, the run stops at the first recording that fails to authenticate, keeps what it already imported, and lets you sign in again right there; a **Resume remaining** button then finishes the recordings that were left.
 - **Duplicate handling** is configurable — Skip, Overwrite, or Ask each time. "Ask each time" prompts per file with an explicit warning that the existing note body AND its `-assets` folder will be replaced; in a multi-select import you can escalate to "Overwrite all remaining" / "Skip all remaining" or cancel the batch.
 - **Transcript folding** — imported notes open with the transcript section collapsed by default so the summary is what you see first. Toggleable in settings.
 - **Debug log** — opt-in in-memory buffer of API requests/responses for troubleshooting; auth headers are never captured.
@@ -193,7 +198,20 @@ What the importer does when a note for a recording already exists in the output 
 
 ### Default artifact selection
 
-What the "Review artifacts first" checklist starts with when you begin a multi-import: transcript, summary, attachments, mindmap, card. Uncheck artifacts you never want to pull by default; you can always override per-batch.
+What the "Review artifacts first" checklist starts with when you begin a multi-import: transcript, summary, attachments, mindmap, card, and audio. Uncheck artifacts you never want to pull by default; you can always override per-batch. **Audio is off by default** because the files are large (roughly 15 MB per hour of recording); turn it on only if you want the original audio saved and embedded in each note.
+
+### Auto-sync
+
+Optional background sync, **off by default**. When enabled, the plugin checks Plaud on a schedule and imports new recordings on its own using your default import options, with no import window open.
+
+- **Enable auto-sync.** Turns the background job on or off.
+- **Sync interval.** How often it checks, from every 15 minutes to once a day.
+
+It also re-imports recordings you changed in Plaud since importing them (an edited transcript, corrected speaker names, a regenerated summary), including older recordings you edited today. **A re-import overwrites that note and its downloaded artifacts with Plaud's current version, so any edits you made to a synced note are replaced.** Only recordings that actually changed are touched; unchanged notes are never modified. This tradeoff is called out in the settings.
+
+If your Plaud session expires, auto-sync pauses with a single notice and resumes automatically when you reconnect (Test connection, a manual import, re-entering your token, or toggling auto-sync off and on).
+
+**Backfill for existing notes:** notes imported before this feature shipped do not carry the version marker auto-sync compares against, so their Plaud-side edits are not detected until the marker exists. Run the command **Plaud Importer: Backfill version markers for auto-sync** once after enabling auto-sync to make your existing library edit-detectable. It only adds a frontmatter marker and never rewrites note content.
 
 ### Tags and keywords
 
@@ -205,6 +223,21 @@ What the "Review artifacts first" checklist starts with when you begin a multi-i
 
 - **Fold transcript by default** — imported notes open with the transcript heading collapsed so the summary is what you see first.
 - **Transcript heading level** — which H-level the wrapping `Transcript` heading uses (chapters render one level deeper). Pick what fits your note style.
+
+### Unprocessed and trashed recordings
+
+- **Write placeholder for unprocessed recordings** (on by default). When Plaud has a recording but no transcript or summary yet, write a small placeholder note (recording ID plus a link back to Plaud) instead of recording a bare failure. A later successful import replaces the placeholder automatically, even under Skip or Ask each time. Turn it off to leave such recordings as plain failures with no file written.
+- **Show trashed recordings** (off by default). The import list hides recordings that are in your Plaud trash, matching the Plaud app. Turn this on to bring them back when you want to import something you trashed in Plaud but still want in your vault.
+
+### Import dialog
+
+- **Auto-close summary** (on by default). The post-import summary closes itself after a short countdown. Only a fully successful run auto-closes; any failure keeps the window open so the error list stays visible, and clicking inside the window cancels the countdown.
+- **Auto-close delay.** Seconds to wait before the summary closes (default 20).
+
+### Appearance
+
+- **Show ribbon icon** (on by default). Toggle the left-rail icon that opens the import window. Turn it off to launch imports only from the command palette. The change takes effect immediately.
+- **Ribbon icon.** Pick the icon from a curated set (audio-lines, mic, headphones, podcast, and others). A live preview sits next to the dropdown and the ribbon updates immediately.
 
 ### Debug logging
 

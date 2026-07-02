@@ -4,7 +4,7 @@ All notable changes to Plaud Importer will be documented in this file.
 
 ## [Unreleased]
 
-## [0.18.0] - 2026-07-01
+## [0.18.0] - 2026-07-02
 
 ### Added
 
