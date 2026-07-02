@@ -1674,21 +1674,21 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 	// DOM fresh on each call avoids any DocumentFragment-reuse pitfalls.
 	private renderSubfolderTemplateControl(setting: Setting): void {
 		const docEl = setting.descEl.createDiv();
-		docEl.createEl("div", { text: SUBFOLDER_TEMPLATE_TOKENS_HEADING });
+		docEl.createDiv({ text: SUBFOLDER_TEMPLATE_TOKENS_HEADING });
 		const tokenList = docEl.createEl("ul");
 		for (const [token, meaning] of SUBFOLDER_TEMPLATE_TOKENS) {
 			const item = tokenList.createEl("li");
 			item.createEl("code", { text: token });
 			item.createSpan({ text: ` ${meaning}` });
 		}
-		docEl.createEl("div", { text: SUBFOLDER_TEMPLATE_EXAMPLES_HEADING });
+		docEl.createDiv({ text: SUBFOLDER_TEMPLATE_EXAMPLES_HEADING });
 		const exampleList = docEl.createEl("ul");
 		for (const [template, result] of SUBFOLDER_TEMPLATE_EXAMPLES) {
 			const item = exampleList.createEl("li");
 			item.createEl("code", { text: template });
 			item.createSpan({ text: ` → ${result}` });
 		}
-		docEl.createEl("div", { text: SUBFOLDER_TEMPLATE_FOOTNOTE });
+		docEl.createDiv({ text: SUBFOLDER_TEMPLATE_FOOTNOTE });
 
 		setting.addText((text) =>
 			text
