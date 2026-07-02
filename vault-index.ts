@@ -100,6 +100,18 @@ function fileIsUnder(file: TFile, folder: string): boolean {
 	return file.path.startsWith(prefix);
 }
 
+/**
+ * True when the output folder contains at least one markdown note, using the
+ * SAME folder normalization and matching as buildPlaudIdIndex (including
+ * Windows-backslash handling). Callers use it to tell a genuinely-empty output
+ * folder from a cold metadataCache (index came back empty but notes exist on
+ * disk), so the two can never disagree about which folder is meant.
+ */
+export function outputFolderHasMarkdown(app: App, outputFolder: string): boolean {
+	const normalized = normalizeFolder(outputFolder);
+	return app.vault.getMarkdownFiles().some((file) => fileIsUnder(file, normalized));
+}
+
 // YAML frontmatter values can be parsed as strings or as numbers
 // depending on shape. Only accept strings (after trim + non-empty
 // check); reject everything else so badge state never depends on an

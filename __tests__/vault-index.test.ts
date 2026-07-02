@@ -5,7 +5,7 @@
 
 import type { App, TFile } from 'obsidian';
 import type { PlaudRecordingId } from '../plaud-client';
-import { buildPlaudIdIndex } from '../vault-index';
+import { buildPlaudIdIndex, outputFolderHasMarkdown } from '../vault-index';
 
 interface FakeFile {
 	readonly path: string;
@@ -182,5 +182,23 @@ describe('buildPlaudIdIndex', () => {
 		const app = makeApp([]);
 		const index = buildPlaudIdIndex(app, 'Plaud');
 		expect(index.size).toBe(0);
+	});
+});
+
+describe('outputFolderHasMarkdown', () => {
+	it('is true when the output folder contains a note (same matching as the index)', () => {
+		const app = makeApp([['Plaud/a.md', { 'plaud-id': 'rec-a' }]]);
+		expect(outputFolderHasMarkdown(app, 'Plaud')).toBe(true);
+	});
+
+	it('normalizes Windows backslashes like the index does', () => {
+		const app = makeApp([['Inbox/a.md', { 'plaud-id': 'rec-a' }]]);
+		expect(outputFolderHasMarkdown(app, '\\Inbox')).toBe(true);
+	});
+
+	it('is false when the folder has no notes (a genuinely empty folder)', () => {
+		const app = makeApp([['Other/a.md', { 'plaud-id': 'rec-a' }]]);
+		expect(outputFolderHasMarkdown(app, 'Plaud')).toBe(false);
+		expect(outputFolderHasMarkdown(makeApp([]), 'Plaud')).toBe(false);
 	});
 });

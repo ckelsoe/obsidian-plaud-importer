@@ -27,7 +27,11 @@ import {
 } from "./plaud-login";
 import { NoteWriter, type TagMode } from "./note-writer";
 import { AttachmentImporter } from "./attachment-importer";
-import { buildPlaudIdIndex, type ImportedRecord } from "./vault-index";
+import {
+	buildPlaudIdIndex,
+	outputFolderHasMarkdown,
+	type ImportedRecord,
+} from "./vault-index";
 import { runImport } from "./import-runner";
 import {
 	PAGE_SIZE,
@@ -592,19 +596,16 @@ export default class PlaudImporterPlugin extends Plugin {
 					"/auto-sync",
 				);
 			}
-			return outcome.results.filter((r) => r.kind === "written").length;
+			// Count only real writes. A 'written' result whose writeOutcome is
+			// 'skipped' is a duplicate-policy skip (a note already existed), not a
+			// created/overwritten note, and must not inflate the notice counts.
+			return outcome.results.filter(
+				(r) => r.kind === "written" && r.writeOutcome.status !== "skipped",
+			).length;
 		};
 		const imported = await runBatch(newRecs, "skip");
 		const updated = await runBatch(changedRecs, "overwrite");
 		return { imported, updated };
-	}
-
-	/** Does the output folder contain any markdown notes? Guards the cold-cache case. */
-	private outputFolderHasNotes(): boolean {
-		const folder = this.settings.outputFolder.replace(/^\/+|\/+$/g, "");
-		return this.app.vault
-			.getMarkdownFiles()
-			.some((f) => folder === "" || f.path.startsWith(`${folder}/`));
 	}
 
 	/**
@@ -626,7 +627,10 @@ export default class PlaudImporterPlugin extends Plugin {
 		if (client === undefined) return;
 
 		const index = buildPlaudIdIndex(this.app, this.settings.outputFolder);
-		if (index.size === 0 && this.outputFolderHasNotes()) {
+		if (
+			index.size === 0 &&
+			outputFolderHasMarkdown(this.app, this.settings.outputFolder)
+		) {
 			// Cold metadata cache: the output folder has notes but the index came
 			// back empty. Skip so we do not treat every existing note as new and
 			// mass-re-import. A later tick with a warm cache proceeds normally.
