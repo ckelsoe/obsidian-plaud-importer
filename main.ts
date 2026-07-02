@@ -679,9 +679,14 @@ export default class PlaudImporterPlugin extends Plugin {
 			const outcome = tickOutcomeForCategory(classification.category);
 			this.autoSyncState = nextAutoSyncState(this.autoSyncState, outcome);
 			if (outcome === "auth") {
-				new Notice(
-					"Plaud auto-sync paused: the session expired. Reconnect to resume.",
-				);
+				// The auth outcome covers both a rejected/expired token and a
+				// missing one; word the pause Notice for the actual category so a
+				// user who never configured a token is not told it "expired".
+				const reason =
+					classification.category === "not-configured"
+						? "no Plaud token is configured. Add one to resume."
+						: "the session expired. Reconnect to resume.";
+				new Notice(`Plaud auto-sync paused: ${reason}`);
 			}
 			this.logAutoSync("tick failed", {
 				outcome,
