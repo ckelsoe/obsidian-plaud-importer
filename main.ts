@@ -639,22 +639,28 @@ export default class PlaudImporterPlugin extends Plugin {
 		const client = this.client;
 		if (client === undefined) return;
 
-		// One pass: cold-cache guard and index build fused (see
-		// buildPlaudIdIndexWithColdCheck). A cold cache would make the index
-		// incomplete and every existing note look new, so skip; a later tick with
-		// a warm cache proceeds.
-		const indexState = buildPlaudIdIndexWithColdCheck(
-			this.app,
-			this.settings.outputFolder,
-		);
-		if (indexState.isCold) {
-			this.logAutoSync("tick skipped: output-folder metadata cache is cold");
-			return;
-		}
-		const index = indexState.index;
-
+		// Claim the single-flight gate BEFORE the (potentially expensive) index
+		// scan below. The scan can take a while on a large vault, and a manual
+		// import modal opened mid-scan checks this same flag; setting it only
+		// after the scan would let that modal slip past the gate and overlap this
+		// tick. Every early return from here runs through the finally that clears
+		// the flag.
 		this.autoSyncTickInFlight = true;
 		try {
+			// One pass: cold-cache guard and index build fused (see
+			// buildPlaudIdIndexWithColdCheck). A cold cache would make the index
+			// incomplete and every existing note look new, so skip; a later tick
+			// with a warm cache proceeds.
+			const indexState = buildPlaudIdIndexWithColdCheck(
+				this.app,
+				this.settings.outputFolder,
+			);
+			if (indexState.isCold) {
+				this.logAutoSync("tick skipped: output-folder metadata cache is cold");
+				return;
+			}
+			const index = indexState.index;
+
 			const result = await runAutoSyncTick({
 				pageSize: PAGE_SIZE,
 				maxImportsPerTick: 25,
