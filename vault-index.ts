@@ -80,6 +80,47 @@ export function buildPlaudIdIndex(
 	return out;
 }
 
+/**
+ * Cold-cache check and index build fused into ONE pass over the output folder.
+ * The auto-sync tick runs both every tick; done separately they each iterate
+ * `getMarkdownFiles()` (and, for a root output folder, the whole vault), so the
+ * per-tick cost doubles. This walks the files once: the first in-scope note with
+ * a null cache returns `{ isCold: true }` (matching `outputFolderCacheIsCold`)
+ * and the partial index is discarded; otherwise it returns the fully built index.
+ * Semantically identical to calling `outputFolderCacheIsCold` then
+ * `buildPlaudIdIndex`, at half the scan cost.
+ */
+export type OutputFolderIndexState =
+	| { readonly isCold: true }
+	| {
+			readonly isCold: false;
+			readonly index: Map<PlaudRecordingId, ImportedRecord>;
+	  };
+
+export function buildPlaudIdIndexWithColdCheck(
+	app: App,
+	outputFolder: string,
+): OutputFolderIndexState {
+	const normalized = normalizeFolder(outputFolder);
+	const index = new Map<PlaudRecordingId, ImportedRecord>();
+	for (const file of app.vault.getMarkdownFiles()) {
+		if (!fileIsUnder(file, normalized)) continue;
+		const cache = app.metadataCache.getFileCache(file);
+		if (cache === null) return { isCold: true };
+		const rawFm: unknown = cache.frontmatter;
+		if (!isRecord(rawFm)) continue;
+		const id = pickFrontmatterString(rawFm['plaud-id']);
+		if (id === undefined) continue;
+		index.set(id as PlaudRecordingId, {
+			path: file.path,
+			summaryVersion: pickFrontmatterString(rawFm['plaud-summary-version']),
+			summaryId: pickFrontmatterString(rawFm['plaud-summary-id']),
+			versionMs: pickFrontmatterNumber(rawFm['plaud-version-ms']),
+		});
+	}
+	return { isCold: false, index };
+}
+
 function normalizeFolder(folder: string): string {
 	// Match the note writer's normalization: a Windows-style "\Inbox" must
 	// resolve to "Inbox" so the imported-note index finds files under the

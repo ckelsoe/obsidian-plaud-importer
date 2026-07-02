@@ -29,6 +29,7 @@ import { NoteWriter, type TagMode } from "./note-writer";
 import { AttachmentImporter } from "./attachment-importer";
 import {
 	buildPlaudIdIndex,
+	buildPlaudIdIndexWithColdCheck,
 	outputFolderCacheIsCold,
 	type ImportedRecord,
 } from "./vault-index";
@@ -435,8 +436,8 @@ export default class PlaudImporterPlugin extends Plugin {
 
 	onunload() {
 		this.client = undefined;
-		// Clear the auto-sync timers. registerInterval is also cleared by
-		// Obsidian on unload, but the deferred first-run timeout is ours alone.
+		// Clear the auto-sync timers. Both the interval and the deferred first-run
+		// timeout are ours (plain setInterval/setTimeout), so we clear both here.
 		if (this.autoSyncIntervalId !== undefined) {
 			window.clearInterval(this.autoSyncIntervalId);
 			this.autoSyncIntervalId = undefined;
@@ -638,14 +639,19 @@ export default class PlaudImporterPlugin extends Plugin {
 		const client = this.client;
 		if (client === undefined) return;
 
-		if (outputFolderCacheIsCold(this.app, this.settings.outputFolder)) {
-			// The metadata cache has not finished parsing the output folder, so
-			// buildPlaudIdIndex would return an incomplete map and make existing
-			// notes look new. Skip; a later tick with a warm cache proceeds.
+		// One pass: cold-cache guard and index build fused (see
+		// buildPlaudIdIndexWithColdCheck). A cold cache would make the index
+		// incomplete and every existing note look new, so skip; a later tick with
+		// a warm cache proceeds.
+		const indexState = buildPlaudIdIndexWithColdCheck(
+			this.app,
+			this.settings.outputFolder,
+		);
+		if (indexState.isCold) {
 			this.logAutoSync("tick skipped: output-folder metadata cache is cold");
 			return;
 		}
-		const index = buildPlaudIdIndex(this.app, this.settings.outputFolder);
+		const index = indexState.index;
 
 		this.autoSyncTickInFlight = true;
 		try {
@@ -703,11 +709,13 @@ export default class PlaudImporterPlugin extends Plugin {
 		}
 		if (!this.settings.autoSyncEnabled) return;
 		const minutes = coerceIntervalMinutes(this.settings.autoSyncIntervalMinutes);
-		this.autoSyncIntervalId = this.registerInterval(
-			window.setInterval(() => {
-				void this.runAutoSyncTickSafe();
-			}, minutes * 60 * 1000),
-		);
+		// Plain setInterval, not registerInterval: this method reschedules on every
+		// settings change and clears the previous id itself (above) and on unload.
+		// registerInterval would push each id onto the component's cleanup list
+		// without ever removing the cleared ones, so they would accumulate.
+		this.autoSyncIntervalId = window.setInterval(() => {
+			void this.runAutoSyncTickSafe();
+		}, minutes * 60 * 1000);
 		// Deferred first tick (~2 min) so startup is not blocked and the vault
 		// metadata cache is warm before the first index build.
 		this.autoSyncFirstRunTimeoutId = window.setTimeout(() => {
@@ -762,19 +770,27 @@ export default class PlaudImporterPlugin extends Plugin {
 		new Notice("Plaud importer: backfilling version markers...");
 		try {
 			// Build id -> version_ms from the full list (bounded page loop).
+			const MAX_BACKFILL_PAGES = 500;
 			const versionById = new Map<PlaudRecordingId, number>();
 			let skip = 0;
-			for (let page = 0; page < 500; page++) {
+			let reachedListEnd = false;
+			for (let page = 0; page < MAX_BACKFILL_PAGES; page++) {
 				const recs = await client.listRecordings({
 					sortBy: "edit_time",
 					skip,
 					limit: PAGE_SIZE,
 				});
-				if (recs.length === 0) break;
+				if (recs.length === 0) {
+					reachedListEnd = true;
+					break;
+				}
 				for (const r of recs) {
 					if (r.versionMs !== undefined) versionById.set(r.id, r.versionMs);
 				}
-				if (recs.length < PAGE_SIZE) break;
+				if (recs.length < PAGE_SIZE) {
+					reachedListEnd = true;
+					break;
+				}
 				skip += recs.length;
 			}
 
@@ -794,10 +810,17 @@ export default class PlaudImporterPlugin extends Plugin {
 				);
 				written += 1;
 			}
+			const capNote = reachedListEnd
+				? ""
+				: " Stopped at the scan limit, so some older recordings were not checked; run backfill again to continue.";
 			new Notice(
-				`Plaud importer: backfilled ${written} version marker${written === 1 ? "" : "s"}.`,
+				`Plaud importer: backfilled ${written} version marker${written === 1 ? "" : "s"}.${capNote}`,
 			);
-			this.logAutoSync("backfill complete", { written, listed: versionById.size });
+			this.logAutoSync("backfill complete", {
+				written,
+				listed: versionById.size,
+				reachedListEnd,
+			});
 		} catch (err) {
 			new Notice(`Plaud importer: backfill failed — ${classifyError(err).message}`);
 		} finally {

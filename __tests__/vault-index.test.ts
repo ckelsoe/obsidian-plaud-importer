@@ -5,7 +5,11 @@
 
 import type { App, TFile } from 'obsidian';
 import type { PlaudRecordingId } from '../plaud-client';
-import { buildPlaudIdIndex, outputFolderCacheIsCold } from '../vault-index';
+import {
+	buildPlaudIdIndex,
+	buildPlaudIdIndexWithColdCheck,
+	outputFolderCacheIsCold,
+} from '../vault-index';
 
 interface FakeFile {
 	readonly path: string;
@@ -210,5 +214,52 @@ describe('outputFolderCacheIsCold', () => {
 	it('normalizes Windows backslashes like the index does', () => {
 		const app = makeApp([['Inbox/cold.md', null]]);
 		expect(outputFolderCacheIsCold(app, '\\Inbox')).toBe(true);
+	});
+});
+
+describe('buildPlaudIdIndexWithColdCheck', () => {
+	// The fused helper must match "outputFolderCacheIsCold then buildPlaudIdIndex"
+	// exactly, at one pass instead of two.
+	it('is cold (and yields no index) when a note under the folder is unparsed', () => {
+		const app = makeApp([
+			['Plaud/a.md', { 'plaud-id': 'rec-a' }],
+			['Plaud/cold.md', null],
+		]);
+		const state = buildPlaudIdIndexWithColdCheck(app, 'Plaud');
+		expect(state.isCold).toBe(true);
+		expect(outputFolderCacheIsCold(app, 'Plaud')).toBe(true);
+	});
+
+	it('is warm and returns the same index as buildPlaudIdIndex', () => {
+		const app = makeApp([
+			['Plaud/a.md', { 'plaud-id': 'rec-a', 'plaud-version-ms': 111 }],
+			['Plaud/sub/b.md', { 'plaud-id': 'rec-b' }],
+			['Other/outside.md', { 'plaud-id': 'rec-outside' }],
+		]);
+		const state = buildPlaudIdIndexWithColdCheck(app, 'Plaud');
+		expect(state.isCold).toBe(false);
+		if (state.isCold) return; // narrow the union for the assertions below
+		const reference = buildPlaudIdIndex(app, 'Plaud');
+		expect([...state.index.entries()]).toEqual([...reference.entries()]);
+		expect(state.index.get('rec-a' as PlaudRecordingId)?.versionMs).toBe(111);
+		expect(state.index.has('rec-outside' as PlaudRecordingId)).toBe(false);
+	});
+
+	it('is warm with an empty index when the folder has no notes', () => {
+		const state = buildPlaudIdIndexWithColdCheck(makeApp([]), 'Plaud');
+		expect(state.isCold).toBe(false);
+		if (state.isCold) return;
+		expect(state.index.size).toBe(0);
+	});
+
+	it('a cold note OUTSIDE the folder does not make it cold', () => {
+		const app = makeApp([
+			['Plaud/a.md', { 'plaud-id': 'rec-a' }],
+			['Other/cold.md', null],
+		]);
+		const state = buildPlaudIdIndexWithColdCheck(app, 'Plaud');
+		expect(state.isCold).toBe(false);
+		if (state.isCold) return;
+		expect(state.index.has('rec-a' as PlaudRecordingId)).toBe(true);
 	});
 });
