@@ -107,12 +107,15 @@ function fileIsUnder(file: TFile, folder: string): boolean {
  * cache makes it return empty and every note look new; auto-sync uses this to
  * skip that tick and avoid a mass re-import.
  *
- * Precise rather than heuristic: it checks cache warmth per file (not "the
- * folder has any markdown"), so it does not mis-fire when the folder is the
- * vault root or holds non-Plaud notes, and it cannot permanently disable sync
- * once the cache is warm. Uses the SAME folder normalization + matching as the
- * index (Windows backslashes included). Returns false when the folder has no
- * notes at all — nothing to be cold about.
+ * It checks cache warmth per file (any note under the folder with a null
+ * cache), not "the folder has any markdown". Every note under the folder
+ * counts, Plaud or not, which is correct: if ANY in-scope note is still
+ * unparsed the cache is not ready and buildPlaudIdIndex is unreliable. For a
+ * root output folder ('') "under the folder" means the whole vault, so a single
+ * unparsed note anywhere reports cold until the vault finishes loading. Once
+ * every in-scope note is parsed it returns false, so it cannot permanently
+ * disable sync. Uses the SAME folder normalization + matching as the index
+ * (Windows backslashes included). Returns false when the folder has no notes.
  */
 export function outputFolderCacheIsCold(app: App, outputFolder: string): boolean {
 	const normalized = normalizeFolder(outputFolder);

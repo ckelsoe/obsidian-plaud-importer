@@ -590,6 +590,11 @@ export default class PlaudImporterPlugin extends Plugin {
 				fetchAudioUrl,
 			});
 			if (outcome.stop === "auth-failed") {
+				// token_rejected (not not_configured) is correct here: this batch
+				// only runs after listPage already fetched a page with the stored
+				// token, so a mid-import auth failure is a rejected/expired token,
+				// not a missing one. Either way the state machine maps it to a
+				// pause via categoryAllowsReauth; the reason only sharpens the log.
 				throw new PlaudAuthError(
 					"token_rejected",
 					"Plaud session expired during auto-sync",
@@ -735,6 +740,15 @@ export default class PlaudImporterPlugin extends Plugin {
 		// across many notes, so it must not overlap a manual import or a tick.
 		if (this.importModalOpen || this.autoSyncTickInFlight) {
 			new Notice("Plaud importer: an import is running. Try backfill again shortly.");
+			return;
+		}
+		if (outputFolderCacheIsCold(this.app, this.settings.outputFolder)) {
+			// A cold cache would make buildPlaudIdIndex return a partial map, so
+			// the backfill would silently miss notes ("backfilled 0"). Ask the
+			// user to retry once Obsidian has finished loading.
+			new Notice(
+				"Plaud importer: still loading notes. Try backfill again in a moment.",
+			);
 			return;
 		}
 		this.autoSyncTickInFlight = true;
