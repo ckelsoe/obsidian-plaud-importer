@@ -26,14 +26,17 @@ import type { PlaudRecordingId } from './plaud-client';
 
 /**
  * Lightweight pointer back to an imported note. The path is the only
- * load-bearing field — `openLinkText` uses it for click-through. The
- * summary metadata is captured for future "update available" detection
- * but not used in phase 1.
+ * load-bearing field — `openLinkText` uses it for click-through.
+ * `versionMs` is the stored auto-sync cursor (`plaud-version-ms`): a listed
+ * recording whose `version_ms` exceeds it is a CHANGED note to re-import; a
+ * missing `versionMs` is treated as current (no re-import) so enabling
+ * auto-sync never mass-overwrites a pre-existing library.
  */
 export interface ImportedRecord {
 	readonly path: string;
 	readonly summaryVersion?: string;
 	readonly summaryId?: string;
+	readonly versionMs?: number;
 }
 
 /**
@@ -70,10 +73,52 @@ export function buildPlaudIdIndex(
 			path: file.path,
 			summaryVersion: pickFrontmatterString(rawFm['plaud-summary-version']),
 			summaryId: pickFrontmatterString(rawFm['plaud-summary-id']),
+			versionMs: pickFrontmatterNumber(rawFm['plaud-version-ms']),
 		};
 		out.set(id as PlaudRecordingId, record);
 	}
 	return out;
+}
+
+/**
+ * Cold-cache check and index build fused into ONE pass over the output folder.
+ * The auto-sync tick runs both every tick; done separately they each iterate
+ * `getMarkdownFiles()` (and, for a root output folder, the whole vault), so the
+ * per-tick cost doubles. This walks the files once: the first in-scope note with
+ * a null cache returns `{ isCold: true }` (matching `outputFolderCacheIsCold`)
+ * and the partial index is discarded; otherwise it returns the fully built index.
+ * Semantically identical to calling `outputFolderCacheIsCold` then
+ * `buildPlaudIdIndex`, at half the scan cost.
+ */
+export type OutputFolderIndexState =
+	| { readonly isCold: true }
+	| {
+			readonly isCold: false;
+			readonly index: Map<PlaudRecordingId, ImportedRecord>;
+	  };
+
+export function buildPlaudIdIndexWithColdCheck(
+	app: App,
+	outputFolder: string,
+): OutputFolderIndexState {
+	const normalized = normalizeFolder(outputFolder);
+	const index = new Map<PlaudRecordingId, ImportedRecord>();
+	for (const file of app.vault.getMarkdownFiles()) {
+		if (!fileIsUnder(file, normalized)) continue;
+		const cache = app.metadataCache.getFileCache(file);
+		if (cache === null) return { isCold: true };
+		const rawFm: unknown = cache.frontmatter;
+		if (!isRecord(rawFm)) continue;
+		const id = pickFrontmatterString(rawFm['plaud-id']);
+		if (id === undefined) continue;
+		index.set(id as PlaudRecordingId, {
+			path: file.path,
+			summaryVersion: pickFrontmatterString(rawFm['plaud-summary-version']),
+			summaryId: pickFrontmatterString(rawFm['plaud-summary-id']),
+			versionMs: pickFrontmatterNumber(rawFm['plaud-version-ms']),
+		});
+	}
+	return { isCold: false, index };
 }
 
 function normalizeFolder(folder: string): string {
@@ -96,6 +141,35 @@ function fileIsUnder(file: TFile, folder: string): boolean {
 	return file.path.startsWith(prefix);
 }
 
+/**
+ * True when the metadata cache has NOT finished parsing the notes under the
+ * output folder, i.e. at least one note there has no parsed cache yet
+ * (getFileCache === null). buildPlaudIdIndex relies on the cache, so a cold
+ * cache makes it return empty and every note look new; auto-sync uses this to
+ * skip that tick and avoid a mass re-import.
+ *
+ * It checks cache warmth per file (any note under the folder with a null
+ * cache), not "the folder has any markdown". Every note under the folder
+ * counts, Plaud or not, which is correct: if ANY in-scope note is still
+ * unparsed the cache is not ready and buildPlaudIdIndex is unreliable. For a
+ * root output folder ('') "under the folder" means the whole vault, so a single
+ * unparsed note anywhere reports cold until the vault finishes loading. Once
+ * every in-scope note is parsed it returns false, so it cannot permanently
+ * disable sync. Uses the SAME folder normalization + matching as the index
+ * (Windows backslashes included). Returns false when the folder has no notes.
+ */
+export function outputFolderCacheIsCold(app: App, outputFolder: string): boolean {
+	const normalized = normalizeFolder(outputFolder);
+	// Single pass: this runs every auto-sync tick and, for a root output folder,
+	// scans the whole vault. Return as soon as an in-scope note has a null cache;
+	// falling through the loop covers both "no in-scope notes" and "all warm".
+	for (const file of app.vault.getMarkdownFiles()) {
+		if (!fileIsUnder(file, normalized)) continue;
+		if (app.metadataCache.getFileCache(file) === null) return true;
+	}
+	return false;
+}
+
 // YAML frontmatter values can be parsed as strings or as numbers
 // depending on shape. Only accept strings (after trim + non-empty
 // check); reject everything else so badge state never depends on an
@@ -104,6 +178,21 @@ function pickFrontmatterString(value: unknown): string | undefined {
 	if (typeof value !== 'string') return undefined;
 	const trimmed = value.trim();
 	return trimmed.length > 0 ? trimmed : undefined;
+}
+
+// plaud-version-ms is written as a raw number, so metadataCache usually
+// surfaces it as a number. Accept a numeric string too (a user or a YAML
+// quirk could quote it), and reject anything non-finite so a malformed marker
+// stays undefined (treated as "current", never a spurious re-import).
+function pickFrontmatterNumber(value: unknown): number | undefined {
+	if (typeof value === 'number') {
+		return Number.isFinite(value) ? value : undefined;
+	}
+	if (typeof value === 'string') {
+		const n = Number(value.trim());
+		return value.trim().length > 0 && Number.isFinite(n) ? n : undefined;
+	}
+	return undefined;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

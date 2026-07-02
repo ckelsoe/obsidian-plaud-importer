@@ -6,6 +6,7 @@ import {
 	PluginSettingTab,
 	SecretComponent,
 	Setting,
+	TFile,
 	type SettingDefinitionItem,
 	type ObsidianProtocolData,
 	requestUrl,
@@ -14,6 +15,7 @@ import {
 } from "obsidian";
 import {
 	ReverseEngineeredPlaudClient,
+	PlaudAuthError,
 	type PlaudHttpFetcher,
 } from "./plaud-client-re";
 import { ImportModal, classifyError } from "./import-modal";
@@ -23,7 +25,29 @@ import {
 	isAccessToken,
 	openPlaudLogin,
 } from "./plaud-login";
-import type { TagMode } from "./note-writer";
+import { NoteWriter, type TagMode } from "./note-writer";
+import { AttachmentImporter } from "./attachment-importer";
+import {
+	buildPlaudIdIndex,
+	buildPlaudIdIndexWithColdCheck,
+	outputFolderCacheIsCold,
+	type ImportedRecord,
+} from "./vault-index";
+import { runImport } from "./import-runner";
+import {
+	PAGE_SIZE,
+	type ArtifactSelection,
+	type ImportModalOptions,
+} from "./import-core";
+import type { PlaudRecordingId, Recording } from "./plaud-client";
+import { runAutoSyncTick } from "./auto-sync-runner";
+import {
+	coerceIntervalMinutes,
+	nextAutoSyncState,
+	tickOutcomeForCategory,
+	INITIAL_AUTO_SYNC_STATE,
+	type AutoSyncState,
+} from "./auto-sync";
 
 // Stable SecretStorage id for a token captured by the in-app sign-in flow.
 // Re-running sign-in overwrites it, mirroring "replace my token".
@@ -195,6 +219,14 @@ interface PlaudImporterSettings {
 	// default, matching the Plaud web UI which hides trash. Trashed recordings
 	// are short accidental clips with no transcript more often than not.
 	showTrashedRecordings: boolean;
+	// Auto-sync (issue #5): a background timer that imports new recordings and
+	// re-imports (overwrites) changed ones on an interval, using the saved
+	// default import options. OFF by default: the connection is reverse-
+	// engineered, the ~24h token forces periodic re-auth, and a detected change
+	// OVERWRITES the note and its artifacts (Plaud wins over local edits).
+	autoSyncEnabled: boolean;
+	// Minutes between auto-sync ticks. Coerced to [15, 1440]; default 60.
+	autoSyncIntervalMinutes: number;
 }
 
 const DEFAULT_SETTINGS: PlaudImporterSettings = {
@@ -225,6 +257,8 @@ const DEFAULT_SETTINGS: PlaudImporterSettings = {
 	autoCloseSummarySeconds: 20,
 	writePlaceholderForUnprocessed: true,
 	showTrashedRecordings: false,
+	autoSyncEnabled: false,
+	autoSyncIntervalMinutes: 60,
 };
 
 // Adapt Obsidian's requestUrl to the PlaudHttpFetcher shape the client
@@ -298,6 +332,24 @@ export default class PlaudImporterPlugin extends Plugin {
 	// pure icon swap requires detach + re-add vs. a no-op.
 	private ribbonIconId: string | null = null;
 
+	// Auto-sync timers and state. The interval id and the deferred first-run
+	// timeout id are kept so an interval/toggle change can clear and re-create
+	// them; onunload clears both.
+	private autoSyncIntervalId: number | undefined;
+	private autoSyncFirstRunTimeoutId: number | undefined;
+	private autoSyncState: AutoSyncState = INITIAL_AUTO_SYNC_STATE;
+	// Single-flight coordination between the manual modal and background ticks.
+	// Two independent flags rather than one shared boolean, so the modal's
+	// open/close never clobbers a tick's in-flight state and vice versa. An
+	// auto-sync tick starts only when BOTH are clear.
+	private importModalOpen = false;
+	private autoSyncTickInFlight = false;
+	// Set once in onunload. A tick or backfill captures `this.client` in a local
+	// before its awaits, so clearing the client alone does not stop an in-flight
+	// loop; the loops poll this flag and abort so a disable/re-enable cannot leave
+	// the old instance writing while the new instance starts a tick.
+	private disposed = false;
+
 	async onload() {
 		await this.loadSettings();
 
@@ -317,6 +369,14 @@ export default class PlaudImporterPlugin extends Plugin {
 			id: "import-recent",
 			name: "Import recent recordings",
 			callback: () => this.launchImportModal("command"),
+		});
+
+		this.addCommand({
+			id: "backfill-version-markers",
+			name: "Backfill version markers for auto-sync",
+			callback: () => {
+				void this.backfillVersionMarkers();
+			},
 		});
 
 		// Render the left-rail ribbon icon only when the user has opted
@@ -373,11 +433,28 @@ export default class PlaudImporterPlugin extends Plugin {
 					},
 				},
 			);
+			// The client exists now, so a scheduled tick can run. Starts the
+			// timer only when auto-sync is enabled; deferred first run is inside.
+			this.reconcileAutoSync();
 		});
 	}
 
 	onunload() {
+		// Signal any in-flight tick/backfill loop to stop between iterations. Set
+		// before clearing the client so a loop that already captured the client
+		// still sees the abort.
+		this.disposed = true;
 		this.client = undefined;
+		// Clear the auto-sync timers. Both the interval and the deferred first-run
+		// timeout are ours (plain setInterval/setTimeout), so we clear both here.
+		if (this.autoSyncIntervalId !== undefined) {
+			window.clearInterval(this.autoSyncIntervalId);
+			this.autoSyncIntervalId = undefined;
+		}
+		if (this.autoSyncFirstRunTimeoutId !== undefined) {
+			window.clearTimeout(this.autoSyncFirstRunTimeoutId);
+			this.autoSyncFirstRunTimeoutId = undefined;
+		}
 		// Obsidian auto-detaches ribbon icons on unload; clear our
 		// state so a subsequent onload starts from a known baseline.
 		this.ribbonIconEl = null;
@@ -402,6 +479,8 @@ export default class PlaudImporterPlugin extends Plugin {
 		}
 		try {
 			const recordings = await client.listRecordings({ limit: 1 });
+			// A working token is a valid resume trigger for a paused auto-sync.
+			this.resumeAutoSyncIfPaused();
 			return {
 				ok: true,
 				message:
@@ -411,6 +490,380 @@ export default class PlaudImporterPlugin extends Plugin {
 			};
 		} catch (err) {
 			return { ok: false, message: classifyError(err).message };
+		}
+	}
+
+	// ---- Auto-sync (issue #5) -------------------------------------------
+
+	private logAutoSync(message: string, payload?: unknown): void {
+		if (!this.debugLogger.enabled) return;
+		this.debugLogger.log({ kind: "note", endpoint: "/auto-sync", message, payload });
+	}
+
+	/**
+	 * Runtime import options shared by the manual modal and the headless
+	 * auto-sync path, built from the current settings. Single-sourced so the two
+	 * import paths never drift as settings are added.
+	 */
+	private buildImportRuntimeOptions(): ImportModalOptions {
+		return {
+			outputFolder: this.settings.outputFolder,
+			subfolderTemplate: this.settings.subfolderTemplate,
+			onDuplicate: this.settings.onDuplicate,
+			includeTranscript: this.settings.includeTranscript,
+			includeSummary: this.settings.defaultIncludeSummary,
+			foldTranscript: this.settings.foldTranscript,
+			transcriptHeaderLevel: this.settings.transcriptHeaderLevel,
+			defaultIncludeSummary: this.settings.defaultIncludeSummary,
+			defaultIncludeAttachments: this.settings.defaultIncludeAttachments,
+			defaultIncludeMindmap: this.settings.defaultIncludeMindmap,
+			defaultIncludeCard: this.settings.defaultIncludeCard,
+			defaultIncludeAudio: this.settings.defaultIncludeAudio,
+			tagMode: this.settings.tagMode,
+			customTags: this.settings.customTags,
+			aiKeywordsAsProperty: this.settings.aiKeywordsAsProperty,
+			autoCloseSummary: this.settings.autoCloseSummary,
+			autoCloseSummarySeconds: this.settings.autoCloseSummarySeconds,
+			writePlaceholderForUnprocessed:
+				this.settings.writePlaceholderForUnprocessed,
+			showTrashedRecordings: this.settings.showTrashedRecordings,
+			debugLogger: this.debugLogger,
+			getAuthToken: () =>
+				this.settings.secretId.length > 0
+					? this.app.secretStorage.getSecret(this.settings.secretId)
+					: null,
+			getApiBaseUrl: () => this.settings.apiBaseUrl,
+		};
+	}
+
+	/** Artifact selection for a headless auto-sync import, from settings. */
+	private autoSyncSelection(): ArtifactSelection {
+		return {
+			includeSummary: this.settings.defaultIncludeSummary !== false,
+			includeTranscript: this.settings.includeTranscript !== false,
+			includeAttachments: this.settings.defaultIncludeAttachments !== false,
+			includeMindmap: this.settings.defaultIncludeMindmap !== false,
+			includeCard: this.settings.defaultIncludeCard !== false,
+			includeAudio: this.settings.defaultIncludeAudio === true,
+		};
+	}
+
+	/**
+	 * Headless import of a tick's candidates. New recordings are created
+	 * (skip-for-new); changed recordings overwrite the matched note
+	 * (overwrite-for-changed). Never a blanket-overwrite writer. Throws a
+	 * PlaudAuthError when a batch stops on a mid-run auth failure so the tick's
+	 * state machine pauses; other per-recording failures stay non-fatal.
+	 */
+	private async importAutoSyncCandidates(
+		newRecs: readonly Recording[],
+		changedRecs: readonly Recording[],
+		index: Map<PlaudRecordingId, ImportedRecord>,
+	): Promise<{ imported: number; updated: number }> {
+		const client = this.client;
+		if (client === undefined) return { imported: 0, updated: 0 };
+		const options = this.buildImportRuntimeOptions();
+		const selection = this.autoSyncSelection();
+		// Reuse the tick's index (passed in) rather than rebuilding: one snapshot
+		// backs both classification and the writer's cross-folder dedup, and a
+		// cold/partial metadataCache cannot diverge between the two.
+		const attachments = new AttachmentImporter({
+			app: this.app,
+			getAuthToken: options.getAuthToken,
+			getApiBaseUrl: options.getApiBaseUrl,
+			debugLogger: this.debugLogger,
+		});
+		const fetchArtifacts = (id: PlaudRecordingId) =>
+			client.getTranscriptAndSummary(id);
+		const fetchAudioUrl = selection.includeAudio
+			? (id: PlaudRecordingId) => client.getAudioTempUrl(id)
+			: undefined;
+		const makeWriter = (policy: "skip" | "overwrite"): NoteWriter =>
+			new NoteWriter(this.app.vault, {
+				...options,
+				onDuplicate: policy,
+				existingPathForPlaudId: (id) =>
+					index.get(id as PlaudRecordingId)?.path ?? null,
+			});
+		const runBatch = async (
+			recordings: readonly Recording[],
+			policy: "skip" | "overwrite",
+		): Promise<number> => {
+			if (recordings.length === 0) return 0;
+			const outcome = await runImport({
+				recordings,
+				selection,
+				writer: makeWriter(policy),
+				attachments,
+				options,
+				fetchArtifacts,
+				fetchAudioUrl,
+				// Stop between recordings if the plugin unloads mid-tick, so a
+				// disable/re-enable cannot leave this loop writing while a fresh
+				// instance starts its own tick.
+				observer: { shouldAbort: () => this.disposed },
+			});
+			if (outcome.stop === "auth-failed") {
+				// token_rejected (not not_configured) is correct here: this batch
+				// only runs after listPage already fetched a page with the stored
+				// token, so a mid-import auth failure is a rejected/expired token,
+				// not a missing one. Either way the state machine maps it to a
+				// pause via categoryAllowsReauth; the reason only sharpens the log.
+				throw new PlaudAuthError(
+					"token_rejected",
+					"Plaud session expired during auto-sync",
+					"/auto-sync",
+				);
+			}
+			// Count only real writes. A 'written' result whose writeOutcome is
+			// 'skipped' is a duplicate-policy skip (a note already existed), not a
+			// created/overwritten note, and must not inflate the notice counts.
+			// A 'placeholder-written' result is a real stub write too, so it must
+			// count; but its 'kept-existing' status means a real note already
+			// existed and nothing was written, so it is excluded on the same
+			// principle as a 'skipped' write.
+			return outcome.results.filter(
+				(r) =>
+					(r.kind === "written" && r.writeOutcome.status !== "skipped") ||
+					(r.kind === "placeholder-written" &&
+						r.outcome.status !== "kept-existing"),
+			).length;
+		};
+		const imported = await runBatch(newRecs, "skip");
+		const updated = await runBatch(changedRecs, "overwrite");
+		return { imported, updated };
+	}
+
+	/**
+	 * One auto-sync tick, wrapped so it never throws into the timer. Skips when
+	 * disabled, paused for re-auth, or an import is already in flight. Maps a
+	 * failure through the state machine (auth pauses; transient retries).
+	 */
+	private async runAutoSyncTickSafe(): Promise<void> {
+		if (!this.settings.autoSyncEnabled) return;
+		if (this.autoSyncState.paused) {
+			this.logAutoSync("tick skipped: paused for re-auth");
+			return;
+		}
+		if (this.importModalOpen || this.autoSyncTickInFlight) {
+			this.logAutoSync("tick skipped: an import is already running");
+			return;
+		}
+		const client = this.client;
+		if (client === undefined) return;
+
+		// Claim the single-flight gate BEFORE the (potentially expensive) index
+		// scan below. The scan can take a while on a large vault, and a manual
+		// import modal opened mid-scan checks this same flag; setting it only
+		// after the scan would let that modal slip past the gate and overlap this
+		// tick. Every early return from here runs through the finally that clears
+		// the flag.
+		this.autoSyncTickInFlight = true;
+		try {
+			// One pass: cold-cache guard and index build fused (see
+			// buildPlaudIdIndexWithColdCheck). A cold cache would make the index
+			// incomplete and every existing note look new, so skip; a later tick
+			// with a warm cache proceeds.
+			const indexState = buildPlaudIdIndexWithColdCheck(
+				this.app,
+				this.settings.outputFolder,
+			);
+			if (indexState.isCold) {
+				this.logAutoSync("tick skipped: output-folder metadata cache is cold");
+				return;
+			}
+			const index = indexState.index;
+
+			const result = await runAutoSyncTick({
+				pageSize: PAGE_SIZE,
+				maxImportsPerTick: 25,
+				maxPagesPerTick: 5,
+				listPage: (skip, limit) =>
+					client.listRecordings({ sortBy: "edit_time", skip, limit }),
+				buildIndex: () => index,
+				// Reuse the index this tick already built (and cold-cache-guarded)
+				// so classification and the writer's dedup share one snapshot.
+				importCandidates: (n, c) => this.importAutoSyncCandidates(n, c, index),
+				log: (m, p) => this.logAutoSync(m, p),
+			});
+			this.autoSyncState = nextAutoSyncState(this.autoSyncState, "ok");
+			if (result.imported + result.updated > 0) {
+				new Notice(
+					`Plaud auto-sync: imported ${result.imported} new, updated ${result.updated}.`,
+				);
+			}
+			this.logAutoSync("tick complete", result);
+		} catch (err) {
+			const classification = classifyError(err);
+			const outcome = tickOutcomeForCategory(classification.category);
+			this.autoSyncState = nextAutoSyncState(this.autoSyncState, outcome);
+			if (outcome === "auth") {
+				// The auth outcome covers both a rejected/expired token and a
+				// missing one; word the pause Notice for the actual category so a
+				// user who never configured a token is not told it "expired".
+				const reason =
+					classification.category === "not-configured"
+						? "no Plaud token is configured. Add one to resume."
+						: "the session expired. Reconnect to resume.";
+				new Notice(`Plaud auto-sync paused: ${reason}`);
+			}
+			this.logAutoSync("tick failed", {
+				outcome,
+				message: classification.message,
+			});
+		} finally {
+			this.autoSyncTickInFlight = false;
+		}
+	}
+
+	/**
+	 * Start, stop, or reschedule the auto-sync timer to match settings.
+	 * Idempotent: clears the existing interval and deferred first-run timeout
+	 * before (re)creating them. Called from onLayoutReady and on any auto-sync
+	 * settings change.
+	 */
+	reconcileAutoSync(): void {
+		if (this.autoSyncIntervalId !== undefined) {
+			window.clearInterval(this.autoSyncIntervalId);
+			this.autoSyncIntervalId = undefined;
+		}
+		if (this.autoSyncFirstRunTimeoutId !== undefined) {
+			window.clearTimeout(this.autoSyncFirstRunTimeoutId);
+			this.autoSyncFirstRunTimeoutId = undefined;
+		}
+		if (!this.settings.autoSyncEnabled) return;
+		const minutes = coerceIntervalMinutes(this.settings.autoSyncIntervalMinutes);
+		// Plain setInterval, not registerInterval: this method reschedules on every
+		// settings change and clears the previous id itself (above) and on unload.
+		// registerInterval would push each id onto the component's cleanup list
+		// without ever removing the cleared ones, so they would accumulate.
+		this.autoSyncIntervalId = window.setInterval(() => {
+			void this.runAutoSyncTickSafe();
+		}, minutes * 60 * 1000);
+		// Deferred first tick (~2 min) so startup is not blocked and the vault
+		// metadata cache is warm before the first index build.
+		this.autoSyncFirstRunTimeoutId = window.setTimeout(() => {
+			this.autoSyncFirstRunTimeoutId = undefined;
+			void this.runAutoSyncTickSafe();
+		}, 2 * 60 * 1000);
+		this.logAutoSync("auto-sync scheduled", { minutes });
+	}
+
+	/** Clear an auth pause and run a tick soon. Called on token re-save / test / toggle. */
+	resumeAutoSyncIfPaused(): void {
+		if (!this.autoSyncState.paused) return;
+		this.autoSyncState = nextAutoSyncState(this.autoSyncState, "ok");
+		this.logAutoSync("auto-sync resumed after re-auth");
+		if (!this.settings.autoSyncEnabled) return;
+		// Track this deferred tick in the same slot as the scheduled first run so
+		// reconcileAutoSync() and onunload() clear it. An untracked setTimeout
+		// could otherwise fire after auto-sync is disabled/rescheduled or during
+		// unload and run an unexpected tick.
+		if (this.autoSyncFirstRunTimeoutId !== undefined) {
+			window.clearTimeout(this.autoSyncFirstRunTimeoutId);
+		}
+		this.autoSyncFirstRunTimeoutId = window.setTimeout(() => {
+			this.autoSyncFirstRunTimeoutId = undefined;
+			void this.runAutoSyncTickSafe();
+		}, 1000);
+	}
+
+	/**
+	 * One-time backfill of `plaud-version-ms` into notes imported before
+	 * auto-sync existed. Reads each recording's current `version_ms` from the
+	 * list and writes ONLY the frontmatter marker (no body rewrite), so those
+	 * notes become edit-detectable. Without it, auto-sync treats a legacy note's
+	 * edits as un-detectable (missing marker = current). Safe to re-run: notes
+	 * that already have a marker are skipped.
+	 */
+	private async backfillVersionMarkers(): Promise<void> {
+		const client = this.client;
+		if (client === undefined) {
+			new Notice("Plaud importer: still starting up. Try again in a moment.");
+			return;
+		}
+		// Participate in the single-flight gate: the backfill writes frontmatter
+		// across many notes, so it must not overlap a manual import or a tick.
+		if (this.importModalOpen || this.autoSyncTickInFlight) {
+			new Notice("Plaud importer: an import is running. Try backfill again shortly.");
+			return;
+		}
+		if (outputFolderCacheIsCold(this.app, this.settings.outputFolder)) {
+			// A cold cache would make buildPlaudIdIndex return a partial map, so
+			// the backfill would silently miss notes ("backfilled 0"). Ask the
+			// user to retry once Obsidian has finished loading.
+			new Notice(
+				"Plaud importer: still loading notes. Try backfill again in a moment.",
+			);
+			return;
+		}
+		this.autoSyncTickInFlight = true;
+		new Notice("Plaud importer: backfilling version markers...");
+		try {
+			// Build id -> version_ms from the full list (bounded page loop).
+			const MAX_BACKFILL_PAGES = 500;
+			const versionById = new Map<PlaudRecordingId, number>();
+			let skip = 0;
+			let reachedListEnd = false;
+			for (let page = 0; page < MAX_BACKFILL_PAGES; page++) {
+				// Stop if the plugin unloaded mid-scan (finally clears the gate).
+				if (this.disposed) return;
+				const recs = await client.listRecordings({
+					sortBy: "edit_time",
+					skip,
+					limit: PAGE_SIZE,
+				});
+				if (recs.length === 0) {
+					reachedListEnd = true;
+					break;
+				}
+				for (const r of recs) {
+					if (r.versionMs !== undefined) versionById.set(r.id, r.versionMs);
+				}
+				if (recs.length < PAGE_SIZE) {
+					reachedListEnd = true;
+					break;
+				}
+				skip += recs.length;
+			}
+
+			const index = buildPlaudIdIndex(this.app, this.settings.outputFolder);
+			let written = 0;
+			for (const [id, record] of index) {
+				// Stop writing frontmatter if the plugin unloaded mid-backfill.
+				if (this.disposed) return;
+				if (record.versionMs !== undefined) continue; // already has a marker
+				const versionMs = versionById.get(id);
+				if (versionMs === undefined) continue; // recording no longer listed
+				const file = this.app.vault.getFileByPath(record.path);
+				if (!(file instanceof TFile)) continue;
+				await this.app.fileManager.processFrontMatter(
+					file,
+					(fm: Record<string, unknown>) => {
+						fm["plaud-version-ms"] = versionMs;
+					},
+				);
+				written += 1;
+			}
+			// The scan always restarts from the newest page, so re-running does not
+			// advance past the cap; say what happened without promising a fix.
+			const capNote = reachedListEnd
+				? ""
+				: " Stopped at the scan limit; the least recently updated recordings were not checked, so a few legacy notes may still lack a marker.";
+			new Notice(
+				`Plaud importer: backfilled ${written} version marker${written === 1 ? "" : "s"}.${capNote}`,
+			);
+			this.logAutoSync("backfill complete", {
+				written,
+				listed: versionById.size,
+				reachedListEnd,
+			});
+		} catch (err) {
+			new Notice(`Plaud importer: backfill failed — ${classifyError(err).message}`);
+		} finally {
+			// Always release the gate so a failed or empty backfill never leaves
+			// auto-sync permanently blocked.
+			this.autoSyncTickInFlight = false;
 		}
 	}
 
@@ -465,48 +918,59 @@ export default class PlaudImporterPlugin extends Plugin {
 				message: `user invoked 'Import recent recordings' via ${source}`,
 			});
 		}
-		// Snapshot settings at invocation time so changes in the settings
-		// tab take effect on the next click without reinstantiation.
-		new ImportModal(this.app, this.client, {
-			outputFolder: this.settings.outputFolder,
-			subfolderTemplate: this.settings.subfolderTemplate,
-			onDuplicate: this.settings.onDuplicate,
-			includeTranscript: this.settings.includeTranscript,
-			includeSummary: this.settings.defaultIncludeSummary,
-			foldTranscript: this.settings.foldTranscript,
-			transcriptHeaderLevel: this.settings.transcriptHeaderLevel,
-			defaultIncludeSummary: this.settings.defaultIncludeSummary,
-			defaultIncludeAttachments: this.settings.defaultIncludeAttachments,
-			defaultIncludeMindmap: this.settings.defaultIncludeMindmap,
-			defaultIncludeCard: this.settings.defaultIncludeCard,
-			defaultIncludeAudio: this.settings.defaultIncludeAudio,
-			tagMode: this.settings.tagMode,
-			customTags: this.settings.customTags,
-			aiKeywordsAsProperty: this.settings.aiKeywordsAsProperty,
-			autoCloseSummary: this.settings.autoCloseSummary,
-			autoCloseSummarySeconds: this.settings.autoCloseSummarySeconds,
-			writePlaceholderForUnprocessed:
-				this.settings.writePlaceholderForUnprocessed,
-			showTrashedRecordings: this.settings.showTrashedRecordings,
-			debugLogger: this.debugLogger,
-			getAuthToken: () =>
-				this.settings.secretId.length > 0
-					? this.app.secretStorage.getSecret(this.settings.secretId)
-					: null,
-			getApiBaseUrl: () => this.settings.apiBaseUrl,
-			onReauth: () => this.reauthenticate(),
-			onReauthSso: {
-				setupBookmark: () => {
-					void this.openBookmarkSetupPage();
+		// Refuse to launch while another import is active: a second modal, or a
+		// modal opened over an in-flight auto-sync/backfill, would clobber the
+		// shared single-flight gate (importModalOpen / autoSyncTickInFlight).
+		if (this.importModalOpen) {
+			new Notice("Plaud importer: an import window is already open.");
+			return;
+		}
+		if (this.autoSyncTickInFlight) {
+			new Notice("Plaud importer: auto-sync is running. Try again shortly.");
+			return;
+		}
+		// Mark the modal open for its whole lifetime so a background auto-sync
+		// tick does not start alongside a manual import. Cleared from onClosed
+		// below. Uses its own flag (not the tick's) so the two never clobber.
+		this.importModalOpen = true;
+		try {
+			// Snapshot settings at invocation time (via buildImportRuntimeOptions,
+			// the same builder the headless auto-sync path uses) so changes in the
+			// settings tab take effect on the next click without reinstantiation.
+			new ImportModal(this.app, this.client, {
+				...this.buildImportRuntimeOptions(),
+				// After a successful in-modal re-auth, clear any auth pause so
+				// background sync resumes without waiting for the settings tab.
+				onReauth: async () => {
+					const ok = await this.reauthenticate();
+					if (ok) this.resumeAutoSyncIfPaused();
+					return ok;
 				},
-				signIn: () => {
-					new BrowserSignInModal(this.app, () =>
-						this.openPlaudInBrowser(),
-					).open();
+				onReauthSso: {
+					setupBookmark: () => {
+						void this.openBookmarkSetupPage();
+					},
+					signIn: () => {
+						new BrowserSignInModal(this.app, () =>
+							this.openPlaudInBrowser(),
+						).open();
+					},
+					pasteToken: async () => {
+						const ok = await this.pasteTokenFromClipboard();
+						if (ok) this.resumeAutoSyncIfPaused();
+						return ok;
+					},
 				},
-				pasteToken: () => this.pasteTokenFromClipboard(),
-			},
-		}).open();
+				onClosed: () => {
+					this.importModalOpen = false;
+				},
+			}).open();
+		} catch (err) {
+			// If constructing/opening the modal throws, onClosed never fires;
+			// release the flag here so a background tick is not blocked forever.
+			this.importModalOpen = false;
+			throw err;
+		}
 	}
 
 	async loadSettings() {
@@ -946,6 +1410,29 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 			"showTrashedRecordings",
 		);
 
+		new Setting(containerEl).setName("Automatic sync").setHeading();
+		this.addToggleRow(
+			containerEl,
+			"Enable automatic sync",
+			"Off by default. Runs a background import on a schedule using your default import options: new recordings are imported, and a recording you changed in Plaud (edited speaker names, corrected transcript, or finished processing) is re-imported. IMPORTANT: a re-import OVERWRITES that note and its downloaded artifacts with Plaud's current version, so edits you made to a synced note or its attachment files are lost on the next change. Only recordings that actually changed are touched; unchanged notes are never modified. Desktop only, and the ~24 hour token means the background job pauses for reconnection roughly daily.",
+			"autoSyncEnabled",
+		);
+		this.addDropdownRow(
+			containerEl,
+			"Sync interval",
+			"How often the background sync checks Plaud for new and changed recordings. Minimum 15 minutes.",
+			"autoSyncIntervalMinutes",
+			{
+				"15": "Every 15 minutes",
+				"30": "Every 30 minutes",
+				"60": "Every hour",
+				"120": "Every 2 hours",
+				"240": "Every 4 hours",
+				"480": "Every 8 hours",
+				"1440": "Once a day",
+			},
+		);
+
 		new Setting(containerEl).setName("Transcript rendering").setHeading();
 		this.addToggleRow(
 			containerEl,
@@ -1006,6 +1493,9 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 					.onChange(async (id) => {
 						this.plugin.settings.secretId = id;
 						await this.plugin.saveSettings();
+						// A freshly stored token is a resume trigger for a paused
+						// auto-sync.
+						this.plugin.resumeAutoSyncIfPaused();
 						refreshStatus();
 					});
 			this.tokenRefresh = () => {
@@ -1506,6 +1996,34 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 			},
 			{
 				type: "group",
+				heading: "Automatic sync",
+				items: [
+					{
+						name: "Enable automatic sync",
+						desc: "Off by default. Runs a background import on a schedule using your default import options: new recordings are imported, and a recording you changed in Plaud (edited speaker names, corrected transcript, or finished processing) is re-imported. IMPORTANT: a re-import OVERWRITES that note and its downloaded artifacts with Plaud's current version, so edits you made to a synced note or its attachment files are lost on the next change. Only recordings that actually changed are touched; unchanged notes are never modified. Desktop only, and the ~24 hour token means the background job pauses for reconnection roughly daily.",
+						control: { type: "toggle", key: "autoSyncEnabled" },
+					},
+					{
+						name: "Sync interval",
+						desc: "How often the background sync checks Plaud for new and changed recordings. Minimum 15 minutes.",
+						control: {
+							type: "dropdown",
+							key: "autoSyncIntervalMinutes",
+							options: {
+								"15": "Every 15 minutes",
+								"30": "Every 30 minutes",
+								"60": "Every hour",
+								"120": "Every 2 hours",
+								"240": "Every 4 hours",
+								"480": "Every 8 hours",
+								"1440": "Once a day",
+							},
+						},
+					},
+				],
+			},
+			{
+				type: "group",
 				heading: "Transcript rendering",
 				items: [
 					{
@@ -1585,6 +2103,9 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 			this.plugin.settings.autoCloseSummarySeconds = Number.isFinite(parsed)
 				? Math.min(600, Math.max(1, Math.floor(parsed)))
 				: 20;
+		} else if (key === "autoSyncIntervalMinutes") {
+			// Dropdown delivers a string; coerce to a valid interval [15, 1440].
+			this.plugin.settings.autoSyncIntervalMinutes = coerceIntervalMinutes(value);
 		} else {
 			(this.plugin.settings as unknown as Record<string, unknown>)[key] = value;
 		}
@@ -1593,6 +2114,13 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 		// Side effects that the imperative onChange handlers used to run inline.
 		if (key === "showRibbonIcon") {
 			this.plugin.updateRibbonIcon();
+		} else if (key === "autoSyncEnabled" || key === "autoSyncIntervalMinutes") {
+			// Start/stop/reschedule the timer to match the new setting. Enabling
+			// is a deliberate action, so also clear any prior auth pause.
+			this.plugin.reconcileAutoSync();
+			if (key === "autoSyncEnabled" && this.plugin.settings.autoSyncEnabled) {
+				this.plugin.resumeAutoSyncIfPaused();
+			}
 		} else if (key === "debug") {
 			// Update the live logger's enabled flag in place so the change takes
 			// effect on the next API call without reinstantiating the client.

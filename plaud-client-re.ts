@@ -169,7 +169,7 @@ export class ReverseEngineeredPlaudClient implements PlaudClient {
 			skip: String(filter?.skip ?? 0),
 			limit: String(filter?.limit ?? DEFAULT_LIMIT),
 			is_trash: '2',
-			sort_by: 'start_time',
+			sort_by: filter?.sortBy ?? 'start_time',
 			is_desc: 'true',
 		});
 
@@ -1069,6 +1069,12 @@ interface RawRecording {
 	// Treated as not-trashed when missing.
 	readonly is_trash?: boolean;
 	readonly filetag_id_list?: readonly string[];
+	// The recording's edit version in unix ms (equals edit_time * 1000).
+	// Present on current payloads; the auto-sync change cursor. Optional so an
+	// older payload without it still parses.
+	readonly version_ms?: number;
+	// 1 while the recording is still syncing from the capture device.
+	readonly wait_pull?: number;
 }
 
 function parseListResponse(raw: unknown, endpoint: string): readonly RawRecording[] {
@@ -1177,6 +1183,16 @@ function parseRecording(raw: RawRecording, endpoint: string): Recording {
 		summaryAvailable: raw.is_summary,
 		isTrashed: raw.is_trash === true,
 		tags: raw.filetag_id_list,
+		// The change cursor for auto-sync. Only trust a finite number; the guard
+		// treats version_ms as optional, so a malformed value stays undefined
+		// rather than corrupting the stored marker.
+		versionMs:
+			typeof raw.version_ms === 'number' && Number.isFinite(raw.version_ms)
+				? raw.version_ms
+				: undefined,
+		// wait_pull === 1 means still syncing from the device; anything else
+		// (including absent) is treated as ready.
+		waitPull: raw.wait_pull === 1,
 	};
 }
 

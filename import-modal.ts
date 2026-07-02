@@ -20,6 +20,7 @@ import {
 } from './note-writer';
 import { runImport } from './import-runner';
 import { buildPlaudIdIndex, type ImportedRecord } from './vault-index';
+import { isUpdateAvailable } from './auto-sync';
 import { AttachmentImporter } from './attachment-importer';
 import {
 	classifyError,
@@ -430,6 +431,12 @@ export class ImportModal extends Modal {
 	// stop writing to the vault without continuing through the rest of the
 	// selected recordings. Checked between iterations in onImportClick.
 	private aborted = false;
+	// The in-flight import loop, if one is running. onClose sets `aborted` (which
+	// only stops the loop BETWEEN recordings, so the current write can still be
+	// finishing) and then defers the shared-gate release (onClosed) until this
+	// settles, so a background auto-sync tick cannot start mid-write and defeat
+	// the single-flight guarantee. Null when no import is running.
+	private activeImportRun: Promise<void> | null = null;
 	// Interval id for the summary auto-close countdown. Held on the modal
 	// so onClose can clear it whether the countdown finished, the user
 	// clicked Done, or they dismissed the modal some other way.
@@ -479,10 +486,32 @@ export class ImportModal extends Modal {
 	}
 
 	onClose(): void {
-		// Signal any in-flight import loop to stop writing. The loop
-		// checks `this.aborted` between iterations and fires a partial
-		// Notice if it was interrupted.
+		// Signal any in-flight import loop to stop writing. `aborted` is only
+		// checked BETWEEN recordings, so the current write can still be finishing
+		// after this returns; the gate release is therefore deferred until the
+		// loop actually settles (below), so a background auto-sync tick cannot
+		// start mid-write. `aborted = true` is a plain assignment that cannot
+		// throw. The loop fires a partial Notice if it was interrupted.
 		this.aborted = true;
+		// Release the shared gate (onClosed) only after any in-flight import loop
+		// settles; if none is running, release now. onClosed is an injected
+		// callback, so a throw from it must not escape teardown.
+		const releaseGate = (): void => {
+			try {
+				this.noteWriterOptions.onClosed?.();
+			} catch (err) {
+				console.error(
+					'Plaud importer: onClosed callback threw during teardown',
+					err,
+				);
+			}
+		};
+		const run = this.activeImportRun;
+		if (run) {
+			void run.then(releaseGate, releaseGate);
+		} else {
+			releaseGate();
+		}
 		this.cancelAutoClose();
 		this.contentEl.empty();
 		this.selectedIds.clear();
@@ -960,6 +989,12 @@ export class ImportModal extends Modal {
 		const existing = this.importedIndex.get(rec.id);
 		if (existing !== undefined) {
 			this.renderImportedBadge(titleRow, existing);
+			// Manual-import cue: this note is stale (the recording changed in
+			// Plaud since it was imported). Re-importing it overwrites the note
+			// with Plaud's current version.
+			if (isUpdateAvailable(rec.versionMs, existing.versionMs)) {
+				this.renderUpdateAvailableBadge(titleRow);
+			}
 		}
 
 		const meta = labelWrap.createDiv({ cls: 'plaud-importer-meta' });
@@ -998,6 +1033,9 @@ export class ImportModal extends Modal {
 		if (row === null) return;
 		const titleRow = row.querySelector('.plaud-importer-title-row');
 		if (titleRow === null) return;
+		// The note was just written, so it is current: drop any stale
+		// "update available" badge.
+		titleRow.querySelector('.plaud-importer-update-badge')?.remove();
 		const existingBadge = titleRow.querySelector('.plaud-importer-imported-badge');
 		if (existingBadge !== null) return;
 		this.renderImportedBadge(titleRow as HTMLElement, existing);
@@ -1017,6 +1055,21 @@ export class ImportModal extends Modal {
 			evt.preventDefault();
 			evt.stopPropagation();
 			void this.app.workspace.openLinkText(record.path, '', false);
+		});
+	}
+
+	// A non-interactive "Update available" badge shown next to "Imported" when
+	// the recording changed in Plaud since import. Re-importing overwrites the
+	// note with Plaud's current version.
+	private renderUpdateAvailableBadge(parent: HTMLElement): void {
+		if (parent.querySelector('.plaud-importer-update-badge') !== null) return;
+		parent.createSpan({
+			cls: 'plaud-importer-update-badge',
+			text: 'Update available',
+			attr: {
+				'aria-label': 'This recording changed in Plaud since it was imported',
+				title: 'Changed in Plaud since import — re-importing overwrites this note',
+			},
 		});
 	}
 
@@ -1044,6 +1097,13 @@ export class ImportModal extends Modal {
 	}
 
 	private async beginCustomizationFlow(): Promise<void> {
+		// "Review artifacts first" stays clickable during a default import (its
+		// disabled state ignores the in-flight run), so guard here too: bail
+		// before the artifact preflight so a second import can never start.
+		if (this.activeImportRun !== null) {
+			new Notice('Plaud importer: an import is already running.');
+			return;
+		}
 		if (this.selectedIds.size === 0 || this.preparingCustomization) {
 			return;
 		}
@@ -1548,6 +1608,12 @@ export class ImportModal extends Modal {
 	}
 
 	private async onImportClick(selection: ArtifactSelection): Promise<void> {
+		// Refuse to start a second import while one is already running. Without
+		// this, "Review artifacts first" (which is not disabled during a default
+		// import) could launch a second runImportBatch; trackImportRun would then
+		// overwrite activeImportRun, orphaning the first loop and letting two
+		// writers hit the same notes concurrently.
+		if (this.activeImportRun !== null) return;
 		const selected = this.currentRecordings.filter((r) =>
 			this.selectedIds.has(r.id),
 		);
@@ -1576,7 +1642,25 @@ export class ImportModal extends Modal {
 		// batch runner. isInitial=true keeps the issue #12 cancelled-path button
 		// reset (the modal stays on the selection screen here) and starts the
 		// run with an empty prior-results accumulator.
-		await this.runImportBatch(selected, selection, duplicatePolicy, [], true);
+		await this.trackImportRun(
+			this.runImportBatch(selected, selection, duplicatePolicy, [], true),
+		);
+	}
+
+	/**
+	 * Record `run` as the active import loop for its lifetime so onClose can wait
+	 * for it to settle before releasing the shared gate. Self-clears on settle
+	 * (only if it is still the current run, so a resume that replaced it wins).
+	 */
+	private trackImportRun(run: Promise<void>): Promise<void> {
+		// Declare with `let` and assign after, so the finally closure does not
+		// reference `tracked` from inside its own initializer.
+		let tracked: Promise<void>;
+		tracked = run.finally(() => {
+			if (this.activeImportRun === tracked) this.activeImportRun = null;
+		});
+		this.activeImportRun = tracked;
+		return tracked;
 	}
 
 	/**
@@ -1800,12 +1884,14 @@ export class ImportModal extends Modal {
 			// The resumed batch has no Import button to carry the progress
 			// counter, so show a lightweight progress state in its place.
 			this.renderImporting(tail.length);
-			this.runImportBatch(
-				tail,
-				selection,
-				duplicatePolicy,
-				priorResults,
-				false,
+			this.trackImportRun(
+				this.runImportBatch(
+					tail,
+					selection,
+					duplicatePolicy,
+					priorResults,
+					false,
+				),
 			).catch((err) => {
 				console.error('Plaud importer: resume import failed', err);
 				this.renderError(classifyError(err));

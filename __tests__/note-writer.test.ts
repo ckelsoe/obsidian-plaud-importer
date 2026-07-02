@@ -503,6 +503,16 @@ describe('formatFrontmatter', () => {
 		expect(fm).not.toMatch(/tags:/);
 	});
 
+	it('emits plaud-version-ms as a raw number when versionMs is present (auto-sync cursor)', () => {
+		const fm = formatFrontmatter(makeRecording({ versionMs: 1782918853105 }), []);
+		expect(fm).toContain('plaud-version-ms: 1782918853105');
+	});
+
+	it('omits plaud-version-ms when versionMs is absent', () => {
+		const fm = formatFrontmatter(makeRecording({ versionMs: undefined }), []);
+		expect(fm).not.toMatch(/plaud-version-ms:/);
+	});
+
 	it('includes tags when recording.tags has values', () => {
 		const fm = formatFrontmatter(
 			makeRecording({ tags: ['meeting', 'q2'] }),

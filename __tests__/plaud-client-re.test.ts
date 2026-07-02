@@ -219,6 +219,30 @@ describe('listRecordings happy path', () => {
 
 		expect(r.isTrashed).toBe(false);
 	});
+
+	it('maps version_ms to versionMs and wait_pull===1 to waitPull (the auto-sync fields)', async () => {
+		const { fetcher } = captureFetcher(
+			ok(listEnvelope([record({ version_ms: 1744628400123, wait_pull: 1 })])),
+		);
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+
+		const [r] = await client.listRecordings();
+
+		expect(r.versionMs).toBe(1744628400123);
+		expect(r.waitPull).toBe(true);
+	});
+
+	it('leaves versionMs undefined and waitPull false when the fields are absent or non-1', async () => {
+		const { fetcher } = captureFetcher(
+			ok(listEnvelope([record({ version_ms: undefined, wait_pull: 0 })])),
+		);
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+
+		const [r] = await client.listRecordings();
+
+		expect(r.versionMs).toBeUndefined();
+		expect(r.waitPull).toBe(false);
+	});
 });
 
 // listRecordings — request shape --------------------------------------------
@@ -331,6 +355,17 @@ describe('listRecordings request shape', () => {
 		const url = new URL(lastRequest()?.url ?? '');
 		expect(url.searchParams.get('skip')).toBe('20');
 		expect(url.searchParams.get('limit')).toBe('10');
+	});
+
+	it('sends sort_by=edit_time when the filter requests it (auto-sync cursor)', async () => {
+		const { fetcher, lastRequest } = captureFetcher(ok(listEnvelope([])));
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+
+		await client.listRecordings({ sortBy: 'edit_time' });
+
+		const url = new URL(lastRequest()?.url ?? '');
+		expect(url.searchParams.get('sort_by')).toBe('edit_time');
+		// default stays start_time when unspecified (covered above)
 	});
 });
 
