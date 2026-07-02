@@ -243,6 +243,110 @@ describe('runImport', () => {
 		expect(written).toEqual([recording.id]);
 	});
 
+	// Issue #16: folder ids resolve to names in both plaud-folder: and tags:.
+	it('resolves folder ids to names: plaud-folder set, tags use names not ids', async () => {
+		const vault = makeFakeVault();
+		const recording = makeRecording({ tags: ['id-work', 'id-bnb'] });
+		const { fetchArtifacts } = makeFetch(
+			new Map([[recording.id, makeArtifacts(recording)]]),
+		);
+
+		const outcome = await runImport({
+			recordings: [recording],
+			selection: SELECTION,
+			writer: makeWriter(vault),
+			attachments: makeAttachmentStub().pipeline,
+			options: OPTIONS,
+			fetchArtifacts,
+			fetchFolderCatalog: async () => [
+				{ id: 'id-work', name: 'Work' },
+				{ id: 'id-bnb', name: 'B&B' },
+			],
+		});
+
+		expect(outcome.stop).toBe('completed');
+		const note = [...vault.files.values()][0];
+		// plaud-folder keeps the pretty original names (quoting where needed).
+		expect(note).toContain('plaud-folder: [Work, "B&B"]');
+		// tags: carries the slugified names, and the raw ids never appear.
+		expect(note).toContain('tags: [work, b-b]');
+		expect(note).not.toContain('id-work');
+		expect(note).not.toContain('id-bnb');
+	});
+
+	it('drops unresolved folder ids from tags and plaud-folder rather than leaking them', async () => {
+		const vault = makeFakeVault();
+		const recording = makeRecording({ tags: ['id-known', 'id-gone'] });
+		const { fetchArtifacts } = makeFetch(
+			new Map([[recording.id, makeArtifacts(recording)]]),
+		);
+
+		await runImport({
+			recordings: [recording],
+			selection: SELECTION,
+			writer: makeWriter(vault),
+			attachments: makeAttachmentStub().pipeline,
+			options: OPTIONS,
+			fetchArtifacts,
+			fetchFolderCatalog: async () => [{ id: 'id-known', name: 'Known' }],
+		});
+
+		const note = [...vault.files.values()][0];
+		expect(note).toContain('plaud-folder: [Known]');
+		expect(note).toContain('tags: [known]');
+		expect(note).not.toContain('id-gone');
+	});
+
+	it('does not leak raw folder ids when no folder catalog dep is provided', async () => {
+		const vault = makeFakeVault();
+		const recording = makeRecording({ tags: ['id-work'] });
+		const { fetchArtifacts } = makeFetch(
+			new Map([[recording.id, makeArtifacts(recording)]]),
+		);
+
+		// No fetchFolderCatalog: mirrors an older caller. Ids must vanish, never
+		// fall through raw into tags: (the pre-#16 bug).
+		const outcome = await runImport({
+			recordings: [recording],
+			selection: SELECTION,
+			writer: makeWriter(vault),
+			attachments: makeAttachmentStub().pipeline,
+			options: OPTIONS,
+			fetchArtifacts,
+		});
+
+		expect(outcome.stop).toBe('completed');
+		const note = [...vault.files.values()][0];
+		expect(note).not.toContain('id-work');
+		expect(note).not.toMatch(/plaud-folder:/);
+	});
+
+	it('completes the import when the folder catalog fetch fails', async () => {
+		const vault = makeFakeVault();
+		const recording = makeRecording({ tags: ['id-work'] });
+		const { fetchArtifacts } = makeFetch(
+			new Map([[recording.id, makeArtifacts(recording)]]),
+		);
+
+		const outcome = await runImport({
+			recordings: [recording],
+			selection: SELECTION,
+			writer: makeWriter(vault),
+			attachments: makeAttachmentStub().pipeline,
+			options: OPTIONS,
+			fetchArtifacts,
+			fetchFolderCatalog: async () => {
+				throw new Error('boom');
+			},
+		});
+
+		expect(outcome.stop).toBe('completed');
+		expect(outcome.results[0]).toMatchObject({ kind: 'written' });
+		const note = [...vault.files.values()][0];
+		expect(note).not.toContain('id-work');
+		expect(note).not.toMatch(/plaud-folder:/);
+	});
+
 	it('overwrites an existing note on a second run with onDuplicate overwrite', async () => {
 		const vault = makeFakeVault();
 		const recording = makeRecording();

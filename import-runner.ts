@@ -17,6 +17,7 @@
 
 import type {
 	PlaudRecordingId,
+	PlaudFolder,
 	Recording,
 	TranscriptAndSummary,
 	AttachmentAsset,
@@ -27,6 +28,11 @@ import {
 	type NoteWriter,
 	type FormatMarkdownOptions,
 } from './note-writer';
+import {
+	buildFolderNameMap,
+	folderNameToTag,
+	resolveFolderNames,
+} from './folder-catalog';
 import {
 	classifyError,
 	categoryAllowsReauth,
@@ -102,6 +108,15 @@ export interface ImportRunDeps {
 	 */
 	fetchArtifacts(recordingId: PlaudRecordingId): Promise<TranscriptAndSummary>;
 	/**
+	 * Resolves the account's flat folder/tag catalog, called ONCE per run to
+	 * turn each recording's `filetag_id_list` into folder names (issue #16).
+	 * Optional: a caller that omits it (or whose fetch fails) simply resolves no
+	 * folders. The import still runs; notes just carry no `plaud-folder:` and no
+	 * folder-derived tags. The modal and auto-sync both inject the client's
+	 * cached `getFolderCatalog`.
+	 */
+	fetchFolderCatalog?(): Promise<readonly PlaudFolder[]>;
+	/**
 	 * Resolves one recording's original-audio download URL, or null when Plaud
 	 * exposes none. Only invoked when `selection.includeAudio` is set, so a
 	 * caller that never imports audio (or a headless auto-sync) may omit it.
@@ -171,6 +186,23 @@ export async function runImport(deps: ImportRunDeps): Promise<ImportRunOutcome> 
 	const total = recordings.length;
 	const shouldAbort = (): boolean => observer?.shouldAbort?.() ?? false;
 
+	// Resolve the folder/tag catalog ONCE for the whole batch (issue #16), then
+	// reuse the id->name map for every recording. Best-effort: a fetch failure
+	// (or an absent dep for older callers/tests) degrades to an empty map, so
+	// notes just carry no folder data rather than the import failing. This is
+	// also what fixes the latent bug where raw filetag ids leaked into `tags:`:
+	// names replace ids below, and an unresolved id is dropped, never shown raw.
+	let folderNameMap: ReadonlyMap<string, string> = new Map();
+	if (deps.fetchFolderCatalog) {
+		try {
+			folderNameMap = buildFolderNameMap(await deps.fetchFolderCatalog());
+		} catch (err) {
+			emitImportDebug(options, 'folder catalog fetch failed; folders unresolved', {
+				reason: err instanceof Error ? err.message : String(err),
+			});
+		}
+	}
+
 	const results: ImportResult[] = [];
 	for (let i = 0; i < total; i++) {
 		// Bail on mid-import modal close. The caller renders the partial
@@ -212,16 +244,35 @@ export async function runImport(deps: ImportRunDeps): Promise<ImportRunOutcome> 
 				attachments ?? [],
 				summaryLinkedAttachments,
 			);
+			// Issue #16: a recording's `tags` are its raw filetag_id_list (opaque
+			// folder ids). Resolve them to folder names via the catalog before
+			// building the note: the pretty names go to `plaud-folder:`, and the
+			// slugified names become the base for `tags:` (replacing the ids that
+			// leaked before). An id with no catalog entry is dropped, not shown
+			// raw. Empty-after-slug names (a punctuation-only folder) are filtered.
+			const { names: folderNames, missing: missingFolderIds } = resolveFolderNames(
+				recording.tags,
+				folderNameMap,
+			);
+			if (missingFolderIds.length > 0) {
+				emitImportDebug(options, 'folder ids not in catalog; dropped from tags/plaud-folder', {
+					recordingId: recording.id,
+					missing: missingFolderIds,
+				});
+			}
+			const folderTags = folderNames
+				.map(folderNameToTag)
+				.filter((tag) => tag.length > 0);
 			// DD-004: combine Plaud's AI-generated keyword list (from
-			// /file/detail/), the recording's own tags, and the user's
-			// custom tags before the note is rendered. buildNoteTags
+			// /file/detail/), the recording's folder-derived tags, and the
+			// user's custom tags before the note is rendered. buildNoteTags
 			// owns the mode filtering, namespacing, slug, and dedup
 			// rules; this site just feeds it the sources and settings.
 			// The recording's tags are ALWAYS overwritten with the
 			// built list (even when empty) so a restrictive tag mode
 			// cannot leak the raw Plaud tags into the frontmatter.
 			// formatFrontmatter omits empty tags:/keywords: keys.
-			const tagResult = buildNoteTags(recording.tags, aiKeywords, {
+			const tagResult = buildNoteTags(folderTags, aiKeywords, {
 				tagMode: options.tagMode ?? 'plaud',
 				customTags: options.customTags ?? '',
 				aiKeywordsAsProperty: options.aiKeywordsAsProperty ?? true,
@@ -231,6 +282,7 @@ export async function runImport(deps: ImportRunDeps): Promise<ImportRunOutcome> 
 				includeTranscript: selection.includeTranscript,
 				includeSummary: selection.includeSummary,
 				keywords: tagResult.keywords,
+				folders: folderNames,
 				consumerNotes,
 			};
 			const selectedChapters = selection.includeTranscript

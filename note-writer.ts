@@ -775,6 +775,7 @@ export function formatFrontmatter(
 	speakers: readonly string[],
 	summary?: Summary | null,
 	keywords?: readonly string[],
+	folders?: readonly string[],
 ): string {
 	const duration = Number.isFinite(recording.durationSeconds)
 		? Math.max(0, Math.floor(recording.durationSeconds))
@@ -799,6 +800,13 @@ export function formatFrontmatter(
 	}
 	if (recording.tags && recording.tags.length > 0) {
 		lines.push(`tags: ${yamlArray(recording.tags)}`);
+	}
+	// Resolved Plaud folder name(s) for the recording (issue #16). Separate from
+	// tags: this keeps the original folder name (case, spaces, `&`) for humans
+	// and Dataview, while tags: carries the slugified tag form. Emitted only for
+	// filed recordings; unfiled ones get no key.
+	if (folders && folders.length > 0) {
+		lines.push(`plaud-folder: ${yamlArray(folders)}`);
 	}
 	// AI keywords demoted from tags by the tag-mode setting. A plain
 	// frontmatter property is searchable and Dataview-queryable but does
@@ -1342,6 +1350,15 @@ export interface FormatMarkdownOptions {
 	 */
 	readonly keywords?: readonly string[];
 	/**
+	 * Resolved Plaud folder NAMES for this recording, written to the
+	 * `plaud-folder:` frontmatter field (issue #16). These are the human names
+	 * behind the recording's `filetag_id_list`, in original case (the `tags:`
+	 * field gets slugified variants; this field keeps the pretty name). Empty or
+	 * omitted emits no `plaud-folder:` line. In Plaud a recording is normally in
+	 * a single folder, but the field is an array to tolerate multi-folder data.
+	 */
+	readonly folders?: readonly string[];
+	/**
 	 * Extra Plaud AI template outputs (Key Points, Daily Journal, etc.) to
 	 * render in the note as a `## Template outputs` block. Empty or omitted
 	 * renders no block. Independent of `includeSummary`: these mirror the
@@ -1368,7 +1385,7 @@ export function formatMarkdown(
 		? formatTranscriptSection(transcript, groups, headerLevel)
 		: '';
 	const parts: string[] = [
-		formatFrontmatter(recording, speakers, summary, options.keywords),
+		formatFrontmatter(recording, speakers, summary, options.keywords, options.folders),
 		'',
 		`# ${expandedTitle}`,
 		'',

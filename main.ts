@@ -598,6 +598,7 @@ export default class PlaudImporterPlugin extends Plugin {
 				options,
 				fetchArtifacts,
 				fetchAudioUrl,
+				fetchFolderCatalog: () => client.getFolderCatalog(),
 				// Stop between recordings if the plugin unloads mid-tick, so a
 				// disable/re-enable cannot leave this loop writing while a fresh
 				// instance starts its own tick.
