@@ -604,8 +604,15 @@ export default class PlaudImporterPlugin extends Plugin {
 			// Count only real writes. A 'written' result whose writeOutcome is
 			// 'skipped' is a duplicate-policy skip (a note already existed), not a
 			// created/overwritten note, and must not inflate the notice counts.
+			// A 'placeholder-written' result is a real stub write too, so it must
+			// count; but its 'kept-existing' status means a real note already
+			// existed and nothing was written, so it is excluded on the same
+			// principle as a 'skipped' write.
 			return outcome.results.filter(
-				(r) => r.kind === "written" && r.writeOutcome.status !== "skipped",
+				(r) =>
+					(r.kind === "written" && r.writeOutcome.status !== "skipped") ||
+					(r.kind === "placeholder-written" &&
+						r.outcome.status !== "kept-existing"),
 			).length;
 		};
 		const imported = await runBatch(newRecs, "skip");

@@ -487,7 +487,13 @@ export class ImportModal extends Modal {
 		// so onClosed still fires. The loop checks `aborted` between iterations
 		// and fires a partial Notice if it was interrupted.
 		this.aborted = true;
-		this.noteWriterOptions.onClosed?.();
+		// onClosed is an injected callback; a throw from it must not abort the
+		// rest of teardown (leaving the shared gate held and DOM/state leaked).
+		try {
+			this.noteWriterOptions.onClosed?.();
+		} catch (err) {
+			console.error('Plaud importer: onClosed callback threw during teardown', err);
+		}
 		this.cancelAutoClose();
 		this.contentEl.empty();
 		this.selectedIds.clear();

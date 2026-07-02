@@ -119,11 +119,14 @@ function fileIsUnder(file: TFile, folder: string): boolean {
  */
 export function outputFolderCacheIsCold(app: App, outputFolder: string): boolean {
 	const normalized = normalizeFolder(outputFolder);
-	const under = app.vault
-		.getMarkdownFiles()
-		.filter((file) => fileIsUnder(file, normalized));
-	if (under.length === 0) return false;
-	return under.some((file) => app.metadataCache.getFileCache(file) === null);
+	// Single pass: this runs every auto-sync tick and, for a root output folder,
+	// scans the whole vault. Return as soon as an in-scope note has a null cache;
+	// falling through the loop covers both "no in-scope notes" and "all warm".
+	for (const file of app.vault.getMarkdownFiles()) {
+		if (!fileIsUnder(file, normalized)) continue;
+		if (app.metadataCache.getFileCache(file) === null) return true;
+	}
+	return false;
 }
 
 // YAML frontmatter values can be parsed as strings or as numbers
