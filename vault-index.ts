@@ -101,15 +101,26 @@ function fileIsUnder(file: TFile, folder: string): boolean {
 }
 
 /**
- * True when the output folder contains at least one markdown note, using the
- * SAME folder normalization and matching as buildPlaudIdIndex (including
- * Windows-backslash handling). Callers use it to tell a genuinely-empty output
- * folder from a cold metadataCache (index came back empty but notes exist on
- * disk), so the two can never disagree about which folder is meant.
+ * True when the metadata cache has NOT finished parsing the notes under the
+ * output folder, i.e. at least one note there has no parsed cache yet
+ * (getFileCache === null). buildPlaudIdIndex relies on the cache, so a cold
+ * cache makes it return empty and every note look new; auto-sync uses this to
+ * skip that tick and avoid a mass re-import.
+ *
+ * Precise rather than heuristic: it checks cache warmth per file (not "the
+ * folder has any markdown"), so it does not mis-fire when the folder is the
+ * vault root or holds non-Plaud notes, and it cannot permanently disable sync
+ * once the cache is warm. Uses the SAME folder normalization + matching as the
+ * index (Windows backslashes included). Returns false when the folder has no
+ * notes at all — nothing to be cold about.
  */
-export function outputFolderHasMarkdown(app: App, outputFolder: string): boolean {
+export function outputFolderCacheIsCold(app: App, outputFolder: string): boolean {
 	const normalized = normalizeFolder(outputFolder);
-	return app.vault.getMarkdownFiles().some((file) => fileIsUnder(file, normalized));
+	const under = app.vault
+		.getMarkdownFiles()
+		.filter((file) => fileIsUnder(file, normalized));
+	if (under.length === 0) return false;
+	return under.some((file) => app.metadataCache.getFileCache(file) === null);
 }
 
 // YAML frontmatter values can be parsed as strings or as numbers

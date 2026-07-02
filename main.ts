@@ -29,7 +29,7 @@ import { NoteWriter, type TagMode } from "./note-writer";
 import { AttachmentImporter } from "./attachment-importer";
 import {
 	buildPlaudIdIndex,
-	outputFolderHasMarkdown,
+	outputFolderCacheIsCold,
 	type ImportedRecord,
 } from "./vault-index";
 import { runImport } from "./import-runner";
@@ -626,19 +626,14 @@ export default class PlaudImporterPlugin extends Plugin {
 		const client = this.client;
 		if (client === undefined) return;
 
-		const index = buildPlaudIdIndex(this.app, this.settings.outputFolder);
-		if (
-			index.size === 0 &&
-			outputFolderHasMarkdown(this.app, this.settings.outputFolder)
-		) {
-			// Cold metadata cache: the output folder has notes but the index came
-			// back empty. Skip so we do not treat every existing note as new and
-			// mass-re-import. A later tick with a warm cache proceeds normally.
-			this.logAutoSync(
-				"tick skipped: index empty but output folder has notes (cold cache)",
-			);
+		if (outputFolderCacheIsCold(this.app, this.settings.outputFolder)) {
+			// The metadata cache has not finished parsing the output folder, so
+			// buildPlaudIdIndex would return an incomplete map and make existing
+			// notes look new. Skip; a later tick with a warm cache proceeds.
+			this.logAutoSync("tick skipped: output-folder metadata cache is cold");
 			return;
 		}
+		const index = buildPlaudIdIndex(this.app, this.settings.outputFolder);
 
 		this.autoSyncTickInFlight = true;
 		try {
@@ -736,6 +731,13 @@ export default class PlaudImporterPlugin extends Plugin {
 			new Notice("Plaud importer: still starting up. Try again in a moment.");
 			return;
 		}
+		// Participate in the single-flight gate: the backfill writes frontmatter
+		// across many notes, so it must not overlap a manual import or a tick.
+		if (this.importModalOpen || this.autoSyncTickInFlight) {
+			new Notice("Plaud importer: an import is running. Try backfill again shortly.");
+			return;
+		}
+		this.autoSyncTickInFlight = true;
 		new Notice("Plaud importer: backfilling version markers...");
 		try {
 			// Build id -> version_ms from the full list (bounded page loop).
@@ -777,6 +779,10 @@ export default class PlaudImporterPlugin extends Plugin {
 			this.logAutoSync("backfill complete", { written, listed: versionById.size });
 		} catch (err) {
 			new Notice(`Plaud importer: backfill failed — ${classifyError(err).message}`);
+		} finally {
+			// Always release the gate so a failed or empty backfill never leaves
+			// auto-sync permanently blocked.
+			this.autoSyncTickInFlight = false;
 		}
 	}
 
@@ -835,27 +841,34 @@ export default class PlaudImporterPlugin extends Plugin {
 		// tick does not start alongside a manual import. Cleared from onClosed
 		// below. Uses its own flag (not the tick's) so the two never clobber.
 		this.importModalOpen = true;
-		// Snapshot settings at invocation time (via buildImportRuntimeOptions, the
-		// same builder the headless auto-sync path uses) so changes in the
-		// settings tab take effect on the next click without reinstantiation.
-		new ImportModal(this.app, this.client, {
-			...this.buildImportRuntimeOptions(),
-			onReauth: () => this.reauthenticate(),
-			onReauthSso: {
-				setupBookmark: () => {
-					void this.openBookmarkSetupPage();
+		try {
+			// Snapshot settings at invocation time (via buildImportRuntimeOptions,
+			// the same builder the headless auto-sync path uses) so changes in the
+			// settings tab take effect on the next click without reinstantiation.
+			new ImportModal(this.app, this.client, {
+				...this.buildImportRuntimeOptions(),
+				onReauth: () => this.reauthenticate(),
+				onReauthSso: {
+					setupBookmark: () => {
+						void this.openBookmarkSetupPage();
+					},
+					signIn: () => {
+						new BrowserSignInModal(this.app, () =>
+							this.openPlaudInBrowser(),
+						).open();
+					},
+					pasteToken: () => this.pasteTokenFromClipboard(),
 				},
-				signIn: () => {
-					new BrowserSignInModal(this.app, () =>
-						this.openPlaudInBrowser(),
-					).open();
+				onClosed: () => {
+					this.importModalOpen = false;
 				},
-				pasteToken: () => this.pasteTokenFromClipboard(),
-			},
-			onClosed: () => {
-				this.importModalOpen = false;
-			},
-		}).open();
+			}).open();
+		} catch (err) {
+			// If constructing/opening the modal throws, onClosed never fires;
+			// release the flag here so a background tick is not blocked forever.
+			this.importModalOpen = false;
+			throw err;
+		}
 	}
 
 	async loadSettings() {

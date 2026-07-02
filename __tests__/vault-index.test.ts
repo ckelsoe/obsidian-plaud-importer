@@ -5,7 +5,7 @@
 
 import type { App, TFile } from 'obsidian';
 import type { PlaudRecordingId } from '../plaud-client';
-import { buildPlaudIdIndex, outputFolderHasMarkdown } from '../vault-index';
+import { buildPlaudIdIndex, outputFolderCacheIsCold } from '../vault-index';
 
 interface FakeFile {
 	readonly path: string;
@@ -185,20 +185,30 @@ describe('buildPlaudIdIndex', () => {
 	});
 });
 
-describe('outputFolderHasMarkdown', () => {
-	it('is true when the output folder contains a note (same matching as the index)', () => {
-		const app = makeApp([['Plaud/a.md', { 'plaud-id': 'rec-a' }]]);
-		expect(outputFolderHasMarkdown(app, 'Plaud')).toBe(true);
+describe('outputFolderCacheIsCold', () => {
+	// makeApp's getFileCache returns null when the entry's frontmatter is null,
+	// modelling a not-yet-parsed (cold) note.
+	it('is cold when a note under the folder has no parsed cache yet', () => {
+		const app = makeApp([['Plaud/cold.md', null]]);
+		expect(outputFolderCacheIsCold(app, 'Plaud')).toBe(true);
+	});
+
+	it('is NOT cold when every note under the folder is parsed (even empty frontmatter)', () => {
+		const app = makeApp([
+			['Plaud/a.md', { 'plaud-id': 'rec-a' }],
+			['Plaud/b.md', {}],
+		]);
+		expect(outputFolderCacheIsCold(app, 'Plaud')).toBe(false);
+	});
+
+	it('is NOT cold when the folder has no notes (nothing to be cold about)', () => {
+		expect(outputFolderCacheIsCold(makeApp([]), 'Plaud')).toBe(false);
+		// a cold note OUTSIDE the folder does not make the folder cold
+		expect(outputFolderCacheIsCold(makeApp([['Other/x.md', null]]), 'Plaud')).toBe(false);
 	});
 
 	it('normalizes Windows backslashes like the index does', () => {
-		const app = makeApp([['Inbox/a.md', { 'plaud-id': 'rec-a' }]]);
-		expect(outputFolderHasMarkdown(app, '\\Inbox')).toBe(true);
-	});
-
-	it('is false when the folder has no notes (a genuinely empty folder)', () => {
-		const app = makeApp([['Other/a.md', { 'plaud-id': 'rec-a' }]]);
-		expect(outputFolderHasMarkdown(app, 'Plaud')).toBe(false);
-		expect(outputFolderHasMarkdown(makeApp([]), 'Plaud')).toBe(false);
+		const app = makeApp([['Inbox/cold.md', null]]);
+		expect(outputFolderCacheIsCold(app, '\\Inbox')).toBe(true);
 	});
 });
