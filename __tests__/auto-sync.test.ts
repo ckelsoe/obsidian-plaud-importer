@@ -202,4 +202,14 @@ describe('coerceIntervalMinutes', () => {
 		expect(coerceIntervalMinutes(undefined)).toBe(60);
 		expect(coerceIntervalMinutes(NaN)).toBe(60);
 	});
+
+	it('treats null/empty/whitespace as absent (60), not as 0 floored to 15', () => {
+		expect(coerceIntervalMinutes(null)).toBe(60);
+		expect(coerceIntervalMinutes('')).toBe(60);
+		expect(coerceIntervalMinutes('   ')).toBe(60);
+		// A genuine zero (number or string) is still an explicit too-low value
+		// and floors to 15, not the default.
+		expect(coerceIntervalMinutes(0)).toBe(15);
+		expect(coerceIntervalMinutes('0')).toBe(15);
+	});
 });

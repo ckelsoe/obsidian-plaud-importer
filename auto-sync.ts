@@ -194,7 +194,18 @@ export const AUTO_SYNC_INTERVAL_DEFAULT = 60;
  * absurd or zero interval.
  */
 export function coerceIntervalMinutes(value: unknown): number {
-	const n = typeof value === 'number' ? value : Number(value);
+	// Only a real number or a non-empty numeric string counts. null, undefined,
+	// '' and whitespace must NOT go through Number() (which maps them to 0 and
+	// then to the 15-minute floor); a corrupt/absent setting should land on the
+	// 60-minute default, not silently become the most frequent interval.
+	let n: number;
+	if (typeof value === 'number') {
+		n = value;
+	} else if (typeof value === 'string' && value.trim() !== '') {
+		n = Number(value);
+	} else {
+		n = NaN;
+	}
 	if (!Number.isFinite(n)) {
 		return AUTO_SYNC_INTERVAL_DEFAULT;
 	}
