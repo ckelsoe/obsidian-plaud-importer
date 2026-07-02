@@ -344,6 +344,11 @@ export default class PlaudImporterPlugin extends Plugin {
 	// auto-sync tick starts only when BOTH are clear.
 	private importModalOpen = false;
 	private autoSyncTickInFlight = false;
+	// Set once in onunload. A tick or backfill captures `this.client` in a local
+	// before its awaits, so clearing the client alone does not stop an in-flight
+	// loop; the loops poll this flag and abort so a disable/re-enable cannot leave
+	// the old instance writing while the new instance starts a tick.
+	private disposed = false;
 
 	async onload() {
 		await this.loadSettings();
@@ -435,6 +440,10 @@ export default class PlaudImporterPlugin extends Plugin {
 	}
 
 	onunload() {
+		// Signal any in-flight tick/backfill loop to stop between iterations. Set
+		// before clearing the client so a loop that already captured the client
+		// still sees the abort.
+		this.disposed = true;
 		this.client = undefined;
 		// Clear the auto-sync timers. Both the interval and the deferred first-run
 		// timeout are ours (plain setInterval/setTimeout), so we clear both here.
@@ -589,6 +598,10 @@ export default class PlaudImporterPlugin extends Plugin {
 				options,
 				fetchArtifacts,
 				fetchAudioUrl,
+				// Stop between recordings if the plugin unloads mid-tick, so a
+				// disable/re-enable cannot leave this loop writing while a fresh
+				// instance starts its own tick.
+				observer: { shouldAbort: () => this.disposed },
 			});
 			if (outcome.stop === "auth-failed") {
 				// token_rejected (not not_configured) is correct here: this batch
@@ -793,6 +806,8 @@ export default class PlaudImporterPlugin extends Plugin {
 			let skip = 0;
 			let reachedListEnd = false;
 			for (let page = 0; page < MAX_BACKFILL_PAGES; page++) {
+				// Stop if the plugin unloaded mid-scan (finally clears the gate).
+				if (this.disposed) return;
 				const recs = await client.listRecordings({
 					sortBy: "edit_time",
 					skip,
@@ -815,6 +830,8 @@ export default class PlaudImporterPlugin extends Plugin {
 			const index = buildPlaudIdIndex(this.app, this.settings.outputFolder);
 			let written = 0;
 			for (const [id, record] of index) {
+				// Stop writing frontmatter if the plugin unloaded mid-backfill.
+				if (this.disposed) return;
 				if (record.versionMs !== undefined) continue; // already has a marker
 				const versionMs = versionById.get(id);
 				if (versionMs === undefined) continue; // recording no longer listed

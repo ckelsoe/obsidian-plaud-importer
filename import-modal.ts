@@ -1097,6 +1097,13 @@ export class ImportModal extends Modal {
 	}
 
 	private async beginCustomizationFlow(): Promise<void> {
+		// "Review artifacts first" stays clickable during a default import (its
+		// disabled state ignores the in-flight run), so guard here too: bail
+		// before the artifact preflight so a second import can never start.
+		if (this.activeImportRun !== null) {
+			new Notice('Plaud importer: an import is already running.');
+			return;
+		}
 		if (this.selectedIds.size === 0 || this.preparingCustomization) {
 			return;
 		}
@@ -1601,6 +1608,12 @@ export class ImportModal extends Modal {
 	}
 
 	private async onImportClick(selection: ArtifactSelection): Promise<void> {
+		// Refuse to start a second import while one is already running. Without
+		// this, "Review artifacts first" (which is not disabled during a default
+		// import) could launch a second runImportBatch; trackImportRun would then
+		// overwrite activeImportRun, orphaning the first loop and letting two
+		// writers hit the same notes concurrently.
+		if (this.activeImportRun !== null) return;
 		const selected = this.currentRecordings.filter((r) =>
 			this.selectedIds.has(r.id),
 		);
@@ -1640,7 +1653,10 @@ export class ImportModal extends Modal {
 	 * (only if it is still the current run, so a resume that replaced it wins).
 	 */
 	private trackImportRun(run: Promise<void>): Promise<void> {
-		const tracked = run.finally(() => {
+		// Declare with `let` and assign after, so the finally closure does not
+		// reference `tracked` from inside its own initializer.
+		let tracked: Promise<void>;
+		tracked = run.finally(() => {
 			if (this.activeImportRun === tracked) this.activeImportRun = null;
 		});
 		this.activeImportRun = tracked;
