@@ -521,10 +521,12 @@ function joinFolderPath(base: string, sub: string): string {
  *   "Quarterly review"  -> "2026-04-13 Quarterly review" (dateless: prepend)
  *   "06/13 Sync"        -> "06/13 Sync"                  (other date form: kept)
  *
- * The date is the recording's createdAt, the same value formatDateYmd writes to
- * the `date:` frontmatter, so the filename prefix and that field agree. Runs
- * once in writeNote for both the filename (via sanitizeFilename) and the H1
- * heading (via formatMarkdown) so the two stay in sync.
+ * A dateless title takes the full recording date (createdAt), the same value
+ * formatDateYmd writes to the `date:` frontmatter. The MM-DD branch keeps the
+ * title's own month and day and only borrows the year, so its prefix can differ
+ * from `date:` when the title's MM-DD was edited. Runs once in writeNote for
+ * both the filename (via sanitizeFilename) and the H1 heading (via
+ * formatMarkdown) so the two stay in sync.
  */
 export function expandTitleWithYear(title: string, date: Date): string {
 	const trimmed = title.trim();
