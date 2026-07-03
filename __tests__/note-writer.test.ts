@@ -469,7 +469,7 @@ describe('isValidNoteNameTemplate', () => {
 	});
 
 	it('accepts a comma, period, underscore, space, and parentheses', () => {
-		// Charles verified live that a comma is filesystem-safe on Windows.
+		// A comma is filesystem-safe on all three OSes, so it is accepted.
 		expect(isValidNoteNameTemplate('{{MMM}} {{d}}, {{yyyy}} - {{title}}')).toBe(true);
 		expect(isValidNoteNameTemplate('{{yyyy}}.{{MM}}.{{dd}} ({{title}})')).toBe(true);
 		expect(isValidNoteNameTemplate('{{yyyy}}_{{MM}}_{{dd}}_{{title}}')).toBe(true);

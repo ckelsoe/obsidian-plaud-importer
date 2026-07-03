@@ -619,7 +619,7 @@ export function formatNoteName(template: string, date: Date, title: string): str
 			const expanded = expandNoteNameDateToken(token, date);
 			if (expanded === null) {
 				throw new NoteWriterError(
-					`Unknown note name template token "{{${token}}}" — valid tokens: ${NOTE_NAME_DATE_TOKENS.join(', ')}, title`,
+					`Unknown note name template token "{{${token}}}" — valid tokens: ${NOTE_NAME_DATE_TOKENS.map((t) => `{{${t}}}`).join(', ')}, {{title}}`,
 				);
 			}
 			return expanded;
@@ -688,8 +688,8 @@ function restAfterLeadingDate(title: string): string | null {
 /**
  * Strip any date the title already begins with and return the rest, so a
  * note-name template's own date tokens are the only date in the note name. This
- * is how the recording date REPLACES any date in the Plaud title (Charles's
- * rule). Handles a cleanly-delimited leading date (`04-13 Meeting` -> `Meeting`)
+ * is how the recording date REPLACES any date in the Plaud title (the feature's
+ * core rule). Handles a cleanly-delimited leading date (`04-13 Meeting` -> `Meeting`)
  * and a date glued to text (`04/13-Meeting` -> `Meeting`), dropping any
  * separator left behind. A lead that is not a plausible date (`123-4 Widget`,
  * `1.2.3 notes`) is kept verbatim.
