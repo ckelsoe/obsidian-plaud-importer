@@ -513,16 +513,16 @@ function joinFolderPath(base: string, sub: string): string {
 
 /**
  * Matches a title that leads with a PLAUSIBLE date GLUED to other text — the one
- * date case extractLeadingDate deliberately skips. extractLeadingDate requires a
- * clean whitespace-or-end delimiter after the date so it can safely re-render
- * it; when a date-shape runs straight into more text, like "06/13-Sync", this
- * guard still recognizes it as already dated, so expandTitleWithYear leaves the
- * title alone instead of prepending a second date (re-rendering it would strand
- * the glued text). Month is 1-12 and day 1-31, so an ID-like lead such as
- * "123-4 Widget" is NOT read as a date (it stays dateless and gets a prefix).
- * The token must not run straight into more date digits, so a version like
- * "1.2.3" or a long number like "12-345" is not mistaken for a date.
- * Month-first, matching Plaud's MM-DD default.
+ * date case restAfterLeadingDate deliberately skips. restAfterLeadingDate needs
+ * a clean whitespace-or-end delimiter after the date so it can be cleanly
+ * stripped; when a date-shape runs straight into more text, like "06/13-Sync",
+ * this guard still recognizes it as already dated, so expandTitleWithYear leaves
+ * the title alone instead of prepending the recording date on top of it
+ * (stripping the glued date would strand the text). Month is 1-12 and day 1-31,
+ * so an ID-like lead such as "123-4 Widget" is NOT read as a date (it stays
+ * dateless and gets a prefix). The token must not run straight into more date
+ * digits, so a version like "1.2.3" or a long number like "12-345" is not
+ * mistaken for a date. Month-first, matching Plaud's MM-DD default.
  */
 const OTHER_LEADING_DATE =
 	/^(?:\d{4}[-/.])?(?:0?[1-9]|1[0-2])[-/.](?:0?[1-9]|[12]\d|3[01])(?:[-/.]\d{2,4})?(?![-/.]?\d)/;
@@ -649,21 +649,18 @@ function joinDateAndRest(dateText: string, rest: string | undefined): string {
 const LEADING_DATE = /^(\d{1,4})([-/.])(\d{1,2})(?:\2(\d{2,4}))?(?=\s|$)/;
 
 /**
- * Parse a title's cleanly-delimited leading date into a Date plus the remaining
- * text, or null when the title does not begin with a recognizable, in-range
- * date. Numeric ordering is MONTH-FIRST (matching Plaud, which always emits
- * month-first); a first number above 31 cannot be a month or day, so it is read
- * as a year-first date instead. `fallbackYear` supplies the year for a bare
- * month-day (`04-13`) — the recording's own year. A two-digit year in the title
- * is read as 2000+YY (every Plaud recording is 21st century). Range-validates
- * month (1-12) and day (1-31); an implausible lead like `123-4` or `99-99`
- * returns null so the caller treats the title as dateless and ADDS a date rather
- * than trusting a bad one.
+ * If a title begins with a cleanly-delimited, in-range leading date (any
+ * supported numeric form), return the text that FOLLOWS that date; otherwise
+ * null. Used only to STRIP a date the title already carries so the recording
+ * date can take its place — the leading date's own value is intentionally
+ * ignored (the recording date always wins). "Cleanly delimited" means the date
+ * is followed by whitespace or the end of the title, so a version string like
+ * `1.2.3` or a date glued to text like `04/13-Meeting` is not stripped here.
+ * Month-first ordering (matching Plaud), with a first number above 31 read as a
+ * year-first date; range-validates month (1-12) and day (1-31) so an ID-like
+ * lead such as `123-4` is not mistaken for a date.
  */
-function extractLeadingDate(
-	title: string,
-	fallbackYear: number,
-): { date: Date; rest: string } | null {
+function restAfterLeadingDate(title: string): string | null {
 	const match = LEADING_DATE.exec(title);
 	if (match === null) {
 		return null;
@@ -671,57 +668,45 @@ function extractLeadingDate(
 	const [matched, firstStr, , secondStr, thirdStr] = match;
 	const first = Number(firstStr);
 	const second = Number(secondStr);
-	let year: number;
-	let month: number;
-	let day: number;
-	if (thirdStr === undefined) {
-		// Two components (04-13): month-first day, year from the recording.
-		month = first;
-		day = second;
-		year = fallbackYear;
-	} else if (first > 31) {
-		// Year-first (2025-12-31): a number above 31 is neither month nor day.
-		year = first;
-		month = second;
-		day = Number(thirdStr);
-	} else {
-		// Month-first with a year in the title (12-31-2025 or 04.13.26).
-		month = first;
-		day = second;
-		const third = Number(thirdStr);
-		year = third < 100 ? 2000 + third : third;
-	}
+	// A year-first date (2025-12-31) carries month and day in the 2nd and 3rd
+	// numbers; every other form is month-first. Month and day are needed only to
+	// confirm this is a real date worth stripping, never to build the output.
+	const [month, day] =
+		thirdStr !== undefined && first > 31
+			? [second, Number(thirdStr)]
+			: [first, second];
 	if (!isPlausibleMonthDay(month, day)) {
 		return null;
 	}
-	return { date: new Date(year, month - 1, day), rest: title.slice(matched.length) };
+	return title.slice(matched.length);
 }
 
 /**
- * Normalize a recording title's leading date to `dateFormat` so notes sort
- * chronologically in the file explorer and every note name reads the same way.
- * `dateFormat` is a moment-compatible pattern (see formatNoteNameDate); it
- * defaults to DEFAULT_NOTE_NAME_DATE_FORMAT, which reproduces the historical
- * `YYYY-MM-DD` output.
+ * Put the recording's date at the START of a note title, rendered in
+ * `dateFormat`, REPLACING any date the title already begins with. The recording
+ * date always wins: it is the same value the `date:` frontmatter uses, so the
+ * note name and that field never disagree about which day a recording belongs
+ * to. `dateFormat` is a moment-compatible pattern (see formatNoteNameDate) and
+ * defaults to DEFAULT_NOTE_NAME_DATE_FORMAT, the historical `YYYY-MM-DD` layout.
  *
- * - A title with a recognizable leading date, in ANY supported form, has that
- *   date RE-RENDERED in `dateFormat`: the title keeps its own month and day, a
- *   year in the title wins, otherwise the recording's year fills in. So
- *   `04-13 Meeting`, `06/13 Sync`, `12/31/2025 Recap`, and `2025-12-31 Party`
- *   all collapse to the one chosen layout.
- * - A title with no recognizable date gets the recording date prepended.
- * - A date-shape glued to text (`04/13-Meeting`) is left unchanged: it already
- *   shows a date, so it is not given a second one, and re-rendering it would
- *   strand the leading punctuation.
+ * - A title that begins with a recognizable date, in ANY supported form, has
+ *   that date STRIPPED and the recording date put in its place. So `04-13
+ *   Meeting`, `06/13 Sync`, and `2025-12-31 Party` all become
+ *   `<recording date> ...`, even when the title's own date differed.
+ * - A title with no leading date gets the recording date prepended.
+ * - A date glued to other text (`04/13-Meeting`) is left unchanged: it already
+ *   shows a date, and stripping a glued date would strand the punctuation.
  *
- *   default "YYYY-MM-DD":  "06/13 Sync"      -> "2026-06-13 Sync"
- *   "MM-DD-YYYY":          "2025-12-31 Gala" -> "12-31-2025 Gala"
+ *   default "YYYY-MM-DD", recording 2026-04-14:
+ *     "04-13 Sync" -> "2026-04-14 Sync"   (the title's 04-13 is replaced)
+ *     "Planning"   -> "2026-04-14 Planning"
  *
- * The date uses the recording's (or the title's) LOCAL calendar day, the same
- * basis as the `date:` frontmatter. Runs once in writeNote for both the filename
- * (via sanitizeFilename) and the H1 heading (via formatMarkdown) so the two stay
- * in sync. The pattern must be filename-safe; the settings layer validates that
- * with isFilesystemSafeNoteNameDateFormat.
+ * The date uses the recording's LOCAL calendar day, the same basis as the
+ * `date:` frontmatter. Runs once in writeNote for both the filename (via
+ * sanitizeFilename) and the H1 heading (via formatMarkdown) so the two stay in
+ * sync. The pattern must be filename-safe; the settings layer validates that
+ * with isFilesystemSafeNoteNameDateFormat. (The name is historical — it no
+ * longer merely adds a year; a rename is a deliberate follow-up.)
  */
 export function expandTitleWithYear(
 	title: string,
@@ -729,25 +714,20 @@ export function expandTitleWithYear(
 	dateFormat: string = DEFAULT_NOTE_NAME_DATE_FORMAT,
 ): string {
 	const trimmed = title.trim();
-	// A recognizable, cleanly-delimited leading date in any supported form:
-	// re-render it in the chosen pattern (the whole point of the feature — one
-	// consistent layout, regardless of how the title happened to write the date).
-	const extracted = extractLeadingDate(trimmed, date.getFullYear());
-	if (extracted !== null) {
-		return joinDateAndRest(
-			formatNoteNameDate(dateFormat, extracted.date),
-			extracted.rest,
-		);
+	const rendered = formatNoteNameDate(dateFormat, date);
+	// A recognizable, cleanly-delimited leading date: drop it and put the
+	// recording date in its place, keeping whatever text followed.
+	const rest = restAfterLeadingDate(trimmed);
+	if (rest !== null) {
+		return joinDateAndRest(rendered, rest);
 	}
-	// A date-shape that runs straight into text (e.g. "04/13-Meeting"): it already
-	// shows a date, so leave it rather than prepend a second one. extractLeadingDate
-	// skips it (no clean delimiter) and re-rendering would strand the glued text.
+	// A date-shape glued to text (e.g. "04/13-Meeting"): leave it alone. It
+	// already shows a date, and stripping a glued date would strand the text.
 	if (OTHER_LEADING_DATE.test(trimmed)) {
 		return trimmed;
 	}
-	// Truly dateless: prepend the recording date in the chosen pattern. An empty
-	// title collapses to just the date.
-	return joinDateAndRest(formatNoteNameDate(dateFormat, date), trimmed || undefined);
+	// Dateless: prepend the recording date. An empty title collapses to the date.
+	return joinDateAndRest(rendered, trimmed || undefined);
 }
 
 /**

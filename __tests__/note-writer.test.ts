@@ -280,62 +280,9 @@ describe('formatDurationHoursMinutes', () => {
 describe('expandTitleWithYear', () => {
 	const apr14 = new Date(2026, 3, 14); // 2026-04-14 local
 
-	it('prepends the year to a MM-DD-prefixed title', () => {
-		expect(expandTitleWithYear('04-13 Meeting notes', apr14)).toBe(
-			'2026-04-13 Meeting notes',
-		);
-	});
-
-	it('prepends the year to a bare MM-DD title with no body', () => {
-		expect(expandTitleWithYear('04-13', apr14)).toBe('2026-04-13');
-	});
-
-	it('leaves titles that already have a YYYY-MM-DD prefix unchanged', () => {
-		expect(expandTitleWithYear('2025-12-31 New Year Eve', apr14)).toBe(
-			'2025-12-31 New Year Eve',
-		);
-	});
-
-	it('prepends the full recording date to a dateless title', () => {
+	it('prepends the recording date to a dateless title', () => {
 		expect(expandTitleWithYear('Quarterly review', apr14)).toBe(
 			'2026-04-14 Quarterly review',
-		);
-	});
-
-	it('prefixes a title whose leading digits are not a date (phone number)', () => {
-		// "1-800 customer service" has no leading date token (1-800 is not a
-		// month-day), so it counts as dateless and gets the full date prefix.
-		expect(expandTitleWithYear('1-800 customer service', apr14)).toBe(
-			'2026-04-14 1-800 customer service',
-		);
-	});
-
-	it('normalizes a single-digit-month date form to the default layout', () => {
-		// "4-13" is a single-digit month-day. It is reformatted (zero-padded,
-		// year from the recording) rather than left as-is, so every note name
-		// reads the same way.
-		expect(expandTitleWithYear('4-13 Meeting', apr14)).toBe('2026-04-13 Meeting');
-	});
-
-	it('does not double-prefix when the title already starts with the same year', () => {
-		expect(expandTitleWithYear('2026-04-13 Done', apr14)).toBe(
-			'2026-04-13 Done',
-		);
-	});
-
-	it('uses the year from the recording date, not the title', () => {
-		// If the user dates a note 12-31 but its createdAt is 2025, the
-		// year from createdAt wins. This is Plaud's own year, not a
-		// user-interpreted one.
-		const dec31_2025 = new Date(2025, 11, 31);
-		expect(expandTitleWithYear('12-31 Year-end review', dec31_2025)).toBe(
-			'2025-12-31 Year-end review',
-		);
-	});
-
-	it('trims leading whitespace before detecting the MM-DD prefix', () => {
-		expect(expandTitleWithYear('  04-13 Padded  ', apr14)).toBe(
-			'2026-04-13 Padded',
 		);
 	});
 
@@ -343,65 +290,122 @@ describe('expandTitleWithYear', () => {
 		expect(expandTitleWithYear('   ', apr14)).toBe('2026-04-14');
 	});
 
-	it('normalizes a slash-form date prefix to the default layout', () => {
-		expect(expandTitleWithYear('04/13 Meeting', apr14)).toBe('2026-04-13 Meeting');
-	});
+	// The recording date REPLACES whatever date the title starts with, in every
+	// recognized form. The title's own date is discarded; the value always comes
+	// from the recording (createdAt = 2026-04-14 here).
 
-	it('normalizes a single-digit slash-form date prefix', () => {
-		expect(expandTitleWithYear('4/13 Standup', apr14)).toBe('2026-04-13 Standup');
-	});
-
-	it('normalizes a dot-form date prefix', () => {
-		expect(expandTitleWithYear('04.13 Standup', apr14)).toBe('2026-04-13 Standup');
-	});
-
-	it('normalizes a year-first slash date, keeping the title year', () => {
-		expect(expandTitleWithYear('2025/12/31 Party', apr14)).toBe(
-			'2025-12-31 Party',
+	it('replaces a Plaud MM-DD prefix with the recording date', () => {
+		expect(expandTitleWithYear('04-13 Meeting notes', apr14)).toBe(
+			'2026-04-14 Meeting notes',
 		);
 	});
 
-	it('normalizes a US-style full slash date, keeping the title year', () => {
+	it('replaces a bare MM-DD title with no body', () => {
+		expect(expandTitleWithYear('04-13', apr14)).toBe('2026-04-14');
+	});
+
+	it('replaces a single-digit-month date form', () => {
+		expect(expandTitleWithYear('4-13 Meeting', apr14)).toBe('2026-04-14 Meeting');
+	});
+
+	it('replaces a slash-form date prefix', () => {
+		expect(expandTitleWithYear('04/13 Meeting', apr14)).toBe('2026-04-14 Meeting');
+	});
+
+	it('replaces a single-digit slash-form date prefix', () => {
+		expect(expandTitleWithYear('4/13 Standup', apr14)).toBe('2026-04-14 Standup');
+	});
+
+	it('replaces a dot-form date prefix', () => {
+		expect(expandTitleWithYear('04.13 Standup', apr14)).toBe('2026-04-14 Standup');
+	});
+
+	it('replaces a year-first date, discarding the title year', () => {
+		expect(expandTitleWithYear('2025-12-31 Party', apr14)).toBe(
+			'2026-04-14 Party',
+		);
+	});
+
+	it('replaces a year-first slash date', () => {
+		expect(expandTitleWithYear('2025/12/31 Gala', apr14)).toBe(
+			'2026-04-14 Gala',
+		);
+	});
+
+	it('replaces a US-style full slash date, discarding the title date', () => {
 		expect(expandTitleWithYear('12/31/2025 Recap', apr14)).toBe(
-			'2025-12-31 Recap',
+			'2026-04-14 Recap',
+		);
+	});
+
+	it('replaces a full YYYY-MM-DD title date with the recording date', () => {
+		// The title says 04-13, but the recording is 04-14, so the note name uses
+		// 04-14. The note-name date always matches the recording, not the title.
+		expect(expandTitleWithYear('2026-04-13 Done', apr14)).toBe(
+			'2026-04-14 Done',
+		);
+	});
+
+	it('replaces a title date that carries a 2-digit year', () => {
+		expect(expandTitleWithYear('04-13-26 Sprint', apr14)).toBe(
+			'2026-04-14 Sprint',
+		);
+	});
+
+	it('takes the day from the recording, not the title (day can shift)', () => {
+		// The title's own date is only stripped; the value is always the
+		// recording date. Here the recording is 12-31-2025, so that is what lands.
+		const dec31_2025 = new Date(2025, 11, 31);
+		expect(expandTitleWithYear('01-02 Year-end review', dec31_2025)).toBe(
+			'2025-12-31 Year-end review',
+		);
+	});
+
+	it('trims leading whitespace before detecting the date prefix', () => {
+		expect(expandTitleWithYear('  04-13 Padded  ', apr14)).toBe(
+			'2026-04-14 Padded',
+		);
+	});
+
+	// Leads that are NOT a plausible date are kept verbatim and get the recording
+	// date prepended, so a title that never showed a date still sorts by day.
+
+	it('prefixes a phone-number-like lead that is not a date', () => {
+		expect(expandTitleWithYear('1-800 customer service', apr14)).toBe(
+			'2026-04-14 1-800 customer service',
 		);
 	});
 
 	it('prefixes a title that leads with digits but no date separator', () => {
-		// "1234" has no month-day separator, so it is dateless and prefixed.
 		expect(expandTitleWithYear('1234 sales report', apr14)).toBe(
 			'2026-04-14 1234 sales report',
 		);
 	});
 
 	it('prefixes an ID-like numeric prefix that is not a real date', () => {
-		// "123-4" has month 123, not a valid date, so the title is dateless
-		// and gets the full date prefix rather than being read as a date.
+		// "123-4" has month 123, out of range, so it is not a date.
 		expect(expandTitleWithYear('123-4 Widget spec', apr14)).toBe(
 			'2026-04-14 123-4 Widget spec',
 		);
 	});
 
 	it('prefixes a slash-form prefix whose month/day is out of range', () => {
-		// "45/67" is not a plausible month-day, so it is treated as dateless
-		// and prefixed rather than mistaken for a slash-form date.
 		expect(expandTitleWithYear('45/67 notes', apr14)).toBe(
 			'2026-04-14 45/67 notes',
 		);
 	});
 
-	it('leaves a date glued to punctuation unchanged', () => {
-		// The guard allows a date that runs into text, so "04/13-Meeting" is
-		// recognized as already dated and not prefixed.
-		expect(expandTitleWithYear('04/13-Meeting', apr14)).toBe('04/13-Meeting');
-	});
-
 	it('prefixes a version-like prefix rather than reading it as a date', () => {
-		// "1.2.3" is a version: the guard rejects it because the token runs
-		// straight into more digits, so the title is dateless and prefixed.
+		// "1.2.3" runs straight into more digits, so it is not a clean date.
 		expect(expandTitleWithYear('1.2.3 release notes', apr14)).toBe(
 			'2026-04-14 1.2.3 release notes',
 		);
+	});
+
+	it('leaves a date glued to punctuation unchanged', () => {
+		// A date that runs into text ("04/13-Meeting") already shows a date and
+		// cannot be cleanly stripped, so it is left alone rather than double-dated.
+		expect(expandTitleWithYear('04/13-Meeting', apr14)).toBe('04/13-Meeting');
 	});
 
 	// --- configurable date format (PR 2) ---
@@ -412,17 +416,16 @@ describe('expandTitleWithYear', () => {
 		);
 	});
 
-	it('reformats a MM-DD title in a custom format, keeping the day', () => {
-		// The title's own month/day (04-13) is kept; only the layout changes and
-		// the recording year (2026) is added.
+	it('replaces a MM-DD title date under a custom format', () => {
+		// The title's 04-13 is dropped; the recording date (04-14) is rendered.
 		expect(expandTitleWithYear('04-13 Meeting', apr14, 'MM-DD-YYYY')).toBe(
-			'04-13-2026 Meeting',
+			'04-14-2026 Meeting',
 		);
 	});
 
 	it('applies a EUR-style day-first format', () => {
 		expect(expandTitleWithYear('04-13 Meeting', apr14, 'DD-MM-YYYY')).toBe(
-			'13-04-2026 Meeting',
+			'14-04-2026 Meeting',
 		);
 	});
 
@@ -433,34 +436,13 @@ describe('expandTitleWithYear', () => {
 	});
 
 	it('renders a bare MM-DD title with no description in a custom format', () => {
-		expect(expandTitleWithYear('04-13', apr14, 'MM.DD.YY')).toBe('04.13.26');
+		expect(expandTitleWithYear('04-13', apr14, 'MM.DD.YY')).toBe('04.14.26');
 	});
 
-	it('reformats an already-full-date title under a custom format', () => {
-		// The whole point of the feature: an explicit YYYY-MM-DD title is parsed
-		// (its own year, month, and day) and re-rendered in the chosen layout.
+	it('replaces a full-date title under a custom format', () => {
 		expect(
 			expandTitleWithYear('2025-12-31 New Year Eve', apr14, 'MM-DD-YYYY'),
-		).toBe('12-31-2025 New Year Eve');
-	});
-
-	it('reformats a year-first slash title under a custom format', () => {
-		expect(
-			expandTitleWithYear('2025/12/31 Party', apr14, 'MM-DD-YYYY'),
-		).toBe('12-31-2025 Party');
-	});
-
-	it('reformats a US-style dated title under a day-first format', () => {
-		expect(
-			expandTitleWithYear('12/31/2025 Recap', apr14, 'DD-MM-YYYY'),
-		).toBe('31-12-2025 Recap');
-	});
-
-	it('reads a 2-digit year in the title as 21st century', () => {
-		// "04-13-26" carries its own year; 26 is read as 2026, not 1926.
-		expect(expandTitleWithYear('04-13-26 Sprint', apr14)).toBe(
-			'2026-04-13 Sprint',
-		);
+		).toBe('04-14-2026 New Year Eve');
 	});
 });
 
@@ -923,14 +905,14 @@ describe('formatMarkdown', () => {
 		);
 	});
 
-	it('expands MM-DD titles with the year from createdAt in the H1', () => {
+	it('replaces a title date with the recording date in the H1', () => {
 		const md = formatMarkdown(
 			makeRecording({ title: '04-13 Client kickoff' }),
 			makeTranscript(),
 			makeSummary(),
 		);
-		// makeRecording() uses createdAt of 2026-04-14 → year 2026
-		expect(md).toContain('# 2026-04-13 Client kickoff');
+		// createdAt is 2026-04-14, which replaces the title's 04-13.
+		expect(md).toContain('# 2026-04-14 Client kickoff');
 		expect(md).not.toMatch(/^# 04-13/m);
 	});
 
@@ -1129,7 +1111,7 @@ describe('NoteWriter', () => {
 		expect(vault.files.has('Plaud/2026-04-14 Meeting - notes - draft.md')).toBe(true);
 	});
 
-	it('expands MM-DD titles with the year for the filename so files sort chronologically', async () => {
+	it('puts the recording date in the filename so files sort chronologically', async () => {
 		const vault = makeFakeVault();
 		const writer = new NoteWriter(vault, { outputFolder: 'Plaud', onDuplicate: 'skip' });
 
@@ -1139,11 +1121,11 @@ describe('NoteWriter', () => {
 			makeSummary(),
 		);
 
-		// makeRecording's createdAt is 2026-04-14 → year 2026
-		expect(outcome.path).toBe('Plaud/2026-04-13 Client kickoff.md');
+		// createdAt is 2026-04-14, which replaces the title's 04-13.
+		expect(outcome.path).toBe('Plaud/2026-04-14 Client kickoff.md');
 	});
 
-	it('keeps the filename and H1 in sync when both expand', async () => {
+	it('keeps the filename and H1 in sync when the date is applied', async () => {
 		const vault = makeFakeVault();
 		const writer = new NoteWriter(vault, { outputFolder: 'Plaud', onDuplicate: 'skip' });
 
@@ -1153,8 +1135,8 @@ describe('NoteWriter', () => {
 			makeSummary(),
 		);
 
-		const body = vault.files.get('Plaud/2026-04-13 Securing a data sandbox.md') ?? '';
-		expect(body).toContain('# 2026-04-13 Securing a data sandbox');
+		const body = vault.files.get('Plaud/2026-04-14 Securing a data sandbox.md') ?? '';
+		expect(body).toContain('# 2026-04-14 Securing a data sandbox');
 	});
 
 	it('renames the note (filename and H1) with a custom note-name date format', async () => {
@@ -1171,11 +1153,11 @@ describe('NoteWriter', () => {
 			makeSummary(),
 		);
 
-		// createdAt is 2026-04-14, so the year is 2026. Filename and H1 both use
-		// the custom layout and stay identical.
-		expect(outcome.path).toBe('Plaud/04-13-2026 Client kickoff.md');
-		const body = vault.files.get('Plaud/04-13-2026 Client kickoff.md') ?? '';
-		expect(body).toContain('# 04-13-2026 Client kickoff');
+		// The title's 04-13 is replaced by the recording date (04-14) in the
+		// custom layout. Filename and H1 stay identical.
+		expect(outcome.path).toBe('Plaud/04-14-2026 Client kickoff.md');
+		const body = vault.files.get('Plaud/04-14-2026 Client kickoff.md') ?? '';
+		expect(body).toContain('# 04-14-2026 Client kickoff');
 	});
 
 	it('applies a named-month note-name date format to a dateless title', async () => {

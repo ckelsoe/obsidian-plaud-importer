@@ -176,7 +176,7 @@ const SUBFOLDER_TEMPLATE_FOOTNOTE =
 // strings above: the sentence-case lint inspects literal arguments, so the
 // token examples and proper nouns stay untouched.
 const NOTE_NAME_DATE_FORMAT_INTRO =
-	"Sets how the date in each note's name is written. On import the recording title's date is cleaned up: a title with no date gets one added from the recording date, and a title that already starts with a date, in any common form, has it rewritten to this layout. The date property inside the note stays YYYY-MM-DD for Dataview. Uses moment-style tokens; the default reproduces the previous YYYY-MM-DD naming. The result has to be usable as a filename, so a format containing a slash, colon, or other reserved character is rejected.";
+	"Puts the recording's date at the start of each note's name, replacing any date already in the Plaud title, and this sets how that date is written. The date always comes from the recording (the same value as the note's date property), so a title with no date, or with a different or edited date, ends up with the recording's date in this format. Uses moment-style tokens; the default reproduces the previous YYYY-MM-DD naming. The result has to be usable as a filename, so a format containing a slash, colon, or other reserved character is rejected.";
 
 // [token, what it expands to] pairs for a July 3 2026 recording. Mirrors the
 // subset of moment tokens formatNoteNameDate understands.
