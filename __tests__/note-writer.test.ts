@@ -17,6 +17,7 @@ import {
 	formatTimestamp,
 	formatTranscriptSection,
 	groupTranscriptByChapters,
+	isFilesystemSafeNoteNameDateFormat,
 	mergeTagSources,
 	buildNoteTags,
 	type TagBuildOptions,
@@ -309,11 +310,11 @@ describe('expandTitleWithYear', () => {
 		);
 	});
 
-	it('leaves a single-digit-month date form unchanged (does not double-date)', () => {
-		// "4-13" is a single-digit-month date, an "other date form" the year
-		// expansion deliberately skips. It is left as-is rather than prefixed,
-		// so a title that already shows a date is never given a second one.
-		expect(expandTitleWithYear('4-13 Meeting', apr14)).toBe('4-13 Meeting');
+	it('normalizes a single-digit-month date form to the default layout', () => {
+		// "4-13" is a single-digit month-day. It is reformatted (zero-padded,
+		// year from the recording) rather than left as-is, so every note name
+		// reads the same way.
+		expect(expandTitleWithYear('4-13 Meeting', apr14)).toBe('2026-04-13 Meeting');
 	});
 
 	it('does not double-prefix when the title already starts with the same year', () => {
@@ -342,27 +343,27 @@ describe('expandTitleWithYear', () => {
 		expect(expandTitleWithYear('   ', apr14)).toBe('2026-04-14');
 	});
 
-	it('does not double-date a slash-form date prefix', () => {
-		expect(expandTitleWithYear('04/13 Meeting', apr14)).toBe('04/13 Meeting');
+	it('normalizes a slash-form date prefix to the default layout', () => {
+		expect(expandTitleWithYear('04/13 Meeting', apr14)).toBe('2026-04-13 Meeting');
 	});
 
-	it('does not double-date a single-digit slash-form date prefix', () => {
-		expect(expandTitleWithYear('4/13 Standup', apr14)).toBe('4/13 Standup');
+	it('normalizes a single-digit slash-form date prefix', () => {
+		expect(expandTitleWithYear('4/13 Standup', apr14)).toBe('2026-04-13 Standup');
 	});
 
-	it('does not double-date a dot-form date prefix', () => {
-		expect(expandTitleWithYear('04.13 Standup', apr14)).toBe('04.13 Standup');
+	it('normalizes a dot-form date prefix', () => {
+		expect(expandTitleWithYear('04.13 Standup', apr14)).toBe('2026-04-13 Standup');
 	});
 
-	it('does not double-date a year-first slash date', () => {
+	it('normalizes a year-first slash date, keeping the title year', () => {
 		expect(expandTitleWithYear('2025/12/31 Party', apr14)).toBe(
-			'2025/12/31 Party',
+			'2025-12-31 Party',
 		);
 	});
 
-	it('does not double-date a US-style full slash date', () => {
+	it('normalizes a US-style full slash date, keeping the title year', () => {
 		expect(expandTitleWithYear('12/31/2025 Recap', apr14)).toBe(
-			'12/31/2025 Recap',
+			'2025-12-31 Recap',
 		);
 	});
 
@@ -435,11 +436,31 @@ describe('expandTitleWithYear', () => {
 		expect(expandTitleWithYear('04-13', apr14, 'MM.DD.YY')).toBe('04.13.26');
 	});
 
-	it('leaves an already-full-date title unchanged even under a custom format', () => {
-		// Reformatting an explicit YYYY-MM-DD title is deferred.
+	it('reformats an already-full-date title under a custom format', () => {
+		// The whole point of the feature: an explicit YYYY-MM-DD title is parsed
+		// (its own year, month, and day) and re-rendered in the chosen layout.
 		expect(
 			expandTitleWithYear('2025-12-31 New Year Eve', apr14, 'MM-DD-YYYY'),
-		).toBe('2025-12-31 New Year Eve');
+		).toBe('12-31-2025 New Year Eve');
+	});
+
+	it('reformats a year-first slash title under a custom format', () => {
+		expect(
+			expandTitleWithYear('2025/12/31 Party', apr14, 'MM-DD-YYYY'),
+		).toBe('12-31-2025 Party');
+	});
+
+	it('reformats a US-style dated title under a day-first format', () => {
+		expect(
+			expandTitleWithYear('12/31/2025 Recap', apr14, 'DD-MM-YYYY'),
+		).toBe('31-12-2025 Recap');
+	});
+
+	it('reads a 2-digit year in the title as 21st century', () => {
+		// "04-13-26" carries its own year; 26 is read as 2026, not 1926.
+		expect(expandTitleWithYear('04-13-26 Sprint', apr14)).toBe(
+			'2026-04-13 Sprint',
+		);
 	});
 });
 
@@ -472,6 +493,44 @@ describe('formatNoteNameDate', () => {
 
 	it('leaves literal non-token characters untouched', () => {
 		expect(formatNoteNameDate('YYYY_MM_DD', d)).toBe('2026_07_03');
+	});
+});
+
+// isFilesystemSafeNoteNameDateFormat ----------------------------------------
+
+describe('isFilesystemSafeNoteNameDateFormat', () => {
+	it('accepts the ISO, US, and EU dash presets', () => {
+		expect(isFilesystemSafeNoteNameDateFormat('YYYY-MM-DD')).toBe(true);
+		expect(isFilesystemSafeNoteNameDateFormat('MM-DD-YYYY')).toBe(true);
+		expect(isFilesystemSafeNoteNameDateFormat('DD-MM-YYYY')).toBe(true);
+	});
+
+	it('accepts a comma, period, underscore, space, and parentheses', () => {
+		// Charles verified live that a comma is filesystem-safe on Windows
+		// ("Jul 3, 2026 Meeting.md" created); the rest are safe on all three OSes.
+		expect(isFilesystemSafeNoteNameDateFormat('MMM D, YYYY')).toBe(true);
+		expect(isFilesystemSafeNoteNameDateFormat('YYYY.MM.DD')).toBe(true);
+		expect(isFilesystemSafeNoteNameDateFormat('YYYY_MM_DD')).toBe(true);
+		expect(isFilesystemSafeNoteNameDateFormat('D MMMM YYYY')).toBe(true);
+		expect(isFilesystemSafeNoteNameDateFormat('YYYY (MMM)')).toBe(true);
+	});
+
+	it('rejects a format whose rendered date contains a path separator', () => {
+		expect(isFilesystemSafeNoteNameDateFormat('YYYY/MM/DD')).toBe(false);
+		expect(isFilesystemSafeNoteNameDateFormat('YYYY\\MM\\DD')).toBe(false);
+	});
+
+	it('rejects the other Windows-forbidden filename characters', () => {
+		expect(isFilesystemSafeNoteNameDateFormat('YYYY:MM:DD')).toBe(false);
+		expect(isFilesystemSafeNoteNameDateFormat('MM*DD')).toBe(false);
+		expect(isFilesystemSafeNoteNameDateFormat('MM?DD')).toBe(false);
+		expect(isFilesystemSafeNoteNameDateFormat('MM|DD')).toBe(false);
+		expect(isFilesystemSafeNoteNameDateFormat('<YYYY>')).toBe(false);
+		expect(isFilesystemSafeNoteNameDateFormat('"YYYY"')).toBe(false);
+	});
+
+	it('rejects a trailing dot, which Windows silently drops from a filename', () => {
+		expect(isFilesystemSafeNoteNameDateFormat('YYYY-MM-DD.')).toBe(false);
 	});
 });
 
@@ -1096,6 +1155,47 @@ describe('NoteWriter', () => {
 
 		const body = vault.files.get('Plaud/2026-04-13 Securing a data sandbox.md') ?? '';
 		expect(body).toContain('# 2026-04-13 Securing a data sandbox');
+	});
+
+	it('renames the note (filename and H1) with a custom note-name date format', async () => {
+		const vault = makeFakeVault();
+		const writer = new NoteWriter(vault, {
+			outputFolder: 'Plaud',
+			onDuplicate: 'skip',
+			noteNameDateFormat: 'MM-DD-YYYY',
+		});
+
+		const outcome = await writer.writeNote(
+			makeRecording({ title: '04-13 Client kickoff' }),
+			makeTranscript(),
+			makeSummary(),
+		);
+
+		// createdAt is 2026-04-14, so the year is 2026. Filename and H1 both use
+		// the custom layout and stay identical.
+		expect(outcome.path).toBe('Plaud/04-13-2026 Client kickoff.md');
+		const body = vault.files.get('Plaud/04-13-2026 Client kickoff.md') ?? '';
+		expect(body).toContain('# 04-13-2026 Client kickoff');
+	});
+
+	it('applies a named-month note-name date format to a dateless title', async () => {
+		const vault = makeFakeVault();
+		const writer = new NoteWriter(vault, {
+			outputFolder: 'Plaud',
+			onDuplicate: 'skip',
+			noteNameDateFormat: 'MMM D, YYYY',
+		});
+
+		const outcome = await writer.writeNote(
+			makeRecording({ title: 'Quarterly review' }),
+			makeTranscript(),
+			makeSummary(),
+		);
+
+		// A comma is filesystem-safe, so it survives verbatim in the filename.
+		expect(outcome.path).toBe('Plaud/Apr 14, 2026 Quarterly review.md');
+		const body = vault.files.get('Plaud/Apr 14, 2026 Quarterly review.md') ?? '';
+		expect(body).toContain('# Apr 14, 2026 Quarterly review');
 	});
 
 	it('writes at vault root when outputFolder is empty', async () => {

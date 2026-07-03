@@ -6,6 +6,7 @@ import {
 	PluginSettingTab,
 	SecretComponent,
 	Setting,
+	type TextComponent,
 	TFile,
 	type SettingDefinitionItem,
 	type ObsidianProtocolData,
@@ -25,7 +26,12 @@ import {
 	isAccessToken,
 	openPlaudLogin,
 } from "./plaud-login";
-import { NoteWriter, type TagMode } from "./note-writer";
+import {
+	NoteWriter,
+	DEFAULT_NOTE_NAME_DATE_FORMAT,
+	isFilesystemSafeNoteNameDateFormat,
+	type TagMode,
+} from "./note-writer";
 import { AttachmentImporter } from "./attachment-importer";
 import {
 	buildPlaudIdIndex,
@@ -164,6 +170,41 @@ const SUBFOLDER_TEMPLATE_EXAMPLES_HEADING = "Examples:";
 const SUBFOLDER_TEMPLATE_FOOTNOTE =
 	"Applies to new imports; notes you already imported stay where they are.";
 
+// Note-name date format documentation, shared by the declarative settings
+// (1.13+) and the imperative display() fallback (1.12). Held in consts (not
+// inline literals at createEl/setDesc) for the same reason as the subfolder
+// strings above: the sentence-case lint inspects literal arguments, so the
+// token examples and proper nouns stay untouched.
+const NOTE_NAME_DATE_FORMAT_INTRO =
+	"Sets how the date in each note's name is written. On import the recording title's date is cleaned up: a title with no date gets one added from the recording date, and a title that already starts with a date, in any common form, has it rewritten to this layout. The date property inside the note stays YYYY-MM-DD for Dataview. Uses moment-style tokens; the default reproduces the previous YYYY-MM-DD naming. The result has to be usable as a filename, so a format containing a slash, colon, or other reserved character is rejected.";
+
+// [token, what it expands to] pairs for a July 3 2026 recording. Mirrors the
+// subset of moment tokens formatNoteNameDate understands.
+const NOTE_NAME_DATE_FORMAT_TOKENS: ReadonlyArray<readonly [string, string]> = [
+	["YYYY", "4-digit year, for example 2026"],
+	["YY", "2-digit year, for example 26"],
+	["MMMM", "full month name, for example July"],
+	["MMM", "short month name, for example Jul"],
+	["MM", "month, 01 to 12"],
+	["M", "month, 1 to 12"],
+	["DD", "day, 01 to 31"],
+	["D", "day, 1 to 31"],
+];
+
+const NOTE_NAME_DATE_FORMAT_TOKENS_HEADING =
+	"Tokens (mix with your own text and separators):";
+const NOTE_NAME_DATE_FORMAT_FOOTNOTE =
+	"Applies to new imports; notes you already imported keep their current names.";
+
+// [label, pattern] preset buttons. All dashes, so every preset is filename-safe.
+// ISO is the default; US and EU cover the common month-first and day-first
+// orders so a user does not have to remember the token names to switch.
+const NOTE_NAME_DATE_FORMAT_PRESETS: ReadonlyArray<readonly [string, string]> = [
+	["ISO", "YYYY-MM-DD"],
+	["US", "MM-DD-YYYY"],
+	["EU", "DD-MM-YYYY"],
+];
+
 /**
  * Coerce a stored ribbon icon ID to a known-good value. Protects against
  * a hand-edited `data.json` or a setting left over from a future build
@@ -189,6 +230,10 @@ interface PlaudImporterSettings {
 	apiBaseUrl: string;
 	outputFolder: string;
 	subfolderTemplate: string;
+	// Moment-style pattern for the date in each note's name (YYYY-MM-DD by
+	// default). The importer normalizes the recording title's leading date to
+	// this layout. Validated filename-safe before it is saved.
+	noteNameDateFormat: string;
 	onDuplicate: "skip" | "overwrite" | "prompt";
 	showRibbonIcon: boolean;
 	ribbonIcon: string;
@@ -234,6 +279,7 @@ const DEFAULT_SETTINGS: PlaudImporterSettings = {
 	apiBaseUrl: "https://api.plaud.ai",
 	outputFolder: "Plaud",
 	subfolderTemplate: "",
+	noteNameDateFormat: DEFAULT_NOTE_NAME_DATE_FORMAT,
 	onDuplicate: "prompt",
 	showRibbonIcon: true,
 	ribbonIcon: DEFAULT_RIBBON_ICON,
@@ -509,6 +555,7 @@ export default class PlaudImporterPlugin extends Plugin {
 		return {
 			outputFolder: this.settings.outputFolder,
 			subfolderTemplate: this.settings.subfolderTemplate,
+			noteNameDateFormat: this.settings.noteNameDateFormat,
 			onDuplicate: this.settings.onDuplicate,
 			includeTranscript: this.settings.includeTranscript,
 			includeSummary: this.settings.defaultIncludeSummary,
@@ -1296,6 +1343,13 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 		this.renderSubfolderTemplateControl(
 			this.makeSetting(containerEl, "Subfolder template", SUBFOLDER_TEMPLATE_INTRO),
 		);
+		this.renderNoteNameDateFormatControl(
+			this.makeSetting(
+				containerEl,
+				"Note name date format",
+				NOTE_NAME_DATE_FORMAT_INTRO,
+			),
+		);
 		this.addDropdownRow(
 			containerEl,
 			"Duplicate handling",
@@ -1701,6 +1755,44 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 		);
 	}
 
+	// Renders the note-name date format row: the token reference (a list, so it
+	// reads clearly) into the description, then a text control bound to
+	// noteNameDateFormat, then ISO/US/EU preset buttons that fill the field and
+	// persist in one click. Shared by the declarative path and the imperative
+	// display() fallback so both Obsidian versions show identical documentation.
+	private renderNoteNameDateFormatControl(setting: Setting): void {
+		const docEl = setting.descEl.createDiv();
+		docEl.createDiv({ text: NOTE_NAME_DATE_FORMAT_TOKENS_HEADING });
+		const tokenList = docEl.createEl("ul");
+		for (const [token, meaning] of NOTE_NAME_DATE_FORMAT_TOKENS) {
+			const item = tokenList.createEl("li");
+			item.createEl("code", { text: token });
+			item.createSpan({ text: ` ${meaning}` });
+		}
+		docEl.createDiv({ text: NOTE_NAME_DATE_FORMAT_FOOTNOTE });
+
+		// Captured so a preset button can update the visible field, not just the
+		// saved value.
+		let field: TextComponent | null = null;
+		setting.addText((text) => {
+			field = text;
+			text
+				.setPlaceholder(DEFAULT_NOTE_NAME_DATE_FORMAT)
+				.setValue(this.readSettingString("noteNameDateFormat"))
+				.onChange(async (value) => {
+					await this.applyControlChange("noteNameDateFormat", value);
+				});
+		});
+		for (const [label, pattern] of NOTE_NAME_DATE_FORMAT_PRESETS) {
+			setting.addButton((button) =>
+				button.setButtonText(label).onClick(async () => {
+					field?.setValue(pattern);
+					await this.applyControlChange("noteNameDateFormat", pattern);
+				}),
+			);
+		}
+	}
+
 	// Builds a Setting with name/desc set. Desc passes as an argument rather
 	// than a setDesc() string literal so the sentence-case lint (which would
 	// otherwise mangle proper nouns like "Plaud" and "EU") sees the same
@@ -1874,6 +1966,16 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 						searchable: false,
 						render: (setting: Setting) =>
 							this.renderSubfolderTemplateControl(setting),
+					},
+					{
+						name: "Note name date format",
+						desc: NOTE_NAME_DATE_FORMAT_INTRO,
+						// Rendered imperatively for the token reference list plus
+						// the preset buttons. Not search-indexable, like the
+						// subfolder row above.
+						searchable: false,
+						render: (setting: Setting) =>
+							this.renderNoteNameDateFormatControl(setting),
 					},
 					{
 						name: "Duplicate handling",
@@ -2090,6 +2192,23 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 		if (key === "outputFolder") {
 			this.plugin.settings.outputFolder =
 				(typeof value === "string" ? value.trim() : "") || "Plaud";
+		} else if (key === "noteNameDateFormat") {
+			const next = typeof value === "string" ? value.trim() : "";
+			if (next.length === 0) {
+				// Never persist an empty pattern: the date part of every note name
+				// would render blank. Snap back to the default layout.
+				this.plugin.settings.noteNameDateFormat = DEFAULT_NOTE_NAME_DATE_FORMAT;
+			} else if (!isFilesystemSafeNoteNameDateFormat(next)) {
+				// The rendered date would carry a character a filename cannot
+				// hold. Keep the prior valid value and say why, rather than
+				// silently writing a mangled name whose H1 and filename diverge.
+				new Notice(
+					"Plaud importer: That note name date format would make an invalid filename. Remove any / \\ : * ? < > or | characters. The format was not changed.",
+				);
+				return;
+			} else {
+				this.plugin.settings.noteNameDateFormat = next;
+			}
 		} else if (key === "transcriptHeaderLevel") {
 			const level = Number(value);
 			if (level >= 1 && level <= 6) {

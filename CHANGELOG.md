@@ -4,9 +4,13 @@ All notable changes to Plaud Importer will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **Configurable note name date format.** A new setting controls how the date in each imported note's name is written. Pick a preset (ISO `YYYY-MM-DD`, US `MM-DD-YYYY`, or EU `DD-MM-YYYY`) or type your own moment-style pattern, for example `MMM D, YYYY` for `Jul 3, 2026`. The default reproduces the previous `YYYY-MM-DD` naming, so nothing changes unless you set it. The pattern has to be usable as a filename, so one containing a slash, colon, or other reserved character is rejected. The `date` property inside each note stays `YYYY-MM-DD` for Dataview and sorting.
+
 ### Changed
 
-- A recording whose Plaud title has no date now gets a `YYYY-MM-DD` date prefix (from the recording's own date) when it is imported, so imported notes sort in date order in the file explorer. Plaud's default `MM-DD` titles keep getting the year added, as before. A title that already starts with a full date, or with another date form such as `MM/DD`, is left unchanged. Existing notes are not renamed.
+- On import, the date in a recording's title is cleaned up so notes sort by day in the file explorer and every note name reads the same way. A title with no date gets one added from the recording date. A title that already starts with a date, in any common form (`MM-DD`, `MM/DD`, `12/31/2025`, `2025-12-31`, and similar), has that date rewritten to your chosen format. A date that runs directly into other text, such as `04/13-Meeting`, is left alone. Existing notes are not renamed; this applies to new imports.
 
 ## [0.19.0] - 2026-07-03
 

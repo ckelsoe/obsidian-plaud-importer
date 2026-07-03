@@ -125,6 +125,12 @@ export interface NoteWriterOptions {
 	 */
 	readonly subfolderTemplate?: string;
 	/**
+	 * Optional moment-compatible pattern for the date in each note's name (see
+	 * formatNoteNameDate). Omitted or empty reproduces the historical
+	 * `YYYY-MM-DD` layout. The settings layer validates it is filename-safe.
+	 */
+	readonly noteNameDateFormat?: string;
+	/**
 	 * Optional vault-wide lookup from a `plaud-id` to the path of an existing
 	 * note for that recording, anywhere under the output folder. Lets the
 	 * writer find a prior import that lives in a DIFFERENT subfolder (for
@@ -506,16 +512,17 @@ function joinFolderPath(base: string, sub: string): string {
 }
 
 /**
- * Matches a title that already leads with a PLAUSIBLE date in a form the
- * YYYY-MM-DD and MM-DD dash branches do not handle: slash or dot separators, a
- * single-digit month/day, or a year-first date. Month is 1-12 and day 1-31, so
- * an ID-like lead such as "123-4 Widget" is NOT read as a date (it stays
- * dateless and still gets a prefix), while a real "06/13" date is left alone
- * rather than double-dated. The token must not run straight into more date
- * digits, so a version like "1.2.3" or a long number like "12-345" is not
- * mistaken for a date, though a date glued to text ("06/13-Sync") still counts.
- * Month-first, matching Plaud's MM-DD default; a locale-aware (US/EUR) detector
- * is future work with the configurable date format.
+ * Matches a title that leads with a PLAUSIBLE date GLUED to other text — the one
+ * date case extractLeadingDate deliberately skips. extractLeadingDate requires a
+ * clean whitespace-or-end delimiter after the date so it can safely re-render
+ * it; when a date-shape runs straight into more text, like "06/13-Sync", this
+ * guard still recognizes it as already dated, so expandTitleWithYear leaves the
+ * title alone instead of prepending a second date (re-rendering it would strand
+ * the glued text). Month is 1-12 and day 1-31, so an ID-like lead such as
+ * "123-4 Widget" is NOT read as a date (it stays dateless and gets a prefix).
+ * The token must not run straight into more date digits, so a version like
+ * "1.2.3" or a long number like "12-345" is not mistaken for a date.
+ * Month-first, matching Plaud's MM-DD default.
  */
 const OTHER_LEADING_DATE =
 	/^(?:\d{4}[-/.])?(?:0?[1-9]|1[0-2])[-/.](?:0?[1-9]|[12]\d|3[01])(?:[-/.]\d{2,4})?(?![-/.]?\d)/;
@@ -584,6 +591,30 @@ export function formatNoteNameDate(pattern: string, date: Date): string {
 }
 
 /**
+ * A fixed sample date used to validate a note-name date format. Uses a 2-digit
+ * month and day so every numeric token renders to representative output; the
+ * specific day is irrelevant because a format's forbidden characters are
+ * literals, constant across dates.
+ */
+const NOTE_NAME_FORMAT_SAMPLE_DATE = new Date(2026, 11, 30); // 2026-12-30 local
+
+/**
+ * Whether a note-name date format renders to a filename-safe string on Windows,
+ * macOS, and Linux (Windows is the strictest). The format lands in a note
+ * filename AND the identical H1, so its rendered output must survive
+ * sanitizeFilename byte-for-byte: a path separator, a Windows-reserved
+ * character, or a leading/trailing dot or space would otherwise be silently
+ * rewritten to a dash, desyncing the filename from the heading. Validates the
+ * RENDERED output, not the raw pattern, so a literal comma, dash, period, space,
+ * or parenthesis passes while `/`, `\`, `:`, `*`, `?`, `"`, `<`, `>`, and `|`
+ * are rejected.
+ */
+export function isFilesystemSafeNoteNameDateFormat(pattern: string): boolean {
+	const rendered = formatNoteNameDate(pattern, NOTE_NAME_FORMAT_SAMPLE_DATE);
+	return sanitizeFilename(rendered) === rendered;
+}
+
+/**
  * A month (1-12) and day (1-31) that form a plausible calendar date. Rejects
  * inputs like "99-99" or "13-45" so they are never fed to a Date constructor,
  * which would silently roll them over into a different, wrong date.
@@ -602,28 +633,95 @@ function joinDateAndRest(dateText: string, rest: string | undefined): string {
 }
 
 /**
- * Give a recording title a leading date, rendered in `dateFormat`, so notes sort
- * chronologically in the file explorer and group by day. `dateFormat` is a
- * moment-compatible pattern (see formatNoteNameDate); it defaults to
- * DEFAULT_NOTE_NAME_DATE_FORMAT, which reproduces the historical `YYYY-MM-DD`
- * output exactly.
+ * One capture drives every numeric leading-date shape extractLeadingDate parses:
  *
- * - A truly dateless title gets the recording date prepended.
- * - Plaud's default MM-DD prefix is reformatted: the title's own month/day plus
- *   the recording's year, rendered in `dateFormat` (so "04-13 Meeting" keeps its
- *   day but adopts the chosen layout).
- * - A title already led by a full YYYY-MM-DD date, or any other date form (slash
- *   or dot separators, single-digit, year-first), is left unchanged. Reformatting
- *   those needs format-aware detection and is deferred; they are rare from Plaud.
+ *   group 1  first number   (1-4 digits)
+ *   group 2  the separator  (-, /, or .)
+ *   group 3  second number  (1-2 digits)
+ *   group 4  optional third number (2-4 digits), joined by the SAME separator
  *
- *   default "YYYY-MM-DD":  "04-13 Meeting" -> "2026-04-13 Meeting"
- *   "MM-DD-YYYY":          "04-13 Meeting" -> "04-13-2026 Meeting"
+ * The trailing `(?=\s|$)` requires the date to end cleanly (whitespace or end of
+ * title), so a version string like `1.2.3` or a date glued to text like
+ * `04/13-Meeting` does NOT match here — those fall through to OTHER_LEADING_DATE
+ * and are left unchanged. The third number is 2-4 digits so `1.2.3` cannot read
+ * its `.3` as a year.
+ */
+const LEADING_DATE = /^(\d{1,4})([-/.])(\d{1,2})(?:\2(\d{2,4}))?(?=\s|$)/;
+
+/**
+ * Parse a title's cleanly-delimited leading date into a Date plus the remaining
+ * text, or null when the title does not begin with a recognizable, in-range
+ * date. Numeric ordering is MONTH-FIRST (matching Plaud, which always emits
+ * month-first); a first number above 31 cannot be a month or day, so it is read
+ * as a year-first date instead. `fallbackYear` supplies the year for a bare
+ * month-day (`04-13`) — the recording's own year. A two-digit year in the title
+ * is read as 2000+YY (every Plaud recording is 21st century). Range-validates
+ * month (1-12) and day (1-31); an implausible lead like `123-4` or `99-99`
+ * returns null so the caller treats the title as dateless and ADDS a date rather
+ * than trusting a bad one.
+ */
+function extractLeadingDate(
+	title: string,
+	fallbackYear: number,
+): { date: Date; rest: string } | null {
+	const match = LEADING_DATE.exec(title);
+	if (match === null) {
+		return null;
+	}
+	const [matched, firstStr, , secondStr, thirdStr] = match;
+	const first = Number(firstStr);
+	const second = Number(secondStr);
+	let year: number;
+	let month: number;
+	let day: number;
+	if (thirdStr === undefined) {
+		// Two components (04-13): month-first day, year from the recording.
+		month = first;
+		day = second;
+		year = fallbackYear;
+	} else if (first > 31) {
+		// Year-first (2025-12-31): a number above 31 is neither month nor day.
+		year = first;
+		month = second;
+		day = Number(thirdStr);
+	} else {
+		// Month-first with a year in the title (12-31-2025 or 04.13.26).
+		month = first;
+		day = second;
+		const third = Number(thirdStr);
+		year = third < 100 ? 2000 + third : third;
+	}
+	if (!isPlausibleMonthDay(month, day)) {
+		return null;
+	}
+	return { date: new Date(year, month - 1, day), rest: title.slice(matched.length) };
+}
+
+/**
+ * Normalize a recording title's leading date to `dateFormat` so notes sort
+ * chronologically in the file explorer and every note name reads the same way.
+ * `dateFormat` is a moment-compatible pattern (see formatNoteNameDate); it
+ * defaults to DEFAULT_NOTE_NAME_DATE_FORMAT, which reproduces the historical
+ * `YYYY-MM-DD` output.
  *
- * The date uses the recording's LOCAL calendar day, the same basis as the
- * `date:` frontmatter. Runs once in writeNote for both the filename (via
- * sanitizeFilename) and the H1 heading (via formatMarkdown) so the two stay in
- * sync. The pattern must be filename-safe (no path separators); the settings
- * layer validates that.
+ * - A title with a recognizable leading date, in ANY supported form, has that
+ *   date RE-RENDERED in `dateFormat`: the title keeps its own month and day, a
+ *   year in the title wins, otherwise the recording's year fills in. So
+ *   `04-13 Meeting`, `06/13 Sync`, `12/31/2025 Recap`, and `2025-12-31 Party`
+ *   all collapse to the one chosen layout.
+ * - A title with no recognizable date gets the recording date prepended.
+ * - A date-shape glued to text (`04/13-Meeting`) is left unchanged: it already
+ *   shows a date, so it is not given a second one, and re-rendering it would
+ *   strand the leading punctuation.
+ *
+ *   default "YYYY-MM-DD":  "06/13 Sync"      -> "2026-06-13 Sync"
+ *   "MM-DD-YYYY":          "2025-12-31 Gala" -> "12-31-2025 Gala"
+ *
+ * The date uses the recording's (or the title's) LOCAL calendar day, the same
+ * basis as the `date:` frontmatter. Runs once in writeNote for both the filename
+ * (via sanitizeFilename) and the H1 heading (via formatMarkdown) so the two stay
+ * in sync. The pattern must be filename-safe; the settings layer validates that
+ * with isFilesystemSafeNoteNameDateFormat.
  */
 export function expandTitleWithYear(
 	title: string,
@@ -631,25 +729,19 @@ export function expandTitleWithYear(
 	dateFormat: string = DEFAULT_NOTE_NAME_DATE_FORMAT,
 ): string {
 	const trimmed = title.trim();
-	// Already a full YYYY-MM-DD (dash) prefix: leave as-is. Reformatting a literal
-	// date already in the title is deferred, and re-rendering would risk feeding a
-	// possibly-invalid literal (e.g. 2026-13-40) to a Date.
-	if (/^\d{4}-\d{2}-\d{2}/.test(trimmed)) {
-		return trimmed;
-	}
-	// Plaud's default MM-DD (dash) prefix with a plausible month/day: reformat it
-	// from the title's month/day and the recording's year, in the chosen pattern.
-	const monthDay = /^(\d{2})-(\d{2})(?:\s+(.*))?$/.exec(trimmed);
-	if (monthDay && isPlausibleMonthDay(Number(monthDay[1]), Number(monthDay[2]))) {
-		const dated = new Date(
-			date.getFullYear(),
-			Number(monthDay[1]) - 1,
-			Number(monthDay[2]),
+	// A recognizable, cleanly-delimited leading date in any supported form:
+	// re-render it in the chosen pattern (the whole point of the feature — one
+	// consistent layout, regardless of how the title happened to write the date).
+	const extracted = extractLeadingDate(trimmed, date.getFullYear());
+	if (extracted !== null) {
+		return joinDateAndRest(
+			formatNoteNameDate(dateFormat, extracted.date),
+			extracted.rest,
 		);
-		return joinDateAndRest(formatNoteNameDate(dateFormat, dated), monthDay[3]);
 	}
-	// A title that already leads with a plausible date the branches above did not
-	// handle (see OTHER_LEADING_DATE): leave it unchanged rather than double-date.
+	// A date-shape that runs straight into text (e.g. "04/13-Meeting"): it already
+	// shows a date, so leave it rather than prepend a second one. extractLeadingDate
+	// skips it (no clean delimiter) and re-rendering would strand the glued text.
 	if (OTHER_LEADING_DATE.test(trimmed)) {
 		return trimmed;
 	}
@@ -1487,6 +1579,12 @@ export interface FormatMarkdownOptions {
 	 * user's own Plaud-side template selection.
 	 */
 	readonly consumerNotes?: readonly ConsumerNote[];
+	/**
+	 * Moment-compatible pattern for the leading date in the note's H1 (see
+	 * formatNoteNameDate). Must match the pattern the writer uses for the
+	 * filename so the two stay in sync. Omitted reproduces `YYYY-MM-DD`.
+	 */
+	readonly noteNameDateFormat?: string;
 }
 
 export function formatMarkdown(
@@ -1501,7 +1599,11 @@ export function formatMarkdown(
 	const headerLevel: HeadingLevel = options.transcriptHeaderLevel ?? 4;
 
 	const speakers = extractSpeakers(transcript);
-	const expandedTitle = expandTitleWithYear(recording.title, recording.createdAt);
+	const expandedTitle = expandTitleWithYear(
+		recording.title,
+		recording.createdAt,
+		options.noteNameDateFormat,
+	);
 	const groups = groupTranscriptByChapters(transcript, chapters);
 	const transcriptSection = includeTranscript
 		? formatTranscriptSection(transcript, groups, headerLevel)
@@ -1562,9 +1664,14 @@ export function formatMarkdown(
 export function formatPlaceholderMarkdown(
 	recording: Recording,
 	reason: string,
+	dateFormat: string = DEFAULT_NOTE_NAME_DATE_FORMAT,
 ): string {
 	const url = formatPlaudWebUrl(recording.id);
-	const expandedTitle = expandTitleWithYear(recording.title, recording.createdAt);
+	const expandedTitle = expandTitleWithYear(
+		recording.title,
+		recording.createdAt,
+		dateFormat,
+	);
 	const flatReason = reason.replace(/\s*\r?\n\s*/g, ' ').trim();
 	const lines: string[] = [
 		'---',
@@ -1610,6 +1717,7 @@ export class NoteWriter {
 	// safe to concatenate with a filename.
 	private readonly outputFolder: string;
 	private readonly subfolderTemplate: string;
+	private readonly noteNameDateFormat: string;
 	private readonly existingPathForPlaudId?: (plaudId: string) => string | null;
 	private readonly onDuplicate: DuplicatePolicy;
 	private readonly promptOnDuplicate?: DuplicatePromptCallback;
@@ -1633,6 +1741,12 @@ export class NoteWriter {
 		this.vault = vault;
 		this.outputFolder = normalizeFolderPath(options.outputFolder);
 		this.subfolderTemplate = options.subfolderTemplate ?? '';
+		// `|| DEFAULT` (not `??`) so an empty or whitespace-only pattern — from a
+		// hand-edited data.json, say — falls back to the historical layout rather
+		// than rendering every note name with a blank date. The settings layer
+		// already refuses to save an empty pattern; this is defense-in-depth.
+		this.noteNameDateFormat =
+			options.noteNameDateFormat?.trim() || DEFAULT_NOTE_NAME_DATE_FORMAT;
 		this.existingPathForPlaudId = options.existingPathForPlaudId;
 		this.onDuplicate = options.onDuplicate;
 		this.promptOnDuplicate = options.promptOnDuplicate;
@@ -1640,6 +1754,7 @@ export class NoteWriter {
 			includeTranscript: options.includeTranscript,
 			includeSummary: options.includeSummary,
 			transcriptHeaderLevel: options.transcriptHeaderLevel,
+			noteNameDateFormat: this.noteNameDateFormat,
 		};
 	}
 
@@ -1652,7 +1767,11 @@ export class NoteWriter {
 		const subfolder = resolveSubfolder(this.subfolderTemplate, recording.createdAt);
 		const destinationFolder = joinFolderPath(this.outputFolder, subfolder);
 		await this.ensureFolder(destinationFolder);
-		const expandedTitle = expandTitleWithYear(recording.title, recording.createdAt);
+		const expandedTitle = expandTitleWithYear(
+			recording.title,
+			recording.createdAt,
+			this.noteNameDateFormat,
+		);
 		const filename = `${sanitizeFilename(expandedTitle)}.md`;
 		return destinationFolder === '' ? filename : `${destinationFolder}/${filename}`;
 	}
@@ -1728,7 +1847,11 @@ export class NoteWriter {
 		reason: string,
 	): Promise<PlaceholderWriteOutcome> {
 		const targetPath = await this.resolveTargetPath(recording);
-		const markdown = formatPlaceholderMarkdown(recording, reason);
+		const markdown = formatPlaceholderMarkdown(
+			recording,
+			reason,
+			this.noteNameDateFormat,
+		);
 		const { existing, notePath } = this.findExistingNote(recording, targetPath);
 		if (existing === null) {
 			try {
