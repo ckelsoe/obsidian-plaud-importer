@@ -506,34 +506,66 @@ function joinFolderPath(base: string, sub: string): string {
 }
 
 /**
- * Prepend the year from `date` onto a recording title that starts with
- * Plaud's default MM-DD prefix. Titles that already have a YYYY-MM-DD
- * prefix or no date prefix at all are returned unchanged.
+ * Matches a title that already leads with a PLAUSIBLE date in a form the
+ * YYYY-MM-DD and MM-DD dash branches do not handle: slash or dot separators, a
+ * single-digit month/day, or a year-first date. Month is 1-12 and day 1-31, so
+ * an ID-like lead such as "123-4 Widget" is NOT read as a date (it stays
+ * dateless and still gets a prefix), while a real "06/13" date is left alone
+ * rather than double-dated. The token must not run straight into more date
+ * digits, so a version like "1.2.3" or a long number like "12-345" is not
+ * mistaken for a date, though a date glued to text ("06/13-Sync") still counts.
+ * Month-first, matching Plaud's MM-DD default; a locale-aware (US/EUR) detector
+ * is future work with the configurable date format.
+ */
+const OTHER_LEADING_DATE =
+	/^(?:\d{4}[-/.])?(?:0?[1-9]|1[0-2])[-/.](?:0?[1-9]|[12]\d|3[01])(?:[-/.]\d{2,4})?(?![-/.]?\d)/;
+
+/**
+ * Ensure a recording title carries a leading YYYY-MM-DD date so notes sort
+ * chronologically in the file explorer and group by day.
  *
- *   expandTitleWithYear("04-13 Meeting", 2026-04-13)
- *     === "2026-04-13 Meeting"
- *   expandTitleWithYear("2026-04-13 Meeting", 2026-04-13)
- *     === "2026-04-13 Meeting"  (already expanded)
- *   expandTitleWithYear("Meeting notes", 2026-04-13)
- *     === "Meeting notes"  (no MM-DD prefix)
+ * - A title already led by a full YYYY-MM-DD (dash) date is returned unchanged.
+ * - Plaud's default MM-DD (dash) prefix gets the year from `date` prepended.
+ * - A title led by any other date form (slash or dot separators, a single-digit
+ *   month/day, or a year-first date) is left unchanged, so a title that already
+ *   shows a date is never given a second one.
+ * - A truly dateless title gets the full YYYY-MM-DD from `date` prepended.
  *
- * This runs once in writeNote and is used for both the filename (via
- * sanitizeFilename) and the H1 heading (via formatMarkdown) so the two
- * stay in sync.
+ *   "04-13 Meeting"     -> "2026-04-13 Meeting"          (MM-DD: prepend year)
+ *   "2026-04-13 Done"   -> "2026-04-13 Done"             (already a full date)
+ *   "Quarterly review"  -> "2026-04-13 Quarterly review" (dateless: prepend)
+ *   "06/13 Sync"        -> "06/13 Sync"                  (other date form: kept)
+ *
+ * A dateless title takes the full recording date (createdAt), the same value
+ * formatDateYmd writes to the `date:` frontmatter. The MM-DD branch keeps the
+ * title's own month and day and only borrows the year, so its prefix can differ
+ * from `date:` when the title's MM-DD was edited. Runs once in writeNote for
+ * both the filename (via sanitizeFilename) and the H1 heading (via
+ * formatMarkdown) so the two stay in sync.
  */
 export function expandTitleWithYear(title: string, date: Date): string {
 	const trimmed = title.trim();
-	// Already has a full YYYY-MM-DD prefix — don't double-prefix.
+	// Already a full YYYY-MM-DD (dash) prefix: canonical, leave as-is.
 	if (/^\d{4}-\d{2}-\d{2}/.test(trimmed)) {
 		return trimmed;
 	}
-	// Has a MM-DD prefix followed by whitespace or end-of-string — prepend
-	// the year from the recording's createdAt so the title reads as a full
-	// YYYY-MM-DD date followed by the original description.
+	// Plaud's default MM-DD (dash) prefix: prepend the year from the
+	// recording's createdAt so the title reads as a full YYYY-MM-DD date
+	// followed by the original description.
 	if (/^\d{2}-\d{2}(\s|$)/.test(trimmed)) {
 		return `${date.getFullYear()}-${trimmed}`;
 	}
-	return trimmed;
+	// A title that already leads with a plausible date the two dash branches
+	// above did not handle (see OTHER_LEADING_DATE for the exact forms): leave
+	// it unchanged rather than prepend a second date onto a title that already
+	// shows one.
+	if (OTHER_LEADING_DATE.test(trimmed)) {
+		return trimmed;
+	}
+	// Truly dateless: prepend the full recording date so the note sorts by
+	// day. An empty title collapses to just the date.
+	const ymd = formatDateYmd(date);
+	return trimmed ? `${ymd} ${trimmed}` : ymd;
 }
 
 /**

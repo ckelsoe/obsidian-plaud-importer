@@ -294,23 +294,24 @@ describe('expandTitleWithYear', () => {
 		);
 	});
 
-	it('leaves titles without any date prefix unchanged', () => {
+	it('prepends the full recording date to a dateless title', () => {
 		expect(expandTitleWithYear('Quarterly review', apr14)).toBe(
-			'Quarterly review',
+			'2026-04-14 Quarterly review',
 		);
 	});
 
-	it('does not prefix a title that merely contains digits', () => {
-		// "1-800 customer service" does not start with \d{2}-\d{2}, so it
-		// should pass through unchanged — no year prefix.
+	it('prefixes a title whose leading digits are not a date (phone number)', () => {
+		// "1-800 customer service" has no leading date token (1-800 is not a
+		// month-day), so it counts as dateless and gets the full date prefix.
 		expect(expandTitleWithYear('1-800 customer service', apr14)).toBe(
-			'1-800 customer service',
+			'2026-04-14 1-800 customer service',
 		);
 	});
 
-	it('does not prefix a title with a single-digit "month"', () => {
-		// "4-13 Meeting" starts with \d-\d{2} not \d{2}-\d{2}, so the
-		// pattern doesn't match and the title passes through.
+	it('leaves a single-digit-month date form unchanged (does not double-date)', () => {
+		// "4-13" is a single-digit-month date, an "other date form" the year
+		// expansion deliberately skips. It is left as-is rather than prefixed,
+		// so a title that already shows a date is never given a second one.
 		expect(expandTitleWithYear('4-13 Meeting', apr14)).toBe('4-13 Meeting');
 	});
 
@@ -333,6 +334,71 @@ describe('expandTitleWithYear', () => {
 	it('trims leading whitespace before detecting the MM-DD prefix', () => {
 		expect(expandTitleWithYear('  04-13 Padded  ', apr14)).toBe(
 			'2026-04-13 Padded',
+		);
+	});
+
+	it('collapses an empty or whitespace-only title to just the date', () => {
+		expect(expandTitleWithYear('   ', apr14)).toBe('2026-04-14');
+	});
+
+	it('does not double-date a slash-form date prefix', () => {
+		expect(expandTitleWithYear('04/13 Meeting', apr14)).toBe('04/13 Meeting');
+	});
+
+	it('does not double-date a single-digit slash-form date prefix', () => {
+		expect(expandTitleWithYear('4/13 Standup', apr14)).toBe('4/13 Standup');
+	});
+
+	it('does not double-date a dot-form date prefix', () => {
+		expect(expandTitleWithYear('04.13 Standup', apr14)).toBe('04.13 Standup');
+	});
+
+	it('does not double-date a year-first slash date', () => {
+		expect(expandTitleWithYear('2025/12/31 Party', apr14)).toBe(
+			'2025/12/31 Party',
+		);
+	});
+
+	it('does not double-date a US-style full slash date', () => {
+		expect(expandTitleWithYear('12/31/2025 Recap', apr14)).toBe(
+			'12/31/2025 Recap',
+		);
+	});
+
+	it('prefixes a title that leads with digits but no date separator', () => {
+		// "1234" has no month-day separator, so it is dateless and prefixed.
+		expect(expandTitleWithYear('1234 sales report', apr14)).toBe(
+			'2026-04-14 1234 sales report',
+		);
+	});
+
+	it('prefixes an ID-like numeric prefix that is not a real date', () => {
+		// "123-4" has month 123, not a valid date, so the title is dateless
+		// and gets the full date prefix rather than being read as a date.
+		expect(expandTitleWithYear('123-4 Widget spec', apr14)).toBe(
+			'2026-04-14 123-4 Widget spec',
+		);
+	});
+
+	it('prefixes a slash-form prefix whose month/day is out of range', () => {
+		// "45/67" is not a plausible month-day, so it is treated as dateless
+		// and prefixed rather than mistaken for a slash-form date.
+		expect(expandTitleWithYear('45/67 notes', apr14)).toBe(
+			'2026-04-14 45/67 notes',
+		);
+	});
+
+	it('leaves a date glued to punctuation unchanged', () => {
+		// The guard allows a date that runs into text, so "04/13-Meeting" is
+		// recognized as already dated and not prefixed.
+		expect(expandTitleWithYear('04/13-Meeting', apr14)).toBe('04/13-Meeting');
+	});
+
+	it('prefixes a version-like prefix rather than reading it as a date', () => {
+		// "1.2.3" is a version: the guard rejects it because the token runs
+		// straight into more digits, so the title is dateless and prefixed.
+		expect(expandTitleWithYear('1.2.3 release notes', apr14)).toBe(
+			'2026-04-14 1.2.3 release notes',
 		);
 	});
 });
@@ -674,7 +740,7 @@ describe('formatMarkdown', () => {
 		const md = formatMarkdown(makeRecording(), makeTranscript(), makeSummary());
 		// Order assertions: find each anchor's index and verify monotonic.
 		const fmStart = md.indexOf('---');
-		const h1 = md.indexOf('# Morning standup');
+		const h1 = md.indexOf('# 2026-04-14 Morning standup');
 		const plaudLink = md.indexOf('[Open in Plaud →](');
 		const summaryH2 = md.indexOf('## Summary');
 		const callout = md.indexOf('> [!note]- Transcript');
@@ -692,7 +758,7 @@ describe('formatMarkdown', () => {
 		// future change accidentally wraps the link inside the summary
 		// section, this catches it.
 		expect(md).toMatch(
-			/^# Morning standup\n\n\[Open in Plaud →\]\(https:\/\/web\.plaud\.ai\/file\/abc123\)\n/m,
+			/^# 2026-04-14 Morning standup\n\n\[Open in Plaud →\]\(https:\/\/web\.plaud\.ai\/file\/abc123\)\n/m,
 		);
 	});
 
@@ -737,14 +803,15 @@ describe('formatMarkdown', () => {
 		expect(md).not.toMatch(/^# 04-13/m);
 	});
 
-	it('leaves non-MM-DD titles unchanged in the H1', () => {
+	it('prepends the recording date to a dateless title in the H1', () => {
 		const md = formatMarkdown(
 			makeRecording({ title: 'Quarterly review' }),
 			makeTranscript(),
 			makeSummary(),
 		);
-		expect(md).toContain('# Quarterly review');
-		expect(md).not.toMatch(/# 2026-.*Quarterly review/);
+		// makeRecording() uses createdAt of 2026-04-14 → dateless gets that date
+		expect(md).toContain('# 2026-04-14 Quarterly review');
+		expect(md).not.toMatch(/^# Quarterly review/m);
 	});
 
 	it('renders transcript segments as one callout line each with [MM:SS] markers', () => {
@@ -927,8 +994,8 @@ describe('NoteWriter', () => {
 		);
 
 		expect(outcome.status).toBe('created');
-		expect(outcome.path).toBe('Plaud/Meeting - notes - draft.md');
-		expect(vault.files.has('Plaud/Meeting - notes - draft.md')).toBe(true);
+		expect(outcome.path).toBe('Plaud/2026-04-14 Meeting - notes - draft.md');
+		expect(vault.files.has('Plaud/2026-04-14 Meeting - notes - draft.md')).toBe(true);
 	});
 
 	it('expands MM-DD titles with the year for the filename so files sort chronologically', async () => {
@@ -965,7 +1032,7 @@ describe('NoteWriter', () => {
 
 		const outcome = await writer.writeNote(makeRecording(), makeTranscript(), makeSummary());
 
-		expect(outcome.path).toBe('Morning standup.md');
+		expect(outcome.path).toBe('2026-04-14 Morning standup.md');
 		expect(vault.folders.size).toBe(0); // no folder created
 	});
 
@@ -975,7 +1042,7 @@ describe('NoteWriter', () => {
 
 		const outcome = await writer.writeNote(makeRecording(), makeTranscript(), makeSummary());
 
-		expect(outcome.path).toBe('Plaud/Morning standup.md');
+		expect(outcome.path).toBe('Plaud/2026-04-14 Morning standup.md');
 	});
 
 	it('normalizes Windows-style backslash folder paths', async () => {
@@ -986,7 +1053,7 @@ describe('NoteWriter', () => {
 
 		const outcome = await writer.writeNote(makeRecording(), makeTranscript(), makeSummary());
 
-		expect(outcome.path).toBe('Inbox/Morning standup.md');
+		expect(outcome.path).toBe('Inbox/2026-04-14 Morning standup.md');
 		expect(vault.createFolderCalls).toEqual(['Inbox']);
 	});
 
@@ -1005,7 +1072,7 @@ describe('NoteWriter', () => {
 		const outcome = await writer.writeNote(makeRecording(), makeTranscript(), makeSummary());
 
 		expect(outcome.status).toBe('created');
-		expect(outcome.path).toBe('Inbox/Morning standup.md');
+		expect(outcome.path).toBe('Inbox/2026-04-14 Morning standup.md');
 	});
 
 	it('throws at construction when outputFolder contains path-traversal segments', () => {
@@ -1023,34 +1090,34 @@ describe('NoteWriter', () => {
 
 	it('skips writing when file exists and onDuplicate is skip', async () => {
 		const vault = makeFakeVault();
-		vault.files.set('Plaud/Morning standup.md', 'existing content');
+		vault.files.set('Plaud/2026-04-14 Morning standup.md', 'existing content');
 		const writer = new NoteWriter(vault, { outputFolder: 'Plaud', onDuplicate: 'skip' });
 
 		const outcome = await writer.writeNote(makeRecording(), makeTranscript(), makeSummary());
 
 		expect(outcome.status).toBe('skipped');
-		expect(vault.files.get('Plaud/Morning standup.md')).toBe('existing content');
+		expect(vault.files.get('Plaud/2026-04-14 Morning standup.md')).toBe('existing content');
 		expect(vault.createdPaths).toEqual([]);
 		expect(vault.overwrittenPaths).toEqual([]);
 	});
 
 	it('overwrites via process() when file exists and onDuplicate is overwrite', async () => {
 		const vault = makeFakeVault();
-		vault.files.set('Plaud/Morning standup.md', 'existing content');
+		vault.files.set('Plaud/2026-04-14 Morning standup.md', 'existing content');
 		const writer = new NoteWriter(vault, { outputFolder: 'Plaud', onDuplicate: 'overwrite' });
 
 		const outcome = await writer.writeNote(makeRecording(), makeTranscript(), makeSummary());
 
 		expect(outcome.status).toBe('overwritten');
-		expect(vault.overwrittenPaths).toContain('Plaud/Morning standup.md');
-		expect(vault.files.get('Plaud/Morning standup.md')).toContain('# Morning standup');
-		expect(vault.files.get('Plaud/Morning standup.md')).not.toBe('existing content');
+		expect(vault.overwrittenPaths).toContain('Plaud/2026-04-14 Morning standup.md');
+		expect(vault.files.get('Plaud/2026-04-14 Morning standup.md')).toContain('# 2026-04-14 Morning standup');
+		expect(vault.files.get('Plaud/2026-04-14 Morning standup.md')).not.toBe('existing content');
 	});
 
 	describe('prompt policy', () => {
 		it('invokes the callback with the target context when a same-id duplicate exists', async () => {
 			const vault = makeFakeVault();
-			vault.files.set('Plaud/Morning standup.md', '---\nplaud-id: abc123\n---\n');
+			vault.files.set('Plaud/2026-04-14 Morning standup.md', '---\nplaud-id: abc123\n---\n');
 			const received: Array<{
 				recordingId: string;
 				recordingTitle: string;
@@ -1076,14 +1143,14 @@ describe('NoteWriter', () => {
 				{
 					recordingId: 'abc123',
 					recordingTitle: 'Morning standup',
-					targetPath: 'Plaud/Morning standup.md',
+					targetPath: 'Plaud/2026-04-14 Morning standup.md',
 				},
 			]);
 		});
 
 		it('skips the write when the callback returns skip', async () => {
 			const vault = makeFakeVault();
-			vault.files.set('Plaud/Morning standup.md', '---\nplaud-id: abc123\n---\noriginal');
+			vault.files.set('Plaud/2026-04-14 Morning standup.md', '---\nplaud-id: abc123\n---\noriginal');
 			const writer = new NoteWriter(vault, {
 				outputFolder: 'Plaud',
 				onDuplicate: 'prompt',
@@ -1094,14 +1161,14 @@ describe('NoteWriter', () => {
 
 			expect(outcome.status).toBe('skipped');
 			expect(vault.overwrittenPaths).toEqual([]);
-			expect(vault.files.get('Plaud/Morning standup.md')).toBe(
+			expect(vault.files.get('Plaud/2026-04-14 Morning standup.md')).toBe(
 				'---\nplaud-id: abc123\n---\noriginal',
 			);
 		});
 
 		it('throws NoteWriterCancelledError when the callback returns cancel', async () => {
 			const vault = makeFakeVault();
-			vault.files.set('Plaud/Morning standup.md', '---\nplaud-id: abc123\n---\n');
+			vault.files.set('Plaud/2026-04-14 Morning standup.md', '---\nplaud-id: abc123\n---\n');
 			const writer = new NoteWriter(vault, {
 				outputFolder: 'Plaud',
 				onDuplicate: 'prompt',
@@ -1137,7 +1204,7 @@ describe('NoteWriter', () => {
 		const outcome = await writer.writeNote(makeRecording(), makeTranscript(), makeSummary());
 
 		expect(outcome.status).toBe('created');
-		expect(vault.createdPaths).toEqual(['Plaud/Morning standup.md']);
+		expect(vault.createdPaths).toEqual(['Plaud/2026-04-14 Morning standup.md']);
 	});
 
 	describe('subfolder template', () => {
@@ -1147,7 +1214,7 @@ describe('NoteWriter', () => {
 
 			await writer.writeNote(makeRecording(), makeTranscript(), makeSummary());
 
-			expect(vault.createdPaths).toEqual(['Plaud/Morning standup.md']);
+			expect(vault.createdPaths).toEqual(['Plaud/2026-04-14 Morning standup.md']);
 		});
 
 		it('resolves {{yyyy-MM}} from the recording date and nests the note under it', async () => {
@@ -1161,8 +1228,8 @@ describe('NoteWriter', () => {
 			const outcome = await writer.writeNote(makeRecording(), makeTranscript(), makeSummary());
 
 			// makeRecording().createdAt is 2026-04-14 local.
-			expect(outcome.path).toBe('Plaud/2026-04/Morning standup.md');
-			expect(vault.createdPaths).toEqual(['Plaud/2026-04/Morning standup.md']);
+			expect(outcome.path).toBe('Plaud/2026-04/2026-04-14 Morning standup.md');
+			expect(vault.createdPaths).toEqual(['Plaud/2026-04/2026-04-14 Morning standup.md']);
 			expect(vault.folders.has('Plaud/2026-04')).toBe(true);
 		});
 
@@ -1176,13 +1243,13 @@ describe('NoteWriter', () => {
 
 			const outcome = await writer.writeNote(makeRecording(), makeTranscript(), makeSummary());
 
-			expect(outcome.path).toBe('2026/04/Morning standup.md');
+			expect(outcome.path).toBe('2026/04/2026-04-14 Morning standup.md');
 		});
 	});
 
 	describe('cross-folder dedup via existingPathForPlaudId', () => {
-		const PRIOR = 'Plaud/Morning standup.md';
-		const priorContent = '---\nplaud-id: abc123\n---\n# Morning standup\n';
+		const PRIOR = 'Plaud/2026-04-14 Morning standup.md';
+		const priorContent = '---\nplaud-id: abc123\n---\n# 2026-04-14 Morning standup\n';
 
 		function vaultWithPriorNote(): FakeVault {
 			const vault = makeFakeVault();
@@ -1205,7 +1272,7 @@ describe('NoteWriter', () => {
 			expect(outcome.status).toBe('skipped');
 			expect(outcome.path).toBe(PRIOR);
 			expect(vault.createdPaths).toEqual([]);
-			expect(vault.files.has('Plaud/2026-04/Morning standup.md')).toBe(false);
+			expect(vault.files.has('Plaud/2026-04/2026-04-14 Morning standup.md')).toBe(false);
 		});
 
 		it('overwrites the existing note in place rather than creating a duplicate', async () => {
@@ -1237,7 +1304,7 @@ describe('NoteWriter', () => {
 			const outcome = await writer.writeNote(makeRecording(), makeTranscript(), makeSummary());
 
 			expect(outcome.status).toBe('created');
-			expect(vault.createdPaths).toEqual(['Plaud/2026-04/Morning standup.md']);
+			expect(vault.createdPaths).toEqual(['Plaud/2026-04/2026-04-14 Morning standup.md']);
 		});
 
 		it('falls through to create when the lookup returns a stale path with no file', async () => {
@@ -1252,7 +1319,7 @@ describe('NoteWriter', () => {
 			const outcome = await writer.writeNote(makeRecording(), makeTranscript(), makeSummary());
 
 			expect(outcome.status).toBe('created');
-			expect(vault.createdPaths).toEqual(['Plaud/2026-04/Morning standup.md']);
+			expect(vault.createdPaths).toEqual(['Plaud/2026-04/2026-04-14 Morning standup.md']);
 		});
 	});
 
@@ -1262,9 +1329,9 @@ describe('NoteWriter', () => {
 
 		await writer.writeNote(makeRecording(), makeTranscript(), makeSummary());
 
-		const body = vault.files.get('Plaud/Morning standup.md') ?? '';
+		const body = vault.files.get('Plaud/2026-04-14 Morning standup.md') ?? '';
 		expect(body).toContain('plaud-id: abc123');
-		expect(body).toContain('# Morning standup');
+		expect(body).toContain('# 2026-04-14 Morning standup');
 		expect(body).toContain('## Summary');
 		expect(body).toContain('> [!note]- Transcript');
 		expect(body).toContain('> **[00:00]** Charles: Thanks for making time.');
@@ -1310,7 +1377,7 @@ describe('NoteWriter', () => {
 		it('throws NoteWriterError when existing note has a DIFFERENT plaud-id', async () => {
 			const vault = makeFakeVault();
 			vault.files.set(
-				'Plaud/Morning standup.md',
+				'Plaud/2026-04-14 Morning standup.md',
 				'---\nplaud-id: DIFFERENT_RECORDING\ndate: 2026-04-01\nduration-seconds: 100\nsource: plaud\n---\n\n# Old recording\n',
 			);
 			const writer = new NoteWriter(vault, {
@@ -1326,7 +1393,7 @@ describe('NoteWriter', () => {
 		it('includes both plaud-ids in the collision error message', async () => {
 			const vault = makeFakeVault();
 			vault.files.set(
-				'Plaud/Morning standup.md',
+				'Plaud/2026-04-14 Morning standup.md',
 				'---\nplaud-id: OLD_ID_42\n---\n\n# Old\n',
 			);
 			const writer = new NoteWriter(vault, {
@@ -1342,7 +1409,7 @@ describe('NoteWriter', () => {
 		it('allows overwrite when existing note has the SAME plaud-id (re-import)', async () => {
 			const vault = makeFakeVault();
 			vault.files.set(
-				'Plaud/Morning standup.md',
+				'Plaud/2026-04-14 Morning standup.md',
 				'---\nplaud-id: abc123\n---\n\n# Old version\n',
 			);
 			const writer = new NoteWriter(vault, {
@@ -1353,13 +1420,13 @@ describe('NoteWriter', () => {
 			const outcome = await writer.writeNote(makeRecording(), makeTranscript(), makeSummary());
 
 			expect(outcome.status).toBe('overwritten');
-			expect(vault.files.get('Plaud/Morning standup.md')).toContain('# Morning standup');
+			expect(vault.files.get('Plaud/2026-04-14 Morning standup.md')).toContain('# 2026-04-14 Morning standup');
 		});
 
 		it('allows skip when existing note has the SAME plaud-id (idempotent re-import)', async () => {
 			const vault = makeFakeVault();
 			vault.files.set(
-				'Plaud/Morning standup.md',
+				'Plaud/2026-04-14 Morning standup.md',
 				'---\nplaud-id: abc123\n---\n\n# Old\n',
 			);
 			const writer = new NoteWriter(vault, {
@@ -1377,7 +1444,7 @@ describe('NoteWriter', () => {
 			// Collision detection returns null, so we fall through to the
 			// duplicate policy — which is the pragmatic default.
 			const vault = makeFakeVault();
-			vault.files.set('Plaud/Morning standup.md', 'Just some text, no frontmatter.');
+			vault.files.set('Plaud/2026-04-14 Morning standup.md', 'Just some text, no frontmatter.');
 			const writer = new NoteWriter(vault, {
 				outputFolder: 'Plaud',
 				onDuplicate: 'overwrite',
@@ -1417,7 +1484,7 @@ describe('NoteWriter', () => {
 			);
 
 			expect(outcome.status).toBe('created');
-			const body = vault.files.get('Plaud/Morning standup.md') ?? '';
+			const body = vault.files.get('Plaud/2026-04-14 Morning standup.md') ?? '';
 			expect(body).toContain('## Summary');
 			expect(body).toContain('_No summary available._');
 		});
@@ -1446,7 +1513,7 @@ describe('NoteWriter', () => {
 			);
 
 			expect(outcome.status).toBe('created');
-			const body = vault.files.get('Plaud/Morning standup.md') ?? '';
+			const body = vault.files.get('Plaud/2026-04-14 Morning standup.md') ?? '';
 			expect(body).toContain('_No transcript available._');
 			expect(body).toContain('_No summary available._');
 		});
@@ -1487,13 +1554,13 @@ describe('NoteWriter', () => {
 			// Error message format: "Failed to create <path> for recording <id>: <cause>"
 			await expect(
 				writer.writeNote(makeRecording(), makeTranscript(), makeSummary()),
-			).rejects.toThrow(/Plaud\/Morning standup\.md.*abc123.*EACCES/);
+			).rejects.toThrow(/Plaud\/2026-04-14 Morning standup\.md.*abc123.*EACCES/);
 		});
 
 		it('wraps vault.process errors with recording id and target path', async () => {
 			const vault = makeFakeVault();
 			vault.files.set(
-				'Plaud/Morning standup.md',
+				'Plaud/2026-04-14 Morning standup.md',
 				'---\nplaud-id: abc123\n---\n',
 			);
 			vault.process = async () => {
@@ -1508,7 +1575,7 @@ describe('NoteWriter', () => {
 
 		it('wraps vault.read errors during collision check', async () => {
 			const vault = makeFakeVault();
-			vault.files.set('Plaud/Morning standup.md', 'existing');
+			vault.files.set('Plaud/2026-04-14 Morning standup.md', 'existing');
 			vault.read = async () => {
 				throw new Error('read blew up');
 			};
@@ -2672,7 +2739,7 @@ describe('formatPlaceholderMarkdown', () => {
 		expect(md).toContain('plaud-placeholder: true');
 		expect(md).toContain(formatPlaudWebUrl('rec-9'));
 		expect(md).toContain('[Open in Plaud →]');
-		expect(md).toContain('# Strategy sync');
+		expect(md).toContain('# 2026-04-14 Strategy sync');
 		expect(md).toContain('start trans task error');
 	});
 
@@ -2703,8 +2770,8 @@ describe('NoteWriter.writePlaceholderNote', () => {
 		const outcome = await writer.writePlaceholderNote(makeRecording(), 'no content yet');
 
 		expect(outcome.status).toBe('created');
-		expect(outcome.path).toBe('Plaud/Morning standup.md');
-		const body = vault.files.get('Plaud/Morning standup.md') ?? '';
+		expect(outcome.path).toBe('Plaud/2026-04-14 Morning standup.md');
+		const body = vault.files.get('Plaud/2026-04-14 Morning standup.md') ?? '';
 		expect(extractPlaudPlaceholderFlag(body)).toBe(true);
 	});
 
@@ -2717,22 +2784,22 @@ describe('NoteWriter.writePlaceholderNote', () => {
 
 		expect(outcome.status).toBe('refreshed');
 		expect(vault.files.size).toBe(1);
-		expect(vault.files.get('Plaud/Morning standup.md')).toContain('second reason');
+		expect(vault.files.get('Plaud/2026-04-14 Morning standup.md')).toContain('second reason');
 	});
 
 	it('keeps an existing real note and never downgrades it to a stub', async () => {
 		const vault = makeFakeVault();
 		const writer = new NoteWriter(vault, { outputFolder: 'Plaud', onDuplicate: 'skip' });
 		await writer.writeNote(makeRecording(), makeTranscript(), makeSummary());
-		const realBody = vault.files.get('Plaud/Morning standup.md');
+		const realBody = vault.files.get('Plaud/2026-04-14 Morning standup.md');
 
 		const outcome = await writer.writePlaceholderNote(makeRecording(), 'plaud erred');
 
 		expect(outcome.status).toBe('kept-existing');
 		// The real note is untouched: still has the summary, no placeholder marker.
-		expect(vault.files.get('Plaud/Morning standup.md')).toBe(realBody);
+		expect(vault.files.get('Plaud/2026-04-14 Morning standup.md')).toBe(realBody);
 		expect(
-			extractPlaudPlaceholderFlag(vault.files.get('Plaud/Morning standup.md') ?? ''),
+			extractPlaudPlaceholderFlag(vault.files.get('Plaud/2026-04-14 Morning standup.md') ?? ''),
 		).toBe(false);
 	});
 
@@ -2740,8 +2807,8 @@ describe('NoteWriter.writePlaceholderNote', () => {
 		const vault = makeFakeVault();
 		const writer = new NoteWriter(vault, { outputFolder: 'Plaud', onDuplicate: 'skip' });
 		vault.files.set(
-			'Plaud/Morning standup.md',
-			'---\nplaud-id: someone-else\n---\n\n# Morning standup',
+			'Plaud/2026-04-14 Morning standup.md',
+			'---\nplaud-id: someone-else\n---\n\n# 2026-04-14 Morning standup',
 		);
 
 		await expect(
@@ -2767,7 +2834,7 @@ describe('NoteWriter.writeNote superseding a placeholder', () => {
 		// Skip policy would normally leave an existing note alone, but a
 		// placeholder must always yield to real content.
 		expect(outcome.status).toBe('overwritten');
-		const body = vault.files.get('Plaud/Morning standup.md') ?? '';
+		const body = vault.files.get('Plaud/2026-04-14 Morning standup.md') ?? '';
 		expect(extractPlaudPlaceholderFlag(body)).toBe(false);
 		expect(body).toContain('## Summary');
 	});
