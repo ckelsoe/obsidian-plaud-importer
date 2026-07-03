@@ -4,6 +4,8 @@ All notable changes to Plaud Importer will be documented in this file.
 
 ## [Unreleased]
 
+## [0.18.1] - 2026-07-03
+
 ### Changed
 
 - Development tooling: updated the Obsidian marketplace lint plugin to its 0.4 line and adopted the `createSpan`/`createDiv` DOM helpers it now prefers over `createEl('span'/'div')`. No behavior change.
