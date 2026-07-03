@@ -720,13 +720,14 @@ const NOTE_NAME_SAMPLE_TITLE = 'Title';
  * Whether a note-name template is safe to save: every `{{...}}` token is known,
  * and the rendered result (with a safe placeholder title) survives
  * sanitizeFilename byte-for-byte on Windows, macOS, and Linux (Windows is
- * strictest). The template lands in a note filename AND the identical H1, so its
- * own characters must not include a path separator, a Windows-reserved
- * character, or a leading/trailing dot, which would be rewritten to a dash.
- * Validates the RENDERED output, so a literal comma, dash, period, or space
- * passes while a slash, colon, or unknown token is rejected. Only the template's
- * own text is judged; the recording title (a `{{title}}` placeholder here) is
- * sanitized separately at write time.
+ * strictest). The template's own characters must survive sanitizeFilename: a
+ * path separator, a Windows-reserved character, a double quote, or a square
+ * bracket is rewritten to a dash, and a leading or trailing dot or space is
+ * stripped, so any of those makes the render differ and the template invalid.
+ * Validates the RENDERED output, so a literal comma, interior dash, period, or
+ * space passes while a slash, colon, bracket, quote, or unknown token is
+ * rejected. Only the template's own text is judged; the recording title (a
+ * `{{title}}` placeholder here) is sanitized separately at write time.
  */
 export function isValidNoteNameTemplate(template: string): boolean {
 	let rendered: string;
@@ -751,15 +752,21 @@ export function isValidNoteNameTemplate(template: string): boolean {
  *   "{{title}} {{yyyy}}-{{MM}}-{{dd}}":                               -> "Sync 2026-04-14"
  *
  * Runs once in writeNote for both the filename (via sanitizeFilename) and the H1
- * heading (via formatMarkdown) so the two stay in sync. The template must be
- * filename-safe; the settings layer validates that with isValidNoteNameTemplate.
+ * heading (via formatMarkdown), so the template's date and layout are identical
+ * in both. The recording title text can still differ between them when it holds a
+ * character a filename cannot (the filename sanitizes it, the H1 keeps it); the
+ * template's own characters are validated filename-safe by isValidNoteNameTemplate.
+ * Falls back to the recording's ISO date if the template renders to nothing (a
+ * `{{title}}`-only template whose title was just a date, now stripped), so the
+ * note always gets a stable, non-empty name instead of a blank H1.
  */
 export function buildNoteName(
 	title: string,
 	date: Date,
 	template: string = DEFAULT_NOTE_NAME_TEMPLATE,
 ): string {
-	return formatNoteName(template, date, titleWithoutLeadingDate(title));
+	const name = formatNoteName(template, date, titleWithoutLeadingDate(title));
+	return name || formatDateYmd(date);
 }
 
 /**

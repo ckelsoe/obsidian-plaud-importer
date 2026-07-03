@@ -396,6 +396,12 @@ describe('buildNoteName', () => {
 			buildNoteName('04-13', apr14, '{{yyyy}}-{{MM}}-{{dd}} {{title}}'),
 		).toBe('2026-04-14');
 	});
+
+	it('falls back to the recording date when the template renders empty', () => {
+		// A {{title}}-only template plus a date-only title strips to nothing, so the
+		// recording's ISO date is used instead of a blank name and a blank H1.
+		expect(buildNoteName('04-13', apr14, '{{title}}')).toBe('2026-04-14');
+	});
 });
 
 // formatNoteName ------------------------------------------------------------

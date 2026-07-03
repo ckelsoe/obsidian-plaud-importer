@@ -176,7 +176,7 @@ const SUBFOLDER_TEMPLATE_FOOTNOTE =
 // above: the sentence-case lint inspects literal arguments, so the token
 // examples and proper nouns stay untouched.
 const NOTE_NAME_TEMPLATE_INTRO =
-	"Sets each note's name from a template, using the same {{...}} tokens as the subfolder setting plus a {{title}} token. The recording's date fills the date tokens, and {{title}} is the recording title with any date it already had removed, so the recording's date replaces whatever date was in the Plaud title. Put the date wherever you like, before or after {{title}}. The date property inside the note stays YYYY-MM-DD for Dataview. The whole name has to be usable as a filename, so a template containing a slash, colon, or other reserved character is rejected.";
+	"Sets each note's name from a template, using the same {{...}} tokens as the subfolder setting plus a {{title}} token. The recording's date fills the date tokens, and {{title}} is the recording title with any date it already had removed, so the recording's date replaces whatever date was in the Plaud title. Put the date wherever you like, before or after {{title}}. The date property inside the note stays YYYY-MM-DD for Dataview. The whole name has to be usable as a filename, so a template that would make a name with a character a file name cannot contain (for example a slash or colon) is rejected.";
 
 // [token, what it expands to] pairs for a July 3 2026 recording.
 const NOTE_NAME_TEMPLATE_TOKENS: ReadonlyArray<readonly [string, string]> = [
@@ -2229,7 +2229,7 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 				// the prior valid template and say why, rather than saving one that
 				// would break imports or write a mangled name.
 				new Notice(
-					"Plaud importer: That note name template is not valid. Check the {{token}} names and avoid / \\ : * ? < > and | characters. The template was not changed.",
+					"Plaud importer: That note name template is not valid. It uses an unknown {{token}}, or it would make a name with a character a file name cannot contain. The template was not changed.",
 				);
 				return;
 			} else {
