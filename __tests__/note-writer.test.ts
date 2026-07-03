@@ -457,6 +457,20 @@ describe('formatNoteName', () => {
 			/Unknown note name template token/,
 		);
 	});
+
+	it('throws on a malformed or unclosed delimiter', () => {
+		expect(() => formatNoteName('{{yyyy', d, '')).toThrow(/Malformed/);
+		expect(() => formatNoteName('{{yyyy}}-{{MM', d, '')).toThrow(/Malformed/);
+		expect(() => formatNoteName('yyyy}}', d, '')).toThrow(/Malformed/);
+	});
+
+	it('does not mistake braces in the title for a malformed template', () => {
+		// The malformed-delimiter check inspects the template, not the rendered
+		// title, so a recording title that contains "{{" renders verbatim.
+		expect(formatNoteName('{{title}}', d, 'Notes {{draft}}')).toBe(
+			'Notes {{draft}}',
+		);
+	});
 });
 
 // isValidNoteNameTemplate ---------------------------------------------------
@@ -492,6 +506,12 @@ describe('isValidNoteNameTemplate', () => {
 		expect(isValidNoteNameTemplate('{{yyyy}}-{{month}}-{{dd}}')).toBe(false);
 		// Tokens are case-sensitive; the moment-style YYYY is not a token here.
 		expect(isValidNoteNameTemplate('{{YYYY}}-{{MM}}-{{DD}}')).toBe(false);
+	});
+
+	it('rejects a malformed or unclosed {{ }} delimiter', () => {
+		expect(isValidNoteNameTemplate('{{yyyy')).toBe(false);
+		expect(isValidNoteNameTemplate('{{yyyy}}-{{MM')).toBe(false);
+		expect(isValidNoteNameTemplate('yyyy}} {{title}}')).toBe(false);
 	});
 
 	it('rejects a trailing dot, which Windows silently drops from a filename', () => {
@@ -1161,6 +1181,30 @@ describe('NoteWriter', () => {
 		expect(outcome.path).toBe('Plaud/Quarterly review Apr 14, 2026.md');
 		const body = vault.files.get('Plaud/Quarterly review Apr 14, 2026.md') ?? '';
 		expect(body).toContain('# Quarterly review Apr 14, 2026');
+	});
+
+	it('ignores a per-call template override so the filename and H1 stay in sync', async () => {
+		const vault = makeFakeVault();
+		const writer = new NoteWriter(vault, {
+			outputFolder: 'Plaud',
+			onDuplicate: 'skip',
+			noteNameTemplate: '{{yyyy}}-{{MM}}-{{dd}} {{title}}',
+		});
+
+		// A caller passes a DIFFERENT template in the per-call formatOptions; the
+		// writer's template must still drive both the filename and the H1 so the
+		// two never diverge.
+		const outcome = await writer.writeNote(
+			makeRecording({ title: 'Quarterly review' }),
+			makeTranscript(),
+			makeSummary(),
+			undefined,
+			{ noteNameTemplate: '{{MM}}-{{dd}}-{{yyyy}} {{title}}' },
+		);
+
+		expect(outcome.path).toBe('Plaud/2026-04-14 Quarterly review.md');
+		const body = vault.files.get('Plaud/2026-04-14 Quarterly review.md') ?? '';
+		expect(body).toContain('# 2026-04-14 Quarterly review');
 	});
 
 	it('writes at vault root when outputFolder is empty', async () => {

@@ -609,6 +609,16 @@ function expandNoteNameDateToken(token: string, date: Date): string | null {
  *     === "Sync 2026-07-03"
  */
 export function formatNoteName(template: string, date: Date, title: string): string {
+	// Reject a malformed {{ }} delimiter (e.g. "{{yyyy" with no closing braces)
+	// before rendering, so a typo is caught by isValidNoteNameTemplate at save time
+	// instead of being written literally into every note name. Checks the TEMPLATE
+	// with well-formed tokens removed, not the rendered output, so a recording
+	// title that itself contains "{{" is never mistaken for a bad token.
+	if (/\{\{|\}\}/.test(template.replace(/\{\{\s*[^}]*?\s*\}\}/g, ''))) {
+		throw new NoteWriterError(
+			'Malformed note name template: unbalanced or unclosed {{ }} delimiters',
+		);
+	}
 	const rendered = template.replace(
 		/\{\{\s*([^}]*?)\s*\}\}/g,
 		(_match, raw: string): string => {
@@ -1949,6 +1959,11 @@ export class NoteWriter {
 		const effectiveFormatOptions: FormatMarkdownOptions = {
 			...this.defaultFormatOptions,
 			...formatOptions,
+			// The note name is a writer-level setting, not a per-recording one. Pin
+			// it to the writer's template so a per-call formatOptions override cannot
+			// desync the H1 (formatMarkdown) from the filename (resolveTargetPath,
+			// which always uses this.noteNameTemplate).
+			noteNameTemplate: this.noteNameTemplate,
 		};
 		const markdown = formatMarkdown(
 			recording,

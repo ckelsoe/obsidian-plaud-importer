@@ -1804,18 +1804,15 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 			field = text;
 			text
 				.setPlaceholder(DEFAULT_NOTE_NAME_TEMPLATE)
-				.setValue(this.readSettingString("noteNameTemplate"))
-				.onChange(async (value) => {
-					await this.applyControlChange("noteNameTemplate", value);
-				});
-			// On blur, snap the field back to the value that was actually saved.
-			// applyControlChange rejects an invalid template and snaps an empty one
-			// to the default without changing the field, so without this the field
-			// could keep showing stale or rejected text after the user moves on.
-			// Validating per keystroke and reverting here (not mid-type) avoids
-			// fighting the user while they type.
+				.setValue(this.readSettingString("noteNameTemplate"));
+			// Validate and persist on BLUR, not on every keystroke. Editing inside a
+			// {{...}} token passes through invalid intermediate states (a half-typed
+			// {{yyy}}), and validating per keystroke would flash a Notice on each one.
+			// On blur, commitNoteNameTemplate validates once and then reflects the
+			// saved value, so a rejected or emptied entry does not linger as stale
+			// text. Preset buttons remain an explicit commit.
 			text.inputEl.addEventListener("blur", () => {
-				text.setValue(this.readSettingString("noteNameTemplate"));
+				void this.commitNoteNameTemplate(text);
 			});
 		});
 		for (const [label, template] of NOTE_NAME_TEMPLATE_PRESETS) {
@@ -1826,6 +1823,14 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 				}),
 			);
 		}
+	}
+
+	// Validates and persists the note-name template field on blur (see
+	// renderNoteNameTemplateControl), then reflects the saved value back into the
+	// field so a rejected or emptied entry does not linger as stale text.
+	private async commitNoteNameTemplate(text: TextComponent): Promise<void> {
+		await this.applyControlChange("noteNameTemplate", text.getValue());
+		text.setValue(this.readSettingString("noteNameTemplate"));
 	}
 
 	// Builds a Setting with name/desc set. Desc passes as an argument rather
