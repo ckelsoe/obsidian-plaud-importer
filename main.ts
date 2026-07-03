@@ -2238,16 +2238,22 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 				// Never persist an empty template: every note name would render
 				// blank. Snap back to the default template.
 				this.plugin.settings.noteNameTemplate = DEFAULT_NOTE_NAME_TEMPLATE;
-			} else if (!isValidNoteNameTemplate(next)) {
-				// An unknown token, or a render that is not a legal filename. Keep
-				// the prior valid template and say why, rather than saving one that
-				// would break imports or write a mangled name.
+			} else if (isValidNoteNameTemplate(next)) {
+				this.plugin.settings.noteNameTemplate = next;
+			} else if (!isValidNoteNameTemplate(this.plugin.settings.noteNameTemplate)) {
+				// The entered template is invalid AND the stored one is too (for
+				// example a hand-edited data.json). Heal to the default so the UI
+				// matches the writer, which already falls back to the default for an
+				// invalid stored template, instead of looping the notice on blur.
+				this.plugin.settings.noteNameTemplate = DEFAULT_NOTE_NAME_TEMPLATE;
+			} else {
+				// The stored template is still valid: keep it and say why the entry
+				// was not applied, rather than saving one that would break imports or
+				// write a mangled name.
 				new Notice(
 					"Plaud importer: That note name template is not valid. It uses an unknown {{token}}, or it would put a character that is not allowed in a note name (such as a slash, colon, or square bracket) into the name. The template was not changed.",
 				);
 				return;
-			} else {
-				this.plugin.settings.noteNameTemplate = next;
 			}
 		} else if (key === "transcriptHeaderLevel") {
 			const level = Number(value);
