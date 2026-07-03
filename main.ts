@@ -211,13 +211,12 @@ const NOTE_NAME_TEMPLATE_FOOTNOTE =
 	"Applies to new imports; notes you already imported keep their current names.";
 
 // [label, template] preset buttons. All dashes, so every preset is filename-safe.
-// ISO/US/EU cover the common date orders; "Date at end" shows the date can go
-// after the title, so a user does not have to discover positioning themselves.
+// ISO/US/EU cover the common date orders; putting the date after {{title}} (the
+// "date at the end" example in the reference) is left to the user to type.
 const NOTE_NAME_TEMPLATE_PRESETS: ReadonlyArray<readonly [string, string]> = [
 	["ISO", "{{yyyy}}-{{MM}}-{{dd}} {{title}}"],
 	["US", "{{MM}}-{{dd}}-{{yyyy}} {{title}}"],
 	["EU", "{{dd}}-{{MM}}-{{yyyy}} {{title}}"],
-	["Date at end", "{{title}} {{yyyy}}-{{MM}}-{{dd}}"],
 ];
 
 /**
@@ -1743,6 +1742,9 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 	// so both Obsidian versions show the identical documentation. Building the
 	// DOM fresh on each call avoids any DocumentFragment-reuse pitfalls.
 	private renderSubfolderTemplateControl(setting: Setting): void {
+		// Stack the row: the token/example lists read full-width on top, the text
+		// field full-width below, rather than crammed into a narrow left column.
+		setting.settingEl.addClass("plaud-importer-stacked-row");
 		const docEl = setting.descEl.createDiv();
 		docEl.createDiv({ text: SUBFOLDER_TEMPLATE_TOKENS_HEADING });
 		const tokenList = docEl.createEl("ul");
@@ -1772,10 +1774,12 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 
 	// Renders the note-name template row: the token reference and examples (lists,
 	// so they read clearly) into the description, then a text control bound to
-	// noteNameTemplate, then ISO/US/EU/Date-at-end preset buttons that fill the
-	// field and persist in one click. Shared by the declarative path and the
-	// imperative display() fallback so both Obsidian versions show identical docs.
+	// noteNameTemplate, then ISO/US/EU preset buttons that fill the field and
+	// persist in one click. Stacked full-width (see the CSS class) so the doc block
+	// and controls are not squeezed into narrow columns. Shared by the declarative
+	// path and the imperative display() fallback so both show identical docs.
 	private renderNoteNameTemplateControl(setting: Setting): void {
+		setting.settingEl.addClass("plaud-importer-stacked-row");
 		const docEl = setting.descEl.createDiv();
 		docEl.createDiv({ text: NOTE_NAME_TEMPLATE_TOKENS_HEADING });
 		const tokenList = docEl.createEl("ul");

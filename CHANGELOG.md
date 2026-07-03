@@ -6,7 +6,7 @@ All notable changes to Plaud Importer will be documented in this file.
 
 ### Added
 
-- **Configurable note name template.** A new setting builds each note's name from a template, using the same `{{...}}` tokens as the subfolder setting plus a `{{title}}` token. Put the date wherever you like, before or after the title: `{{yyyy}}-{{MM}}-{{dd}} {{title}}` gives `2026-07-03 Team sync`, and `{{title}} {{yyyy}}-{{MM}}-{{dd}}` gives `Team sync 2026-07-03`. Presets cover ISO, US, EU, and date-at-end orders, or type your own with named-month (`{{MMM}}`), 2-digit-year (`{{yy}}`), week (`{{ww}}`), and quarter (`{{Q}}`) tokens. The default reproduces the previous `YYYY-MM-DD` naming, so nothing changes unless you set it. The name has to be usable as a filename, so a template with a slash, colon, or unknown token is rejected. The `date` property inside each note stays `YYYY-MM-DD` for Dataview and sorting.
+- **Configurable note name template.** A new setting builds each note's name from a template, using the same `{{...}}` tokens as the subfolder setting plus a `{{title}}` token. Put the date wherever you like, before or after the title: `{{yyyy}}-{{MM}}-{{dd}} {{title}}` gives `2026-07-03 Team sync`, and `{{title}} {{yyyy}}-{{MM}}-{{dd}}` gives `Team sync 2026-07-03`. Preset buttons fill in ISO, US, and EU orders, or type your own with named-month (`{{MMM}}`), 2-digit-year (`{{yy}}`), week (`{{ww}}`), and quarter (`{{Q}}`) tokens. The default reproduces the previous `YYYY-MM-DD` naming, so nothing changes unless you set it. The name has to be usable as a filename, so a template with a slash, colon, or unknown token is rejected. The `date` property inside each note stays `YYYY-MM-DD` for Dataview and sorting.
 
 ### Changed
 

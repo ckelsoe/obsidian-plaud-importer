@@ -248,6 +248,30 @@
 }
 
 /*
+ * Stacked layout for a doc-heavy settings row (the subfolder and note-name
+ * template rows): the token reference and examples read as a full-width block on
+ * top, and the text field plus preset buttons sit full-width below, instead of
+ * squeezing the description into a narrow left column while the controls crowd
+ * the right rail. Same idea as the browser sign-in row above. Two classes beat
+ * Obsidian's default .setting-item-control specificity without !important.
+ */
+.plaud-importer-stacked-row {
+	display: block;
+}
+
+.plaud-importer-stacked-row .setting-item-control {
+	justify-content: flex-start;
+	flex-wrap: wrap;
+	gap: 0.5em;
+	margin-top: 0.6em;
+}
+
+/* Let the template field fill the row; buttons wrap after it when space runs out. */
+.plaud-importer-stacked-row .setting-item-control input[type="text"] {
+	flex: 1 1 16em;
+}
+
+/*
  * Off-screen focus shim used to force input focus into the sign-in webview on
  * first attach (Electron webview input-focus workaround). Must be focusable, so
  * it cannot use display:none; keep it in layout but invisible and inert.
