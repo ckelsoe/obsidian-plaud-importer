@@ -117,18 +117,56 @@ describe('selectAutoSyncCandidates', () => {
 		]);
 	});
 
-	it('flags reachedUpToDate only when the page yields no candidates', () => {
+	it('reaches the frontier only when the whole page is proven up-to-date', () => {
 		const index = idx([
 			['a', { path: 'a', versionMs: 500 }],
 			['b', { path: 'b', versionMs: 500 }],
 		]);
 		const page = [
-			rec({ id: 'a', versionMs: 500 }), // up-to-date
-			rec({ id: 'b', versionMs: 400 }), // up-to-date
+			rec({ id: 'a', versionMs: 500 }), // up-to-date-boundary
+			rec({ id: 'b', versionMs: 400 }), // up-to-date-boundary
 		];
 		const { candidates, reachedUpToDate } = selectAutoSyncCandidates(page, index);
 		expect(candidates).toEqual([]);
 		expect(reachedUpToDate).toBe(true);
+	});
+
+	it('does NOT reach the frontier on a page of only legacy (no-marker) notes', () => {
+		// up-to-date-current rows cannot prove the frontier (migration rule): a
+		// ready recording can still sit below them on a later page.
+		const index = idx([
+			['legacy-a', { path: 'a' }], // no versionMs
+			['legacy-b', { path: 'b' }],
+		]);
+		const page = [
+			rec({ id: 'legacy-a', versionMs: 900 }),
+			rec({ id: 'legacy-b', versionMs: 800 }),
+		];
+		const { candidates, reachedUpToDate } = selectAutoSyncCandidates(page, index);
+		expect(candidates).toEqual([]);
+		expect(reachedUpToDate).toBe(false);
+	});
+
+	it('does NOT reach the frontier on a page of only pending wait_pull notes', () => {
+		const page = [
+			rec({
+				id: 'p1',
+				versionMs: 900,
+				waitPull: true,
+				transcriptAvailable: false,
+				summaryAvailable: false,
+			}),
+			rec({
+				id: 'p2',
+				versionMs: 800,
+				waitPull: true,
+				transcriptAvailable: false,
+				summaryAvailable: false,
+			}),
+		];
+		const { candidates, reachedUpToDate } = selectAutoSyncCandidates(page, idx([]));
+		expect(candidates).toEqual([]);
+		expect(reachedUpToDate).toBe(false);
 	});
 
 	it('does not stop on a missing-marker note and never flags it changed', () => {

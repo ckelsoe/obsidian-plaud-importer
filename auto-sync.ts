@@ -111,12 +111,16 @@ export interface AutoSyncCandidate {
 export interface SelectCandidatesResult {
 	readonly candidates: readonly AutoSyncCandidate[];
 	/**
-	 * True when this page produced NO importable candidates (nothing new or
-	 * changed after scanning the whole page). In edit-time-descending order a
-	 * page with nothing to import means we have reached the synced frontier, so
-	 * the scheduler stops paging. This replaces the old "first up-to-date
-	 * recording" break, which could strand a new recording that sorts below an
-	 * already-synced one.
+	 * True only when EVERY recording on the page is a proven-unchanged
+	 * `up-to-date-boundary` (in the vault, with a version marker, listed
+	 * `version_ms` <= stored). That is the real synced frontier, so the
+	 * scheduler stops paging. A page is deliberately NOT a frontier when it
+	 * still holds any candidate, any `up-to-date-current` (legacy note with no
+	 * marker, per the migration rule), or any `skipped-wait-pull` row: an
+	 * importable recording can sort below those on a later page, so paging must
+	 * continue. This replaces both the old "first up-to-date recording" break
+	 * (stranded new recordings below it) and the interim "zero candidates" stop
+	 * (stranded ready recordings below an all-legacy or all-wait_pull page).
 	 */
 	readonly reachedUpToDate: boolean;
 }
@@ -130,9 +134,9 @@ export interface SelectCandidatesResult {
  * recording: a `new` (never-imported) recording can sit below an
  * `up-to-date-boundary` one in edit-time order once a backlog accumulates (for
  * example after auto-sync was auth-paused and several recordings piled up), so
- * an early break would strand it. Instead, `reachedUpToDate` is set when the
- * page yields zero candidates, and the scheduler uses that (plus its page /
- * import caps) to decide when to stop paging.
+ * an early break would strand it. Paging stops only when the whole page is
+ * proven up-to-date (see `reachedUpToDate`), which the scheduler combines with
+ * its page / import caps.
  */
 export function selectAutoSyncCandidates(
 	page: readonly Recording[],
@@ -141,16 +145,25 @@ export function selectAutoSyncCandidates(
 	// Never import trash. filterVisibleRecordings preserves order.
 	const visible = filterVisibleRecordings(page, false);
 	const candidates: AutoSyncCandidate[] = [];
+	// The frontier is reached only if the page has at least one recording and
+	// every one of them is an `up-to-date-boundary`. Any candidate, legacy
+	// (`up-to-date-current`), or pending (`skipped-wait-pull`) row means an
+	// importable recording could still be below, so we must keep paging.
+	let sawRecording = false;
+	let allProvenUpToDate = true;
 	for (const recording of visible) {
+		sawRecording = true;
 		const classification = classifyRecording(recording, index);
 		if (classification === 'new' || classification === 'changed') {
 			candidates.push({ recording, kind: classification });
+			allProvenUpToDate = false;
+		} else if (classification !== 'up-to-date-boundary') {
+			// 'up-to-date-current' (legacy) or 'skipped-wait-pull' (pending):
+			// non-importable here, but NOT a frontier. Skip and keep scanning.
+			allProvenUpToDate = false;
 		}
-		// 'up-to-date-boundary', 'up-to-date-current', and 'skipped-wait-pull'
-		// are all non-importable: skip them but keep scanning the rest of the
-		// page so a new recording below them is not missed.
 	}
-	return { candidates, reachedUpToDate: candidates.length === 0 };
+	return { candidates, reachedUpToDate: sawRecording && allProvenUpToDate };
 }
 
 // -----------------------------------------------------------------------------
