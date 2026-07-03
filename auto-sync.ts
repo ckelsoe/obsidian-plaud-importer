@@ -27,9 +27,12 @@ import {
  *  - `changed`: in the vault with a stored marker, and the listed `version_ms`
  *    is strictly greater. Re-import (overwrite) it.
  *  - `up-to-date-boundary`: in the vault with a stored marker and listed
- *    `version_ms` <= stored. Proof it has not changed; because the list is
- *    edit-time-descending, everything BELOW it is also unchanged, so this is
- *    the stop signal.
+ *    `version_ms` <= stored. Proof this recording has not changed. It is NOT a
+ *    hard stop signal on its own: a NEW (never-imported) recording can sort
+ *    below it in edit-time order once a backlog accumulates (for example while
+ *    auto-sync was auth-paused), so paging must not terminate at the first one.
+ *    `selectAutoSyncCandidates` stops only after a whole page yields nothing to
+ *    import.
  *  - `up-to-date-current`: in the vault but no comparable marker (imported
  *    before this feature, or the list omitted `version_ms`). Migration rule:
  *    treat as current so enabling auto-sync never mass-overwrites an existing
@@ -49,7 +52,22 @@ export function classifyRecording(
 	recording: Recording,
 	index: ReadonlyMap<PlaudRecordingId, ImportedRecord>,
 ): AutoSyncClassification {
-	if (recording.waitPull === true) {
+	// `wait_pull` tracks the device's ORIGINAL-AUDIO pull (the list's
+	// `ori_ready`), NOT transcript/summary readiness. A recording is routinely
+	// fully transcribed and summarized (`transcriptAvailable` / `summaryAvailable`
+	// true) while `wait_pull` is still 1 for a long time; observed live at 30
+	// minutes to 24 hours after the transcript was ready. Skipping on `wait_pull`
+	// alone therefore withholds importable notes from auto-sync for that whole
+	// window, even though the content is complete (verified: the transcript/
+	// summary fetch succeeds on a `wait_pull === 1` recording). Only skip when
+	// there is genuinely no content yet; a transcribed recording imports now and
+	// its audio, if enabled, stays best-effort, matching the manual import path.
+	// If the recording later changes, `version_ms` advances and it re-syncs.
+	if (
+		recording.waitPull === true &&
+		!recording.transcriptAvailable &&
+		!recording.summaryAvailable
+	) {
 		return 'skipped-wait-pull';
 	}
 	const existing = index.get(recording.id);
@@ -93,8 +111,12 @@ export interface AutoSyncCandidate {
 export interface SelectCandidatesResult {
 	readonly candidates: readonly AutoSyncCandidate[];
 	/**
-	 * True when a definitively up-to-date recording was reached (the boundary).
-	 * The scheduler stops paging when this is set.
+	 * True when this page produced NO importable candidates (nothing new or
+	 * changed after scanning the whole page). In edit-time-descending order a
+	 * page with nothing to import means we have reached the synced frontier, so
+	 * the scheduler stops paging. This replaces the old "first up-to-date
+	 * recording" break, which could strand a new recording that sorts below an
+	 * already-synced one.
 	 */
 	readonly reachedUpToDate: boolean;
 }
@@ -102,9 +124,15 @@ export interface SelectCandidatesResult {
 /**
  * Classify one edit-time-descending page against the index and collect the
  * importable candidates. Trashed recordings are removed first (auto-sync never
- * imports trash regardless of the show-trash display setting). Iteration stops
- * at the first `up-to-date-boundary`: everything after it in the page is older
- * and unchanged.
+ * imports trash regardless of the show-trash display setting).
+ *
+ * The WHOLE page is scanned rather than stopping at the first already-synced
+ * recording: a `new` (never-imported) recording can sit below an
+ * `up-to-date-boundary` one in edit-time order once a backlog accumulates (for
+ * example after auto-sync was auth-paused and several recordings piled up), so
+ * an early break would strand it. Instead, `reachedUpToDate` is set when the
+ * page yields zero candidates, and the scheduler uses that (plus its page /
+ * import caps) to decide when to stop paging.
  */
 export function selectAutoSyncCandidates(
 	page: readonly Recording[],
@@ -113,19 +141,16 @@ export function selectAutoSyncCandidates(
 	// Never import trash. filterVisibleRecordings preserves order.
 	const visible = filterVisibleRecordings(page, false);
 	const candidates: AutoSyncCandidate[] = [];
-	let reachedUpToDate = false;
 	for (const recording of visible) {
 		const classification = classifyRecording(recording, index);
-		if (classification === 'up-to-date-boundary') {
-			reachedUpToDate = true;
-			break;
-		}
 		if (classification === 'new' || classification === 'changed') {
 			candidates.push({ recording, kind: classification });
 		}
-		// 'skipped-wait-pull' and 'up-to-date-current' fall through: skip, keep going.
+		// 'up-to-date-boundary', 'up-to-date-current', and 'skipped-wait-pull'
+		// are all non-importable: skip them but keep scanning the rest of the
+		// page so a new recording below them is not missed.
 	}
-	return { candidates, reachedUpToDate };
+	return { candidates, reachedUpToDate: candidates.length === 0 };
 }
 
 // -----------------------------------------------------------------------------

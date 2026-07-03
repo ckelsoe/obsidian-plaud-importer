@@ -8,6 +8,11 @@ All notable changes to Plaud Importer will be documented in this file.
 
 - Development tooling: updated the Obsidian marketplace lint plugin to its 0.4 line and adopted the `createSpan`/`createDiv` DOM helpers it now prefers over `createEl('span'/'div')`. No behavior change.
 
+### Fixed
+
+- Background auto-sync now imports a recording as soon as its transcript and summary are ready, instead of waiting for Plaud to finish pulling the original audio off the device. A recording could stay un-imported for a long time (sometimes hours) even though it was fully transcribed, because the plugin was gating on a device-sync flag that clears much later. Transcribed recordings now sync on the next check; if you import audio, a recording whose audio is not ready yet still imports and its audio lands on a later sync.
+- Background auto-sync no longer stops scanning at the first already-synced recording. When several recordings piled up while sync was paused (for example after your Plaud session expired), a newer-imported recording could sit above older un-imported ones and cause auto-sync to stop before reaching them, so they were never imported. Auto-sync now scans each check until it reaches a page with nothing new, so a backlog drains fully.
+
 ## [0.18.0] - 2026-07-02
 
 ### Added

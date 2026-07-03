@@ -60,7 +60,7 @@ function deps(
 }
 
 describe('runAutoSyncTick', () => {
-	it('stops at the up-to-date boundary in a single page and splits new/changed', async () => {
+	it('scans the whole page (splitting new/changed) instead of stopping at an up-to-date one', async () => {
 		const index = idx([
 			['changed', 500],
 			['boundary', 900],
@@ -72,34 +72,44 @@ describe('runAutoSyncTick', () => {
 				[
 					rec('new1', 1000),
 					rec('changed', 600), // > stored 500 -> changed
-					rec('boundary', 900), // == stored -> STOP
-					rec('never', 1),
+					rec('boundary', 900), // == stored -> up-to-date, do NOT stop
+					rec('new-below', 1), // NEW, below the up-to-date one -> still caught
 				],
 			],
 		});
 		const result = await runAutoSyncTick(d);
-		expect(result.reachedUpToDate).toBe(true);
+		// The page produced candidates, so we did not reach the "nothing to
+		// import" frontier; the short page (4 < 10) is what ends paging.
+		expect(result.reachedUpToDate).toBe(false);
 		expect(result.pagesScanned).toBe(1);
-		expect(importCalls).toEqual([{ newIds: ['new1'], changedIds: ['changed'] }]);
-		expect(result.imported).toBe(1);
+		expect(importCalls).toEqual([
+			{ newIds: ['new1', 'new-below'], changedIds: ['changed'] },
+		]);
+		expect(result.imported).toBe(2);
 		expect(result.updated).toBe(1);
 	});
 
-	it('pages across multiple pages until the boundary', async () => {
-		const index = idx([['stop', 100]]);
-		const { deps: d, listSkips } = deps({
+	it('keeps paging past up-to-date recordings and stops on the first page with no candidates', async () => {
+		const index = idx([
+			['synced-a', 500],
+			['synced-b', 500],
+			['synced-c', 500],
+		]);
+		const { deps: d, listSkips, importCalls } = deps({
 			index,
 			pageSize: 2,
 			pages: [
-				[rec('a', 900), rec('b', 800)], // full page, keep going
-				[rec('c', 700), rec('stop', 100)], // boundary at 'stop'
-				[rec('should-not-load', 1)],
+				[rec('a', 900), rec('b', 800)], // page 1: both new -> keep going
+				[rec('c', 700), rec('synced-a', 500)], // page 2: new + up-to-date -> keep going
+				[rec('synced-b', 400), rec('synced-c', 300)], // page 3: all up-to-date -> STOP
+				[rec('should-not-load', 1)], // page 4: never loaded
 			],
 		});
 		const result = await runAutoSyncTick(d);
-		expect(result.reachedUpToDate).toBe(true);
-		expect(result.pagesScanned).toBe(2);
-		expect(listSkips).toEqual([0, 2]); // never asked for page 3
+		expect(result.reachedUpToDate).toBe(true); // page 3 yielded zero candidates
+		expect(result.pagesScanned).toBe(3);
+		expect(listSkips).toEqual([0, 2, 4]); // never asked for page 4
+		expect(importCalls[0].newIds).toEqual(['a', 'b', 'c']);
 	});
 
 	it('caps by maxPagesPerTick on a cold index (nothing up to date)', async () => {

@@ -66,36 +66,69 @@ describe('classifyRecording', () => {
 		);
 	});
 
-	it('skips a recording still syncing from the device (wait_pull)', () => {
+	it('imports a wait_pull recording that already has content ready', () => {
+		// wait_pull tracks the device audio pull, not transcript/summary
+		// readiness: a transcribed recording must import even while wait_pull=1.
 		expect(
 			classifyRecording(rec({ id: 'a', versionMs: 999, waitPull: true }), idx([])),
+		).toBe('new');
+	});
+
+	it('skips a wait_pull recording only when it has no content yet', () => {
+		expect(
+			classifyRecording(
+				rec({
+					id: 'a',
+					versionMs: 999,
+					waitPull: true,
+					transcriptAvailable: false,
+					summaryAvailable: false,
+				}),
+				idx([]),
+			),
 		).toBe('skipped-wait-pull');
 	});
 });
 
 describe('selectAutoSyncCandidates', () => {
-	it('collects new and changed, and stops at the first up-to-date boundary', () => {
-		// edit-time-descending page: a changed-old recording sits ABOVE the
-		// boundary and must still be caught; everything after the boundary is
-		// skipped without classification.
+	it('scans the whole page so a new recording below an up-to-date one is still caught', () => {
+		// Bug B regression: after a backlog builds up (e.g. auto-sync was
+		// auth-paused), a NEW recording can sort BELOW an already-synced
+		// (up-to-date-boundary) recording in edit-time order. The scan must not
+		// stop at the boundary, or that new recording is stranded forever.
 		const index = idx([
 			['changed-old', { path: 'c', versionMs: 100 }],
 			['boundary', { path: 'b', versionMs: 500 }],
-			['below', { path: 'x', versionMs: 10 }],
+			['below-synced', { path: 'x', versionMs: 10 }],
 		]);
 		const page = [
 			rec({ id: 'brand-new', versionMs: 900 }),
 			rec({ id: 'changed-old', versionMs: 800 }),
-			rec({ id: 'boundary', versionMs: 500 }), // == stored -> boundary, STOP
-			rec({ id: 'below', versionMs: 5 }), // never examined
-			rec({ id: 'also-new', versionMs: 1 }), // never examined
+			rec({ id: 'boundary', versionMs: 500 }), // == stored -> up-to-date, do NOT stop
+			rec({ id: 'below-synced', versionMs: 5 }), // in index, up-to-date, skip
+			rec({ id: 'also-new', versionMs: 1 }), // NEW, below the boundary -> must be caught
 		];
 		const { candidates, reachedUpToDate } = selectAutoSyncCandidates(page, index);
-		expect(reachedUpToDate).toBe(true);
+		expect(reachedUpToDate).toBe(false); // the page produced candidates
 		expect(candidates.map((c) => `${c.recording.id}:${c.kind}`)).toEqual([
 			'brand-new:new',
 			'changed-old:changed',
+			'also-new:new',
 		]);
+	});
+
+	it('flags reachedUpToDate only when the page yields no candidates', () => {
+		const index = idx([
+			['a', { path: 'a', versionMs: 500 }],
+			['b', { path: 'b', versionMs: 500 }],
+		]);
+		const page = [
+			rec({ id: 'a', versionMs: 500 }), // up-to-date
+			rec({ id: 'b', versionMs: 400 }), // up-to-date
+		];
+		const { candidates, reachedUpToDate } = selectAutoSyncCandidates(page, index);
+		expect(candidates).toEqual([]);
+		expect(reachedUpToDate).toBe(true);
 	});
 
 	it('does not stop on a missing-marker note and never flags it changed', () => {
@@ -118,14 +151,26 @@ describe('selectAutoSyncCandidates', () => {
 		expect(candidates.map((c) => c.recording.id)).toEqual(['keep']);
 	});
 
-	it('skips wait_pull recordings but keeps scanning', () => {
+	it('skips a content-less wait_pull recording but keeps scanning', () => {
 		const page = [
-			rec({ id: 'pending', versionMs: 900, waitPull: true }),
+			rec({
+				id: 'pending',
+				versionMs: 900,
+				waitPull: true,
+				transcriptAvailable: false,
+				summaryAvailable: false,
+			}),
 			rec({ id: 'ready', versionMs: 800 }),
 		];
 		const { candidates, reachedUpToDate } = selectAutoSyncCandidates(page, idx([]));
 		expect(reachedUpToDate).toBe(false);
 		expect(candidates.map((c) => c.recording.id)).toEqual(['ready']);
+	});
+
+	it('imports a wait_pull recording that has content (transcribed but audio still pulling)', () => {
+		const page = [rec({ id: 'pending-with-content', versionMs: 900, waitPull: true })];
+		const { candidates } = selectAutoSyncCandidates(page, idx([]));
+		expect(candidates.map((c) => c.recording.id)).toEqual(['pending-with-content']);
 	});
 });
 
