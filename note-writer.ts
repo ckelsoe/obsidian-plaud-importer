@@ -511,11 +511,14 @@ function joinFolderPath(base: string, sub: string): string {
  * single-digit month/day, or a year-first date. Month is 1-12 and day 1-31, so
  * an ID-like lead such as "123-4 Widget" is NOT read as a date (it stays
  * dateless and still gets a prefix), while a real "06/13" date is left alone
- * rather than double-dated. Month-first, matching Plaud's MM-DD default; a
- * locale-aware (US/EUR) detector is future work with the configurable format.
+ * rather than double-dated. The token must not run straight into more date
+ * digits, so a version like "1.2.3" or a long number like "12-345" is not
+ * mistaken for a date, though a date glued to text ("06/13-Sync") still counts.
+ * Month-first, matching Plaud's MM-DD default; a locale-aware (US/EUR) detector
+ * is future work with the configurable date format.
  */
 const OTHER_LEADING_DATE =
-	/^(?:\d{4}[-/.])?(?:0?[1-9]|1[0-2])[-/.](?:0?[1-9]|[12]\d|3[01])(?:[-/.]\d{2,4})?(?:\s|$)/;
+	/^(?:\d{4}[-/.])?(?:0?[1-9]|1[0-2])[-/.](?:0?[1-9]|[12]\d|3[01])(?:[-/.]\d{2,4})?(?![-/.]?\d)/;
 
 /**
  * Ensure a recording title carries a leading YYYY-MM-DD date so notes sort

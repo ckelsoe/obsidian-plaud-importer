@@ -387,6 +387,20 @@ describe('expandTitleWithYear', () => {
 			'2026-04-14 45/67 notes',
 		);
 	});
+
+	it('leaves a date glued to punctuation unchanged', () => {
+		// The guard allows a date that runs into text, so "04/13-Meeting" is
+		// recognized as already dated and not prefixed.
+		expect(expandTitleWithYear('04/13-Meeting', apr14)).toBe('04/13-Meeting');
+	});
+
+	it('prefixes a version-like prefix rather than reading it as a date', () => {
+		// "1.2.3" is a version: the guard rejects it because the token runs
+		// straight into more digits, so the title is dateless and prefixed.
+		expect(expandTitleWithYear('1.2.3 release notes', apr14)).toBe(
+			'2026-04-14 1.2.3 release notes',
+		);
+	});
 });
 
 // resolveSubfolder ----------------------------------------------------------
