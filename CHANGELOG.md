@@ -4,9 +4,13 @@ All notable changes to Plaud Importer will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **Configurable note name template.** A new setting builds each note's name from a template, using the same `{{...}}` tokens as the subfolder setting plus a `{{title}}` token. Put the date wherever you like, before or after the title: `{{yyyy}}-{{MM}}-{{dd}} {{title}}` gives `2026-07-03 Team sync`, and `{{title}} {{yyyy}}-{{MM}}-{{dd}}` gives `Team sync 2026-07-03`. Preset buttons fill in ISO, US, and EU orders, or type your own with named-month (`{{MMM}}`), 2-digit-year (`{{yy}}`), week (`{{ww}}`), and quarter (`{{Q}}`) tokens. The default reproduces the previous `YYYY-MM-DD` naming, so nothing changes unless you set it. The name has to be usable as a filename, so a template with a slash, colon, or unknown token is rejected. The `date` property inside each note stays `YYYY-MM-DD` for Dataview and sorting.
+
 ### Changed
 
-- A recording whose Plaud title has no date now gets a `YYYY-MM-DD` date prefix (from the recording's own date) when it is imported, so imported notes sort in date order in the file explorer. Plaud's default `MM-DD` titles keep getting the year added, as before. A title that already starts with a full date, or with another date form such as `MM/DD`, is left unchanged. Existing notes are not renamed.
+- On import, the recording's own date is placed in each note's name by the template, replacing any date already in the title, so notes sort by day in the file explorer and every name reads the same way. A title with no date gets the recording date. A title that starts with a date, in any common form (including one glued to text such as `04/13-Meeting`), has that date removed and the recording's date used instead. The date always comes from the recording, the same value as the note's `date` property, so a title whose date was edited or written differently ends up with the recording's date. Existing notes are not renamed; this applies to new imports.
 
 ## [0.19.0] - 2026-07-03
 

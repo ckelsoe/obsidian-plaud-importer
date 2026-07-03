@@ -6,6 +6,7 @@ import {
 	PluginSettingTab,
 	SecretComponent,
 	Setting,
+	type TextComponent,
 	TFile,
 	type SettingDefinitionItem,
 	type ObsidianProtocolData,
@@ -25,7 +26,12 @@ import {
 	isAccessToken,
 	openPlaudLogin,
 } from "./plaud-login";
-import { NoteWriter, type TagMode } from "./note-writer";
+import {
+	NoteWriter,
+	DEFAULT_NOTE_NAME_TEMPLATE,
+	isValidNoteNameTemplate,
+	type TagMode,
+} from "./note-writer";
 import { AttachmentImporter } from "./attachment-importer";
 import {
 	buildPlaudIdIndex,
@@ -164,6 +170,55 @@ const SUBFOLDER_TEMPLATE_EXAMPLES_HEADING = "Examples:";
 const SUBFOLDER_TEMPLATE_FOOTNOTE =
 	"Applies to new imports; notes you already imported stay where they are.";
 
+// Note-name template documentation, shared by the declarative settings (1.13+)
+// and the imperative display() fallback (1.12). Held in consts (not inline
+// literals at createEl/setDesc) for the same reason as the subfolder strings
+// above: the sentence-case lint inspects literal arguments, so the token
+// examples and proper nouns stay untouched.
+const NOTE_NAME_TEMPLATE_INTRO =
+	"Sets each note's name from a template, using the same {{...}} tokens as the subfolder setting plus a {{title}} token. The recording's date fills the date tokens, and {{title}} is the recording title with a leading numeric date removed (the MM-DD and YYYY-MM-DD style forms Plaud uses), so the recording's date takes the place of the one Plaud put in the title. Put the date wherever you like, before or after {{title}}. The date property inside the note stays YYYY-MM-DD for Dataview. The whole name has to work as a note file name, so a template that would put a character that is not allowed in a note name (for example a slash, colon, or square bracket) into the name is rejected.";
+
+// [token, what it expands to] pairs for a July 3 2026 recording.
+const NOTE_NAME_TEMPLATE_TOKENS: ReadonlyArray<readonly [string, string]> = [
+	["{{yyyy}}", "year, for example 2026"],
+	["{{yy}}", "2-digit year, for example 26"],
+	["{{MMMM}}", "month name, for example July"],
+	["{{MMM}}", "short month, for example Jul"],
+	["{{MM}}", "month, 01 to 12"],
+	["{{M}}", "month, 1 to 12"],
+	["{{dd}}", "day, 01 to 31"],
+	["{{d}}", "day, 1 to 31"],
+	["{{yyyy-MM}}", "year and month, for example 2026-07"],
+	["{{ww}}", "ISO week number, 01 to 53"],
+	["{{Q}}", "quarter, 1 to 4"],
+	["{{title}}", "the recording title, with a leading numeric date (MM-DD, YYYY-MM-DD, and similar) removed"],
+];
+
+// [template, resulting name] pairs for a July 3 2026 recording titled Team sync.
+// Covers date-first, date-last, a named month, and US order so positioning and
+// ordering are both visible.
+const NOTE_NAME_TEMPLATE_EXAMPLES: ReadonlyArray<readonly [string, string]> = [
+	["{{yyyy}}-{{MM}}-{{dd}} {{title}}", "2026-07-03 Team sync"],
+	["{{title}} {{yyyy}}-{{MM}}-{{dd}}", "Team sync 2026-07-03 (date at the end)"],
+	["{{MMM}} {{d}}, {{yyyy}} - {{title}}", "Jul 3, 2026 - Team sync"],
+	["{{MM}}-{{dd}}-{{yyyy}} {{title}}", "07-03-2026 Team sync (US order)"],
+];
+
+const NOTE_NAME_TEMPLATE_TOKENS_HEADING =
+	"Tokens (mix with your own text and separators):";
+const NOTE_NAME_TEMPLATE_EXAMPLES_HEADING = "Examples:";
+const NOTE_NAME_TEMPLATE_FOOTNOTE =
+	"Applies to new imports; notes you already imported keep their current names.";
+
+// [label, template] preset buttons. All dashes, so every preset is filename-safe.
+// ISO/US/EU cover the common date orders; putting the date after {{title}} (the
+// "date at the end" example in the reference) is left to the user to type.
+const NOTE_NAME_TEMPLATE_PRESETS: ReadonlyArray<readonly [string, string]> = [
+	["ISO", "{{yyyy}}-{{MM}}-{{dd}} {{title}}"],
+	["US", "{{MM}}-{{dd}}-{{yyyy}} {{title}}"],
+	["EU", "{{dd}}-{{MM}}-{{yyyy}} {{title}}"],
+];
+
 /**
  * Coerce a stored ribbon icon ID to a known-good value. Protects against
  * a hand-edited `data.json` or a setting left over from a future build
@@ -189,6 +244,10 @@ interface PlaudImporterSettings {
 	apiBaseUrl: string;
 	outputFolder: string;
 	subfolderTemplate: string;
+	// {{...}} template for each note's name (same token syntax as
+	// subfolderTemplate, plus {{title}}). Default "{{yyyy}}-{{MM}}-{{dd}} {{title}}"
+	// reproduces the historical naming. Validated filename-safe before it is saved.
+	noteNameTemplate: string;
 	onDuplicate: "skip" | "overwrite" | "prompt";
 	showRibbonIcon: boolean;
 	ribbonIcon: string;
@@ -234,6 +293,7 @@ const DEFAULT_SETTINGS: PlaudImporterSettings = {
 	apiBaseUrl: "https://api.plaud.ai",
 	outputFolder: "Plaud",
 	subfolderTemplate: "",
+	noteNameTemplate: DEFAULT_NOTE_NAME_TEMPLATE,
 	onDuplicate: "prompt",
 	showRibbonIcon: true,
 	ribbonIcon: DEFAULT_RIBBON_ICON,
@@ -509,6 +569,7 @@ export default class PlaudImporterPlugin extends Plugin {
 		return {
 			outputFolder: this.settings.outputFolder,
 			subfolderTemplate: this.settings.subfolderTemplate,
+			noteNameTemplate: this.settings.noteNameTemplate,
 			onDuplicate: this.settings.onDuplicate,
 			includeTranscript: this.settings.includeTranscript,
 			includeSummary: this.settings.defaultIncludeSummary,
@@ -1296,6 +1357,13 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 		this.renderSubfolderTemplateControl(
 			this.makeSetting(containerEl, "Subfolder template", SUBFOLDER_TEMPLATE_INTRO),
 		);
+		this.renderNoteNameTemplateControl(
+			this.makeSetting(
+				containerEl,
+				"Note name template",
+				NOTE_NAME_TEMPLATE_INTRO,
+			),
+		);
 		this.addDropdownRow(
 			containerEl,
 			"Duplicate handling",
@@ -1674,6 +1742,9 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 	// so both Obsidian versions show the identical documentation. Building the
 	// DOM fresh on each call avoids any DocumentFragment-reuse pitfalls.
 	private renderSubfolderTemplateControl(setting: Setting): void {
+		// Stack the row: the token/example lists read full-width on top, the text
+		// field full-width below, rather than crammed into a narrow left column.
+		setting.settingEl.addClass("plaud-importer-stacked-row");
 		const docEl = setting.descEl.createDiv();
 		docEl.createDiv({ text: SUBFOLDER_TEMPLATE_TOKENS_HEADING });
 		const tokenList = docEl.createEl("ul");
@@ -1699,6 +1770,67 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 					await this.applyControlChange("subfolderTemplate", value);
 				}),
 		);
+	}
+
+	// Renders the note-name template row: the token reference and examples (lists,
+	// so they read clearly) into the description, then a text control bound to
+	// noteNameTemplate, then ISO/US/EU preset buttons that fill the field and
+	// persist in one click. Stacked full-width (see the CSS class) so the doc block
+	// and controls are not squeezed into narrow columns. Shared by the declarative
+	// path and the imperative display() fallback so both show identical docs.
+	private renderNoteNameTemplateControl(setting: Setting): void {
+		setting.settingEl.addClass("plaud-importer-stacked-row");
+		const docEl = setting.descEl.createDiv();
+		docEl.createDiv({ text: NOTE_NAME_TEMPLATE_TOKENS_HEADING });
+		const tokenList = docEl.createEl("ul");
+		for (const [token, meaning] of NOTE_NAME_TEMPLATE_TOKENS) {
+			const item = tokenList.createEl("li");
+			item.createEl("code", { text: token });
+			item.createSpan({ text: ` ${meaning}` });
+		}
+		docEl.createDiv({ text: NOTE_NAME_TEMPLATE_EXAMPLES_HEADING });
+		const exampleList = docEl.createEl("ul");
+		for (const [template, result] of NOTE_NAME_TEMPLATE_EXAMPLES) {
+			const item = exampleList.createEl("li");
+			item.createEl("code", { text: template });
+			item.createSpan({ text: ` → ${result}` });
+		}
+		docEl.createDiv({ text: NOTE_NAME_TEMPLATE_FOOTNOTE });
+
+		// Captured so a preset button can update the visible field, not just the
+		// saved value.
+		let field: TextComponent | null = null;
+		setting.addText((text) => {
+			field = text;
+			text
+				.setPlaceholder(DEFAULT_NOTE_NAME_TEMPLATE)
+				.setValue(this.readSettingString("noteNameTemplate"));
+			// Validate and persist on BLUR, not on every keystroke. Editing inside a
+			// {{...}} token passes through invalid intermediate states (a half-typed
+			// {{yyy}}), and validating per keystroke would flash a Notice on each one.
+			// On blur, commitNoteNameTemplate validates once and then reflects the
+			// saved value, so a rejected or emptied entry does not linger as stale
+			// text. Preset buttons remain an explicit commit.
+			text.inputEl.addEventListener("blur", () => {
+				void this.commitNoteNameTemplate(text);
+			});
+		});
+		for (const [label, template] of NOTE_NAME_TEMPLATE_PRESETS) {
+			setting.addButton((button) =>
+				button.setButtonText(label).onClick(async () => {
+					field?.setValue(template);
+					await this.applyControlChange("noteNameTemplate", template);
+				}),
+			);
+		}
+	}
+
+	// Validates and persists the note-name template field on blur (see
+	// renderNoteNameTemplateControl), then reflects the saved value back into the
+	// field so a rejected or emptied entry does not linger as stale text.
+	private async commitNoteNameTemplate(text: TextComponent): Promise<void> {
+		await this.applyControlChange("noteNameTemplate", text.getValue());
+		text.setValue(this.readSettingString("noteNameTemplate"));
 	}
 
 	// Builds a Setting with name/desc set. Desc passes as an argument rather
@@ -1874,6 +2006,16 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 						searchable: false,
 						render: (setting: Setting) =>
 							this.renderSubfolderTemplateControl(setting),
+					},
+					{
+						name: "Note name template",
+						desc: NOTE_NAME_TEMPLATE_INTRO,
+						// Rendered imperatively for the token + examples lists plus
+						// the preset buttons. Not search-indexable, like the
+						// subfolder row above.
+						searchable: false,
+						render: (setting: Setting) =>
+							this.renderNoteNameTemplateControl(setting),
 					},
 					{
 						name: "Duplicate handling",
@@ -2090,6 +2232,29 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 		if (key === "outputFolder") {
 			this.plugin.settings.outputFolder =
 				(typeof value === "string" ? value.trim() : "") || "Plaud";
+		} else if (key === "noteNameTemplate") {
+			const next = typeof value === "string" ? value.trim() : "";
+			if (next.length === 0) {
+				// Never persist an empty template: every note name would render
+				// blank. Snap back to the default template.
+				this.plugin.settings.noteNameTemplate = DEFAULT_NOTE_NAME_TEMPLATE;
+			} else if (isValidNoteNameTemplate(next)) {
+				this.plugin.settings.noteNameTemplate = next;
+			} else if (!isValidNoteNameTemplate(this.plugin.settings.noteNameTemplate)) {
+				// The entered template is invalid AND the stored one is too (for
+				// example a hand-edited data.json). Heal to the default so the UI
+				// matches the writer, which already falls back to the default for an
+				// invalid stored template, instead of looping the notice on blur.
+				this.plugin.settings.noteNameTemplate = DEFAULT_NOTE_NAME_TEMPLATE;
+			} else {
+				// The stored template is still valid: keep it and say why the entry
+				// was not applied, rather than saving one that would break imports or
+				// write a mangled name.
+				new Notice(
+					"Plaud importer: That note name template is not valid. It uses an unknown {{token}}, or it would put a character that is not allowed in a note name (such as a slash, colon, or square bracket) into the name. The template was not changed.",
+				);
+				return;
+			}
 		} else if (key === "transcriptHeaderLevel") {
 			const level = Number(value);
 			if (level >= 1 && level <= 6) {
