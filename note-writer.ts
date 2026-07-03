@@ -521,51 +521,141 @@ const OTHER_LEADING_DATE =
 	/^(?:\d{4}[-/.])?(?:0?[1-9]|1[0-2])[-/.](?:0?[1-9]|[12]\d|3[01])(?:[-/.]\d{2,4})?(?![-/.]?\d)/;
 
 /**
- * Ensure a recording title carries a leading YYYY-MM-DD date so notes sort
- * chronologically in the file explorer and group by day.
- *
- * - A title already led by a full YYYY-MM-DD (dash) date is returned unchanged.
- * - Plaud's default MM-DD (dash) prefix gets the year from `date` prepended.
- * - A title led by any other date form (slash or dot separators, a single-digit
- *   month/day, or a year-first date) is left unchanged, so a title that already
- *   shows a date is never given a second one.
- * - A truly dateless title gets the full YYYY-MM-DD from `date` prepended.
- *
- *   "04-13 Meeting"     -> "2026-04-13 Meeting"          (MM-DD: prepend year)
- *   "2026-04-13 Done"   -> "2026-04-13 Done"             (already a full date)
- *   "Quarterly review"  -> "2026-04-13 Quarterly review" (dateless: prepend)
- *   "06/13 Sync"        -> "06/13 Sync"                  (other date form: kept)
- *
- * A dateless title takes the full recording date (createdAt), the same value
- * formatDateYmd writes to the `date:` frontmatter. The MM-DD branch keeps the
- * title's own month and day and only borrows the year, so its prefix can differ
- * from `date:` when the title's MM-DD was edited. Runs once in writeNote for
- * both the filename (via sanitizeFilename) and the H1 heading (via
- * formatMarkdown) so the two stay in sync.
+ * The note-name date format used when the user has not chosen one. Reproduces
+ * the historical `YYYY-MM-DD` prefix, so leaving it unset is a no-op change.
  */
-export function expandTitleWithYear(title: string, date: Date): string {
+export const DEFAULT_NOTE_NAME_DATE_FORMAT = 'YYYY-MM-DD';
+
+const MONTH_NAMES_LONG = [
+	'January', 'February', 'March', 'April', 'May', 'June',
+	'July', 'August', 'September', 'October', 'November', 'December',
+];
+const MONTH_NAMES_SHORT = [
+	'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+	'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+];
+
+/**
+ * Render a date through a moment-compatible pattern for a note name. Supports
+ * the common date tokens (case-sensitive, matched longest-first):
+ *
+ *   YYYY 4-digit year    YY 2-digit year
+ *   MMMM month name      MMM short month    MM 2-digit month    M month
+ *   DD 2-digit day       D day
+ *
+ * Every other character is a literal separator. This is a deliberate subset of
+ * moment's tokens: enough for numeric and named date layouts without bundling
+ * moment (external in the Obsidian runtime and unavailable to the pure unit
+ * tests) or hand-rolling localization. Uses the date's LOCAL calendar fields,
+ * the same basis as formatDateYmd, so a note-name date and the `date:`
+ * frontmatter never disagree about which day a recording belongs to.
+ *
+ *   formatNoteNameDate("YYYY-MM-DD", 2026-07-03)  === "2026-07-03"
+ *   formatNoteNameDate("MM-DD-YYYY", 2026-07-03)  === "07-03-2026"
+ *   formatNoteNameDate("MMM D, YYYY", 2026-07-03) === "Jul 3, 2026"
+ */
+export function formatNoteNameDate(pattern: string, date: Date): string {
+	const year = date.getFullYear();
+	const monthIndex = date.getMonth();
+	const day = date.getDate();
+	const pad = (n: number): string => String(n).padStart(2, '0');
+	return pattern.replace(/YYYY|YY|MMMM|MMM|MM|M|DD|D/g, (token) => {
+		switch (token) {
+			case 'YYYY':
+				return String(year);
+			case 'YY':
+				return pad(year % 100);
+			case 'MMMM':
+				return MONTH_NAMES_LONG[monthIndex];
+			case 'MMM':
+				return MONTH_NAMES_SHORT[monthIndex];
+			case 'MM':
+				return pad(monthIndex + 1);
+			case 'M':
+				return String(monthIndex + 1);
+			case 'DD':
+				return pad(day);
+			case 'D':
+				return String(day);
+			default:
+				return token;
+		}
+	});
+}
+
+/**
+ * A month (1-12) and day (1-31) that form a plausible calendar date. Rejects
+ * inputs like "99-99" or "13-45" so they are never fed to a Date constructor,
+ * which would silently roll them over into a different, wrong date.
+ */
+function isPlausibleMonthDay(month: number, day: number): boolean {
+	return month >= 1 && month <= 12 && day >= 1 && day <= 31;
+}
+
+/**
+ * Join a rendered date with the rest of a title, dropping the separator when no
+ * text remains so a bare date does not gain a trailing space.
+ */
+function joinDateAndRest(dateText: string, rest: string | undefined): string {
+	const tail = rest?.trim();
+	return tail ? `${dateText} ${tail}` : dateText;
+}
+
+/**
+ * Give a recording title a leading date, rendered in `dateFormat`, so notes sort
+ * chronologically in the file explorer and group by day. `dateFormat` is a
+ * moment-compatible pattern (see formatNoteNameDate); it defaults to
+ * DEFAULT_NOTE_NAME_DATE_FORMAT, which reproduces the historical `YYYY-MM-DD`
+ * output exactly.
+ *
+ * - A truly dateless title gets the recording date prepended.
+ * - Plaud's default MM-DD prefix is reformatted: the title's own month/day plus
+ *   the recording's year, rendered in `dateFormat` (so "04-13 Meeting" keeps its
+ *   day but adopts the chosen layout).
+ * - A title already led by a full YYYY-MM-DD date, or any other date form (slash
+ *   or dot separators, single-digit, year-first), is left unchanged. Reformatting
+ *   those needs format-aware detection and is deferred; they are rare from Plaud.
+ *
+ *   default "YYYY-MM-DD":  "04-13 Meeting" -> "2026-04-13 Meeting"
+ *   "MM-DD-YYYY":          "04-13 Meeting" -> "04-13-2026 Meeting"
+ *
+ * The date uses the recording's LOCAL calendar day, the same basis as the
+ * `date:` frontmatter. Runs once in writeNote for both the filename (via
+ * sanitizeFilename) and the H1 heading (via formatMarkdown) so the two stay in
+ * sync. The pattern must be filename-safe (no path separators); the settings
+ * layer validates that.
+ */
+export function expandTitleWithYear(
+	title: string,
+	date: Date,
+	dateFormat: string = DEFAULT_NOTE_NAME_DATE_FORMAT,
+): string {
 	const trimmed = title.trim();
-	// Already a full YYYY-MM-DD (dash) prefix: canonical, leave as-is.
+	// Already a full YYYY-MM-DD (dash) prefix: leave as-is. Reformatting a literal
+	// date already in the title is deferred, and re-rendering would risk feeding a
+	// possibly-invalid literal (e.g. 2026-13-40) to a Date.
 	if (/^\d{4}-\d{2}-\d{2}/.test(trimmed)) {
 		return trimmed;
 	}
-	// Plaud's default MM-DD (dash) prefix: prepend the year from the
-	// recording's createdAt so the title reads as a full YYYY-MM-DD date
-	// followed by the original description.
-	if (/^\d{2}-\d{2}(\s|$)/.test(trimmed)) {
-		return `${date.getFullYear()}-${trimmed}`;
+	// Plaud's default MM-DD (dash) prefix with a plausible month/day: reformat it
+	// from the title's month/day and the recording's year, in the chosen pattern.
+	const monthDay = /^(\d{2})-(\d{2})(?:\s+(.*))?$/.exec(trimmed);
+	if (monthDay && isPlausibleMonthDay(Number(monthDay[1]), Number(monthDay[2]))) {
+		const dated = new Date(
+			date.getFullYear(),
+			Number(monthDay[1]) - 1,
+			Number(monthDay[2]),
+		);
+		return joinDateAndRest(formatNoteNameDate(dateFormat, dated), monthDay[3]);
 	}
-	// A title that already leads with a plausible date the two dash branches
-	// above did not handle (see OTHER_LEADING_DATE for the exact forms): leave
-	// it unchanged rather than prepend a second date onto a title that already
-	// shows one.
+	// A title that already leads with a plausible date the branches above did not
+	// handle (see OTHER_LEADING_DATE): leave it unchanged rather than double-date.
 	if (OTHER_LEADING_DATE.test(trimmed)) {
 		return trimmed;
 	}
-	// Truly dateless: prepend the full recording date so the note sorts by
-	// day. An empty title collapses to just the date.
-	const ymd = formatDateYmd(date);
-	return trimmed ? `${ymd} ${trimmed}` : ymd;
+	// Truly dateless: prepend the recording date in the chosen pattern. An empty
+	// title collapses to just the date.
+	return joinDateAndRest(formatNoteNameDate(dateFormat, date), trimmed || undefined);
 }
 
 /**

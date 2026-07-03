@@ -11,6 +11,7 @@ import {
 	formatDurationHoursMinutes,
 	formatFrontmatter,
 	formatMarkdown,
+	formatNoteNameDate,
 	formatPlaceholderMarkdown,
 	formatPlaudWebUrl,
 	formatTimestamp,
@@ -400,6 +401,77 @@ describe('expandTitleWithYear', () => {
 		expect(expandTitleWithYear('1.2.3 release notes', apr14)).toBe(
 			'2026-04-14 1.2.3 release notes',
 		);
+	});
+
+	// --- configurable date format (PR 2) ---
+
+	it('renders a dateless title in a custom format', () => {
+		expect(expandTitleWithYear('Quarterly review', apr14, 'MM-DD-YYYY')).toBe(
+			'04-14-2026 Quarterly review',
+		);
+	});
+
+	it('reformats a MM-DD title in a custom format, keeping the day', () => {
+		// The title's own month/day (04-13) is kept; only the layout changes and
+		// the recording year (2026) is added.
+		expect(expandTitleWithYear('04-13 Meeting', apr14, 'MM-DD-YYYY')).toBe(
+			'04-13-2026 Meeting',
+		);
+	});
+
+	it('applies a EUR-style day-first format', () => {
+		expect(expandTitleWithYear('04-13 Meeting', apr14, 'DD-MM-YYYY')).toBe(
+			'13-04-2026 Meeting',
+		);
+	});
+
+	it('applies a named-month format to a dateless title', () => {
+		expect(expandTitleWithYear('Quarterly review', apr14, 'MMM D, YYYY')).toBe(
+			'Apr 14, 2026 Quarterly review',
+		);
+	});
+
+	it('renders a bare MM-DD title with no description in a custom format', () => {
+		expect(expandTitleWithYear('04-13', apr14, 'MM.DD.YY')).toBe('04.13.26');
+	});
+
+	it('leaves an already-full-date title unchanged even under a custom format', () => {
+		// Reformatting an explicit YYYY-MM-DD title is deferred.
+		expect(
+			expandTitleWithYear('2025-12-31 New Year Eve', apr14, 'MM-DD-YYYY'),
+		).toBe('2025-12-31 New Year Eve');
+	});
+});
+
+// formatNoteNameDate --------------------------------------------------------
+
+describe('formatNoteNameDate', () => {
+	const d = new Date(2026, 6, 3); // 2026-07-03 local (Jul 3)
+
+	it('renders the ISO layout', () => {
+		expect(formatNoteNameDate('YYYY-MM-DD', d)).toBe('2026-07-03');
+	});
+
+	it('renders US and EUR layouts', () => {
+		expect(formatNoteNameDate('MM-DD-YYYY', d)).toBe('07-03-2026');
+		expect(formatNoteNameDate('DD-MM-YYYY', d)).toBe('03-07-2026');
+	});
+
+	it('supports a 2-digit year and unpadded month/day', () => {
+		expect(formatNoteNameDate('M/D/YY', d)).toBe('7/3/26');
+	});
+
+	it('supports short and long month names', () => {
+		expect(formatNoteNameDate('MMM D, YYYY', d)).toBe('Jul 3, 2026');
+		expect(formatNoteNameDate('MMMM D', d)).toBe('July 3');
+	});
+
+	it('pads month and day with MM and DD', () => {
+		expect(formatNoteNameDate('YYYY.MM.DD', d)).toBe('2026.07.03');
+	});
+
+	it('leaves literal non-token characters untouched', () => {
+		expect(formatNoteNameDate('YYYY_MM_DD', d)).toBe('2026_07_03');
 	});
 });
 
