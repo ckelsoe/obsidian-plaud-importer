@@ -4,6 +4,10 @@ All notable changes to Plaud Importer will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- A recording whose Plaud title has no date now gets a `YYYY-MM-DD` date prefix (from the recording's own date) when it is imported, so imported notes sort in date order in the file explorer. Titles that already begin with a date are left as they are, including Plaud's default `MM-DD` titles (which still get the year added) and other forms such as `MM/DD`. Existing notes are not renamed.
+
 ## [0.19.0] - 2026-07-03
 
 ### Added
