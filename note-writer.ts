@@ -552,9 +552,10 @@ export function expandTitleWithYear(title: string, date: Date): string {
 	if (/^\d{2}-\d{2}(\s|$)/.test(trimmed)) {
 		return `${date.getFullYear()}-${trimmed}`;
 	}
-	// A title that already leads with a plausible date in a non-dash form:
-	// leave it unchanged rather than prepend a second date. See the regex
-	// definition above for the exact forms and why ID-like leads are excluded.
+	// A title that already leads with a plausible date the two dash branches
+	// above did not handle (see OTHER_LEADING_DATE for the exact forms): leave
+	// it unchanged rather than prepend a second date onto a title that already
+	// shows one.
 	if (OTHER_LEADING_DATE.test(trimmed)) {
 		return trimmed;
 	}
