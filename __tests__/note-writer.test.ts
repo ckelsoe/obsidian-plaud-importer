@@ -552,6 +552,36 @@ describe('formatFrontmatter', () => {
 		expect(fm).toContain('keywords: ["Q2: Review", "true"]');
 	});
 
+	// plaud-folder (issue #16): resolved folder NAMES for the recording. Kept
+	// separate from tags: so the pretty name survives; the field is an array to
+	// tolerate multi-folder data even though single-folder is the Plaud norm.
+
+	it('emits a single folder name as a plaud-folder array', () => {
+		const fm = formatFrontmatter(
+			makeRecording({ tags: ['work'] }),
+			[],
+			null,
+			undefined,
+			['Daily Journal'],
+		);
+		expect(fm).toContain('plaud-folder: [Daily Journal]');
+	});
+
+	it('emits multiple folder names, quoting ones with special characters', () => {
+		const fm = formatFrontmatter(makeRecording(), [], null, undefined, [
+			'Daily Journal',
+			'B&B',
+		]);
+		expect(fm).toContain('plaud-folder: [Daily Journal, "B&B"]');
+	});
+
+	it('omits plaud-folder when folders is absent or empty', () => {
+		expect(formatFrontmatter(makeRecording(), [])).not.toMatch(/plaud-folder:/);
+		expect(
+			formatFrontmatter(makeRecording(), [], null, undefined, []),
+		).not.toMatch(/plaud-folder:/);
+	});
+
 	it('clamps negative/infinite durations in the duration-seconds line', () => {
 		const fm = formatFrontmatter(
 			makeRecording({ durationSeconds: -10 }),

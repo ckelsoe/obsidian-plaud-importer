@@ -13,6 +13,7 @@ import type {
 	Chapter,
 	ConsumerNote,
 	PlaudClient,
+	PlaudFolder,
 	PlaudRecordingId,
 	Recording,
 	RecordingFilter,
@@ -140,6 +141,12 @@ export class ReverseEngineeredPlaudClient implements PlaudClient {
 	private baseUrl: string;
 	private readonly debugLogger: DebugLogger | undefined;
 	private readonly onBaseUrlChanged: ((newBaseUrl: string) => void) | undefined;
+	// Per-session cache of the flat folder/tag catalog (`GET /filetag/`). The
+	// catalog changes rarely, so one fetch per plugin session is enough; a
+	// folder renamed in Plaud after this is read shows its old name until the
+	// plugin reloads (a fresh client instance clears the cache). undefined means
+	// "not yet fetched"; an empty array is a valid cached "no folders" result.
+	private folderCatalogCache: readonly PlaudFolder[] | undefined;
 
 	constructor(
 		tokenProvider: PlaudTokenProvider,
@@ -228,6 +235,28 @@ export class ReverseEngineeredPlaudClient implements PlaudClient {
 		}
 
 		return out;
+	}
+
+	async getFolderCatalog(): Promise<readonly PlaudFolder[]> {
+		if (this.folderCatalogCache !== undefined) {
+			return this.folderCatalogCache;
+		}
+		const endpoint = '/filetag/';
+		const url = `${this.baseUrl}${endpoint}`;
+		const raw = await this.fetchJson(url, endpoint);
+		const { catalog, skipped } = parseFolderCatalog(raw, endpoint);
+		this.folderCatalogCache = catalog;
+		if (this.debugLogger?.enabled === true) {
+			this.debugLogger.log({
+				kind: 'parsed',
+				endpoint,
+				message: `parsed ${catalog.length} folders${
+					skipped > 0 ? ` (skipped ${skipped} malformed)` : ''
+				}`,
+				payload: { count: catalog.length, skipped },
+			});
+		}
+		return catalog;
 	}
 
 	async getTranscriptAndSummary(id: PlaudRecordingId): Promise<TranscriptAndSummary> {
@@ -1094,6 +1123,68 @@ function parseListResponse(raw: unknown, endpoint: string): readonly RawRecordin
 		}
 		return item;
 	});
+}
+
+// Wire shape of one `GET /filetag/` catalog entry. `id`/`name` are required;
+// `icon`/`color` are display metadata carried through for Phase 4 but unused by
+// the import path.
+interface RawFiletag {
+	readonly id: string;
+	readonly name: string;
+	// icon/color may be null on the wire: Plaud returns null for a folder with
+	// no custom styling. Accept null so such a folder is not dropped, then
+	// coerce it to undefined when building the clean PlaudFolder below.
+	readonly icon?: string | null;
+	readonly color?: string | null;
+}
+
+function isRawFiletag(value: unknown): value is RawFiletag {
+	return (
+		isRecord(value) &&
+		typeof value.id === 'string' &&
+		value.id.length > 0 &&
+		typeof value.name === 'string' &&
+		(value.icon === undefined || value.icon === null || typeof value.icon === 'string') &&
+		(value.color === undefined || value.color === null || typeof value.color === 'string')
+	);
+}
+
+// Parse the folder/tag catalog envelope. Unlike parseListResponse a single
+// malformed entry does NOT abort the whole parse: folders are best-effort
+// import enrichment, so one bad filetag must not cost every recording its
+// folder resolution. Only a structurally-wrong envelope (missing/!array
+// `data_filetag_list`) throws; per-item failures are skipped and counted so the
+// client can debug-log the drift. `name` may be an empty string (a Plaud folder
+// can be blank); the id->name map still resolves it, and the empty name is
+// dropped later when it fails tag/frontmatter emission.
+function parseFolderCatalog(
+	raw: unknown,
+	endpoint: string,
+): { catalog: readonly PlaudFolder[]; skipped: number } {
+	if (!isRecord(raw)) {
+		throw new PlaudParseError('Response body is not an object', endpoint);
+	}
+	const list = raw.data_filetag_list;
+	if (!Array.isArray(list)) {
+		throw new PlaudParseError('Response is missing data_filetag_list array', endpoint);
+	}
+	const catalog: PlaudFolder[] = [];
+	let skipped = 0;
+	for (const item of list) {
+		if (!isRawFiletag(item)) {
+			skipped++;
+			continue;
+		}
+		catalog.push({
+			id: item.id,
+			name: item.name,
+			// null (no custom styling) collapses to undefined so PlaudFolder
+			// stays string | undefined.
+			icon: typeof item.icon === 'string' ? item.icon : undefined,
+			color: typeof item.color === 'string' ? item.color : undefined,
+		});
+	}
+	return { catalog, skipped };
 }
 
 // Plausibility bounds for a Plaud recording's start_time, which is a unix

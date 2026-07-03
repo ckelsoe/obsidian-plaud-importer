@@ -126,9 +126,35 @@ export interface AttachmentAsset {
 	readonly mimeType?: string;
 }
 
+/**
+ * One Plaud "filetag". In Plaud a folder and a tag are the same primitive, so
+ * this catalog entry doubles as both a recording's folder membership (via the
+ * recording's `filetag_id_list`, surfaced as `Recording.tags`) and the source
+ * for the `plaud-folder:` frontmatter field on import. The catalog is FLAT:
+ * there is no `parent_id`, so folders never nest. `icon` and `color` are Plaud
+ * display metadata, unused by the forward import path but modeled here so the
+ * future folder-mirroring work (Phase 4) can reuse this shape without a second
+ * fetch. Verified live 2026-06-29/2026-07-02: `GET /filetag/` returns
+ * `{id, name, icon, color}` per entry.
+ */
+export interface PlaudFolder {
+	readonly id: string;
+	readonly name: string;
+	readonly icon?: string;
+	readonly color?: string;
+}
+
 export interface PlaudClient {
 	listRecordings(filter?: RecordingFilter): Promise<readonly Recording[]>;
 	getTranscriptAndSummary(id: PlaudRecordingId): Promise<TranscriptAndSummary>;
+	/**
+	 * Fetch the account's flat folder/tag catalog (`GET /filetag/`) so import
+	 * can resolve a recording's `filetag_id_list` (opaque ids) into human folder
+	 * NAMES. Implementations should cache per session; the catalog changes
+	 * rarely and a re-fetch is cheap. Best-effort at the call site: a failed
+	 * fetch must degrade to "no folders resolved", never fail an import.
+	 */
+	getFolderCatalog(): Promise<readonly PlaudFolder[]>;
 	/**
 	 * Resolve the pre-signed download URL for a recording's original audio
 	 * (Opus in an Ogg container). Returns null when Plaud exposes no audio

@@ -1702,6 +1702,7 @@ export class ImportModal extends Modal {
 			options: this.noteWriterOptions,
 			fetchArtifacts: (id) => this.ensureArtifactsForRecording(id),
 			fetchAudioUrl: (id) => this.client.getAudioTempUrl(id),
+			fetchFolderCatalog: () => this.client.getFolderCatalog(),
 			applyFold: (filePath) => this.applyNoteFolds(filePath),
 			observer: {
 				onRecordingStart: (index, total) => {

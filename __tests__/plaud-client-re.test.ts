@@ -3718,3 +3718,77 @@ describe('parseAudioTempUrl', () => {
 		expect(() => parseAudioTempUrl('nope', '/file/temp-url/x')).toThrow(PlaudParseError);
 	});
 });
+
+// getFolderCatalog (issue #16): fetch + cache the flat folder/tag catalog.
+describe('getFolderCatalog', () => {
+	const filetagEnvelope = (items: unknown[]): Record<string, unknown> => ({
+		status: 0,
+		msg: 'success',
+		request_id: 'req-ft',
+		data_filetag_total: items.length,
+		data_filetag_list: items,
+	});
+
+	it('parses the flat {id,name,icon,color} shape and calls GET /filetag/', async () => {
+		const { fetcher, lastRequest } = captureFetcher(
+			ok(
+				filetagEnvelope([
+					{ id: 'a', name: 'Work', icon: 'e644', color: '#fff' },
+					{ id: 'b', name: 'B&B' },
+				]),
+			),
+		);
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+		const catalog = await client.getFolderCatalog();
+		expect(catalog[0]).toEqual({ id: 'a', name: 'Work', icon: 'e644', color: '#fff' });
+		expect(catalog[1].id).toBe('b');
+		expect(catalog[1].name).toBe('B&B');
+		expect(lastRequest()?.url).toContain('/filetag/');
+		expect(lastRequest()?.method).toBe('GET');
+	});
+
+	it('caches per session: a second call does not refetch', async () => {
+		const { fetcher, allRequests } = captureFetcher(
+			ok(filetagEnvelope([{ id: 'a', name: 'Work' }])),
+		);
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+		await client.getFolderCatalog();
+		await client.getFolderCatalog();
+		expect(allRequests().length).toBe(1);
+	});
+
+	it('keeps a filetag whose icon/color are null (no custom styling)', async () => {
+		const { fetcher } = captureFetcher(
+			ok(filetagEnvelope([{ id: 'a', name: 'Work', icon: null, color: null }])),
+		);
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+		const catalog = await client.getFolderCatalog();
+		expect(catalog).toHaveLength(1);
+		expect(catalog[0].id).toBe('a');
+		expect(catalog[0].name).toBe('Work');
+		expect(catalog[0].icon).toBeUndefined();
+		expect(catalog[0].color).toBeUndefined();
+	});
+
+	it('skips malformed entries instead of failing the whole catalog', async () => {
+		const { fetcher } = captureFetcher(
+			ok(
+				filetagEnvelope([
+					{ id: 'a', name: 'Work' },
+					{ id: 'b' }, // missing name
+					{ name: 'no id' }, // missing id
+					{ id: 'c', name: 'Ok' },
+				]),
+			),
+		);
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+		const catalog = await client.getFolderCatalog();
+		expect(catalog.map((f) => f.id)).toEqual(['a', 'c']);
+	});
+
+	it('throws a parse error when data_filetag_list is missing', async () => {
+		const { fetcher } = captureFetcher(ok({ status: 0, msg: 'x' }));
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+		await expect(client.getFolderCatalog()).rejects.toBeInstanceOf(PlaudParseError);
+	});
+});

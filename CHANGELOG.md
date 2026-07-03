@@ -4,6 +4,14 @@ All notable changes to Plaud Importer will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- Imported notes now record which Plaud folder each recording is in. Every note gets a `plaud-folder` frontmatter field holding the folder name(s), so you can find and group recordings by their Plaud folder in Obsidian, for example with Dataview. A recording that is not filed in a folder gets no field.
+
+### Fixed
+
+- Plaud folder tags now appear as readable names. A recording filed in a Plaud folder used to write the folder's internal id (a long code) into the note's `tags`; imported notes now use the folder name instead. Names are converted to valid tag form, so spaces and symbols become dashes.
+
 ## [0.18.1] - 2026-07-03
 
 ### Changed
