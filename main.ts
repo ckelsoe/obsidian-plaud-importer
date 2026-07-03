@@ -176,7 +176,7 @@ const SUBFOLDER_TEMPLATE_FOOTNOTE =
 // above: the sentence-case lint inspects literal arguments, so the token
 // examples and proper nouns stay untouched.
 const NOTE_NAME_TEMPLATE_INTRO =
-	"Sets each note's name from a template, using the same {{...}} tokens as the subfolder setting plus a {{title}} token. The recording's date fills the date tokens, and {{title}} is the recording title with any date it already had removed, so the recording's date replaces whatever date was in the Plaud title. Put the date wherever you like, before or after {{title}}. The date property inside the note stays YYYY-MM-DD for Dataview. The whole name has to work as a note file name, so a template that would put a character that is not allowed in a note name (for example a slash, colon, or square bracket) into the name is rejected.";
+	"Sets each note's name from a template, using the same {{...}} tokens as the subfolder setting plus a {{title}} token. The recording's date fills the date tokens, and {{title}} is the recording title with a leading numeric date removed (the MM-DD and YYYY-MM-DD style forms Plaud uses), so the recording's date takes the place of the one Plaud put in the title. Put the date wherever you like, before or after {{title}}. The date property inside the note stays YYYY-MM-DD for Dataview. The whole name has to work as a note file name, so a template that would put a character that is not allowed in a note name (for example a slash, colon, or square bracket) into the name is rejected.";
 
 // [token, what it expands to] pairs for a July 3 2026 recording.
 const NOTE_NAME_TEMPLATE_TOKENS: ReadonlyArray<readonly [string, string]> = [
@@ -191,7 +191,7 @@ const NOTE_NAME_TEMPLATE_TOKENS: ReadonlyArray<readonly [string, string]> = [
 	["{{yyyy-MM}}", "year and month, for example 2026-07"],
 	["{{ww}}", "ISO week number, 01 to 53"],
 	["{{Q}}", "quarter, 1 to 4"],
-	["{{title}}", "the recording title, with any date it started with removed"],
+	["{{title}}", "the recording title, with a leading numeric date (MM-DD, YYYY-MM-DD, and similar) removed"],
 ];
 
 // [template, resulting name] pairs for a July 3 2026 recording titled Team sync.
