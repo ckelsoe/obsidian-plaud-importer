@@ -506,6 +506,18 @@ function joinFolderPath(base: string, sub: string): string {
 }
 
 /**
+ * Matches a title that already leads with a PLAUSIBLE date in a form the
+ * YYYY-MM-DD and MM-DD dash branches do not handle: slash or dot separators, a
+ * single-digit month/day, or a year-first date. Month is 1-12 and day 1-31, so
+ * an ID-like lead such as "123-4 Widget" is NOT read as a date (it stays
+ * dateless and still gets a prefix), while a real "06/13" date is left alone
+ * rather than double-dated. Month-first, matching Plaud's MM-DD default; a
+ * locale-aware (US/EUR) detector is future work with the configurable format.
+ */
+const OTHER_LEADING_DATE =
+	/^(?:\d{4}[-/.])?(?:0?[1-9]|1[0-2])[-/.](?:0?[1-9]|[12]\d|3[01])(?:[-/.]\d{2,4})?(?:\s|$)/;
+
+/**
  * Ensure a recording title carries a leading YYYY-MM-DD date so notes sort
  * chronologically in the file explorer and group by day.
  *
@@ -540,11 +552,10 @@ export function expandTitleWithYear(title: string, date: Date): string {
 	if (/^\d{2}-\d{2}(\s|$)/.test(trimmed)) {
 		return `${date.getFullYear()}-${trimmed}`;
 	}
-	// Some other leading date form (slash or dot separators, a single-digit
-	// month/day, or a year-first date). Ordered after the two dash branches
-	// so it only sees the forms they did not handle. Leave it unchanged
-	// rather than prepend a second date onto a title that already shows one.
-	if (/^\d{1,4}[-/.]\d{1,2}(?:[-/.]\d{1,4})?(?:\s|$)/.test(trimmed)) {
+	// A title that already leads with a plausible date in a non-dash form:
+	// leave it unchanged rather than prepend a second date. See the regex
+	// definition above for the exact forms and why ID-like leads are excluded.
+	if (OTHER_LEADING_DATE.test(trimmed)) {
 		return trimmed;
 	}
 	// Truly dateless: prepend the full recording date so the note sorts by

@@ -371,6 +371,22 @@ describe('expandTitleWithYear', () => {
 			'2026-04-14 1234 sales report',
 		);
 	});
+
+	it('prefixes an ID-like numeric prefix that is not a real date', () => {
+		// "123-4" has month 123, not a valid date, so the title is dateless
+		// and gets the full date prefix rather than being read as a date.
+		expect(expandTitleWithYear('123-4 Widget spec', apr14)).toBe(
+			'2026-04-14 123-4 Widget spec',
+		);
+	});
+
+	it('prefixes a slash-form prefix whose month/day is out of range', () => {
+		// "45/67" is not a plausible month-day, so it is treated as dateless
+		// and prefixed rather than mistaken for a slash-form date.
+		expect(expandTitleWithYear('45/67 notes', apr14)).toBe(
+			'2026-04-14 45/67 notes',
+		);
+	});
 });
 
 // resolveSubfolder ----------------------------------------------------------
