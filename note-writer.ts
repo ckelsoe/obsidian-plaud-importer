@@ -125,11 +125,12 @@ export interface NoteWriterOptions {
 	 */
 	readonly subfolderTemplate?: string;
 	/**
-	 * Optional moment-compatible pattern for the date in each note's name (see
-	 * formatNoteNameDate). Omitted or empty reproduces the historical
-	 * `YYYY-MM-DD` layout. The settings layer validates it is filename-safe.
+	 * Optional `{{...}}` template for each note's name (see buildNoteName), the
+	 * same token syntax as `subfolderTemplate` plus a `{{title}}` token. Omitted
+	 * or empty reproduces the historical `YYYY-MM-DD <title>` layout. The settings
+	 * layer validates it is filename-safe before saving.
 	 */
-	readonly noteNameDateFormat?: string;
+	readonly noteNameTemplate?: string;
 	/**
 	 * Optional vault-wide lookup from a `plaud-id` to the path of an existing
 	 * note for that recording, anywhere under the output folder. Lets the
@@ -512,26 +513,24 @@ function joinFolderPath(base: string, sub: string): string {
 }
 
 /**
- * Matches a title that leads with a PLAUSIBLE date GLUED to other text — the one
- * date case restAfterLeadingDate deliberately skips. restAfterLeadingDate needs
- * a clean whitespace-or-end delimiter after the date so it can be cleanly
- * stripped; when a date-shape runs straight into more text, like "06/13-Sync",
- * this guard still recognizes it as already dated, so expandTitleWithYear leaves
- * the title alone instead of prepending the recording date on top of it
- * (stripping the glued date would strand the text). Month is 1-12 and day 1-31,
- * so an ID-like lead such as "123-4 Widget" is NOT read as a date (it stays
- * dateless and gets a prefix). The token must not run straight into more date
- * digits, so a version like "1.2.3" or a long number like "12-345" is not
- * mistaken for a date. Month-first, matching Plaud's MM-DD default.
+ * Matches a title that leads with a PLAUSIBLE date GLUED to other text — the
+ * case restAfterLeadingDate skips (it needs a clean whitespace-or-end delimiter).
+ * titleWithoutLeadingDate uses this to strip a glued leading date like
+ * "06/13-Sync" so a note-name template's own date tokens are the only date in the
+ * name. Month is 1-12 and day 1-31, so an ID-like lead such as "123-4 Widget" is
+ * NOT read as a date (it is kept verbatim). The token must not run straight into
+ * more date digits, so a version like "1.2.3" or a long number like "12-345" is
+ * not mistaken for a date. Month-first, matching Plaud's MM-DD default.
  */
 const OTHER_LEADING_DATE =
 	/^(?:\d{4}[-/.])?(?:0?[1-9]|1[0-2])[-/.](?:0?[1-9]|[12]\d|3[01])(?:[-/.]\d{2,4})?(?![-/.]?\d)/;
 
 /**
- * The note-name date format used when the user has not chosen one. Reproduces
- * the historical `YYYY-MM-DD` prefix, so leaving it unset is a no-op change.
+ * The note-name template used when the user has not chosen one. Reproduces the
+ * historical `YYYY-MM-DD <title>` naming, so leaving it unset changes nothing.
+ * Uses the same `{{...}}` token syntax as the subfolder template.
  */
-export const DEFAULT_NOTE_NAME_DATE_FORMAT = 'YYYY-MM-DD';
+export const DEFAULT_NOTE_NAME_TEMPLATE = '{{yyyy}}-{{MM}}-{{dd}} {{title}}';
 
 const MONTH_NAMES_LONG = [
 	'January', 'February', 'March', 'April', 'May', 'June',
@@ -543,75 +542,90 @@ const MONTH_NAMES_SHORT = [
 ];
 
 /**
- * Render a date through a moment-compatible pattern for a note name. Supports
- * the common date tokens (case-sensitive, matched longest-first):
- *
- *   YYYY 4-digit year    YY 2-digit year
- *   MMMM month name      MMM short month    MM 2-digit month    M month
- *   DD 2-digit day       D day
- *
- * Every other character is a literal separator. This is a deliberate subset of
- * moment's tokens: enough for numeric and named date layouts without bundling
- * moment (external in the Obsidian runtime and unavailable to the pure unit
- * tests) or hand-rolling localization. Uses the date's LOCAL calendar fields,
- * the same basis as formatDateYmd, so a note-name date and the `date:`
- * frontmatter never disagree about which day a recording belongs to.
- *
- *   formatNoteNameDate("YYYY-MM-DD", 2026-07-03)  === "2026-07-03"
- *   formatNoteNameDate("MM-DD-YYYY", 2026-07-03)  === "07-03-2026"
- *   formatNoteNameDate("MMM D, YYYY", 2026-07-03) === "Jul 3, 2026"
+ * The date tokens a note-name template understands: a superset of the subfolder
+ * tokens (so every subfolder token also works in a note name) plus named months,
+ * a 2-digit year, and single-digit month/day for layouts like `MMM d, yyyy`.
+ * The `{{title}}` token (handled separately in formatNoteName) completes the
+ * vocabulary. Case-sensitive, matched literally between `{{ }}`.
  */
-export function formatNoteNameDate(pattern: string, date: Date): string {
+const NOTE_NAME_DATE_TOKENS = [
+	'yyyy', 'yy', 'MMMM', 'MMM', 'MM', 'M', 'dd', 'd', 'yyyy-MM', 'ww', 'Q',
+] as const;
+
+/**
+ * Expand a single note-name date token against a date, or null when the token is
+ * not a known date token (so formatNoteName can tell `{{title}}` from a typo and
+ * report an unknown token). Uses LOCAL calendar fields, the same basis as
+ * formatDateYmd, so a note name and the `date:` frontmatter never disagree about
+ * which day a recording belongs to.
+ */
+function expandNoteNameDateToken(token: string, date: Date): string | null {
 	const year = date.getFullYear();
 	const monthIndex = date.getMonth();
 	const day = date.getDate();
 	const pad = (n: number): string => String(n).padStart(2, '0');
-	return pattern.replace(/YYYY|YY|MMMM|MMM|MM|M|DD|D/g, (token) => {
-		switch (token) {
-			case 'YYYY':
-				return String(year);
-			case 'YY':
-				return pad(year % 100);
-			case 'MMMM':
-				return MONTH_NAMES_LONG[monthIndex];
-			case 'MMM':
-				return MONTH_NAMES_SHORT[monthIndex];
-			case 'MM':
-				return pad(monthIndex + 1);
-			case 'M':
-				return String(monthIndex + 1);
-			case 'DD':
-				return pad(day);
-			case 'D':
-				return String(day);
-			default:
-				return token;
-		}
-	});
+	switch (token) {
+		case 'yyyy':
+			return String(year);
+		case 'yy':
+			return pad(year % 100);
+		case 'MMMM':
+			return MONTH_NAMES_LONG[monthIndex];
+		case 'MMM':
+			return MONTH_NAMES_SHORT[monthIndex];
+		case 'MM':
+			return pad(monthIndex + 1);
+		case 'M':
+			return String(monthIndex + 1);
+		case 'dd':
+			return pad(day);
+		case 'd':
+			return String(day);
+		case 'yyyy-MM':
+			return `${year}-${pad(monthIndex + 1)}`;
+		case 'ww':
+			return pad(isoWeekNumber(year, monthIndex, day));
+		case 'Q':
+			return String(Math.floor(monthIndex / 3) + 1);
+		default:
+			return null;
+	}
 }
 
 /**
- * A fixed sample date used to validate a note-name date format. Uses a 2-digit
- * month and day so every numeric token renders to representative output; the
- * specific day is irrelevant because a format's forbidden characters are
- * literals, constant across dates.
+ * Render a note-name template against a recording date and its (date-stripped)
+ * title. `{{...}}` tokens are the note-name date tokens (see
+ * NOTE_NAME_DATE_TOKENS) plus `{{title}}`; every other character is a literal.
+ * Uses the same `{{...}}` syntax as the subfolder template so a user learns one
+ * token language. Throws NoteWriterError on an unknown token so a typo surfaces
+ * (the settings layer validates before saving, so a saved template never throws
+ * at import time). Collapses whitespace and trims, so a template whose `{{title}}`
+ * expands to empty (a title that was only a date) does not leave a stray
+ * separator.
+ *
+ *   formatNoteName("{{yyyy}}-{{MM}}-{{dd}} {{title}}", 2026-07-03, "Sync")
+ *     === "2026-07-03 Sync"
+ *   formatNoteName("{{title}} {{yyyy}}-{{MM}}-{{dd}}", 2026-07-03, "Sync")
+ *     === "Sync 2026-07-03"
  */
-const NOTE_NAME_FORMAT_SAMPLE_DATE = new Date(2026, 11, 30); // 2026-12-30 local
-
-/**
- * Whether a note-name date format renders to a filename-safe string on Windows,
- * macOS, and Linux (Windows is the strictest). The format lands in a note
- * filename AND the identical H1, so its rendered output must survive
- * sanitizeFilename byte-for-byte: a path separator, a Windows-reserved
- * character, or a leading/trailing dot or space would otherwise be silently
- * rewritten to a dash, desyncing the filename from the heading. Validates the
- * RENDERED output, not the raw pattern, so a literal comma, dash, period, space,
- * or parenthesis passes while `/`, `\`, `:`, `*`, `?`, `"`, `<`, `>`, and `|`
- * are rejected.
- */
-export function isFilesystemSafeNoteNameDateFormat(pattern: string): boolean {
-	const rendered = formatNoteNameDate(pattern, NOTE_NAME_FORMAT_SAMPLE_DATE);
-	return sanitizeFilename(rendered) === rendered;
+export function formatNoteName(template: string, date: Date, title: string): string {
+	const rendered = template.replace(
+		/\{\{\s*([^}]*?)\s*\}\}/g,
+		(_match, raw: string): string => {
+			const token = raw.trim();
+			if (token === 'title') {
+				return title;
+			}
+			const expanded = expandNoteNameDateToken(token, date);
+			if (expanded === null) {
+				throw new NoteWriterError(
+					`Unknown note name template token "{{${token}}}" — valid tokens: ${NOTE_NAME_DATE_TOKENS.join(', ')}, title`,
+				);
+			}
+			return expanded;
+		},
+	);
+	return rendered.replace(/\s+/g, ' ').trim();
 }
 
 /**
@@ -624,16 +638,7 @@ function isPlausibleMonthDay(month: number, day: number): boolean {
 }
 
 /**
- * Join a rendered date with the rest of a title, dropping the separator when no
- * text remains so a bare date does not gain a trailing space.
- */
-function joinDateAndRest(dateText: string, rest: string | undefined): string {
-	const tail = rest?.trim();
-	return tail ? `${dateText} ${tail}` : dateText;
-}
-
-/**
- * One capture drives every numeric leading-date shape extractLeadingDate parses:
+ * One capture drives every numeric leading-date shape restAfterLeadingDate reads:
  *
  *   group 1  first number   (1-4 digits)
  *   group 2  the separator  (-, /, or .)
@@ -642,20 +647,19 @@ function joinDateAndRest(dateText: string, rest: string | undefined): string {
  *
  * The trailing `(?=\s|$)` requires the date to end cleanly (whitespace or end of
  * title), so a version string like `1.2.3` or a date glued to text like
- * `04/13-Meeting` does NOT match here — those fall through to OTHER_LEADING_DATE
- * and are left unchanged. The third number is 2-4 digits so `1.2.3` cannot read
- * its `.3` as a year.
+ * `04/13-Meeting` does NOT match here — the glued case is handled by
+ * OTHER_LEADING_DATE instead. The third number is 2-4 digits so `1.2.3` cannot
+ * read its `.3` as a year.
  */
 const LEADING_DATE = /^(\d{1,4})([-/.])(\d{1,2})(?:\2(\d{2,4}))?(?=\s|$)/;
 
 /**
  * If a title begins with a cleanly-delimited, in-range leading date (any
  * supported numeric form), return the text that FOLLOWS that date; otherwise
- * null. Used only to STRIP a date the title already carries so the recording
- * date can take its place — the leading date's own value is intentionally
- * ignored (the recording date always wins). "Cleanly delimited" means the date
- * is followed by whitespace or the end of the title, so a version string like
- * `1.2.3` or a date glued to text like `04/13-Meeting` is not stripped here.
+ * null. Used to STRIP a date the title already carries so a note-name template's
+ * own date tokens are the only date in the name — the leading date's own value
+ * is discarded. "Cleanly delimited" means the date is followed by whitespace or
+ * the end of the title, so a version string like `1.2.3` is not stripped here.
  * Month-first ordering (matching Plaud), with a first number above 31 read as a
  * year-first date; range-validates month (1-12) and day (1-31) so an ID-like
  * lead such as `123-4` is not mistaken for a date.
@@ -682,52 +686,80 @@ function restAfterLeadingDate(title: string): string | null {
 }
 
 /**
- * Put the recording's date at the START of a note title, rendered in
- * `dateFormat`, REPLACING any date the title already begins with. The recording
- * date always wins: it is the same value the `date:` frontmatter uses, so the
- * note name and that field never disagree about which day a recording belongs
- * to. `dateFormat` is a moment-compatible pattern (see formatNoteNameDate) and
- * defaults to DEFAULT_NOTE_NAME_DATE_FORMAT, the historical `YYYY-MM-DD` layout.
- *
- * - A title that begins with a recognizable date, in ANY supported form, has
- *   that date STRIPPED and the recording date put in its place. So `04-13
- *   Meeting`, `06/13 Sync`, and `2025-12-31 Party` all become
- *   `<recording date> ...`, even when the title's own date differed.
- * - A title with no leading date gets the recording date prepended.
- * - A date glued to other text (`04/13-Meeting`) is left unchanged: it already
- *   shows a date, and stripping a glued date would strand the punctuation.
- *
- *   default "YYYY-MM-DD", recording 2026-04-14:
- *     "04-13 Sync" -> "2026-04-14 Sync"   (the title's 04-13 is replaced)
- *     "Planning"   -> "2026-04-14 Planning"
- *
- * The date uses the recording's LOCAL calendar day, the same basis as the
- * `date:` frontmatter. Runs once in writeNote for both the filename (via
- * sanitizeFilename) and the H1 heading (via formatMarkdown) so the two stay in
- * sync. The pattern must be filename-safe; the settings layer validates that
- * with isFilesystemSafeNoteNameDateFormat. (The name is historical — it no
- * longer merely adds a year; a rename is a deliberate follow-up.)
+ * Strip any date the title already begins with and return the rest, so a
+ * note-name template's own date tokens are the only date in the note name. This
+ * is how the recording date REPLACES any date in the Plaud title (Charles's
+ * rule). Handles a cleanly-delimited leading date (`04-13 Meeting` -> `Meeting`)
+ * and a date glued to text (`04/13-Meeting` -> `Meeting`), dropping any
+ * separator left behind. A lead that is not a plausible date (`123-4 Widget`,
+ * `1.2.3 notes`) is kept verbatim.
  */
-export function expandTitleWithYear(
+function titleWithoutLeadingDate(title: string): string {
+	const trimmed = title.trim();
+	const cleanRest = restAfterLeadingDate(trimmed);
+	if (cleanRest !== null) {
+		return cleanRest.replace(/^[\s\-/.]+/, '');
+	}
+	const glued = OTHER_LEADING_DATE.exec(trimmed);
+	if (glued !== null) {
+		return trimmed.slice(glued[0].length).replace(/^[\s\-/.]+/, '');
+	}
+	return trimmed;
+}
+
+/**
+ * A fixed sample date and title used to validate a note-name template. A 2-digit
+ * month and day exercise every numeric token; the safe placeholder title lets
+ * the check judge the template's OWN characters (date tokens and literals),
+ * never the recording title, which the writer sanitizes separately.
+ */
+const NOTE_NAME_SAMPLE_DATE = new Date(2026, 11, 30); // 2026-12-30 local
+const NOTE_NAME_SAMPLE_TITLE = 'Title';
+
+/**
+ * Whether a note-name template is safe to save: every `{{...}}` token is known,
+ * and the rendered result (with a safe placeholder title) survives
+ * sanitizeFilename byte-for-byte on Windows, macOS, and Linux (Windows is
+ * strictest). The template lands in a note filename AND the identical H1, so its
+ * own characters must not include a path separator, a Windows-reserved
+ * character, or a leading/trailing dot, which would be rewritten to a dash.
+ * Validates the RENDERED output, so a literal comma, dash, period, or space
+ * passes while a slash, colon, or unknown token is rejected. Only the template's
+ * own text is judged; the recording title (a `{{title}}` placeholder here) is
+ * sanitized separately at write time.
+ */
+export function isValidNoteNameTemplate(template: string): boolean {
+	let rendered: string;
+	try {
+		rendered = formatNoteName(template, NOTE_NAME_SAMPLE_DATE, NOTE_NAME_SAMPLE_TITLE);
+	} catch {
+		return false; // unknown token
+	}
+	return sanitizeFilename(rendered) === rendered;
+}
+
+/**
+ * Build a note name from a recording title and date, using a `{{...}}` template.
+ * The recording date fills the template's date tokens; `{{title}}` gets the
+ * title with any leading date STRIPPED, so the recording date REPLACES whatever
+ * date the Plaud title carried (a title with no date simply has the recording
+ * date placed by the template). `template` defaults to DEFAULT_NOTE_NAME_TEMPLATE
+ * (`{{yyyy}}-{{MM}}-{{dd}} {{title}}`), reproducing the historical
+ * `YYYY-MM-DD <title>` naming.
+ *
+ *   default:                            "04-13 Sync" (rec 2026-04-14) -> "2026-04-14 Sync"
+ *   "{{title}} {{yyyy}}-{{MM}}-{{dd}}":                               -> "Sync 2026-04-14"
+ *
+ * Runs once in writeNote for both the filename (via sanitizeFilename) and the H1
+ * heading (via formatMarkdown) so the two stay in sync. The template must be
+ * filename-safe; the settings layer validates that with isValidNoteNameTemplate.
+ */
+export function buildNoteName(
 	title: string,
 	date: Date,
-	dateFormat: string = DEFAULT_NOTE_NAME_DATE_FORMAT,
+	template: string = DEFAULT_NOTE_NAME_TEMPLATE,
 ): string {
-	const trimmed = title.trim();
-	const rendered = formatNoteNameDate(dateFormat, date);
-	// A recognizable, cleanly-delimited leading date: drop it and put the
-	// recording date in its place, keeping whatever text followed.
-	const rest = restAfterLeadingDate(trimmed);
-	if (rest !== null) {
-		return joinDateAndRest(rendered, rest);
-	}
-	// A date-shape glued to text (e.g. "04/13-Meeting"): leave it alone. It
-	// already shows a date, and stripping a glued date would strand the text.
-	if (OTHER_LEADING_DATE.test(trimmed)) {
-		return trimmed;
-	}
-	// Dateless: prepend the recording date. An empty title collapses to the date.
-	return joinDateAndRest(rendered, trimmed || undefined);
+	return formatNoteName(template, date, titleWithoutLeadingDate(title));
 }
 
 /**
@@ -1560,11 +1592,11 @@ export interface FormatMarkdownOptions {
 	 */
 	readonly consumerNotes?: readonly ConsumerNote[];
 	/**
-	 * Moment-compatible pattern for the leading date in the note's H1 (see
-	 * formatNoteNameDate). Must match the pattern the writer uses for the
-	 * filename so the two stay in sync. Omitted reproduces `YYYY-MM-DD`.
+	 * `{{...}}` template for the note's H1 (see buildNoteName). Must match the
+	 * template the writer uses for the filename so the two stay in sync. Omitted
+	 * reproduces `YYYY-MM-DD <title>`.
 	 */
-	readonly noteNameDateFormat?: string;
+	readonly noteNameTemplate?: string;
 }
 
 export function formatMarkdown(
@@ -1579,10 +1611,10 @@ export function formatMarkdown(
 	const headerLevel: HeadingLevel = options.transcriptHeaderLevel ?? 4;
 
 	const speakers = extractSpeakers(transcript);
-	const expandedTitle = expandTitleWithYear(
+	const expandedTitle = buildNoteName(
 		recording.title,
 		recording.createdAt,
-		options.noteNameDateFormat,
+		options.noteNameTemplate,
 	);
 	const groups = groupTranscriptByChapters(transcript, chapters);
 	const transcriptSection = includeTranscript
@@ -1644,13 +1676,13 @@ export function formatMarkdown(
 export function formatPlaceholderMarkdown(
 	recording: Recording,
 	reason: string,
-	dateFormat: string = DEFAULT_NOTE_NAME_DATE_FORMAT,
+	template: string = DEFAULT_NOTE_NAME_TEMPLATE,
 ): string {
 	const url = formatPlaudWebUrl(recording.id);
-	const expandedTitle = expandTitleWithYear(
+	const expandedTitle = buildNoteName(
 		recording.title,
 		recording.createdAt,
-		dateFormat,
+		template,
 	);
 	const flatReason = reason.replace(/\s*\r?\n\s*/g, ' ').trim();
 	const lines: string[] = [
@@ -1697,7 +1729,7 @@ export class NoteWriter {
 	// safe to concatenate with a filename.
 	private readonly outputFolder: string;
 	private readonly subfolderTemplate: string;
-	private readonly noteNameDateFormat: string;
+	private readonly noteNameTemplate: string;
 	private readonly existingPathForPlaudId?: (plaudId: string) => string | null;
 	private readonly onDuplicate: DuplicatePolicy;
 	private readonly promptOnDuplicate?: DuplicatePromptCallback;
@@ -1721,12 +1753,15 @@ export class NoteWriter {
 		this.vault = vault;
 		this.outputFolder = normalizeFolderPath(options.outputFolder);
 		this.subfolderTemplate = options.subfolderTemplate ?? '';
-		// `|| DEFAULT` (not `??`) so an empty or whitespace-only pattern — from a
-		// hand-edited data.json, say — falls back to the historical layout rather
-		// than rendering every note name with a blank date. The settings layer
-		// already refuses to save an empty pattern; this is defense-in-depth.
-		this.noteNameDateFormat =
-			options.noteNameDateFormat?.trim() || DEFAULT_NOTE_NAME_DATE_FORMAT;
+		// Fall back to the default when the template is missing, empty, or invalid
+		// (an unknown token or an unsafe render) — for example from a hand-edited
+		// data.json. The settings layer already refuses to save an invalid
+		// template; this is defense-in-depth so a bad value never breaks a write.
+		const requestedTemplate = options.noteNameTemplate?.trim();
+		this.noteNameTemplate =
+			requestedTemplate && isValidNoteNameTemplate(requestedTemplate)
+				? requestedTemplate
+				: DEFAULT_NOTE_NAME_TEMPLATE;
 		this.existingPathForPlaudId = options.existingPathForPlaudId;
 		this.onDuplicate = options.onDuplicate;
 		this.promptOnDuplicate = options.promptOnDuplicate;
@@ -1734,7 +1769,7 @@ export class NoteWriter {
 			includeTranscript: options.includeTranscript,
 			includeSummary: options.includeSummary,
 			transcriptHeaderLevel: options.transcriptHeaderLevel,
-			noteNameDateFormat: this.noteNameDateFormat,
+			noteNameTemplate: this.noteNameTemplate,
 		};
 	}
 
@@ -1747,10 +1782,10 @@ export class NoteWriter {
 		const subfolder = resolveSubfolder(this.subfolderTemplate, recording.createdAt);
 		const destinationFolder = joinFolderPath(this.outputFolder, subfolder);
 		await this.ensureFolder(destinationFolder);
-		const expandedTitle = expandTitleWithYear(
+		const expandedTitle = buildNoteName(
 			recording.title,
 			recording.createdAt,
-			this.noteNameDateFormat,
+			this.noteNameTemplate,
 		);
 		const filename = `${sanitizeFilename(expandedTitle)}.md`;
 		return destinationFolder === '' ? filename : `${destinationFolder}/${filename}`;
@@ -1830,7 +1865,7 @@ export class NoteWriter {
 		const markdown = formatPlaceholderMarkdown(
 			recording,
 			reason,
-			this.noteNameDateFormat,
+			this.noteNameTemplate,
 		);
 		const { existing, notePath } = this.findExistingNote(recording, targetPath);
 		if (existing === null) {

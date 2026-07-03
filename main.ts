@@ -28,8 +28,8 @@ import {
 } from "./plaud-login";
 import {
 	NoteWriter,
-	DEFAULT_NOTE_NAME_DATE_FORMAT,
-	isFilesystemSafeNoteNameDateFormat,
+	DEFAULT_NOTE_NAME_TEMPLATE,
+	isValidNoteNameTemplate,
 	type TagMode,
 } from "./note-writer";
 import { AttachmentImporter } from "./attachment-importer";
@@ -170,39 +170,54 @@ const SUBFOLDER_TEMPLATE_EXAMPLES_HEADING = "Examples:";
 const SUBFOLDER_TEMPLATE_FOOTNOTE =
 	"Applies to new imports; notes you already imported stay where they are.";
 
-// Note-name date format documentation, shared by the declarative settings
-// (1.13+) and the imperative display() fallback (1.12). Held in consts (not
-// inline literals at createEl/setDesc) for the same reason as the subfolder
-// strings above: the sentence-case lint inspects literal arguments, so the
-// token examples and proper nouns stay untouched.
-const NOTE_NAME_DATE_FORMAT_INTRO =
-	"Puts the recording's date at the start of each note's name, replacing any date already in the Plaud title, and this sets how that date is written. The date always comes from the recording (the same value as the note's date property), so a title with no date, or with a different or edited date, ends up with the recording's date in this format. Uses moment-style tokens; the default reproduces the previous YYYY-MM-DD naming. The result has to be usable as a filename, so a format containing a slash, colon, or other reserved character is rejected.";
+// Note-name template documentation, shared by the declarative settings (1.13+)
+// and the imperative display() fallback (1.12). Held in consts (not inline
+// literals at createEl/setDesc) for the same reason as the subfolder strings
+// above: the sentence-case lint inspects literal arguments, so the token
+// examples and proper nouns stay untouched.
+const NOTE_NAME_TEMPLATE_INTRO =
+	"Sets each note's name from a template, using the same {{...}} tokens as the subfolder setting plus a {{title}} token. The recording's date fills the date tokens, and {{title}} is the recording title with any date it already had removed, so the recording's date replaces whatever date was in the Plaud title. Put the date wherever you like, before or after {{title}}. The date property inside the note stays YYYY-MM-DD for Dataview. The whole name has to be usable as a filename, so a template containing a slash, colon, or other reserved character is rejected.";
 
-// [token, what it expands to] pairs for a July 3 2026 recording. Mirrors the
-// subset of moment tokens formatNoteNameDate understands.
-const NOTE_NAME_DATE_FORMAT_TOKENS: ReadonlyArray<readonly [string, string]> = [
-	["YYYY", "4-digit year, for example 2026"],
-	["YY", "2-digit year, for example 26"],
-	["MMMM", "full month name, for example July"],
-	["MMM", "short month name, for example Jul"],
-	["MM", "month, 01 to 12"],
-	["M", "month, 1 to 12"],
-	["DD", "day, 01 to 31"],
-	["D", "day, 1 to 31"],
+// [token, what it expands to] pairs for a July 3 2026 recording.
+const NOTE_NAME_TEMPLATE_TOKENS: ReadonlyArray<readonly [string, string]> = [
+	["{{yyyy}}", "year, for example 2026"],
+	["{{yy}}", "2-digit year, for example 26"],
+	["{{MMMM}}", "month name, for example July"],
+	["{{MMM}}", "short month, for example Jul"],
+	["{{MM}}", "month, 01 to 12"],
+	["{{M}}", "month, 1 to 12"],
+	["{{dd}}", "day, 01 to 31"],
+	["{{d}}", "day, 1 to 31"],
+	["{{yyyy-MM}}", "year and month, for example 2026-07"],
+	["{{ww}}", "ISO week number, 01 to 53"],
+	["{{Q}}", "quarter, 1 to 4"],
+	["{{title}}", "the recording title, with any date it started with removed"],
 ];
 
-const NOTE_NAME_DATE_FORMAT_TOKENS_HEADING =
+// [template, resulting name] pairs for a July 3 2026 recording titled Team sync.
+// Covers date-first, date-last, a named month, and US order so positioning and
+// ordering are both visible.
+const NOTE_NAME_TEMPLATE_EXAMPLES: ReadonlyArray<readonly [string, string]> = [
+	["{{yyyy}}-{{MM}}-{{dd}} {{title}}", "2026-07-03 Team sync"],
+	["{{title}} {{yyyy}}-{{MM}}-{{dd}}", "Team sync 2026-07-03 (date at the end)"],
+	["{{MMM}} {{d}}, {{yyyy}} - {{title}}", "Jul 3, 2026 - Team sync"],
+	["{{MM}}-{{dd}}-{{yyyy}} {{title}}", "07-03-2026 Team sync (US order)"],
+];
+
+const NOTE_NAME_TEMPLATE_TOKENS_HEADING =
 	"Tokens (mix with your own text and separators):";
-const NOTE_NAME_DATE_FORMAT_FOOTNOTE =
+const NOTE_NAME_TEMPLATE_EXAMPLES_HEADING = "Examples:";
+const NOTE_NAME_TEMPLATE_FOOTNOTE =
 	"Applies to new imports; notes you already imported keep their current names.";
 
-// [label, pattern] preset buttons. All dashes, so every preset is filename-safe.
-// ISO is the default; US and EU cover the common month-first and day-first
-// orders so a user does not have to remember the token names to switch.
-const NOTE_NAME_DATE_FORMAT_PRESETS: ReadonlyArray<readonly [string, string]> = [
-	["ISO", "YYYY-MM-DD"],
-	["US", "MM-DD-YYYY"],
-	["EU", "DD-MM-YYYY"],
+// [label, template] preset buttons. All dashes, so every preset is filename-safe.
+// ISO/US/EU cover the common date orders; "Date at end" shows the date can go
+// after the title, so a user does not have to discover positioning themselves.
+const NOTE_NAME_TEMPLATE_PRESETS: ReadonlyArray<readonly [string, string]> = [
+	["ISO", "{{yyyy}}-{{MM}}-{{dd}} {{title}}"],
+	["US", "{{MM}}-{{dd}}-{{yyyy}} {{title}}"],
+	["EU", "{{dd}}-{{MM}}-{{yyyy}} {{title}}"],
+	["Date at end", "{{title}} {{yyyy}}-{{MM}}-{{dd}}"],
 ];
 
 /**
@@ -230,10 +245,10 @@ interface PlaudImporterSettings {
 	apiBaseUrl: string;
 	outputFolder: string;
 	subfolderTemplate: string;
-	// Moment-style pattern for the date in each note's name (YYYY-MM-DD by
-	// default). The importer normalizes the recording title's leading date to
-	// this layout. Validated filename-safe before it is saved.
-	noteNameDateFormat: string;
+	// {{...}} template for each note's name (same token syntax as
+	// subfolderTemplate, plus {{title}}). Default "{{yyyy}}-{{MM}}-{{dd}} {{title}}"
+	// reproduces the historical naming. Validated filename-safe before it is saved.
+	noteNameTemplate: string;
 	onDuplicate: "skip" | "overwrite" | "prompt";
 	showRibbonIcon: boolean;
 	ribbonIcon: string;
@@ -279,7 +294,7 @@ const DEFAULT_SETTINGS: PlaudImporterSettings = {
 	apiBaseUrl: "https://api.plaud.ai",
 	outputFolder: "Plaud",
 	subfolderTemplate: "",
-	noteNameDateFormat: DEFAULT_NOTE_NAME_DATE_FORMAT,
+	noteNameTemplate: DEFAULT_NOTE_NAME_TEMPLATE,
 	onDuplicate: "prompt",
 	showRibbonIcon: true,
 	ribbonIcon: DEFAULT_RIBBON_ICON,
@@ -555,7 +570,7 @@ export default class PlaudImporterPlugin extends Plugin {
 		return {
 			outputFolder: this.settings.outputFolder,
 			subfolderTemplate: this.settings.subfolderTemplate,
-			noteNameDateFormat: this.settings.noteNameDateFormat,
+			noteNameTemplate: this.settings.noteNameTemplate,
 			onDuplicate: this.settings.onDuplicate,
 			includeTranscript: this.settings.includeTranscript,
 			includeSummary: this.settings.defaultIncludeSummary,
@@ -1343,11 +1358,11 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 		this.renderSubfolderTemplateControl(
 			this.makeSetting(containerEl, "Subfolder template", SUBFOLDER_TEMPLATE_INTRO),
 		);
-		this.renderNoteNameDateFormatControl(
+		this.renderNoteNameTemplateControl(
 			this.makeSetting(
 				containerEl,
-				"Note name date format",
-				NOTE_NAME_DATE_FORMAT_INTRO,
+				"Note name template",
+				NOTE_NAME_TEMPLATE_INTRO,
 			),
 		);
 		this.addDropdownRow(
@@ -1755,21 +1770,28 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 		);
 	}
 
-	// Renders the note-name date format row: the token reference (a list, so it
-	// reads clearly) into the description, then a text control bound to
-	// noteNameDateFormat, then ISO/US/EU preset buttons that fill the field and
-	// persist in one click. Shared by the declarative path and the imperative
-	// display() fallback so both Obsidian versions show identical documentation.
-	private renderNoteNameDateFormatControl(setting: Setting): void {
+	// Renders the note-name template row: the token reference and examples (lists,
+	// so they read clearly) into the description, then a text control bound to
+	// noteNameTemplate, then ISO/US/EU/Date-at-end preset buttons that fill the
+	// field and persist in one click. Shared by the declarative path and the
+	// imperative display() fallback so both Obsidian versions show identical docs.
+	private renderNoteNameTemplateControl(setting: Setting): void {
 		const docEl = setting.descEl.createDiv();
-		docEl.createDiv({ text: NOTE_NAME_DATE_FORMAT_TOKENS_HEADING });
+		docEl.createDiv({ text: NOTE_NAME_TEMPLATE_TOKENS_HEADING });
 		const tokenList = docEl.createEl("ul");
-		for (const [token, meaning] of NOTE_NAME_DATE_FORMAT_TOKENS) {
+		for (const [token, meaning] of NOTE_NAME_TEMPLATE_TOKENS) {
 			const item = tokenList.createEl("li");
 			item.createEl("code", { text: token });
 			item.createSpan({ text: ` ${meaning}` });
 		}
-		docEl.createDiv({ text: NOTE_NAME_DATE_FORMAT_FOOTNOTE });
+		docEl.createDiv({ text: NOTE_NAME_TEMPLATE_EXAMPLES_HEADING });
+		const exampleList = docEl.createEl("ul");
+		for (const [template, result] of NOTE_NAME_TEMPLATE_EXAMPLES) {
+			const item = exampleList.createEl("li");
+			item.createEl("code", { text: template });
+			item.createSpan({ text: ` → ${result}` });
+		}
+		docEl.createDiv({ text: NOTE_NAME_TEMPLATE_FOOTNOTE });
 
 		// Captured so a preset button can update the visible field, not just the
 		// saved value.
@@ -1777,17 +1799,17 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 		setting.addText((text) => {
 			field = text;
 			text
-				.setPlaceholder(DEFAULT_NOTE_NAME_DATE_FORMAT)
-				.setValue(this.readSettingString("noteNameDateFormat"))
+				.setPlaceholder(DEFAULT_NOTE_NAME_TEMPLATE)
+				.setValue(this.readSettingString("noteNameTemplate"))
 				.onChange(async (value) => {
-					await this.applyControlChange("noteNameDateFormat", value);
+					await this.applyControlChange("noteNameTemplate", value);
 				});
 		});
-		for (const [label, pattern] of NOTE_NAME_DATE_FORMAT_PRESETS) {
+		for (const [label, template] of NOTE_NAME_TEMPLATE_PRESETS) {
 			setting.addButton((button) =>
 				button.setButtonText(label).onClick(async () => {
-					field?.setValue(pattern);
-					await this.applyControlChange("noteNameDateFormat", pattern);
+					field?.setValue(template);
+					await this.applyControlChange("noteNameTemplate", template);
 				}),
 			);
 		}
@@ -1968,14 +1990,14 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 							this.renderSubfolderTemplateControl(setting),
 					},
 					{
-						name: "Note name date format",
-						desc: NOTE_NAME_DATE_FORMAT_INTRO,
-						// Rendered imperatively for the token reference list plus
+						name: "Note name template",
+						desc: NOTE_NAME_TEMPLATE_INTRO,
+						// Rendered imperatively for the token + examples lists plus
 						// the preset buttons. Not search-indexable, like the
 						// subfolder row above.
 						searchable: false,
 						render: (setting: Setting) =>
-							this.renderNoteNameDateFormatControl(setting),
+							this.renderNoteNameTemplateControl(setting),
 					},
 					{
 						name: "Duplicate handling",
@@ -2192,22 +2214,22 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 		if (key === "outputFolder") {
 			this.plugin.settings.outputFolder =
 				(typeof value === "string" ? value.trim() : "") || "Plaud";
-		} else if (key === "noteNameDateFormat") {
+		} else if (key === "noteNameTemplate") {
 			const next = typeof value === "string" ? value.trim() : "";
 			if (next.length === 0) {
-				// Never persist an empty pattern: the date part of every note name
-				// would render blank. Snap back to the default layout.
-				this.plugin.settings.noteNameDateFormat = DEFAULT_NOTE_NAME_DATE_FORMAT;
-			} else if (!isFilesystemSafeNoteNameDateFormat(next)) {
-				// The rendered date would carry a character a filename cannot
-				// hold. Keep the prior valid value and say why, rather than
-				// silently writing a mangled name whose H1 and filename diverge.
+				// Never persist an empty template: every note name would render
+				// blank. Snap back to the default template.
+				this.plugin.settings.noteNameTemplate = DEFAULT_NOTE_NAME_TEMPLATE;
+			} else if (!isValidNoteNameTemplate(next)) {
+				// An unknown token, or a render that is not a legal filename. Keep
+				// the prior valid template and say why, rather than saving one that
+				// would break imports or write a mangled name.
 				new Notice(
-					"Plaud importer: That note name date format would make an invalid filename. Remove any / \\ : * ? < > or | characters. The format was not changed.",
+					"Plaud importer: That note name template is not valid. Check the {{token}} names and avoid / \\ : * ? < > and | characters. The template was not changed.",
 				);
 				return;
 			} else {
-				this.plugin.settings.noteNameDateFormat = next;
+				this.plugin.settings.noteNameTemplate = next;
 			}
 		} else if (key === "transcriptHeaderLevel") {
 			const level = Number(value);
