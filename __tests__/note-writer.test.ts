@@ -1197,6 +1197,36 @@ describe('renameRecordingNote', () => {
 		expect(vault.folders.has('Plaud/old-assets')).toBe(true);
 	});
 
+	it('rolls back the assets-folder rename when the note rename fails', async () => {
+		const vault = makeFakeVault();
+		vault.files.set('Plaud/old.md', '---\nplaud-id: abc123\n---\n');
+		vault.folders.add('Plaud/old-assets');
+		const calls: Array<[string, string]> = [];
+		const rename = async (oldPath: string, newPath: string): Promise<void> => {
+			calls.push([oldPath, newPath]);
+			if (oldPath.endsWith('.md')) {
+				throw new Error('note rename boom');
+			}
+			if (vault.folders.has(oldPath)) {
+				vault.folders.delete(oldPath);
+				vault.folders.add(newPath);
+			}
+		};
+
+		await expect(
+			renameRecordingNote(vault, rename, 'Plaud/old.md', 'Plaud/new.md'),
+		).rejects.toThrow('note rename boom');
+
+		// Folder moved, note rename threw, folder rolled back to the old name.
+		expect(calls).toEqual([
+			['Plaud/old-assets', 'Plaud/new-assets'],
+			['Plaud/old.md', 'Plaud/new.md'],
+			['Plaud/new-assets', 'Plaud/old-assets'],
+		]);
+		expect(vault.folders.has('Plaud/old-assets')).toBe(true);
+		expect(vault.folders.has('Plaud/new-assets')).toBe(false);
+	});
+
 	it('throws when the destination assets folder is already occupied', async () => {
 		const vault = makeFakeVault();
 		vault.files.set('Plaud/old.md', '---\nplaud-id: abc123\n---\n');
@@ -1727,6 +1757,29 @@ describe('NoteWriter', () => {
 				),
 			).rejects.toThrow(/did not land the note at its target/);
 			// The stale note is left untouched, not overwritten.
+			expect(vault.overwrittenPaths).toEqual([]);
+		});
+
+		it('wraps a non-NoteWriterError thrown by the migration as a NoteWriterError', async () => {
+			const vault = makeFakeVault();
+			vault.files.set(OLD, content);
+			vault.folders.add('Plaud');
+			const writer = new NoteWriter(vault, {
+				outputFolder: 'Plaud',
+				onDuplicate: 'overwrite',
+				existingPathForPlaudId: (id) => (id === 'abc123' ? OLD : null),
+				migrateExistingNote: async () => {
+					throw new Error('renameFile failed');
+				},
+			});
+
+			const err = await writer
+				.writeNote(makeRecording({ title: 'New title' }), makeTranscript(), makeSummary())
+				.catch((e: unknown) => e);
+			expect(err).toBeInstanceOf(NoteWriterError);
+			expect((err as NoteWriterError).message).toMatch(
+				/Failed to migrate .* renameFile failed/,
+			);
 			expect(vault.overwrittenPaths).toEqual([]);
 		});
 

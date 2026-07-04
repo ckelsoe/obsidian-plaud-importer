@@ -1808,11 +1808,12 @@ export async function renameRecordingNote(
 	}
 
 	const sourceNote = vault.getFileByPath(oldNotePath);
-	// Note collision: a file already sits where we want to move the note. Allowed
-	// only when it IS the source (already renamed, the listener case). Any other
-	// occupant is refused; comparing plaud-ids sharpens the message when both
-	// notes carry one.
 	const occupant = vault.getFileByPath(newNotePath);
+	// Note collision: refuse when a DIFFERENT file already occupies newNotePath.
+	// Only checked when the source note still exists at oldNotePath; in the
+	// listener case the note has already moved (sourceNote === null), so this
+	// guard is skipped and only the assets folder cascades. Comparing plaud-ids
+	// sharpens the message when both notes carry one.
 	if (occupant !== null && sourceNote !== null) {
 		const [occupantId, sourceId] = await Promise.all([
 			readPlaudId(vault, occupant),
@@ -1843,7 +1844,23 @@ export async function renameRecordingNote(
 	// Skip the note step when it has already moved (Obsidian renamed it and we
 	// are only cascading the folder). Otherwise move the note now.
 	if (sourceNote !== null) {
-		await renameFile(oldNotePath, newNotePath);
+		try {
+			await renameFile(oldNotePath, newNotePath);
+		} catch (cause) {
+			// The folder already moved but the note did not. Best-effort undo of
+			// the folder rename so the note and its assets stay consistent (both
+			// at the old name) rather than leaving a note whose name no longer
+			// matches its assets folder. Surface the original failure regardless.
+			if (assetsFolderRenamed) {
+				try {
+					await renameFile(newAssets, oldAssets);
+				} catch {
+					// Rollback is best-effort; the original error is the one that
+					// matters, so swallow a rollback failure and rethrow below.
+				}
+			}
+			throw cause;
+		}
 	}
 
 	return { notePath: newNotePath, assetsFolderRenamed };
@@ -2199,7 +2216,22 @@ export class NoteWriter {
 		let writeTarget = existing;
 		let writePath = notePath;
 		if (notePath !== targetPath && this.migrateExistingNote) {
-			await this.migrateExistingNote(notePath, targetPath);
+			try {
+				await this.migrateExistingNote(notePath, targetPath);
+			} catch (cause) {
+				// Keep the writer's contract that every write failure surfaces as
+				// a NoteWriterError. The injected migration wraps Obsidian's
+				// renameFile, which throws a plain Error; rewrap it so callers get
+				// a consistent, clear message.
+				if (cause instanceof NoteWriterError) {
+					throw cause;
+				}
+				throw new NoteWriterError(
+					`Failed to migrate ${notePath} to ${targetPath} for recording ${recording.id}: ${
+						cause instanceof Error ? cause.message : String(cause)
+					}`,
+				);
+			}
 			// After a migration the note MUST be at targetPath. If it is not,
 			// the move silently failed (or a buggy injector did not perform it);
 			// overwriting the pre-migration handle would write to a stale path or
