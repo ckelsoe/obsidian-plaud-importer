@@ -30,6 +30,9 @@ import {
 	NoteWriter,
 	DEFAULT_NOTE_NAME_TEMPLATE,
 	isValidNoteNameTemplate,
+	renameRecordingNote,
+	sanitizeFilename,
+	type RenameFileFn,
 	type TagMode,
 } from "./note-writer";
 import { AttachmentImporter } from "./attachment-importer";
@@ -409,6 +412,15 @@ export default class PlaudImporterPlugin extends Plugin {
 	// loop; the loops poll this flag and abort so a disable/re-enable cannot leave
 	// the old instance writing while the new instance starts a tick.
 	private disposed = false;
+	// Loop guard for the rename cascade. Nonzero while WE rename a note or its
+	// assets folder (auto-migration or the local rename command). Suppresses the
+	// vault.on('rename') listener so our own rename is not treated as a
+	// user-initiated one and cascaded a second time, and disables the rename
+	// command and menu item so a user rename cannot start while our cascade is
+	// running. A depth counter, not a boolean: if two self-renames overlap, the
+	// guard stays set until the LAST one finishes, so an outer rename's later
+	// events cannot leak when an inner rename's finally runs first.
+	private selfRenameDepth = 0;
 
 	async onload() {
 		await this.loadSettings();
@@ -474,6 +486,62 @@ export default class PlaudImporterPlugin extends Plugin {
 				);
 			},
 		});
+
+		// Issue B: let the user rename an imported recording from Obsidian and
+		// keep its `<base>-assets` folder in sync. A palette command and a note
+		// context-menu item both open the rename prompt; a vault rename listener
+		// cascades a user rename (from Obsidian's own rename UI) to the assets
+		// folder. All local: no write back to Plaud (that is a later feature).
+		this.addCommand({
+			id: "rename-recording",
+			name: "Rename recording",
+			checkCallback: (checking) => {
+				// Disable while a plugin-owned rename is in flight so a user
+				// rename cannot race our own cascade (the listener is already
+				// suppressed the same way).
+				const file = this.app.workspace.getActiveFile();
+				if (this.selfRenameDepth > 0 || !this.isPlaudNote(file)) {
+					return false;
+				}
+				if (!checking) {
+					this.promptRenameRecording(file);
+				}
+				return true;
+			},
+		});
+
+		this.registerEvent(
+			this.app.workspace.on("file-menu", (menu, file) => {
+				// Same suppression as the command: no user rename entry point
+				// while our own rename cascade is running.
+				if (this.selfRenameDepth > 0 || !this.isPlaudNote(file)) {
+					return;
+				}
+				menu.addItem((item) =>
+					item
+						.setTitle("Rename imported recording")
+						.setIcon("pencil")
+						.onClick(() => this.promptRenameRecording(file)),
+				);
+			}),
+		);
+
+		// Cascade a user's rename of a Plaud note to its assets folder. Obsidian
+		// has already renamed the note by the time this fires, so the note step
+		// is a no-op inside renameRecordingNote and only the folder moves. The
+		// self-rename guard skips our OWN renames (auto-migration and the command
+		// above) so they do not double-cascade.
+		this.registerEvent(
+			this.app.vault.on("rename", (file, oldPath) => {
+				if (this.selfRenameDepth > 0) {
+					return;
+				}
+				if (!this.isPlaudNote(file)) {
+					return;
+				}
+				void this.cascadeUserRename(oldPath, file.path);
+			}),
+		);
 
 		this.app.workspace.onLayoutReady(() => {
 			// Construct the client once. It reads the token fresh on every
@@ -594,7 +662,132 @@ export default class PlaudImporterPlugin extends Plugin {
 					? this.app.secretStorage.getSecret(this.settings.secretId)
 					: null,
 			getApiBaseUrl: () => this.settings.apiBaseUrl,
+			// Issue A: when a re-import lands a recording whose target name/path
+			// differs from its existing note (a title or subfolder change), move
+			// the note + its assets folder instead of overwriting stale-named
+			// content in place. Wrapped with the self-rename loop guard so the
+			// cascade does not re-fire the vault rename listener.
+			migrateExistingNote: (oldPath, newPath) =>
+				this.migrateRecordingNote(oldPath, newPath),
 		};
+	}
+
+	/**
+	 * Rename an existing note and its `<base>-assets` folder to `newNotePath` as
+	 * a unit, guarding the whole cascade with the self-rename flag so our own
+	 * rename does not trigger the vault rename listener. Backs both the
+	 * auto-migration (Issue A) and the local rename command (Issue B).
+	 */
+	private async migrateRecordingNote(
+		oldNotePath: string,
+		newNotePath: string,
+	): Promise<void> {
+		const renameFile: RenameFileFn = async (from, to) => {
+			const item = this.app.vault.getAbstractFileByPath(from);
+			if (item === null) {
+				throw new Error(`Nothing to rename at ${from}`);
+			}
+			await this.app.fileManager.renameFile(item, to);
+		};
+		this.selfRenameDepth += 1;
+		try {
+			await renameRecordingNote(
+				this.app.vault,
+				renameFile,
+				oldNotePath,
+				newNotePath,
+			);
+		} finally {
+			this.selfRenameDepth -= 1;
+		}
+	}
+
+	/**
+	 * True when `file` is a markdown note this plugin imported, identified by a
+	 * non-empty `plaud-id` in its frontmatter (read from the metadata cache).
+	 * The rename command, context-menu item, and rename listener all gate on
+	 * this so they never act on an unrelated note.
+	 */
+	private isPlaudNote(file: unknown): file is TFile {
+		if (!(file instanceof TFile) || file.extension !== "md") {
+			return false;
+		}
+		// Obsidian types `frontmatter` as any; widen to unknown, then narrow,
+		// so no unsafe `any` leaks (matches vault-index.ts's frontmatter reads).
+		const fm: unknown = this.app.metadataCache.getFileCache(file)?.frontmatter;
+		if (fm === null || typeof fm !== "object") {
+			return false;
+		}
+		const id = (fm as Record<string, unknown>)["plaud-id"];
+		return typeof id === "string" && id.trim().length > 0;
+	}
+
+	/**
+	 * Ask for a new name for `file`, then rename the note and its assets folder
+	 * together (same folder, new base name). Local only; no write back to Plaud.
+	 */
+	private promptRenameRecording(file: TFile): void {
+		new RenameRecordingModal(this.app, file.basename, (rawName) => {
+			// sanitizeFilename never returns empty (it falls back to "Untitled"),
+			// and the modal already rejects an empty entry, so there is no
+			// unusable-name case to handle here.
+			const sanitized = sanitizeFilename(rawName);
+			// Obsidian represents the vault root as either "" or "/" depending on
+			// the call site; treat both as no-dir so a root note does not produce
+			// a leading-slash path like "/New name.md".
+			const parentPath = file.parent?.path ?? "";
+			const dir =
+				parentPath === "" || parentPath === "/" ? "" : `${parentPath}/`;
+			const newPath = `${dir}${sanitized}.md`;
+			if (newPath === file.path) {
+				return;
+			}
+			void this.runLocalRename(file.path, newPath, sanitized);
+		}).open();
+	}
+
+	/** Perform the command-driven rename and report success/failure to the user. */
+	private async runLocalRename(
+		oldPath: string,
+		newPath: string,
+		displayName: string,
+	): Promise<void> {
+		try {
+			await this.migrateRecordingNote(oldPath, newPath);
+			new Notice(`Plaud importer: renamed to "${displayName}".`);
+		} catch (err) {
+			console.error("Plaud importer: rename failed", err);
+			new Notice(
+				`Plaud importer: rename failed. ${
+					err instanceof Error ? err.message : String(err)
+				}`,
+			);
+		}
+	}
+
+	/**
+	 * Cascade a user's note rename (from Obsidian's own UI) to the note's assets
+	 * folder. The note is already at `newPath`; renameRecordingNote moves only
+	 * the folder. Silent when there is no assets folder; surfaces a Notice only
+	 * when the folder move fails (which would otherwise leave embeds broken).
+	 */
+	private async cascadeUserRename(
+		oldPath: string,
+		newPath: string,
+	): Promise<void> {
+		try {
+			await this.migrateRecordingNote(oldPath, newPath);
+		} catch (err) {
+			console.error(
+				"Plaud importer: attachments-folder rename cascade failed",
+				err,
+			);
+			new Notice(
+				`Plaud importer: could not rename the attachments folder. ${
+					err instanceof Error ? err.message : String(err)
+				}`,
+			);
+		}
 	}
 
 	/** Artifact selection for a headless auto-sync import, from settings. */
@@ -1262,6 +1455,71 @@ class BrowserSignInModal extends Modal {
 			.addButton((btn) =>
 				btn.setButtonText("Cancel").onClick(() => this.close()),
 			);
+	}
+
+	onClose(): void {
+		this.contentEl.empty();
+	}
+}
+
+/**
+ * Prompt for a new name for an imported recording. Prefills the current base
+ * name, submits on Enter or the Rename button, and hands the raw text to the
+ * caller (which sanitizes it and performs the note + assets-folder rename).
+ */
+class RenameRecordingModal extends Modal {
+	private value: string;
+	private readonly onSubmit: (newName: string) => void;
+
+	constructor(app: App, initial: string, onSubmit: (newName: string) => void) {
+		super(app);
+		this.value = initial;
+		this.onSubmit = onSubmit;
+	}
+
+	onOpen(): void {
+		this.setTitle("Rename recording");
+		const { contentEl } = this;
+		let input: TextComponent | undefined;
+		new Setting(contentEl)
+			.setName("New name")
+			.setDesc("The note and its attachments folder are renamed together.")
+			.addText((text) => {
+				input = text;
+				text.setValue(this.value).onChange((v) => {
+					this.value = v;
+				});
+				text.inputEl.addEventListener("keydown", (evt) => {
+					if (evt.key === "Enter") {
+						evt.preventDefault();
+						this.submit();
+					}
+				});
+			});
+		new Setting(contentEl)
+			.addButton((btn) =>
+				btn
+					.setButtonText("Rename")
+					.setCta()
+					.onClick(() => this.submit()),
+			)
+			.addButton((btn) =>
+				btn.setButtonText("Cancel").onClick(() => this.close()),
+			);
+		if (input) {
+			input.inputEl.focus();
+			input.inputEl.select();
+		}
+	}
+
+	private submit(): void {
+		const trimmed = this.value.trim();
+		if (trimmed.length === 0) {
+			new Notice("Plaud importer: enter a name.");
+			return;
+		}
+		this.close();
+		this.onSubmit(trimmed);
 	}
 
 	onClose(): void {
