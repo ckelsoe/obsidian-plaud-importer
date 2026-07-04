@@ -2200,11 +2200,19 @@ export class NoteWriter {
 		let writePath = notePath;
 		if (notePath !== targetPath && this.migrateExistingNote) {
 			await this.migrateExistingNote(notePath, targetPath);
+			// After a migration the note MUST be at targetPath. If it is not,
+			// the move silently failed (or a buggy injector did not perform it);
+			// overwriting the pre-migration handle would write to a stale path or
+			// the wrong note, so fail loudly instead of falling back to the old
+			// location.
 			const moved = this.vault.getFileByPath(targetPath);
-			if (moved !== null) {
-				writeTarget = moved;
-				writePath = targetPath;
+			if (moved === null) {
+				throw new NoteWriterError(
+					`Migration of ${notePath} to ${targetPath} for recording ${recording.id} did not land the note at its target; refusing to overwrite to avoid writing to a stale path.`,
+				);
 			}
+			writeTarget = moved;
+			writePath = targetPath;
 		}
 
 		// Overwrite path — use process so the write is atomic and

@@ -1706,6 +1706,30 @@ describe('NoteWriter', () => {
 			expect(outcome.path).toBe(NEW);
 		});
 
+		it('throws instead of overwriting a stale path when the migration did not land the note', async () => {
+			const vault = makeFakeVault();
+			vault.files.set(OLD, content);
+			vault.folders.add('Plaud');
+			const writer = new NoteWriter(vault, {
+				outputFolder: 'Plaud',
+				onDuplicate: 'overwrite',
+				existingPathForPlaudId: (id) => (id === 'abc123' ? OLD : null),
+				// Buggy injector: resolves without actually moving the note, so
+				// nothing lands at the target path.
+				migrateExistingNote: async () => {},
+			});
+
+			await expect(
+				writer.writeNote(
+					makeRecording({ title: 'New title' }),
+					makeTranscript(),
+					makeSummary(),
+				),
+			).rejects.toThrow(/did not land the note at its target/);
+			// The stale note is left untouched, not overwritten.
+			expect(vault.overwrittenPaths).toEqual([]);
+		});
+
 		it('does not migrate on a skip decision', async () => {
 			const vault = makeFakeVault();
 			vault.files.set(OLD, content);

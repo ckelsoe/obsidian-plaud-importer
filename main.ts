@@ -412,11 +412,14 @@ export default class PlaudImporterPlugin extends Plugin {
 	// loop; the loops poll this flag and abort so a disable/re-enable cannot leave
 	// the old instance writing while the new instance starts a tick.
 	private disposed = false;
-	// Loop guard for the rename cascade. Set while WE rename a note or its
+	// Loop guard for the rename cascade. Nonzero while WE rename a note or its
 	// assets folder (auto-migration or the local rename command), so the
 	// vault.on('rename') listener does not treat our own rename as a
-	// user-initiated one and cascade a second time.
-	private selfRenameInProgress = false;
+	// user-initiated one and cascade a second time. A depth counter, not a
+	// boolean: if two self-renames overlap, the guard stays set until the LAST
+	// one finishes, so an outer rename's later events cannot leak to the
+	// listener when an inner rename's finally runs first.
+	private selfRenameDepth = 0;
 
 	async onload() {
 		await this.loadSettings();
@@ -524,7 +527,7 @@ export default class PlaudImporterPlugin extends Plugin {
 		// above) so they do not double-cascade.
 		this.registerEvent(
 			this.app.vault.on("rename", (file, oldPath) => {
-				if (this.selfRenameInProgress) {
+				if (this.selfRenameDepth > 0) {
 					return;
 				}
 				if (!this.isPlaudNote(file)) {
@@ -680,7 +683,7 @@ export default class PlaudImporterPlugin extends Plugin {
 			}
 			await this.app.fileManager.renameFile(item, to);
 		};
-		this.selfRenameInProgress = true;
+		this.selfRenameDepth += 1;
 		try {
 			await renameRecordingNote(
 				this.app.vault,
@@ -689,7 +692,7 @@ export default class PlaudImporterPlugin extends Plugin {
 				newNotePath,
 			);
 		} finally {
-			this.selfRenameInProgress = false;
+			this.selfRenameDepth -= 1;
 		}
 	}
 
