@@ -728,11 +728,10 @@ export default class PlaudImporterPlugin extends Plugin {
 	 */
 	private promptRenameRecording(file: TFile): void {
 		new RenameRecordingModal(this.app, file.basename, (rawName) => {
+			// sanitizeFilename never returns empty (it falls back to "Untitled"),
+			// and the modal already rejects an empty entry, so there is no
+			// unusable-name case to handle here.
 			const sanitized = sanitizeFilename(rawName);
-			if (sanitized.length === 0) {
-				new Notice("Plaud importer: that name is not usable as a filename.");
-				return;
-			}
 			// Obsidian represents the vault root as either "" or "/" depending on
 			// the call site; treat both as no-dir so a root note does not produce
 			// a leading-slash path like "/New name.md".
