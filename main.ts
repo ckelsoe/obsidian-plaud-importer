@@ -891,6 +891,13 @@ export default class PlaudImporterPlugin extends Plugin {
 		}
 		try {
 			await client.updateTitle(plaudId as PlaudRecordingId, title);
+			// The plugin can unload during the network await; do not run the
+			// follow-up re-list and frontmatter write against a torn-down state.
+			// The title was already updated in Plaud, so skipping the marker
+			// refresh only risks one benign re-import on the next sync.
+			if (this.disposed) {
+				return;
+			}
 			new Notice(`Plaud importer: recording title updated to "${title}".`);
 			await this.refreshPlaudVersionMarker(client, file, plaudId);
 		} catch (err) {
