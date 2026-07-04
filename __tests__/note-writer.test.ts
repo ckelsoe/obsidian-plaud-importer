@@ -1637,6 +1637,101 @@ describe('NoteWriter', () => {
 		});
 	});
 
+	describe('auto-migration via migrateExistingNote (Issue A)', () => {
+		const OLD = 'Plaud/2026-04-14 Old title.md';
+		const NEW = 'Plaud/2026-04-14 New title.md';
+		const content = '---\nplaud-id: abc123\n---\n# 2026-04-14 Old title\n';
+
+		function migratingWriterVault(): {
+			vault: FakeVault;
+			migrateCalls: Array<[string, string]>;
+			writer: NoteWriter;
+		} {
+			const vault = makeFakeVault();
+			vault.files.set(OLD, content);
+			vault.folders.add('Plaud');
+			const migrateCalls: Array<[string, string]> = [];
+			const writer = new NoteWriter(vault, {
+				outputFolder: 'Plaud',
+				onDuplicate: 'overwrite',
+				existingPathForPlaudId: (id) => (id === 'abc123' ? OLD : null),
+				migrateExistingNote: async (oldPath, newPath) => {
+					migrateCalls.push([oldPath, newPath]);
+					const c = vault.files.get(oldPath) ?? '';
+					vault.files.delete(oldPath);
+					vault.files.set(newPath, c);
+				},
+			});
+			return { vault, migrateCalls, writer };
+		}
+
+		it('renames the note to its recomputed target, then overwrites at the new path', async () => {
+			const { vault, migrateCalls, writer } = migratingWriterVault();
+
+			const outcome = await writer.writeNote(
+				makeRecording({ title: 'New title' }),
+				makeTranscript(),
+				makeSummary(),
+			);
+
+			expect(migrateCalls).toEqual([[OLD, NEW]]);
+			expect(outcome.status).toBe('overwritten');
+			expect(outcome.path).toBe(NEW);
+			expect(vault.files.has(NEW)).toBe(true);
+			expect(vault.files.has(OLD)).toBe(false);
+			expect(vault.overwrittenPaths).toEqual([NEW]);
+		});
+
+		it('does not migrate when the target equals the existing path', async () => {
+			const vault = makeFakeVault();
+			vault.files.set(NEW, content);
+			vault.folders.add('Plaud');
+			const migrateCalls: Array<[string, string]> = [];
+			const writer = new NoteWriter(vault, {
+				outputFolder: 'Plaud',
+				onDuplicate: 'overwrite',
+				migrateExistingNote: async (oldPath, newPath) => {
+					migrateCalls.push([oldPath, newPath]);
+				},
+			});
+
+			const outcome = await writer.writeNote(
+				makeRecording({ title: 'New title' }),
+				makeTranscript(),
+				makeSummary(),
+			);
+
+			expect(migrateCalls).toEqual([]);
+			expect(outcome.status).toBe('overwritten');
+			expect(outcome.path).toBe(NEW);
+		});
+
+		it('does not migrate on a skip decision', async () => {
+			const vault = makeFakeVault();
+			vault.files.set(OLD, content);
+			vault.folders.add('Plaud');
+			const migrateCalls: Array<[string, string]> = [];
+			const writer = new NoteWriter(vault, {
+				outputFolder: 'Plaud',
+				onDuplicate: 'skip',
+				existingPathForPlaudId: (id) => (id === 'abc123' ? OLD : null),
+				migrateExistingNote: async (oldPath, newPath) => {
+					migrateCalls.push([oldPath, newPath]);
+				},
+			});
+
+			const outcome = await writer.writeNote(
+				makeRecording({ title: 'New title' }),
+				makeTranscript(),
+				makeSummary(),
+			);
+
+			expect(outcome.status).toBe('skipped');
+			expect(outcome.path).toBe(OLD);
+			expect(migrateCalls).toEqual([]);
+		});
+	});
+
 	it('writes the full markdown body including frontmatter, title, summary, and callout', async () => {
 		const vault = makeFakeVault();
 		const writer = new NoteWriter(vault, { outputFolder: 'Plaud', onDuplicate: 'skip' });

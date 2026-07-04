@@ -141,6 +141,20 @@ export interface NoteWriterOptions {
 	 * back to the path-scoped check only.
 	 */
 	readonly existingPathForPlaudId?: (plaudId: string) => string | null;
+	/**
+	 * Optional capability to migrate an existing note to its recomputed target
+	 * path — rename the note and its `<base>-assets` folder as a unit — before
+	 * overwriting it. Injected by the plugin (wrapping `renameRecordingNote`
+	 * plus the self-rename loop guard). When omitted (headless callers, tests),
+	 * the writer keeps the historical dedup-in-place behavior and rewrites the
+	 * note at its current path. Invoked only when a prior note lives at a path
+	 * that differs from the recording's current target (a title or subfolder
+	 * change since the last import), and only on the overwrite path.
+	 */
+	readonly migrateExistingNote?: (
+		oldNotePath: string,
+		newNotePath: string,
+	) => Promise<void>;
 	readonly onDuplicate: DuplicatePolicy;
 	/**
 	 * Required when `onDuplicate === 'prompt'`. Invoked per duplicate
@@ -1859,6 +1873,10 @@ export class NoteWriter {
 	private readonly subfolderTemplate: string;
 	private readonly noteNameTemplate: string;
 	private readonly existingPathForPlaudId?: (plaudId: string) => string | null;
+	private readonly migrateExistingNote?: (
+		oldNotePath: string,
+		newNotePath: string,
+	) => Promise<void>;
 	private readonly onDuplicate: DuplicatePolicy;
 	private readonly promptOnDuplicate?: DuplicatePromptCallback;
 	private readonly defaultFormatOptions: FormatMarkdownOptions;
@@ -1891,6 +1909,7 @@ export class NoteWriter {
 				? requestedTemplate
 				: DEFAULT_NOTE_NAME_TEMPLATE;
 		this.existingPathForPlaudId = options.existingPathForPlaudId;
+		this.migrateExistingNote = options.migrateExistingNote;
 		this.onDuplicate = options.onDuplicate;
 		this.promptOnDuplicate = options.promptOnDuplicate;
 		this.defaultFormatOptions = {
@@ -2168,20 +2187,40 @@ export class NoteWriter {
 			}
 		}
 
+		// Issue A migration: when the recording's recomputed target path differs
+		// from where its note currently lives (a title or subfolder change since
+		// the last import), move the note and its assets folder to the new path
+		// before overwriting, instead of rewriting stale-named content in place.
+		// This reverses the earlier "dedup, not migration" call. It is opt-in via
+		// the injected capability, so callers that do not inject it keep the
+		// in-place overwrite. Placed on the overwrite path only, AFTER the
+		// skip/prompt decisions above, so a skip or cancel never leaves a note
+		// renamed without its new content.
+		let writeTarget = existing;
+		let writePath = notePath;
+		if (notePath !== targetPath && this.migrateExistingNote) {
+			await this.migrateExistingNote(notePath, targetPath);
+			const moved = this.vault.getFileByPath(targetPath);
+			if (moved !== null) {
+				writeTarget = moved;
+				writePath = targetPath;
+			}
+		}
+
 		// Overwrite path — use process so the write is atomic and
 		// respects any other plugin's read-modify-write of the same
 		// file. The callback ignores the previous content by design: we
 		// are replacing the entire file with our regenerated markdown.
 		try {
-			await this.vault.process(existing, () => markdown);
+			await this.vault.process(writeTarget, () => markdown);
 		} catch (cause) {
 			throw new NoteWriterError(
-				`Failed to overwrite ${notePath} for recording ${recording.id}: ${
+				`Failed to overwrite ${writePath} for recording ${recording.id}: ${
 					cause instanceof Error ? cause.message : String(cause)
 				}`,
 			);
 		}
-		return { status: 'overwritten', path: notePath, foldInfo };
+		return { status: 'overwritten', path: writePath, foldInfo };
 	}
 
 	/**

@@ -30,6 +30,8 @@ import {
 	NoteWriter,
 	DEFAULT_NOTE_NAME_TEMPLATE,
 	isValidNoteNameTemplate,
+	renameRecordingNote,
+	type RenameFileFn,
 	type TagMode,
 } from "./note-writer";
 import { AttachmentImporter } from "./attachment-importer";
@@ -409,6 +411,11 @@ export default class PlaudImporterPlugin extends Plugin {
 	// loop; the loops poll this flag and abort so a disable/re-enable cannot leave
 	// the old instance writing while the new instance starts a tick.
 	private disposed = false;
+	// Loop guard for the rename cascade. Set while WE rename a note or its
+	// assets folder (auto-migration or the local rename command), so the
+	// vault.on('rename') listener does not treat our own rename as a
+	// user-initiated one and cascade a second time.
+	private selfRenameInProgress = false;
 
 	async onload() {
 		await this.loadSettings();
@@ -594,7 +601,44 @@ export default class PlaudImporterPlugin extends Plugin {
 					? this.app.secretStorage.getSecret(this.settings.secretId)
 					: null,
 			getApiBaseUrl: () => this.settings.apiBaseUrl,
+			// Issue A: when a re-import lands a recording whose target name/path
+			// differs from its existing note (a title or subfolder change), move
+			// the note + its assets folder instead of overwriting stale-named
+			// content in place. Wrapped with the self-rename loop guard so the
+			// cascade does not re-fire the vault rename listener.
+			migrateExistingNote: (oldPath, newPath) =>
+				this.migrateRecordingNote(oldPath, newPath),
 		};
+	}
+
+	/**
+	 * Rename an existing note and its `<base>-assets` folder to `newNotePath` as
+	 * a unit, guarding the whole cascade with the self-rename flag so our own
+	 * rename does not trigger the vault rename listener. Backs both the
+	 * auto-migration (Issue A) and the local rename command (Issue B).
+	 */
+	private async migrateRecordingNote(
+		oldNotePath: string,
+		newNotePath: string,
+	): Promise<void> {
+		const renameFile: RenameFileFn = async (from, to) => {
+			const item = this.app.vault.getAbstractFileByPath(from);
+			if (item === null) {
+				throw new Error(`Nothing to rename at ${from}`);
+			}
+			await this.app.fileManager.renameFile(item, to);
+		};
+		this.selfRenameInProgress = true;
+		try {
+			await renameRecordingNote(
+				this.app.vault,
+				renameFile,
+				oldNotePath,
+				newNotePath,
+			);
+		} finally {
+			this.selfRenameInProgress = false;
+		}
 	}
 
 	/** Artifact selection for a headless auto-sync import, from settings. */
