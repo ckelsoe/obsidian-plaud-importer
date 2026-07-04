@@ -22,6 +22,7 @@ import {
 	mergeTagSources,
 	buildNoteTags,
 	type TagBuildOptions,
+	renameRecordingNote,
 	resolveSubfolder,
 	sanitizeFilename,
 	substitutePlaudPlaceholders,
@@ -1077,6 +1078,138 @@ function makeFakeVault(): FakeVault {
 	};
 	return vault;
 }
+
+// renameRecordingNote ------------------------------------------------------
+
+/**
+ * Wrap a FakeVault with a RenameFileFn that moves entries (a markdown file in
+ * `files`, or a folder in `folders`) and records each (old, new) call in order.
+ * Mirrors `app.fileManager.renameFile` closely enough for the cascade tests:
+ * the note and the assets-folder marker both move.
+ */
+function makeFakeRename(vault: FakeVault): {
+	rename: (oldPath: string, newPath: string) => Promise<void>;
+	calls: Array<[string, string]>;
+} {
+	const calls: Array<[string, string]> = [];
+	const rename = async (oldPath: string, newPath: string): Promise<void> => {
+		calls.push([oldPath, newPath]);
+		if (vault.files.has(oldPath)) {
+			const content = vault.files.get(oldPath) ?? '';
+			vault.files.delete(oldPath);
+			vault.files.set(newPath, content);
+		}
+		if (vault.folders.has(oldPath)) {
+			vault.folders.delete(oldPath);
+			vault.folders.add(newPath);
+		}
+	};
+	return { rename, calls };
+}
+
+describe('renameRecordingNote', () => {
+	it('no-ops when the old and new paths are identical', async () => {
+		const vault = makeFakeVault();
+		vault.files.set('Plaud/note.md', '---\nplaud-id: abc123\n---\n');
+		const { rename, calls } = makeFakeRename(vault);
+
+		const result = await renameRecordingNote(
+			vault,
+			rename,
+			'Plaud/note.md',
+			'Plaud/note.md',
+		);
+
+		expect(result).toEqual({ notePath: 'Plaud/note.md', assetsFolderRenamed: false });
+		expect(calls).toEqual([]);
+	});
+
+	it('renames the assets folder first, then the note', async () => {
+		const vault = makeFakeVault();
+		vault.files.set('Plaud/old.md', '---\nplaud-id: abc123\n---\n');
+		vault.folders.add('Plaud/old-assets');
+		const { rename, calls } = makeFakeRename(vault);
+
+		const result = await renameRecordingNote(
+			vault,
+			rename,
+			'Plaud/old.md',
+			'Plaud/new.md',
+		);
+
+		// Folder before note so the note's embeds repoint before it moves.
+		expect(calls).toEqual([
+			['Plaud/old-assets', 'Plaud/new-assets'],
+			['Plaud/old.md', 'Plaud/new.md'],
+		]);
+		expect(result.assetsFolderRenamed).toBe(true);
+		expect(vault.files.has('Plaud/new.md')).toBe(true);
+		expect(vault.folders.has('Plaud/new-assets')).toBe(true);
+	});
+
+	it('renames only the note when no assets folder exists', async () => {
+		const vault = makeFakeVault();
+		vault.files.set('Plaud/old.md', '---\nplaud-id: abc123\n---\n');
+		const { rename, calls } = makeFakeRename(vault);
+
+		const result = await renameRecordingNote(
+			vault,
+			rename,
+			'Plaud/old.md',
+			'Plaud/new.md',
+		);
+
+		expect(calls).toEqual([['Plaud/old.md', 'Plaud/new.md']]);
+		expect(result.assetsFolderRenamed).toBe(false);
+	});
+
+	it('cascades only the assets folder when the note has already moved (listener case)', async () => {
+		const vault = makeFakeVault();
+		// Obsidian already renamed the note to the new path; the old path is empty.
+		vault.files.set('Plaud/new.md', '---\nplaud-id: abc123\n---\n');
+		vault.folders.add('Plaud/old-assets');
+		const { rename, calls } = makeFakeRename(vault);
+
+		const result = await renameRecordingNote(
+			vault,
+			rename,
+			'Plaud/old.md',
+			'Plaud/new.md',
+		);
+
+		// Only the folder moves; the note step is skipped.
+		expect(calls).toEqual([['Plaud/old-assets', 'Plaud/new-assets']]);
+		expect(result.assetsFolderRenamed).toBe(true);
+	});
+
+	it('throws before moving anything when a different recording owns the target', async () => {
+		const vault = makeFakeVault();
+		vault.files.set('Plaud/old.md', '---\nplaud-id: abc123\n---\n');
+		vault.files.set('Plaud/new.md', '---\nplaud-id: zzz999\n---\n');
+		vault.folders.add('Plaud/old-assets');
+		const { rename, calls } = makeFakeRename(vault);
+
+		await expect(
+			renameRecordingNote(vault, rename, 'Plaud/old.md', 'Plaud/new.md'),
+		).rejects.toThrow(/belongs to recording zzz999/);
+		// Nothing moved.
+		expect(calls).toEqual([]);
+		expect(vault.folders.has('Plaud/old-assets')).toBe(true);
+	});
+
+	it('throws when the destination assets folder is already occupied', async () => {
+		const vault = makeFakeVault();
+		vault.files.set('Plaud/old.md', '---\nplaud-id: abc123\n---\n');
+		vault.folders.add('Plaud/old-assets');
+		vault.folders.add('Plaud/new-assets');
+		const { rename, calls } = makeFakeRename(vault);
+
+		await expect(
+			renameRecordingNote(vault, rename, 'Plaud/old.md', 'Plaud/new.md'),
+		).rejects.toThrow(/attachments folder/);
+		expect(calls).toEqual([]);
+	});
+});
 
 describe('NoteWriter', () => {
 	it('creates the output folder if it does not exist', async () => {

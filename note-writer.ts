@@ -1736,6 +1736,117 @@ export function formatPlaceholderMarkdown(
 }
 
 // -----------------------------------------------------------------------------
+// Recording rename cascade — keep a note and its `<base>-assets` folder in sync.
+// -----------------------------------------------------------------------------
+
+/**
+ * Rename capability injected into the rename cascade. Operates on vault paths
+ * (not TAbstractFile) so the primitive stays vault-agnostic and unit-testable.
+ * The real plugin wraps `app.fileManager.renameFile`, which rewrites every
+ * wikilink pointing at the moved file/folder — that is what keeps a note's
+ * `![[...-assets/...]]` embeds valid across a rename. A fake in tests just
+ * records the calls.
+ */
+export type RenameFileFn = (oldPath: string, newPath: string) => Promise<void>;
+
+/**
+ * The attachments folder for a note is title-derived: same path with the `.md`
+ * extension swapped for `-assets`. Single-sources the convention the attachment
+ * importer writes to (`<notePath>`.replace(/\.md$/i, '-assets')) so a rename
+ * moves the exact folder the attachments live in.
+ */
+export function assetsFolderPathFor(notePath: string): string {
+	return notePath.replace(/\.md$/i, '-assets');
+}
+
+export interface RenameRecordingNoteResult {
+	/** The note's path after the cascade (always `newNotePath`). */
+	readonly notePath: string;
+	/** True when an existing `-assets` folder was moved alongside the note. */
+	readonly assetsFolderRenamed: boolean;
+}
+
+/**
+ * Rename a recording note and its `<base>-assets` folder as a unit.
+ *
+ * Order matters: the folder is renamed FIRST so `app.fileManager.renameFile`
+ * repoints the note's own `![[...-assets/...]]` embeds before the note itself
+ * moves. The note step is skipped when the note is already at `newNotePath` —
+ * that is the `vault.on('rename')` case, where Obsidian has already renamed the
+ * note and only the assets folder needs to catch up.
+ *
+ * Guards, so a rename never destroys unrelated data:
+ * - Note collision: refuses when a DIFFERENT file already occupies
+ *   `newNotePath` (a distinct `plaud-id`, or any non-source note).
+ * - Folder collision: refuses when a folder already occupies the destination
+ *   assets path.
+ * Both throw `NoteWriterError` before any move happens, so a blocked rename
+ * leaves the note and folder untouched.
+ */
+export async function renameRecordingNote(
+	vault: VaultLike,
+	renameFile: RenameFileFn,
+	oldNotePath: string,
+	newNotePath: string,
+): Promise<RenameRecordingNoteResult> {
+	if (oldNotePath === newNotePath) {
+		return { notePath: newNotePath, assetsFolderRenamed: false };
+	}
+
+	const sourceNote = vault.getFileByPath(oldNotePath);
+	// Note collision: a file already sits where we want to move the note. Allowed
+	// only when it IS the source (already renamed — the listener case). Any other
+	// occupant is refused; comparing plaud-ids sharpens the message when both
+	// notes carry one.
+	const occupant = vault.getFileByPath(newNotePath);
+	if (occupant !== null && sourceNote !== null) {
+		const [occupantId, sourceId] = await Promise.all([
+			readPlaudId(vault, occupant),
+			readPlaudId(vault, sourceNote),
+		]);
+		const belongsToDifferentRecording =
+			occupantId !== null && sourceId !== null && occupantId !== sourceId;
+		throw new NoteWriterError(
+			belongsToDifferentRecording
+				? `Cannot rename to ${newNotePath}: a note there belongs to recording ${occupantId}, not ${sourceId ?? 'this recording'}. Choose a different name.`
+				: `Cannot rename to ${newNotePath}: a file already exists there.`,
+		);
+	}
+
+	const oldAssets = assetsFolderPathFor(oldNotePath);
+	const newAssets = assetsFolderPathFor(newNotePath);
+	let assetsFolderRenamed = false;
+	if (oldAssets !== newAssets && vault.getFolderByPath(oldAssets) !== null) {
+		if (vault.getFolderByPath(newAssets) !== null) {
+			throw new NoteWriterError(
+				`Cannot rename attachments folder to ${newAssets}: a folder already exists there.`,
+			);
+		}
+		await renameFile(oldAssets, newAssets);
+		assetsFolderRenamed = true;
+	}
+
+	// Skip the note step when it has already moved (Obsidian renamed it and we
+	// are only cascading the folder). Otherwise move the note now.
+	if (sourceNote !== null) {
+		await renameFile(oldNotePath, newNotePath);
+	}
+
+	return { notePath: newNotePath, assetsFolderRenamed };
+}
+
+async function readPlaudId(vault: VaultLike, file: FileLike): Promise<string | null> {
+	try {
+		return extractPlaudIdFromFrontmatter(await vault.read(file));
+	} catch {
+		// A read failure must not mask the caller's intent with a spurious
+		// collision; treat an unreadable note as "no id" so the guard falls back
+		// to the plain "file already exists" refusal.
+		return null;
+	}
+}
+
+// -----------------------------------------------------------------------------
 // NoteWriter class — handles vault-level file creation and duplicate policy.
 // -----------------------------------------------------------------------------
 
