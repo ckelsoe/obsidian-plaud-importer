@@ -143,7 +143,7 @@ export interface NoteWriterOptions {
 	readonly existingPathForPlaudId?: (plaudId: string) => string | null;
 	/**
 	 * Optional capability to migrate an existing note to its recomputed target
-	 * path — rename the note and its `<base>-assets` folder as a unit — before
+	 * path (rename the note and its `<base>-assets` folder as a unit) before
 	 * overwriting it. Injected by the plugin (wrapping `renameRecordingNote`
 	 * plus the self-rename loop guard). When omitted (headless callers, tests),
 	 * the writer keeps the historical dedup-in-place behavior and rewrites the
@@ -1750,14 +1750,14 @@ export function formatPlaceholderMarkdown(
 }
 
 // -----------------------------------------------------------------------------
-// Recording rename cascade — keep a note and its `<base>-assets` folder in sync.
+// Recording rename cascade: keep a note and its `<base>-assets` folder in sync.
 // -----------------------------------------------------------------------------
 
 /**
  * Rename capability injected into the rename cascade. Operates on vault paths
  * (not TAbstractFile) so the primitive stays vault-agnostic and unit-testable.
  * The real plugin wraps `app.fileManager.renameFile`, which rewrites every
- * wikilink pointing at the moved file/folder — that is what keeps a note's
+ * wikilink pointing at the moved file/folder, which is what keeps a note's
  * `![[...-assets/...]]` embeds valid across a rename. A fake in tests just
  * records the calls.
  */
@@ -1785,7 +1785,7 @@ export interface RenameRecordingNoteResult {
  *
  * Order matters: the folder is renamed FIRST so `app.fileManager.renameFile`
  * repoints the note's own `![[...-assets/...]]` embeds before the note itself
- * moves. The note step is skipped when the note is already at `newNotePath` —
+ * moves. The note step is skipped when the note is already at `newNotePath`:
  * that is the `vault.on('rename')` case, where Obsidian has already renamed the
  * note and only the assets folder needs to catch up.
  *
@@ -1809,7 +1809,7 @@ export async function renameRecordingNote(
 
 	const sourceNote = vault.getFileByPath(oldNotePath);
 	// Note collision: a file already sits where we want to move the note. Allowed
-	// only when it IS the source (already renamed — the listener case). Any other
+	// only when it IS the source (already renamed, the listener case). Any other
 	// occupant is refused; comparing plaud-ids sharpens the message when both
 	// notes carry one.
 	const occupant = vault.getFileByPath(newNotePath);
