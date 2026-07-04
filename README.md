@@ -42,6 +42,7 @@ Plaud does not offer an official API yet, so this plugin works by using Plaud's 
 - It only **adds** notes and attachments inside the output folder you choose, and never edits or deletes anything outside that folder. (To spot already-imported recordings it does read the frontmatter of notes inside your output folder — see [Permissions and access](#permissions-and-access).)
 - It replaces an already-imported note only when **you** choose Overwrite (or confirm it under "Ask each time").
 - It does not rewrite Plaud's transcript or summary text — it renders Plaud's own data into a note.
+- The only change it can make in your **Plaud account** is a recording's **title**, and only if you turn on the optional title write-back and either confirm the prompt or opt into automatic updates (see [Renaming recordings](#renaming-recordings)). It never edits or deletes anything else in Plaud. With that setting off, the plugin is read-only against Plaud.
 
 ## What it does
 
@@ -63,6 +64,9 @@ Plaud does not offer an official API yet, so this plugin works by using Plaud's 
 - **Background auto-sync (optional, off by default).** Checks Plaud on a schedule and imports new recordings automatically, and re-imports recordings you changed in Plaud (edited transcript, corrected speaker names). A re-import overwrites that note and its artifacts with Plaud's current version; unchanged notes are never touched. See [Auto-sync](#auto-sync).
 - **Placeholder notes for unprocessed recordings.** When Plaud has a recording but no transcript or summary yet, the importer writes a small placeholder note (recording ID plus a link back to Plaud) instead of a bare failure, and a later import replaces it automatically. Optional, on by default.
 - **Organize into dated subfolders** — an optional path template (for example `{{yyyy-MM}}`) files notes into per-month, per-week, or per-quarter folders built from the recording date, instead of one flat folder. Attachments follow their note.
+- **Configurable note names.** A note-name template (the same tokens as the subfolder setting, plus a `{{title}}` token) puts the recording date wherever you want it and formats every note name the same way. A Plaud title with no date gets a `YYYY-MM-DD` prefix so notes sort chronologically. The default reproduces the previous `YYYY-MM-DD <title>` naming, so nothing changes unless you set it.
+- **Rename a recording from Obsidian.** A **Rename recording** command and a **Rename imported recording** right-click item rename a note and its `-assets` folder together, keeping embedded images valid. Renaming a Plaud note in the file explorer also moves its assets folder to match. And when you rename a recording in Plaud, the note and its assets folder are renamed on the next sync instead of leaving a stale-named note behind.
+- **Optionally sync a rename back to Plaud (off by default).** When you rename a recording in Obsidian, the plugin can update that recording's title in Plaud so the two stay in sync. This is opt-in and the only thing the plugin ever writes back to Plaud; with it off, renames stay entirely local. See [Renaming recordings](#renaming-recordings).
 - **"Imported" and "Update available" badges in the recording list.** Each row whose `plaud-id` already exists in your output folder shows an Imported pill; click it to open the existing note. If that recording changed in Plaud since you imported it, the row shows an Update available badge instead, so you can spot and re-import a stale note by hand. Re-importing is still possible and honors your duplicate-handling setting.
 - **Resume an interrupted import.** If your Plaud session expires partway through a multi-select import, the run stops at the first recording that fails to authenticate, keeps what it already imported, and lets you sign in again right there; a **Resume remaining** button then finishes the recordings that were left.
 - **Duplicate handling** is configurable — Skip, Overwrite, or Ask each time. "Ask each time" prompts per file with an explicit warning that the existing note body AND its `-assets` folder will be replaced; in a multi-select import you can escalate to "Overwrite all remaining" / "Skip all remaining" or cancel the batch.
@@ -188,6 +192,35 @@ The numbers are fixed and not locale dependent; you choose the order and the sep
 
 The template applies to **new imports**; notes you already imported stay where they are. Each note's `-assets` folder follows it into the same subfolder. If you change the template later, re-importing an existing recording updates the note in place instead of creating a duplicate.
 
+### Note name
+
+By default each note is named `YYYY-MM-DD <title>`, using the recording's own date. To control the format, set a **Note name template** that builds the name from the same `{{...}}` date tokens as the subfolder setting, plus a `{{title}}` token for the recording title. Put the date before or after the title, in any order and with your own separators:
+
+| Template | Resulting note name |
+| --- | --- |
+| `{{yyyy}}-{{MM}}-{{dd}} {{title}}` | `2026-07-03 Team sync` |
+| `{{title}} {{yyyy}}-{{MM}}-{{dd}}` | `Team sync 2026-07-03` |
+| `{{title}}` | `Team sync` (no date in the name) |
+
+Preset buttons fill in ISO, US, and EU orders, or type your own. The recording's own date replaces any date already in the Plaud title, so a title like `04/13 Meeting` becomes the recording's date, and a title with no date gets one. A note name has to be a valid filename, so a template with a slash, colon, or unknown token is rejected. The `date` property inside each note stays `YYYY-MM-DD` regardless, for Dataview and sorting.
+
+Like the subfolder setting, this applies to **new imports**; existing notes are renamed only when you rename them yourself or when the recording changes in Plaud (see [Renaming recordings](#renaming-recordings)).
+
+### Renaming recordings
+
+You can rename an imported recording from Obsidian and keep everything in sync:
+
+- Run the command **Plaud Importer: Rename recording** on the note, or right-click the note and choose **Rename imported recording**. Enter a new name, and the plugin renames both the note and its `-assets` folder so embedded images keep working.
+- If you rename a Plaud note directly in the file explorer, the plugin moves its `-assets` folder to match automatically.
+- When you rename a recording in Plaud itself, its note and assets folder are renamed on the next sync (or manual re-import), instead of leaving a stale-named note.
+
+**Update the recording title on rename** (off by default) controls whether a rename is also pushed back to Plaud:
+
+- **Off:** the Rename recording command asks each time whether to also update the title in Plaud, and a file-explorer rename stays entirely local.
+- **On:** both the command and a file-explorer rename update the title in Plaud automatically, with no prompt.
+
+The title sent to Plaud is your new note name exactly, so Plaud matches what you see in Obsidian. If your Plaud session has expired, the plugin offers to sign you in and then finishes the update, so a rename is not lost. This is the only change the plugin writes back to Plaud.
+
 ### Duplicate handling
 
 What the importer does when a note for a recording already exists in the output folder:
@@ -262,7 +295,7 @@ When something breaks, a debug log is the most useful thing to attach to an issu
 
 ## Plaud API status
 
-⚠️ **This plugin currently uses Plaud's undocumented web API** under `api.plaud.ai`. The endpoints in use are `GET /file/simple/web` for listing recordings, `POST /ai/transsumm/{id}` for transcript and legacy summary retrieval, and `GET /file/detail/{id}` for the richer detail bundle (polish-revision summaries, AI keywords, mindmap and card attachments, and AI suggestions). None of these are officially published or supported by Plaud.
+⚠️ **This plugin currently uses Plaud's undocumented web API** under `api.plaud.ai`. The endpoints in use are `GET /file/simple/web` for listing recordings, `POST /ai/transsumm/{id}` for transcript and legacy summary retrieval, and `GET /file/detail/{id}` for the richer detail bundle (polish-revision summaries, AI keywords, mindmap and card attachments, and AI suggestions). The only write endpoint is `PATCH /file/{id}` to update a recording's title, used solely by the optional title write-back described in [Renaming recordings](#renaming-recordings). None of these are officially published or supported by Plaud.
 
 The listing and `/ai/transsumm/{id}` endpoints were informed by prior community work, most directly [`rsteckler/applaud`](https://github.com/rsteckler/applaud), with cross-validation against [`JamesStuder/Plaud_API`](https://github.com/JamesStuder/Plaud_API). Those projects established that the data was reachable from a logged-in web session and gave a useful starting point for the auth and listing flow. The richer `/file/detail/{id}` surface used by this plugin (the `transaction_polish` polish-revision summary, `auto_sum_note`, `ai_suggestion`, the GPT-5 frontmatter schema fields, and the pre-signed S3 URLs for mindmap, card, and attachment assets), along with the encoding quirks (millisecond timestamps on the listing endpoint, the empty-JSON `POST` body shape on `/ai/transsumm/{id}`), were verified and extended through direct inspection of live Plaud responses during this plugin's development.
 
@@ -278,7 +311,7 @@ I am actively monitoring Plaud's developer announcements and [waitlist](https://
 
 Plaud Importer is desktop-only, runs on your device, and has no telemetry or maintainer server — it talks only to Plaud, and only when you ask it to. Obsidian's plugin scan discloses a few capabilities. Here is exactly what each is and why it exists:
 
-- **Network access to Plaud.** The plugin calls Plaud's web API (`api.plaud.ai`, or your regional host) to list and fetch your recordings, summaries, transcripts, and attachments, and downloads attachment files from the CDN hosts Plaud's responses point at. It contacts no other third party, and only when you trigger an import, scroll to load more recordings, or download attachments.
+- **Network access to Plaud.** The plugin calls Plaud's web API (`api.plaud.ai`, or your regional host) to list and fetch your recordings, summaries, transcripts, and attachments, and downloads attachment files from the CDN hosts Plaud's responses point at. It contacts no other third party, and only when you trigger an import, scroll to load more recordings, or download attachments. The one write it can make to Plaud is updating a recording's **title**, and only when you enable the optional title write-back and confirm or opt into automatic updates (see [Renaming recordings](#renaming-recordings)); with that setting off, every call to Plaud is read-only.
 - **Sign-in window.** When you click **Sign in**, the plugin opens Plaud's own website (`web.plaud.ai`) in a separate window so you can log in normally. For Google or Apple logins, you sign in through your normal web browser instead and hand the token back with a bookmarklet. Either way, your password is entered into Plaud's page and is never seen by the plugin; it reads only the session token your logged-in session already sends to Plaud, and stores it via `SecretStorage`. The sign-in runs in a private session isolated from Obsidian's other web views.
 - **Vault file enumeration.** To show the "Imported" badge and avoid duplicate imports, the plugin lists your vault's note paths and reads the frontmatter of notes **inside your output folder** to find ones it previously created (tagged with a `plaud-id`). It does not read the contents of unrelated notes.
 - **Clipboard, write only.** The only clipboard use is the Copy buttons (copy debug log, copy an error or failure list for a bug report). It writes to your clipboard and never reads it, so it cannot see anything you copied elsewhere.
