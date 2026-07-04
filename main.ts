@@ -48,7 +48,7 @@ import {
 	type ArtifactSelection,
 	type ImportModalOptions,
 } from "./import-core";
-import type { PlaudRecordingId, Recording } from "./plaud-client";
+import type { PlaudClient, PlaudRecordingId, Recording } from "./plaud-client";
 import { runAutoSyncTick } from "./auto-sync-runner";
 import {
 	coerceIntervalMinutes,
@@ -281,6 +281,12 @@ interface PlaudImporterSettings {
 	// default, matching the Plaud web UI which hides trash. Trashed recordings
 	// are short accidental clips with no transcript more often than not.
 	showTrashedRecordings: boolean;
+	// Title write-back: when on, renaming an imported recording (via the Rename
+	// recording command or a file-explorer rename) also updates that recording's
+	// title in Plaud to match the new note name. OFF by default because it is the
+	// only change the plugin writes back to Plaud. When off, the Rename command
+	// asks each time whether to push, and a file-explorer rename stays local.
+	autoUpdatePlaudTitle: boolean;
 	// Auto-sync (issue #5): a background timer that imports new recordings and
 	// re-imports (overwrites) changed ones on an interval, using the saved
 	// default import options. OFF by default: the connection is reverse-
@@ -320,6 +326,7 @@ const DEFAULT_SETTINGS: PlaudImporterSettings = {
 	autoCloseSummarySeconds: 20,
 	writePlaceholderForUnprocessed: true,
 	showTrashedRecordings: false,
+	autoUpdatePlaudTitle: false,
 	autoSyncEnabled: false,
 	autoSyncIntervalMinutes: 60,
 };
@@ -709,17 +716,11 @@ export default class PlaudImporterPlugin extends Plugin {
 	 * this so they never act on an unrelated note.
 	 */
 	private isPlaudNote(file: unknown): file is TFile {
-		if (!(file instanceof TFile) || file.extension !== "md") {
-			return false;
-		}
-		// Obsidian types `frontmatter` as any; widen to unknown, then narrow,
-		// so no unsafe `any` leaks (matches vault-index.ts's frontmatter reads).
-		const fm: unknown = this.app.metadataCache.getFileCache(file)?.frontmatter;
-		if (fm === null || typeof fm !== "object") {
-			return false;
-		}
-		const id = (fm as Record<string, unknown>)["plaud-id"];
-		return typeof id === "string" && id.trim().length > 0;
+		return (
+			file instanceof TFile &&
+			file.extension === "md" &&
+			this.plaudIdOf(file) !== null
+		);
 	}
 
 	/**
@@ -762,7 +763,10 @@ export default class PlaudImporterPlugin extends Plugin {
 					err instanceof Error ? err.message : String(err)
 				}`,
 			);
+			return;
 		}
+		// Offer/do the Plaud title write-back only after a successful local rename.
+		await this.maybeUpdatePlaudTitle(newPath, true);
 	}
 
 	/**
@@ -786,6 +790,230 @@ export default class PlaudImporterPlugin extends Plugin {
 				`Plaud importer: could not rename the attachments folder. ${
 					err instanceof Error ? err.message : String(err)
 				}`,
+			);
+			return;
+		}
+		// A file-explorer rename pushes to Plaud only when auto-update is on
+		// (fromCommand = false means no prompt; the setting is the sole gate).
+		await this.maybeUpdatePlaudTitle(newPath, false);
+	}
+
+	/**
+	 * Read a note's `plaud-id` from the metadata cache, or null when the note is
+	 * not a Plaud import. Widened through unknown to avoid an unsafe any.
+	 */
+	private plaudIdOf(file: TFile): string | null {
+		const fm: unknown = this.app.metadataCache.getFileCache(file)?.frontmatter;
+		if (fm === null || typeof fm !== "object") {
+			return null;
+		}
+		const id = (fm as Record<string, unknown>)["plaud-id"];
+		return typeof id === "string" && id.trim().length > 0 ? id.trim() : null;
+	}
+
+	/**
+	 * After a local rename, optionally update the recording's title in Plaud.
+	 * With autoUpdatePlaudTitle ON, pushes automatically. With it OFF, asks first,
+	 * but only for a rename started from the plugin command (`fromCommand`); a
+	 * file-explorer rename with the setting OFF stays local. No-op for a note
+	 * without a plaud-id or when the client is not ready. The pushed title is the
+	 * new note base name exactly (including any date prefix), so Plaud matches
+	 * what the user set in Obsidian.
+	 */
+	private async maybeUpdatePlaudTitle(
+		newNotePath: string,
+		fromCommand: boolean,
+	): Promise<void> {
+		const file = this.app.vault.getFileByPath(newNotePath);
+		if (!(file instanceof TFile)) {
+			return;
+		}
+		const plaudId = this.plaudIdOf(file);
+		if (plaudId === null) {
+			return;
+		}
+		const title = file.basename;
+		if (title.length === 0) {
+			return;
+		}
+		const client = this.client;
+		if (client === undefined) {
+			if (fromCommand && this.settings.autoUpdatePlaudTitle) {
+				new Notice(
+					"Plaud importer: not connected, so the recording title was not updated.",
+				);
+			}
+			return;
+		}
+
+		if (this.settings.autoUpdatePlaudTitle) {
+			await this.pushPlaudTitle(client, file, plaudId, title);
+			return;
+		}
+		if (!fromCommand) {
+			return;
+		}
+		// Setting off and the user renamed via the command: confirm before any
+		// cloud write.
+		new ConfirmModal(this.app, {
+			title: "Update the recording title?",
+			body: `Also update this recording's title in Plaud to "${title}"? This changes your Plaud account.`,
+			confirmText: "Update",
+			cancelText: "Keep local",
+			onConfirm: () => {
+				// Re-read at confirm time: the note may have been renamed again, or
+				// removed, while the prompt was open. Push the note's current name,
+				// and skip entirely if it is gone.
+				const current = this.app.vault.getFileByPath(file.path);
+				if (current instanceof TFile) {
+					void this.pushPlaudTitle(client, current, plaudId, current.basename);
+				}
+			},
+		}).open();
+	}
+
+	/**
+	 * Push the title to Plaud and, on success, refresh the note's stored version
+	 * marker so auto-sync does not treat our own write as a changed recording.
+	 * A failure surfaces a Notice but never throws to the caller.
+	 */
+	private async pushPlaudTitle(
+		client: PlaudClient,
+		file: TFile,
+		plaudId: string,
+		title: string,
+		alreadyReauthed = false,
+	): Promise<void> {
+		// The confirm-modal path defers this call, so the plugin may have unloaded
+		// between the prompt and the click; do not start a cloud write if so.
+		if (this.disposed) {
+			return;
+		}
+		try {
+			await client.updateTitle(plaudId as PlaudRecordingId, title);
+			// The plugin can unload during the network await; do not run the
+			// follow-up re-list and frontmatter write against a torn-down state.
+			// The title was already updated in Plaud, so skipping the marker
+			// refresh only risks one benign re-import on the next sync.
+			if (this.disposed) {
+				return;
+			}
+			new Notice(`Plaud importer: recording title updated to "${title}".`);
+			await this.refreshPlaudVersionMarker(client, file, plaudId);
+		} catch (err) {
+			// An expired or rejected session must not silently drop the write-back.
+			// The local rename already succeeded; offer to sign in and retry the
+			// push once (not a loop) so the title update is not lost. Guard on
+			// alreadyReauthed so a still-failing token after sign-in falls through
+			// to the plain error rather than re-prompting forever.
+			if (err instanceof PlaudAuthError && !alreadyReauthed) {
+				this.promptReauthAndRetryTitle(file, plaudId, title);
+				return;
+			}
+			console.error("Plaud importer: Plaud title update failed", err);
+			new Notice(
+				`Plaud importer: could not update the recording title. ${
+					err instanceof Error ? err.message : String(err)
+				}`,
+			);
+		}
+	}
+
+	/**
+	 * After an expired-session failure on the title push, ask the user to sign in
+	 * and, on success, retry the push once with the note's current name. Keeps
+	 * the rename's Plaud sync from being lost to a stale token.
+	 */
+	private promptReauthAndRetryTitle(
+		file: TFile,
+		plaudId: string,
+		title: string,
+	): void {
+		new ConfirmModal(this.app, {
+			title: "Sign in to update the title?",
+			body: `Your Plaud session expired, so the title was not updated to "${title}". Your note is already renamed. Sign in to Plaud and finish updating the title there?`,
+			confirmText: "Sign in",
+			cancelText: "Not now",
+			onConfirm: () => {
+				void this.reauthAndRetryTitle(file, plaudId);
+			},
+		}).open();
+	}
+
+	private async reauthAndRetryTitle(file: TFile, plaudId: string): Promise<void> {
+		try {
+			const ok = await this.reauthenticate();
+			if (!ok) {
+				new Notice(
+					"Plaud importer: sign-in was not completed, so the recording title was not updated.",
+				);
+				return;
+			}
+			// The browser sign-in can take a while; re-validate everything after it.
+			if (this.disposed) {
+				return;
+			}
+			const client = this.client;
+			if (client === undefined) {
+				return;
+			}
+			// Re-read the note at its path and confirm it is STILL the same
+			// recording (same plaud-id). During sign-in the file could have been
+			// moved, deleted, or replaced, and we must not push an unrelated file's
+			// name to this recording. alreadyReauthed = true so a second auth
+			// failure does not loop back into another sign-in prompt.
+			const current = this.app.vault.getFileByPath(file.path);
+			if (!(current instanceof TFile) || this.plaudIdOf(current) !== plaudId) {
+				return;
+			}
+			await this.pushPlaudTitle(client, current, plaudId, current.basename, true);
+		} catch (err) {
+			// reauthenticate() and its token persistence can throw; keep this
+			// fire-and-forget path from becoming an unhandled rejection.
+			console.error(
+				"Plaud importer: sign-in retry for the title update failed",
+				err,
+			);
+			new Notice(
+				"Plaud importer: sign-in failed, so the recording title was not updated.",
+			);
+		}
+	}
+
+	/**
+	 * Best-effort: after a title push, re-read the recording's new version_ms
+	 * (the title edit bumps its edit_time, so it sorts to the top of an
+	 * edit-time list) and store it in the note's `plaud-version-ms` frontmatter.
+	 * Without this, the next auto-sync would see our own write as a changed
+	 * recording and re-import it. A failure here is benign (one redundant
+	 * re-import at worst, with the title already matching so no rename), so it is
+	 * logged and swallowed.
+	 */
+	private async refreshPlaudVersionMarker(
+		client: PlaudClient,
+		file: TFile,
+		plaudId: string,
+	): Promise<void> {
+		try {
+			const recent = await client.listRecordings({
+				sortBy: "edit_time",
+				limit: 10,
+			});
+			const updated = recent.find((r) => r.id === plaudId);
+			if (updated?.versionMs === undefined) {
+				return;
+			}
+			const versionMs = updated.versionMs;
+			await this.app.fileManager.processFrontMatter(
+				file,
+				(fm: Record<string, unknown>) => {
+					fm["plaud-version-ms"] = versionMs;
+				},
+			);
+		} catch (err) {
+			console.error(
+				"Plaud importer: version marker refresh after title update failed",
+				err,
 			);
 		}
 	}
@@ -1527,6 +1755,50 @@ class RenameRecordingModal extends Modal {
 	}
 }
 
+interface ConfirmModalOptions {
+	readonly title: string;
+	readonly body: string;
+	readonly confirmText: string;
+	readonly cancelText: string;
+	readonly onConfirm: () => void;
+}
+
+/**
+ * Minimal yes/no confirmation modal. The title and button labels stay plain
+ * (sentence-case UI rule); the question and any product name go in the body
+ * paragraph, which is freeform text.
+ */
+class ConfirmModal extends Modal {
+	private readonly opts: ConfirmModalOptions;
+
+	constructor(app: App, opts: ConfirmModalOptions) {
+		super(app);
+		this.opts = opts;
+	}
+
+	onOpen(): void {
+		this.setTitle(this.opts.title);
+		this.contentEl.createEl("p", { text: this.opts.body });
+		new Setting(this.contentEl)
+			.addButton((btn) =>
+				btn
+					.setButtonText(this.opts.confirmText)
+					.setCta()
+					.onClick(() => {
+						this.close();
+						this.opts.onConfirm();
+					}),
+			)
+			.addButton((btn) =>
+				btn.setButtonText(this.opts.cancelText).onClick(() => this.close()),
+			);
+	}
+
+	onClose(): void {
+		this.contentEl.empty();
+	}
+}
+
 class PlaudImporterSettingsTab extends PluginSettingTab {
 	plugin: PlaudImporterPlugin;
 
@@ -1735,6 +2007,12 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 			"Show trashed recordings",
 			"Include recordings that are in your Plaud trash in the import list. Off by default, matching the Plaud app, which hides trash. Trashed recordings are usually short accidental clips with no transcript. Turn on to import something you trashed in Plaud but still want in your vault.",
 			"showTrashedRecordings",
+		);
+		this.addToggleRow(
+			containerEl,
+			"Update the recording title on rename",
+			"Off by default. When on, renaming an imported recording (with the Rename recording command or by renaming the note in the file explorer) also updates that recording's title in Plaud to match the new note name, including any date prefix. This is the only change the plugin writes back to Plaud. When off, the Rename recording command asks each time whether to update Plaud, and a file-explorer rename stays local.",
+			"autoUpdatePlaudTitle",
 		);
 
 		new Setting(containerEl).setName("Automatic sync").setHeading();
@@ -2392,6 +2670,11 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 						name: "Show trashed recordings",
 						desc: "Include recordings that are in your Plaud trash in the import list. Off by default, matching the Plaud app, which hides trash. Trashed recordings are usually short accidental clips with no transcript. Turn on to import something you trashed in Plaud but still want in your vault.",
 						control: { type: "toggle", key: "showTrashedRecordings" },
+					},
+					{
+						name: "Update the recording title on rename",
+						desc: "Off by default. When on, renaming an imported recording (with the Rename recording command or by renaming the note in the file explorer) also updates that recording's title in Plaud to match the new note name, including any date prefix. This is the only change the plugin writes back to Plaud. When off, the Rename recording command asks each time whether to update Plaud, and a file-explorer rename stays local.",
+						control: { type: "toggle", key: "autoUpdatePlaudTitle" },
 					},
 				],
 			},
