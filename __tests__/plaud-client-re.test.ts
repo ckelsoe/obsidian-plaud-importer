@@ -3792,3 +3792,76 @@ describe('getFolderCatalog', () => {
 		await expect(client.getFolderCatalog()).rejects.toBeInstanceOf(PlaudParseError);
 	});
 });
+
+// updateTitle (PATCH /file/{id}) ------------------------------------------
+
+describe('updateTitle', () => {
+	it('sends a PATCH to /file/{id} with a {"filename"} body', async () => {
+		const { fetcher, lastRequest } = captureFetcher(ok({ status: 0 }));
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+
+		await client.updateTitle('abc123' as PlaudRecordingId, '2026-07-02 New name');
+
+		const req = lastRequest();
+		expect(req?.method).toBe('PATCH');
+		expect(req?.url).toMatch(/\/file\/abc123$/);
+		expect(JSON.parse(req?.body ?? '{}')).toEqual({
+			filename: '2026-07-02 New name',
+		});
+	});
+
+	it('url-encodes the recording id in the path', async () => {
+		const { fetcher, lastRequest } = captureFetcher(ok({ status: 0 }));
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+
+		await client.updateTitle('a/b c' as PlaudRecordingId, 'Name');
+
+		expect(lastRequest()?.url).toMatch(/\/file\/a%2Fb%20c$/);
+	});
+
+	it('treats a 2xx with an empty body as success (allowEmptyBody)', async () => {
+		const { fetcher } = captureFetcher({ status: 200, json: null, text: '' });
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+
+		await expect(
+			client.updateTitle('abc123' as PlaudRecordingId, 'Name'),
+		).resolves.toBeUndefined();
+	});
+
+	it('refuses an empty title without sending a request', async () => {
+		const { fetcher, allRequests } = captureFetcher(ok({ status: 0 }));
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+
+		await expect(
+			client.updateTitle('abc123' as PlaudRecordingId, '   '),
+		).rejects.toBeInstanceOf(PlaudApiError);
+		expect(allRequests()).toHaveLength(0);
+	});
+
+	it('trims the title before sending', async () => {
+		const { fetcher, lastRequest } = captureFetcher(ok({ status: 0 }));
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+
+		await client.updateTitle('abc123' as PlaudRecordingId, '  Name  ');
+
+		expect(JSON.parse(lastRequest()?.body ?? '{}')).toEqual({ filename: 'Name' });
+	});
+
+	it('throws PlaudAuthError on HTTP 401', async () => {
+		const { fetcher } = captureFetcher(status(401));
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+
+		await expect(
+			client.updateTitle('abc123' as PlaudRecordingId, 'Name'),
+		).rejects.toBeInstanceOf(PlaudAuthError);
+	});
+
+	it('surfaces an in-band negative status as a PlaudApiError', async () => {
+		const { fetcher } = captureFetcher(ok({ status: -1, msg: 'bad request' }));
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+
+		await expect(
+			client.updateTitle('abc123' as PlaudRecordingId, 'Name'),
+		).rejects.toBeInstanceOf(PlaudApiError);
+	});
+});

@@ -163,6 +163,15 @@ export interface PlaudClient {
 	 * link carrying its own signature, so download it WITHOUT the Plaud bearer.
 	 */
 	getAudioTempUrl(id: PlaudRecordingId): Promise<string | null>;
+	/**
+	 * Update a recording's title (Plaud's `filename`) via `PATCH /file/{id}`.
+	 * This is the plugin's only cloud write: callers MUST gate it behind an
+	 * explicit user confirmation or the opt-in `autoUpdatePlaudTitle` setting.
+	 * Resolves on success; rejects (`PlaudAuthError` / `PlaudApiError`) on
+	 * failure so the caller can surface a clear message and avoid a retry that
+	 * double-writes.
+	 */
+	updateTitle(id: PlaudRecordingId, filename: string): Promise<void>;
 }
 
 export interface RecordingFilter {

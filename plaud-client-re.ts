@@ -44,7 +44,7 @@ export type PlaudTokenProvider = () => string | null;
 
 export interface PlaudHttpRequest {
 	readonly url: string;
-	readonly method: 'GET' | 'POST';
+	readonly method: 'GET' | 'POST' | 'PATCH';
 	readonly headers: Readonly<Record<string, string>>;
 	readonly body?: string;
 }
@@ -421,6 +421,36 @@ export class ReverseEngineeredPlaudClient implements PlaudClient {
 	}
 
 	/**
+	 * Update a recording's title (Plaud's `filename`) via `PATCH /file/{id}`
+	 * with a `{"filename": <name>}` body (verified live 2026-06-28). The only
+	 * cloud write the plugin performs; the caller gates it behind an explicit
+	 * user confirmation or the opt-in `autoUpdatePlaudTitle` setting. Refuses an
+	 * empty title so a blank name can never wipe the Plaud title. Resolves on
+	 * success and rejects on failure via the shared fetchJson error handling
+	 * (401 -> PlaudAuthError, in-band negative status -> PlaudApiError). The
+	 * response body is not consumed: `allowEmptyBody` tolerates a 2xx with no
+	 * JSON so a successful write is never misread as a failure that could
+	 * prompt a re-write.
+	 */
+	async updateTitle(id: PlaudRecordingId, filename: string): Promise<void> {
+		const endpoint = `/file/${encodeURIComponent(id)}`;
+		const trimmed = filename.trim();
+		if (trimmed.length === 0) {
+			throw new PlaudApiError(
+				`Refusing to set an empty Plaud title for recording ${id}`,
+				undefined,
+				endpoint,
+			);
+		}
+		const url = `${this.baseUrl}${endpoint}`;
+		await this.fetchJson(url, endpoint, {
+			method: 'PATCH',
+			body: JSON.stringify({ filename: trimmed }),
+			allowEmptyBody: true,
+		});
+	}
+
+	/**
 	 * Fetch the raw transcript + summary bundle via the legacy POST
 	 * /ai/transsumm/{id} endpoint. This is the original path the plugin
 	 * has always used. It returns the RAW transcript — speaker renames
@@ -685,9 +715,15 @@ export class ReverseEngineeredPlaudClient implements PlaudClient {
 		url: string,
 		endpoint: string,
 		options: {
-			method?: 'GET' | 'POST';
+			method?: 'GET' | 'POST' | 'PATCH';
 			body?: string;
 			skipAuth?: boolean;
+			// Accept a 2xx response that carries no JSON body as success (return
+			// null) instead of throwing a parse error. For write calls (PATCH)
+			// whose response body shape is not relied on: the only signal that
+			// matters is "did the write succeed", and a 2xx with an empty body
+			// must not be misread as a failure that could trigger a re-write.
+			allowEmptyBody?: boolean;
 			// Internal: set when this call is the retry after a region
 			// redirect, so a second redirect throws instead of looping.
 			isRegionRetry?: boolean;
@@ -847,6 +883,11 @@ export class ReverseEngineeredPlaudClient implements PlaudClient {
 			);
 		}
 		if (response.json === null || response.json === undefined) {
+			// A write call that does not depend on the response body treats a
+			// 2xx-with-empty-body as success rather than a parse failure.
+			if (options.allowEmptyBody === true) {
+				return null;
+			}
 			const bodySnippet = (response.text ?? '').slice(0, 200).replace(/\s+/g, ' ');
 			throw new PlaudParseError(
 				`Plaud API ${endpoint} returned 2xx with no JSON body (got: "${bodySnippet}")`,
