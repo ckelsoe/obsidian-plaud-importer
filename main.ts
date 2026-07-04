@@ -882,6 +882,7 @@ export default class PlaudImporterPlugin extends Plugin {
 		file: TFile,
 		plaudId: string,
 		title: string,
+		alreadyReauthed = false,
 	): Promise<void> {
 		// The confirm-modal path defers this call, so the plugin may have unloaded
 		// between the prompt and the click; do not start a cloud write if so.
@@ -893,11 +894,81 @@ export default class PlaudImporterPlugin extends Plugin {
 			new Notice(`Plaud importer: recording title updated to "${title}".`);
 			await this.refreshPlaudVersionMarker(client, file, plaudId);
 		} catch (err) {
+			// An expired or rejected session must not silently drop the write-back.
+			// The local rename already succeeded; offer to sign in and retry the
+			// push once (not a loop) so the title update is not lost. Guard on
+			// alreadyReauthed so a still-failing token after sign-in falls through
+			// to the plain error rather than re-prompting forever.
+			if (err instanceof PlaudAuthError && !alreadyReauthed) {
+				this.promptReauthAndRetryTitle(file, plaudId, title);
+				return;
+			}
 			console.error("Plaud importer: Plaud title update failed", err);
 			new Notice(
 				`Plaud importer: could not update the recording title. ${
 					err instanceof Error ? err.message : String(err)
 				}`,
+			);
+		}
+	}
+
+	/**
+	 * After an expired-session failure on the title push, ask the user to sign in
+	 * and, on success, retry the push once with the note's current name. Keeps
+	 * the rename's Plaud sync from being lost to a stale token.
+	 */
+	private promptReauthAndRetryTitle(
+		file: TFile,
+		plaudId: string,
+		title: string,
+	): void {
+		new ConfirmModal(this.app, {
+			title: "Sign in to update the title?",
+			body: `Your Plaud session expired, so the title was not updated to "${title}". Your note is already renamed. Sign in to Plaud and finish updating the title there?`,
+			confirmText: "Sign in",
+			cancelText: "Not now",
+			onConfirm: () => {
+				void this.reauthAndRetryTitle(file, plaudId);
+			},
+		}).open();
+	}
+
+	private async reauthAndRetryTitle(file: TFile, plaudId: string): Promise<void> {
+		try {
+			const ok = await this.reauthenticate();
+			if (!ok) {
+				new Notice(
+					"Plaud importer: sign-in was not completed, so the recording title was not updated.",
+				);
+				return;
+			}
+			// The browser sign-in can take a while; re-validate everything after it.
+			if (this.disposed) {
+				return;
+			}
+			const client = this.client;
+			if (client === undefined) {
+				return;
+			}
+			// Re-read the note at its path and confirm it is STILL the same
+			// recording (same plaud-id). During sign-in the file could have been
+			// moved, deleted, or replaced, and we must not push an unrelated file's
+			// name to this recording. alreadyReauthed = true so a second auth
+			// failure does not loop back into another sign-in prompt.
+			const current = this.app.vault.getFileByPath(file.path);
+			if (!(current instanceof TFile) || this.plaudIdOf(current) !== plaudId) {
+				return;
+			}
+			await this.pushPlaudTitle(client, current, plaudId, current.basename, true);
+		} catch (err) {
+			// reauthenticate() and its token persistence can throw; keep this
+			// fire-and-forget path from becoming an unhandled rejection.
+			console.error(
+				"Plaud importer: sign-in retry for the title update failed",
+				err,
+			);
+			new Notice(
+				"Plaud importer: sign-in failed, so the recording title was not updated.",
 			);
 		}
 	}
