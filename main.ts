@@ -861,7 +861,13 @@ export default class PlaudImporterPlugin extends Plugin {
 			confirmText: "Update",
 			cancelText: "Keep local",
 			onConfirm: () => {
-				void this.pushPlaudTitle(client, file, plaudId, title);
+				// Re-read at confirm time: the note may have been renamed again, or
+				// removed, while the prompt was open. Push the note's current name,
+				// and skip entirely if it is gone.
+				const current = this.app.vault.getFileByPath(file.path);
+				if (current instanceof TFile) {
+					void this.pushPlaudTitle(client, current, plaudId, current.basename);
+				}
 			},
 		}).open();
 	}
@@ -877,6 +883,11 @@ export default class PlaudImporterPlugin extends Plugin {
 		plaudId: string,
 		title: string,
 	): Promise<void> {
+		// The confirm-modal path defers this call, so the plugin may have unloaded
+		// between the prompt and the click; do not start a cloud write if so.
+		if (this.disposed) {
+			return;
+		}
 		try {
 			await client.updateTitle(plaudId as PlaudRecordingId, title);
 			new Notice(`Plaud importer: recording title updated to "${title}".`);

@@ -884,8 +884,14 @@ export class ReverseEngineeredPlaudClient implements PlaudClient {
 		}
 		if (response.json === null || response.json === undefined) {
 			// A write call that does not depend on the response body treats a
-			// 2xx-with-empty-body as success rather than a parse failure.
-			if (options.allowEmptyBody === true) {
+			// 2xx-with-EMPTY-body as success rather than a parse failure. Guard on
+			// the raw text being empty: the adapter also maps a NON-empty but
+			// malformed (non-JSON) body to null json, and that is a genuine parse
+			// failure that must not be silently accepted for a cloud write.
+			if (
+				options.allowEmptyBody === true &&
+				(response.text ?? '').trim().length === 0
+			) {
 				return null;
 			}
 			const bodySnippet = (response.text ?? '').slice(0, 200).replace(/\s+/g, ' ');

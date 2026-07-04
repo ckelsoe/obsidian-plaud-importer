@@ -3828,6 +3828,21 @@ describe('updateTitle', () => {
 		).resolves.toBeUndefined();
 	});
 
+	it('rejects a 2xx whose body is non-empty but not JSON (not a silent success)', async () => {
+		// The adapter maps a malformed body to json:null while keeping the text.
+		// allowEmptyBody must not swallow that as a successful write.
+		const { fetcher } = captureFetcher({
+			status: 200,
+			json: null,
+			text: 'not json',
+		});
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+
+		await expect(
+			client.updateTitle('abc123' as PlaudRecordingId, 'Name'),
+		).rejects.toBeInstanceOf(PlaudParseError);
+	});
+
 	it('refuses an empty title without sending a request', async () => {
 		const { fetcher, allRequests } = captureFetcher(ok({ status: 0 }));
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
