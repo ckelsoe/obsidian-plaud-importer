@@ -1832,9 +1832,12 @@ export async function renameRecordingNote(
 	const newAssets = assetsFolderPathFor(newNotePath);
 	let assetsFolderRenamed = false;
 	if (oldAssets !== newAssets && vault.getFolderByPath(oldAssets) !== null) {
-		if (vault.getFolderByPath(newAssets) !== null) {
+		if (
+			vault.getFolderByPath(newAssets) !== null ||
+			vault.getFileByPath(newAssets) !== null
+		) {
 			throw new NoteWriterError(
-				`Cannot rename attachments folder to ${newAssets}: a folder already exists there.`,
+				`Cannot rename attachments folder to ${newAssets}: something already exists there.`,
 			);
 		}
 		await renameFile(oldAssets, newAssets);

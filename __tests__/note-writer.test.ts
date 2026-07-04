@@ -1239,6 +1239,20 @@ describe('renameRecordingNote', () => {
 		).rejects.toThrow(/attachments folder/);
 		expect(calls).toEqual([]);
 	});
+
+	it('throws when a FILE (not a folder) occupies the destination assets path', async () => {
+		const vault = makeFakeVault();
+		vault.files.set('Plaud/old.md', '---\nplaud-id: abc123\n---\n');
+		vault.folders.add('Plaud/old-assets');
+		// A stray file sitting exactly where the assets folder would move.
+		vault.files.set('Plaud/new-assets', 'not a folder');
+		const { rename, calls } = makeFakeRename(vault);
+
+		await expect(
+			renameRecordingNote(vault, rename, 'Plaud/old.md', 'Plaud/new.md'),
+		).rejects.toThrow(/already exists there/);
+		expect(calls).toEqual([]);
+	});
 });
 
 describe('NoteWriter', () => {

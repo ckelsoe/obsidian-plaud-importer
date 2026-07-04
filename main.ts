@@ -413,12 +413,13 @@ export default class PlaudImporterPlugin extends Plugin {
 	// the old instance writing while the new instance starts a tick.
 	private disposed = false;
 	// Loop guard for the rename cascade. Nonzero while WE rename a note or its
-	// assets folder (auto-migration or the local rename command), so the
-	// vault.on('rename') listener does not treat our own rename as a
-	// user-initiated one and cascade a second time. A depth counter, not a
-	// boolean: if two self-renames overlap, the guard stays set until the LAST
-	// one finishes, so an outer rename's later events cannot leak to the
-	// listener when an inner rename's finally runs first.
+	// assets folder (auto-migration or the local rename command). Suppresses the
+	// vault.on('rename') listener so our own rename is not treated as a
+	// user-initiated one and cascaded a second time, and disables the rename
+	// command and menu item so a user rename cannot start while our cascade is
+	// running. A depth counter, not a boolean: if two self-renames overlap, the
+	// guard stays set until the LAST one finishes, so an outer rename's later
+	// events cannot leak when an inner rename's finally runs first.
 	private selfRenameDepth = 0;
 
 	async onload() {
@@ -495,8 +496,11 @@ export default class PlaudImporterPlugin extends Plugin {
 			id: "rename-recording",
 			name: "Rename recording",
 			checkCallback: (checking) => {
+				// Disable while a plugin-owned rename is in flight so a user
+				// rename cannot race our own cascade (the listener is already
+				// suppressed the same way).
 				const file = this.app.workspace.getActiveFile();
-				if (!this.isPlaudNote(file)) {
+				if (this.selfRenameDepth > 0 || !this.isPlaudNote(file)) {
 					return false;
 				}
 				if (!checking) {
@@ -508,7 +512,9 @@ export default class PlaudImporterPlugin extends Plugin {
 
 		this.registerEvent(
 			this.app.workspace.on("file-menu", (menu, file) => {
-				if (!this.isPlaudNote(file)) {
+				// Same suppression as the command: no user rename entry point
+				// while our own rename cascade is running.
+				if (this.selfRenameDepth > 0 || !this.isPlaudNote(file)) {
 					return;
 				}
 				menu.addItem((item) =>
@@ -727,8 +733,12 @@ export default class PlaudImporterPlugin extends Plugin {
 				new Notice("Plaud importer: that name is not usable as a filename.");
 				return;
 			}
-			const parent = file.parent;
-			const dir = parent && parent.path !== "/" ? `${parent.path}/` : "";
+			// Obsidian represents the vault root as either "" or "/" depending on
+			// the call site; treat both as no-dir so a root note does not produce
+			// a leading-slash path like "/New name.md".
+			const parentPath = file.parent?.path ?? "";
+			const dir =
+				parentPath === "" || parentPath === "/" ? "" : `${parentPath}/`;
 			const newPath = `${dir}${sanitized}.md`;
 			if (newPath === file.path) {
 				return;
