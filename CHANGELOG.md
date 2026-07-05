@@ -13,6 +13,10 @@ All notable changes to Plaud Importer will be documented in this file.
 
 - **Live preview and insert-token buttons on both template fields.** Each template setting now shows the resulting folder or note name for a sample recording as you type, and a row of buttons (Year, Month, Day, Weekday, Quarter, Week, and Title on the note-name field) inserts the correct token at the cursor, so you do not have to remember the exact spelling. The preview also flags a template that would produce an invalid note name before you save it.
 
+### Fixed
+
+- A subfolder template that would create a folder Windows cannot hold (a reserved device name like `CON`, or a segment ending in a space or dot) is now refused when you save it, with the reason shown in the preview, instead of being accepted and then failing at import time. This only affects literal text you type into the template; date tokens never produce such a name.
+
 ## [0.20.0] - 2026-07-04
 
 ### Added

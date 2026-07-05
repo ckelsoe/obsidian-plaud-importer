@@ -601,6 +601,32 @@ describe('resolveSubfolder', () => {
 		expect(() => resolveSubfolder('../{{YYYY}}', jun4)).toThrow(NoteWriterError);
 	});
 
+	it('rejects a literal segment that is a reserved Windows device name', () => {
+		// These fail folder creation on Windows and can only come from literal text
+		// a user typed (no date token renders one), so the template is refused
+		// rather than a folder silently relocated. Case-insensitive.
+		expect(() => resolveSubfolder('CON/{{YYYY}}', jun4)).toThrow(NoteWriterError);
+		expect(() => resolveSubfolder('{{YYYY}}/nul', jun4)).toThrow(NoteWriterError);
+		expect(() => resolveSubfolder('lpt1', jun4)).toThrow(NoteWriterError);
+	});
+
+	it('rejects a segment ending in a dot or space (Windows drops them)', () => {
+		// A trailing dot/space makes "2026 " and "2026" collide on Windows, which
+		// breaks the duplicate guard. A trailing token on a non-final segment is the
+		// reachable case; the whole-path ends are already trimmed by normalizeFolderPath.
+		expect(() => resolveSubfolder('{{YYYY}} /{{MM}}', jun4)).toThrow(NoteWriterError);
+		expect(() => resolveSubfolder('{{YYYY}}./{{MM}}', jun4)).toThrow(NoteWriterError);
+	});
+
+	it('does not reject ordinary date-token output that merely contains reserved letters', () => {
+		// Regression guard: month/weekday names are never a bare reserved name, so
+		// the new check must not over-block a normal template.
+		expect(resolveSubfolder('{{MMMM}}/{{YYYY}}', jun4)).toBe('June/2026');
+		expect(resolveSubfolder('{{dddd}}', jun4)).toBe('Thursday');
+		// "COMMS" is not a reserved name even though "COM" prefixes it.
+		expect(resolveSubfolder('COMMS/{{YYYY}}', jun4)).toBe('COMMS/2026');
+	});
+
 	it('returns the flat path for a template that normalizes to empty', () => {
 		// "/" and "." normalize to '' (no real segment). Sanitizing an empty
 		// segment would otherwise yield a stray "Untitled" folder.

@@ -235,6 +235,17 @@ export type PlaceholderWriteOutcome = {
 // Pure helpers (exported for testing).
 // -----------------------------------------------------------------------------
 
+// Windows reserved device names. A file or folder named exactly one of these
+// (any case) is unusable on Windows even though it contains no forbidden
+// character. sanitizeFilename neutralizes it with a leading underscore; the
+// subfolder path rejects it instead (see assertUsableFolderSegment), so one
+// list serves both.
+const WINDOWS_RESERVED_NAMES = new Set([
+	'CON', 'PRN', 'AUX', 'NUL',
+	'COM1', 'COM2', 'COM3', 'COM4', 'COM5', 'COM6', 'COM7', 'COM8', 'COM9',
+	'LPT1', 'LPT2', 'LPT3', 'LPT4', 'LPT5', 'LPT6', 'LPT7', 'LPT8', 'LPT9',
+]);
+
 /**
  * Sanitize a Plaud recording title into a filename that is legal on Windows,
  * macOS, and Linux and doesn't collide with Obsidian's wikilink parser.
@@ -273,12 +284,7 @@ export function sanitizeFilename(title: string): string {
 
 	// Reserved Windows device names — even with an extension these can
 	// confuse legacy code. Prefix with an underscore to neutralize.
-	const reserved = new Set([
-		'CON', 'PRN', 'AUX', 'NUL',
-		'COM1', 'COM2', 'COM3', 'COM4', 'COM5', 'COM6', 'COM7', 'COM8', 'COM9',
-		'LPT1', 'LPT2', 'LPT3', 'LPT4', 'LPT5', 'LPT6', 'LPT7', 'LPT8', 'LPT9',
-	]);
-	if (reserved.has(out.toUpperCase())) {
+	if (WINDOWS_RESERVED_NAMES.has(out.toUpperCase())) {
 		out = `_${out}`;
 	}
 
@@ -463,6 +469,32 @@ function sanitizeFolderSegment(segment: string): string {
 }
 
 /**
+ * Reject a resolved subfolder segment that no Windows folder can hold even
+ * though sanitizeFolderSegment left it alone (it contains no forbidden
+ * character): a reserved device name (CON, PRN, ...) or a name ending in a dot
+ * or space, which Windows silently drops so `2026 ` and `2026` would collide.
+ * These only arise from literal text a user typed into the template, never from
+ * a date token, so throwing here, instead of rewriting like sanitizeFilename
+ * does for note names, keeps the subfolder migration output-preserving: a legal
+ * existing folder is never relocated behind the user's back. The settings
+ * save-guard and the live preview both catch the throw, so an unusable template
+ * is refused before it is stored, the same way the `..` vault-escape is.
+ */
+function assertUsableFolderSegment(segment: string): string {
+	if (WINDOWS_RESERVED_NAMES.has(segment.toUpperCase())) {
+		throw new NoteWriterError(
+			`Subfolder segment "${segment}" is a reserved Windows device name; use a different folder name`,
+		);
+	}
+	if (/[. ]$/.test(segment)) {
+		throw new NoteWriterError(
+			`Subfolder segment "${segment}" ends with a space or dot, which Windows drops; remove the trailing space or dot`,
+		);
+	}
+	return segment;
+}
+
+/**
  * Resolve a user-configured subfolder template against a recording's date.
  *
  * The result is a vault-relative subpath (no leading/trailing slash) that the
@@ -485,6 +517,9 @@ function sanitizeFolderSegment(segment: string): string {
  *    The narrow sanitizer touches only illegal characters, so a legal existing
  *    folder is unchanged. This runs AFTER normalizeFolderPath so the `..`
  *    traversal guard still sees a literal `..` segment.
+ *  - A segment that is a reserved Windows device name or ends in a dot/space is
+ *    rejected (assertUsableFolderSegment throws), rather than silently rewritten,
+ *    so the settings guard refuses the template instead of relocating a folder.
  */
 export function resolveSubfolder(template: string, date: Date): string {
 	if (template.trim() === '') {
@@ -498,7 +533,7 @@ export function resolveSubfolder(template: string, date: Date): string {
 		.split('/')
 		// Drop empty/whitespace-only segments so nesting stays as authored.
 		.filter((segment) => segment.trim() !== '')
-		.map((segment) => sanitizeFolderSegment(segment))
+		.map((segment) => assertUsableFolderSegment(sanitizeFolderSegment(segment)))
 		.join('/');
 }
 
