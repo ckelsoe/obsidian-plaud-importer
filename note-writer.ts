@@ -254,6 +254,13 @@ function isReservedDeviceName(name: string): boolean {
 	return WINDOWS_RESERVED_NAMES.has(name.split('.', 1)[0].toUpperCase());
 }
 
+// Max length for a single path component (file name or one folder level). Every
+// mainstream filesystem caps a component at 255 bytes; 200 stays safely under
+// that even after a `.md` extension and any disambiguation suffix the vault
+// layer appends to a note name. Shared so the note-name and subfolder paths
+// enforce one limit.
+const MAX_PATH_COMPONENT_LENGTH = 200;
+
 /**
  * Sanitize a Plaud recording title into a filename that is legal on Windows,
  * macOS, and Linux and doesn't collide with Obsidian's wikilink parser.
@@ -282,10 +289,10 @@ export function sanitizeFilename(title: string): string {
 	out = out.replace(/[. ]+$/, '');
 	out = out.replace(/^[. ]+/, '');
 
-	// Clamp length: 200 chars leaves room for ".md" + any disambiguation
-	// suffix the vault layer might add. Filesystems typically cap at 255.
-	if (out.length > 200) {
-		out = out.slice(0, 200).trim();
+	// Clamp length (see MAX_PATH_COMPONENT_LENGTH): leaves room for ".md" + any
+	// disambiguation suffix the vault layer might add.
+	if (out.length > MAX_PATH_COMPONENT_LENGTH) {
+		out = out.slice(0, MAX_PATH_COMPONENT_LENGTH).trim();
 		// Re-strip trailing dots/spaces after the slice.
 		out = out.replace(/[. ]+$/, '');
 	}
@@ -485,8 +492,10 @@ function sanitizeFolderSegment(segment: string): string {
  * Reject a resolved subfolder segment that no Windows folder can hold even
  * though sanitizeFolderSegment left it alone (it contains no forbidden
  * character): a reserved device name (CON, PRN, ..., including with an extension
- * like CON.txt) or a name ending in a dot or space, which Windows silently drops
- * so `2026 ` and `2026` would collide.
+ * like CON.txt), a name ending in a dot or space, which Windows silently drops
+ * so `2026 ` and `2026` would collide, or a segment longer than one path
+ * component can hold (MAX_PATH_COMPONENT_LENGTH), the folder analogue of the
+ * length clamp sanitizeFilename applies to a note name.
  * These only arise from literal text a user typed into the template, never from
  * a date token, so throwing here, instead of rewriting like sanitizeFilename
  * does for note names, keeps the subfolder migration output-preserving: a legal
@@ -503,6 +512,11 @@ function assertUsableFolderSegment(segment: string): string {
 	if (/[. ]$/.test(segment)) {
 		throw new NoteWriterError(
 			`Subfolder segment "${segment}" ends with a space or dot, which Windows drops; remove the trailing space or dot`,
+		);
+	}
+	if (segment.length > MAX_PATH_COMPONENT_LENGTH) {
+		throw new NoteWriterError(
+			`Subfolder segment is ${segment.length} characters, over the ${MAX_PATH_COMPONENT_LENGTH}-character limit for one folder level; shorten the template`,
 		);
 	}
 	return segment;

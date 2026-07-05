@@ -635,6 +635,15 @@ describe('resolveSubfolder', () => {
 		expect(resolveSubfolder('a\x01b/{{YYYY}}', jun4)).toBe('a-b/2026');
 	});
 
+	it('rejects a segment longer than one path component can hold', () => {
+		// The folder analogue of sanitizeFilename's length clamp: a single level
+		// over the 200-char limit fails folder creation, so the template is refused.
+		const tooLong = 'x'.repeat(201);
+		expect(() => resolveSubfolder(`${tooLong}/{{YYYY}}`, jun4)).toThrow(NoteWriterError);
+		// A 200-char segment is at the limit and still allowed.
+		expect(resolveSubfolder(`${'x'.repeat(200)}/{{MM}}`, jun4)).toBe(`${'x'.repeat(200)}/06`);
+	});
+
 	it('rejects a segment ending in a dot or space (Windows drops them)', () => {
 		// A trailing dot/space makes "2026 " and "2026" collide on Windows, which
 		// breaks the duplicate guard. A trailing token on a non-final segment is the

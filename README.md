@@ -165,7 +165,7 @@ Folder inside your vault where imported notes are written. Defaults to `Plaud`. 
 
 By default every note lands directly in the output folder. To keep a growing library organized, set a **Subfolder template** that files each note into a subfolder built from the recording's date. Leave it empty to keep the flat layout.
 
-Text inside `{{ }}` is a date format written in [Moment](https://momentjs.com/docs/#/displaying/format/) style, the same syntax the core Daily Notes plugin uses. Text outside the braces is kept as-is, and a forward slash (`/`) starts a new nested folder level, so `{{YYYY}}/{{MM}}` makes a year folder with month folders inside it. Separators like dashes, spaces, and slashes are fine inside the braces (they are part of the date format); keep your own words (plain letters) outside them, because letters inside are read as date tokens.
+Text inside `{{ }}` is a date format written in [Moment](https://momentjs.com/docs/#/displaying/format/) style, the same syntax the core Daily Notes plugin uses. Text outside the braces is kept as-is. Any forward slash (`/`) in the result starts a new nested folder level, whether you type it outside the braces or a date format produces it inside them, so `{{YYYY}}/{{MM}}` and `{{YYYY/MM}}` both make a year folder with month folders inside it. Dashes and spaces are fine inside the braces (they are part of the date format); keep your own words (plain letters) outside them, because letters inside are read as date tokens.
 
 Common tokens (case matters; the same set works in the note-name field):
 
