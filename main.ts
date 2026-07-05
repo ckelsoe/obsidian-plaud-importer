@@ -1491,8 +1491,15 @@ export default class PlaudImporterPlugin extends Plugin {
 		// data.json has no settingsVersion field, and Object.assign would fill it
 		// from DEFAULT_SETTINGS (1), hiding that a migration is due. An absent
 		// field is version 0.
+		const rawVersion = stored?.settingsVersion;
+		// Treat a non-finite or non-numeric stored version as 0 (needs migration),
+		// so a corrupted value cannot skip the migration and leave legacy tokens to
+		// misrender under Moment. JSON parsing cannot itself produce NaN, but a
+		// hand-edited file could carry a bad type; this is defense-in-depth.
 		const storedVersion =
-			typeof stored?.settingsVersion === "number" ? stored.settingsVersion : 0;
+			typeof rawVersion === "number" && Number.isFinite(rawVersion)
+				? rawVersion
+				: 0;
 		this.settings = Object.assign({}, DEFAULT_SETTINGS, stored ?? {});
 		// Repair a blank stored output folder back to the default. The
 		// declarative control can persist an empty string; consumers expect a
