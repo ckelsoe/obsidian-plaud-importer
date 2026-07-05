@@ -163,6 +163,15 @@ describe('sanitizeFilename', () => {
 		expect(sanitizeFilename('con')).toBe('_con');
 		expect(sanitizeFilename('Nul')).toBe('_Nul');
 	});
+
+	it('prefixes a reserved device name that carries an extension', () => {
+		// Windows treats the base before the first dot as the device, so "CON.txt"
+		// is reserved too; the underscore prefix neutralizes it.
+		expect(sanitizeFilename('CON.txt')).toBe('_CON.txt');
+		expect(sanitizeFilename('nul.md')).toBe('_nul.md');
+		// A name whose base is not a device stays unchanged.
+		expect(sanitizeFilename('console.log')).toBe('console.log');
+	});
 });
 
 // formatTimestamp -----------------------------------------------------------
@@ -608,6 +617,22 @@ describe('resolveSubfolder', () => {
 		expect(() => resolveSubfolder('CON/{{YYYY}}', jun4)).toThrow(NoteWriterError);
 		expect(() => resolveSubfolder('{{YYYY}}/nul', jun4)).toThrow(NoteWriterError);
 		expect(() => resolveSubfolder('lpt1', jun4)).toThrow(NoteWriterError);
+	});
+
+	it('rejects a reserved device name that carries an extension (CON.txt)', () => {
+		// Windows keys reserved names off the base before the first dot, so
+		// "CON.txt" and "NUL.md" are the device too, not just the bare name.
+		expect(() => resolveSubfolder('CON.txt/{{YYYY}}', jun4)).toThrow(NoteWriterError);
+		expect(() => resolveSubfolder('{{YYYY}}/nul.md', jun4)).toThrow(NoteWriterError);
+		// A dotted segment whose base is NOT reserved stays legal.
+		expect(resolveSubfolder('2026.06/{{DD}}', jun4)).toBe('2026.06/04');
+	});
+
+	it('rewrites ASCII control characters in a literal segment', () => {
+		// A control char cannot come from a date token, but a pasted literal could
+		// carry one; it is rewritten to a dash the same way sanitizeFilename does,
+		// so folder creation does not fail on Windows.
+		expect(resolveSubfolder('a\x01b/{{YYYY}}', jun4)).toBe('a-b/2026');
 	});
 
 	it('rejects a segment ending in a dot or space (Windows drops them)', () => {

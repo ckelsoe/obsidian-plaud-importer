@@ -246,6 +246,14 @@ const WINDOWS_RESERVED_NAMES = new Set([
 	'LPT1', 'LPT2', 'LPT3', 'LPT4', 'LPT5', 'LPT6', 'LPT7', 'LPT8', 'LPT9',
 ]);
 
+// Whether a file or folder name is a Windows reserved device name. Windows keys
+// off the base up to the first dot, so `CON`, `CON.txt`, and `NUL.md` are all
+// reserved, not just the bare name. A leading-dot name (`.hidden`) has an empty
+// base and is never reserved.
+function isReservedDeviceName(name: string): boolean {
+	return WINDOWS_RESERVED_NAMES.has(name.split('.', 1)[0].toUpperCase());
+}
+
 /**
  * Sanitize a Plaud recording title into a filename that is legal on Windows,
  * macOS, and Linux and doesn't collide with Obsidian's wikilink parser.
@@ -282,9 +290,10 @@ export function sanitizeFilename(title: string): string {
 		out = out.replace(/[. ]+$/, '');
 	}
 
-	// Reserved Windows device names — even with an extension these can
-	// confuse legacy code. Prefix with an underscore to neutralize.
-	if (WINDOWS_RESERVED_NAMES.has(out.toUpperCase())) {
+	// Reserved Windows device names, including with an extension (CON.txt),
+	// which Windows still treats as the device. Prefix with an underscore to
+	// neutralize.
+	if (isReservedDeviceName(out)) {
 		out = `_${out}`;
 	}
 
@@ -456,23 +465,28 @@ function expandDateTemplate(template: string, date: Date, title?: string): strin
 
 /**
  * Rewrite only the characters a folder name cannot hold on Windows/macOS/Linux,
- * each to a dash. Deliberately NARROWER than sanitizeFilename: it does not trim,
- * collapse whitespace, clamp length, strip brackets, or rewrite reserved device
- * names, so it changes a resolved subfolder ONLY when a Moment format renders a
- * genuinely illegal character (e.g. a colon from `{{HH:mm}}`). A legal existing
- * folder is left byte-for-byte alone, keeping the migration output-preserving.
- * The path separator `/` is intentionally excluded: the caller splits on it, so
- * a segment never contains one.
+ * each to a dash: the Windows-forbidden punctuation and any ASCII control
+ * character (0x00-0x1F, which sanitizeFilename also strips). Deliberately
+ * NARROWER than sanitizeFilename: it does not trim, collapse whitespace, clamp
+ * length, strip brackets, or rewrite reserved device names, so it changes a
+ * resolved subfolder ONLY when a Moment format renders a genuinely illegal
+ * character (e.g. a colon from `{{HH:mm}}`). None of these characters can appear
+ * in a legal folder name, so a legal existing folder is left byte-for-byte
+ * alone, keeping the migration output-preserving. The path separator `/` is
+ * intentionally excluded: the caller splits on it, so a segment never contains
+ * one.
  */
 function sanitizeFolderSegment(segment: string): string {
-	return segment.replace(/[<>:"\\|?*]/g, '-');
+	// eslint-disable-next-line no-control-regex -- intentional: strip ASCII control codes a folder segment cannot hold
+	return segment.replace(/[<>:"\\|?*\x00-\x1f]/g, '-');
 }
 
 /**
  * Reject a resolved subfolder segment that no Windows folder can hold even
  * though sanitizeFolderSegment left it alone (it contains no forbidden
- * character): a reserved device name (CON, PRN, ...) or a name ending in a dot
- * or space, which Windows silently drops so `2026 ` and `2026` would collide.
+ * character): a reserved device name (CON, PRN, ..., including with an extension
+ * like CON.txt) or a name ending in a dot or space, which Windows silently drops
+ * so `2026 ` and `2026` would collide.
  * These only arise from literal text a user typed into the template, never from
  * a date token, so throwing here, instead of rewriting like sanitizeFilename
  * does for note names, keeps the subfolder migration output-preserving: a legal
@@ -481,7 +495,7 @@ function sanitizeFolderSegment(segment: string): string {
  * is refused before it is stored, the same way the `..` vault-escape is.
  */
 function assertUsableFolderSegment(segment: string): string {
-	if (WINDOWS_RESERVED_NAMES.has(segment.toUpperCase())) {
+	if (isReservedDeviceName(segment)) {
 		throw new NoteWriterError(
 			`Subfolder segment "${segment}" is a reserved Windows device name; use a different folder name`,
 		);
