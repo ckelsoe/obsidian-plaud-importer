@@ -49,3 +49,13 @@ export class Notice {
 }
 
 export class App {}
+
+// Re-export the REAL moment. At runtime the plugin gets moment from Obsidian's
+// externalized bundle (`import { moment } from 'obsidian'`); at test time there
+// is no real obsidian module, so the pure date formatters would have no moment
+// to call. moment@2.29.4 is already in node_modules (transitive via obsidian),
+// so this needs no new install and keeps the formatters unit-testable. moment
+// ships as an `export =` module, so a namespace import (not a default import)
+// is what type-checks without esModuleInterop.
+import * as moment from "moment";
+export { moment };

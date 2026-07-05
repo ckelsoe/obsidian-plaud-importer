@@ -272,6 +272,20 @@
 }
 
 /*
+ * Live preview line under a template field. Full-width on its own row (forces a
+ * flex wrap), muted and monospace so the sample rendered name/path reads as
+ * output rather than another control.
+ */
+.plaud-importer-template-preview {
+	flex-basis: 100%;
+	margin-top: 0.2em;
+	color: var(--text-muted);
+	font-family: var(--font-monospace);
+	font-size: var(--font-ui-smaller);
+	overflow-wrap: anywhere;
+}
+
+/*
  * Off-screen focus shim used to force input focus into the sign-in webview on
  * first attach (Electron webview input-focus workaround). Must be focusable, so
  * it cannot use display:none; keep it in layout but invisible and inert.

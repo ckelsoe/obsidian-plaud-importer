@@ -19,12 +19,15 @@ import {
 	formatTranscriptSection,
 	groupTranscriptByChapters,
 	isValidNoteNameTemplate,
+	migrateLegacyDateTemplate,
 	mergeTagSources,
 	buildNoteTags,
 	type TagBuildOptions,
 	renameRecordingNote,
 	resolveSubfolder,
 	sanitizeFilename,
+	TEMPLATE_PREVIEW_DATE,
+	TEMPLATE_PREVIEW_TITLE,
 	substitutePlaudPlaceholders,
 	type FileLike,
 	type FolderLike,
@@ -40,6 +43,10 @@ import type {
 	Transcript,
 	TranscriptSegment,
 } from '../plaud-client';
+// The plugin gets moment from Obsidian (mapped to the jest mock, which re-exports
+// the real moment). Reaching it the same way here shares that one singleton, so a
+// test can flip the global locale and observe the formatter's pinned English.
+import { moment } from 'obsidian';
 
 // Fixtures ------------------------------------------------------------------
 
@@ -155,6 +162,15 @@ describe('sanitizeFilename', () => {
 	it('matches reserved names case-insensitively', () => {
 		expect(sanitizeFilename('con')).toBe('_con');
 		expect(sanitizeFilename('Nul')).toBe('_Nul');
+	});
+
+	it('prefixes a reserved device name that carries an extension', () => {
+		// Windows treats the base before the first dot as the device, so "CON.txt"
+		// is reserved too; the underscore prefix neutralizes it.
+		expect(sanitizeFilename('CON.txt')).toBe('_CON.txt');
+		expect(sanitizeFilename('nul.md')).toBe('_nul.md');
+		// A name whose base is not a device stays unchanged.
+		expect(sanitizeFilename('console.log')).toBe('console.log');
 	});
 });
 
@@ -369,32 +385,40 @@ describe('buildNoteName', () => {
 
 	it('puts the date at the end when the template does', () => {
 		expect(
-			buildNoteName('04-13 Team sync', apr14, '{{title}} {{yyyy}}-{{MM}}-{{dd}}'),
+			buildNoteName('04-13 Team sync', apr14, '{{title}} {{YYYY}}-{{MM}}-{{DD}}'),
 		).toBe('Team sync 2026-04-14');
 	});
 
 	it('applies a US-order template', () => {
 		expect(
-			buildNoteName('Team sync', apr14, '{{MM}}-{{dd}}-{{yyyy}} {{title}}'),
+			buildNoteName('Team sync', apr14, '{{MM}}-{{DD}}-{{YYYY}} {{title}}'),
 		).toBe('04-14-2026 Team sync');
 	});
 
 	it('applies a EU-order template', () => {
 		expect(
-			buildNoteName('Team sync', apr14, '{{dd}}-{{MM}}-{{yyyy}} {{title}}'),
+			buildNoteName('Team sync', apr14, '{{DD}}-{{MM}}-{{YYYY}} {{title}}'),
 		).toBe('14-04-2026 Team sync');
 	});
 
 	it('applies a named-month template', () => {
 		expect(
-			buildNoteName('Team sync', apr14, '{{MMM}} {{d}}, {{yyyy}} - {{title}}'),
+			buildNoteName('Team sync', apr14, '{{MMM}} {{D}}, {{YYYY}} - {{title}}'),
 		).toBe('Apr 14, 2026 - Team sync');
+	});
+
+	it('renders a whole date layout inside one {{ }} pair', () => {
+		// Moment formats the entire inner string as one unit, so combined tokens and
+		// their separators live in a single {{ }} (the issue #30 reporter's ask).
+		expect(
+			buildNoteName('Team sync', apr14, '{{YYYY-MM-DD dddd}} {{title}}'),
+		).toBe('2026-04-14 Tuesday Team sync');
 	});
 
 	it('drops a stray separator when the title was only a date', () => {
 		// "04-13" strips to an empty title, so the trailing "{{title}}" leaves no gap.
 		expect(
-			buildNoteName('04-13', apr14, '{{yyyy}}-{{MM}}-{{dd}} {{title}}'),
+			buildNoteName('04-13', apr14, '{{YYYY}}-{{MM}}-{{DD}} {{title}}'),
 		).toBe('2026-04-14');
 	});
 
@@ -411,63 +435,68 @@ describe('formatNoteName', () => {
 	const d = new Date(2026, 6, 3); // 2026-07-03 local (Jul 3)
 
 	it('renders the default ISO template with the title', () => {
-		expect(formatNoteName('{{yyyy}}-{{MM}}-{{dd}} {{title}}', d, 'Sync')).toBe(
+		expect(formatNoteName('{{YYYY}}-{{MM}}-{{DD}} {{title}}', d, 'Sync')).toBe(
 			'2026-07-03 Sync',
 		);
 	});
 
 	it('places the title wherever the template puts it', () => {
-		expect(formatNoteName('{{title}} {{yyyy}}-{{MM}}-{{dd}}', d, 'Sync')).toBe(
+		expect(formatNoteName('{{title}} {{YYYY}}-{{MM}}-{{DD}}', d, 'Sync')).toBe(
 			'Sync 2026-07-03',
 		);
 	});
 
 	it('renders US and EU orders', () => {
-		expect(formatNoteName('{{MM}}-{{dd}}-{{yyyy}}', d, '')).toBe('07-03-2026');
-		expect(formatNoteName('{{dd}}-{{MM}}-{{yyyy}}', d, '')).toBe('03-07-2026');
+		expect(formatNoteName('{{MM}}-{{DD}}-{{YYYY}}', d, '')).toBe('07-03-2026');
+		expect(formatNoteName('{{DD}}-{{MM}}-{{YYYY}}', d, '')).toBe('03-07-2026');
 	});
 
 	it('supports a 2-digit year and single-digit month/day', () => {
-		expect(formatNoteName('{{M}}-{{d}}-{{yy}}', d, '')).toBe('7-3-26');
+		expect(formatNoteName('{{M}}-{{D}}-{{YY}}', d, '')).toBe('7-3-26');
 	});
 
-	it('supports short and long month names', () => {
-		expect(formatNoteName('{{MMM}} {{d}}, {{yyyy}}', d, '')).toBe('Jul 3, 2026');
-		expect(formatNoteName('{{MMMM}} {{d}}', d, '')).toBe('July 3');
+	it('supports short and long month names and the weekday name', () => {
+		expect(formatNoteName('{{MMM}} {{D}}, {{YYYY}}', d, '')).toBe('Jul 3, 2026');
+		expect(formatNoteName('{{MMMM}} {{D}}', d, '')).toBe('July 3');
+		// dddd (weekday name) is new under Moment; the reporter asked for it.
+		expect(formatNoteName('{{dddd}}', d, '')).toBe('Friday');
 	});
 
-	it('supports the subfolder composite, week, and quarter tokens', () => {
-		expect(formatNoteName('{{yyyy-MM}}', d, '')).toBe('2026-07');
+	it('supports the composite, week, and quarter tokens', () => {
+		expect(formatNoteName('{{YYYY-MM}}', d, '')).toBe('2026-07');
 		expect(formatNoteName('Q{{Q}}', d, '')).toBe('Q3');
-		// Jan 4 is always in ISO week 1, by definition of the standard.
-		expect(formatNoteName('W{{ww}}', new Date(2026, 0, 4), '')).toBe('W01');
+		// Jan 4 2026 is in ISO week 1; WW is the ISO week (moment ww would be 02).
+		expect(formatNoteName('W{{WW}}', new Date(2026, 0, 4), '')).toBe('W01');
+	});
+
+	it('renders a whole layout, tokens and separators, inside one {{ }}', () => {
+		expect(formatNoteName('{{YYYY-MM-DD - dddd MMMM D}}', d, '')).toBe(
+			'2026-07-03 - Friday July 3',
+		);
 	});
 
 	it('leaves literal text and separators untouched', () => {
-		expect(formatNoteName('{{yyyy}}_{{MM}}_{{dd}}', d, '')).toBe('2026_07_03');
+		expect(formatNoteName('{{YYYY}}_{{MM}}_{{DD}}', d, '')).toBe('2026_07_03');
 	});
 
 	it('collapses whitespace and trims when the title is empty', () => {
-		expect(formatNoteName('{{yyyy}}-{{MM}}-{{dd}} {{title}}', d, '')).toBe(
+		expect(formatNoteName('{{YYYY}}-{{MM}}-{{DD}} {{title}}', d, '')).toBe(
 			'2026-07-03',
 		);
 	});
 
-	it('throws on an unknown token', () => {
-		expect(() => formatNoteName('{{nope}}', d, 'X')).toThrow(
-			/Unknown note name template token/,
-		);
+	it('does not throw on an unknown token or an unclosed brace (real Moment)', () => {
+		// The pre-Moment engine threw on these; Moment does not, so the settings
+		// preview and isValidNoteNameTemplate are the safety net instead.
+		expect(() => formatNoteName('{{nope}}', d, 'X')).not.toThrow();
+		expect(() => formatNoteName('{{YYYY', d, '')).not.toThrow();
+		// An unclosed brace has no matching {{ }} pair, so it stays literal.
+		expect(formatNoteName('{{YYYY', d, '')).toBe('{{YYYY');
 	});
 
-	it('throws on a malformed or unclosed delimiter', () => {
-		expect(() => formatNoteName('{{yyyy', d, '')).toThrow(/Malformed/);
-		expect(() => formatNoteName('{{yyyy}}-{{MM', d, '')).toThrow(/Malformed/);
-		expect(() => formatNoteName('yyyy}}', d, '')).toThrow(/Malformed/);
-	});
-
-	it('does not mistake braces in the title for a malformed template', () => {
-		// The malformed-delimiter check inspects the template, not the rendered
-		// title, so a recording title that contains "{{" renders verbatim.
+	it('substitutes the title before the Moment call, so braces in it are literal', () => {
+		// {{title}} is replaced first and its value is not re-scanned for tokens, so
+		// a recording title that itself contains "{{" renders verbatim.
 		expect(formatNoteName('{{title}}', d, 'Notes {{draft}}')).toBe(
 			'Notes {{draft}}',
 		);
@@ -479,44 +508,46 @@ describe('formatNoteName', () => {
 describe('isValidNoteNameTemplate', () => {
 	it('accepts the default and preset templates', () => {
 		expect(isValidNoteNameTemplate(DEFAULT_NOTE_NAME_TEMPLATE)).toBe(true);
-		expect(isValidNoteNameTemplate('{{MM}}-{{dd}}-{{yyyy}} {{title}}')).toBe(true);
-		expect(isValidNoteNameTemplate('{{title}} {{yyyy}}-{{MM}}-{{dd}}')).toBe(true);
+		expect(isValidNoteNameTemplate('{{MM}}-{{DD}}-{{YYYY}} {{title}}')).toBe(true);
+		expect(isValidNoteNameTemplate('{{title}} {{YYYY}}-{{MM}}-{{DD}}')).toBe(true);
 	});
 
 	it('accepts a comma, period, underscore, space, and parentheses', () => {
 		// A comma is filesystem-safe on all three OSes, so it is accepted.
-		expect(isValidNoteNameTemplate('{{MMM}} {{d}}, {{yyyy}} - {{title}}')).toBe(true);
-		expect(isValidNoteNameTemplate('{{yyyy}}.{{MM}}.{{dd}} ({{title}})')).toBe(true);
-		expect(isValidNoteNameTemplate('{{yyyy}}_{{MM}}_{{dd}}_{{title}}')).toBe(true);
+		expect(isValidNoteNameTemplate('{{MMM}} {{D}}, {{YYYY}} - {{title}}')).toBe(true);
+		expect(isValidNoteNameTemplate('{{YYYY}}.{{MM}}.{{DD}} ({{title}})')).toBe(true);
+		expect(isValidNoteNameTemplate('{{YYYY}}_{{MM}}_{{DD}}_{{title}}')).toBe(true);
 	});
 
 	it('rejects a template whose render contains a path separator', () => {
-		expect(isValidNoteNameTemplate('{{yyyy}}/{{MM}}/{{dd}}')).toBe(false);
-		expect(isValidNoteNameTemplate('{{yyyy}}\\{{MM}} {{title}}')).toBe(false);
+		expect(isValidNoteNameTemplate('{{YYYY}}/{{MM}}/{{DD}}')).toBe(false);
+		expect(isValidNoteNameTemplate('{{YYYY}}\\{{MM}} {{title}}')).toBe(false);
+	});
+
+	it('rejects a colon, including one produced by a time token', () => {
+		// A literal colon and an HH:mm token both land a colon in the filename;
+		// real Moment happily renders the time token, so render-safety must catch it.
+		expect(isValidNoteNameTemplate('{{YYYY}}:{{MM}} {{title}}')).toBe(false);
+		expect(isValidNoteNameTemplate('{{HH:mm}}')).toBe(false);
+		expect(isValidNoteNameTemplate('{{YYYY}} {{HH:mm}} {{title}}')).toBe(false);
 	});
 
 	it('rejects the other Windows-forbidden filename characters', () => {
-		expect(isValidNoteNameTemplate('{{yyyy}}:{{MM}} {{title}}')).toBe(false);
 		expect(isValidNoteNameTemplate('{{title}}?')).toBe(false);
 		expect(isValidNoteNameTemplate('{{title}}*')).toBe(false);
 		expect(isValidNoteNameTemplate('<{{title}}>')).toBe(false);
-		expect(isValidNoteNameTemplate('{{title}} | {{yyyy}}')).toBe(false);
+		expect(isValidNoteNameTemplate('{{title}} | {{YYYY}}')).toBe(false);
 	});
 
-	it('rejects an unknown or wrong-case token', () => {
-		expect(isValidNoteNameTemplate('{{yyyy}}-{{month}}-{{dd}}')).toBe(false);
-		// Tokens are case-sensitive; the moment-style YYYY is not a token here.
-		expect(isValidNoteNameTemplate('{{YYYY}}-{{MM}}-{{DD}}')).toBe(false);
-	});
-
-	it('rejects a malformed or unclosed {{ }} delimiter', () => {
-		expect(isValidNoteNameTemplate('{{yyyy')).toBe(false);
-		expect(isValidNoteNameTemplate('{{yyyy}}-{{MM')).toBe(false);
-		expect(isValidNoteNameTemplate('yyyy}} {{title}}')).toBe(false);
+	it('accepts real Moment tokens that the old engine rejected as wrong-case', () => {
+		// The whole point of issue #30: uppercase YYYY/DD and the weekday token are
+		// valid now, not rejected as unknown.
+		expect(isValidNoteNameTemplate('{{YYYY}}-{{MM}}-{{DD}}')).toBe(true);
+		expect(isValidNoteNameTemplate('{{dddd}} {{title}}')).toBe(true);
 	});
 
 	it('rejects a trailing dot, which Windows silently drops from a filename', () => {
-		expect(isValidNoteNameTemplate('{{yyyy}}-{{MM}}-{{dd}}.')).toBe(false);
+		expect(isValidNoteNameTemplate('{{YYYY}}-{{MM}}-{{DD}}.')).toBe(false);
 	});
 });
 
@@ -530,62 +561,137 @@ describe('resolveSubfolder', () => {
 		expect(resolveSubfolder('   ', jun4)).toBe('');
 	});
 
-	it('expands {{yyyy}}, {{MM}}, {{dd}} from the recording date', () => {
-		expect(resolveSubfolder('{{yyyy}}', jun4)).toBe('2026');
+	it('expands {{YYYY}}, {{MM}}, {{DD}} from the recording date', () => {
+		expect(resolveSubfolder('{{YYYY}}', jun4)).toBe('2026');
 		expect(resolveSubfolder('{{MM}}', jun4)).toBe('06');
-		expect(resolveSubfolder('{{dd}}', jun4)).toBe('04');
+		expect(resolveSubfolder('{{DD}}', jun4)).toBe('04');
 	});
 
-	it('expands the {{yyyy-MM}} composite token', () => {
-		expect(resolveSubfolder('{{yyyy-MM}}', jun4)).toBe('2026-06');
+	it('expands a composite date inside one {{ }}', () => {
+		expect(resolveSubfolder('{{YYYY-MM}}', jun4)).toBe('2026-06');
+	});
+
+	it('supports the named-month and weekday tokens (parity with note names)', () => {
+		// These worked only in note names before; issue #30 unifies the vocabulary.
+		expect(resolveSubfolder('{{MMMM}}', jun4)).toBe('June');
+		expect(resolveSubfolder('{{YYYY}}/{{MM MMMM}}', jun4)).toBe('2026/06 June');
+		expect(resolveSubfolder('{{dddd}}', jun4)).toBe('Thursday');
 	});
 
 	it('supports nested tokens and literal path text', () => {
-		expect(resolveSubfolder('{{yyyy}}/{{MM}}', jun4)).toBe('2026/06');
-		expect(resolveSubfolder('meetings/{{yyyy-MM}}', jun4)).toBe('meetings/2026-06');
+		expect(resolveSubfolder('{{YYYY}}/{{MM}}', jun4)).toBe('2026/06');
+		expect(resolveSubfolder('meetings/{{YYYY-MM}}', jun4)).toBe('meetings/2026-06');
 	});
 
 	it('keeps literal separators a user puts between tokens', () => {
 		// A dash between year and month.
-		expect(resolveSubfolder('{{yyyy}}-{{MM}}', jun4)).toBe('2026-06');
+		expect(resolveSubfolder('{{YYYY}}-{{MM}}', jun4)).toBe('2026-06');
 		// Day-first ordering for non-US users, with their own separators.
-		expect(resolveSubfolder('{{dd}}-{{MM}}-{{yyyy}}', jun4)).toBe('04-06-2026');
+		expect(resolveSubfolder('{{DD}}-{{MM}}-{{YYYY}}', jun4)).toBe('04-06-2026');
 		// Literal text around a token.
-		expect(resolveSubfolder('Q{{Q}}-{{yyyy}}', jun4)).toBe('Q2-2026');
+		expect(resolveSubfolder('Q{{Q}}-{{YYYY}}', jun4)).toBe('Q2-2026');
 	});
 
-	it('tolerates inner whitespace in a token', () => {
-		expect(resolveSubfolder('{{ yyyy-MM }}', jun4)).toBe('2026-06');
+	it('tolerates inner whitespace around a single token', () => {
+		expect(resolveSubfolder('{{ YYYY-MM }}', jun4)).toBe('2026-06');
 	});
 
-	it('throws on an unknown token so typos surface', () => {
-		expect(() => resolveSubfolder('{{yyy}}', jun4)).toThrow(NoteWriterError);
-		expect(() => resolveSubfolder('{{week}}', jun4)).toThrow(/Unknown subfolder template token/);
+	it('does not throw on an unknown-looking token (real Moment)', () => {
+		// The pre-Moment engine threw here; Moment renders the format instead, and
+		// the settings preview is what surfaces a wrong token now.
+		expect(() => resolveSubfolder('{{YYY}}', jun4)).not.toThrow();
 	});
 
 	it('resolves to _undated when the recording date is missing or invalid', () => {
-		expect(resolveSubfolder('{{yyyy-MM}}', new Date(Number.NaN))).toBe('_undated');
+		expect(resolveSubfolder('{{YYYY-MM}}', new Date(Number.NaN))).toBe('_undated');
 	});
 
 	it('rejects a template that would escape the vault', () => {
-		expect(() => resolveSubfolder('../{{yyyy}}', jun4)).toThrow(NoteWriterError);
+		expect(() => resolveSubfolder('../{{YYYY}}', jun4)).toThrow(NoteWriterError);
+	});
+
+	it('rejects a literal segment that is a reserved Windows device name', () => {
+		// These fail folder creation on Windows and can only come from literal text
+		// a user typed (no date token renders one), so the template is refused
+		// rather than a folder silently relocated. Case-insensitive.
+		expect(() => resolveSubfolder('CON/{{YYYY}}', jun4)).toThrow(NoteWriterError);
+		expect(() => resolveSubfolder('{{YYYY}}/nul', jun4)).toThrow(NoteWriterError);
+		expect(() => resolveSubfolder('lpt1', jun4)).toThrow(NoteWriterError);
+	});
+
+	it('rejects a reserved device name that carries an extension (CON.txt)', () => {
+		// Windows keys reserved names off the base before the first dot, so
+		// "CON.txt" and "NUL.md" are the device too, not just the bare name.
+		expect(() => resolveSubfolder('CON.txt/{{YYYY}}', jun4)).toThrow(NoteWriterError);
+		expect(() => resolveSubfolder('{{YYYY}}/nul.md', jun4)).toThrow(NoteWriterError);
+		// A dotted segment whose base is NOT reserved stays legal.
+		expect(resolveSubfolder('2026.06/{{DD}}', jun4)).toBe('2026.06/04');
+	});
+
+	it('rewrites ASCII control characters in a literal segment', () => {
+		// A control char cannot come from a date token, but a pasted literal could
+		// carry one; it is rewritten to a dash the same way sanitizeFilename does,
+		// so folder creation does not fail on Windows.
+		expect(resolveSubfolder('a\x01b/{{YYYY}}', jun4)).toBe('a-b/2026');
+	});
+
+	it('rejects a segment longer than one path component can hold', () => {
+		// The folder analogue of sanitizeFilename's length clamp: a single level
+		// over the 200-char limit fails folder creation, so the template is refused.
+		const tooLong = 'x'.repeat(201);
+		expect(() => resolveSubfolder(`${tooLong}/{{YYYY}}`, jun4)).toThrow(NoteWriterError);
+		// A 200-char segment is at the limit and still allowed.
+		expect(resolveSubfolder(`${'x'.repeat(200)}/{{MM}}`, jun4)).toBe(`${'x'.repeat(200)}/06`);
+	});
+
+	it('rejects a segment ending in a dot or space (Windows drops them)', () => {
+		// A trailing dot/space makes "2026 " and "2026" collide on Windows, which
+		// breaks the duplicate guard. A trailing token on a non-final segment is the
+		// reachable case; the whole-path ends are already trimmed by normalizeFolderPath.
+		expect(() => resolveSubfolder('{{YYYY}} /{{MM}}', jun4)).toThrow(NoteWriterError);
+		expect(() => resolveSubfolder('{{YYYY}}./{{MM}}', jun4)).toThrow(NoteWriterError);
+	});
+
+	it('does not reject ordinary date-token output that merely contains reserved letters', () => {
+		// Regression guard: month/weekday names are never a bare reserved name, so
+		// the new check must not over-block a normal template.
+		expect(resolveSubfolder('{{MMMM}}/{{YYYY}}', jun4)).toBe('June/2026');
+		expect(resolveSubfolder('{{dddd}}', jun4)).toBe('Thursday');
+		// "COMMS" is not a reserved name even though "COM" prefixes it.
+		expect(resolveSubfolder('COMMS/{{YYYY}}', jun4)).toBe('COMMS/2026');
+	});
+
+	it('returns the flat path for a template that normalizes to empty', () => {
+		// "/" and "." normalize to '' (no real segment). Sanitizing an empty
+		// segment would otherwise yield a stray "Untitled" folder.
+		expect(resolveSubfolder('/', jun4)).toBe('');
+		expect(resolveSubfolder('.', jun4)).toBe('');
+	});
+
+	it('sanitizes a Windows-forbidden character a Moment format renders into a segment', () => {
+		// A colon from a time token would fail folder creation on Windows; it is
+		// rewritten to a dash so the import does not fail, while a literal '/' stays
+		// an intentional nesting separator.
+		const withTime = new Date(2026, 5, 4, 14, 5); // 2026-06-04 14:05 local
+		expect(resolveSubfolder('{{HH:mm}}', withTime)).toBe('14-05');
+		expect(resolveSubfolder('{{YYYY}}/{{HH:mm}}', withTime)).toBe('2026/14-05');
 	});
 
 	it('uses local-time fields, matching the date: frontmatter basis', () => {
 		// A late-evening local time must not roll into the next UTC day.
 		const lateLocal = new Date(2026, 0, 31, 23, 30); // 2026-01-31 23:30 local
-		expect(resolveSubfolder('{{yyyy-MM}}/{{dd}}', lateLocal)).toBe('2026-01/31');
+		expect(resolveSubfolder('{{YYYY-MM}}/{{DD}}', lateLocal)).toBe('2026-01/31');
 	});
 
-	it('expands {{ww}} to a zero-padded ISO week number', () => {
+	it('expands {{WW}} to a zero-padded ISO week number', () => {
 		// Jan 4 is always in ISO week 1, by definition of the standard.
-		expect(resolveSubfolder('{{ww}}', new Date(2026, 0, 4))).toBe('01');
+		expect(resolveSubfolder('{{WW}}', new Date(2026, 0, 4))).toBe('01');
 		// Mid-year sanity: the result is always a two-digit string.
-		expect(resolveSubfolder('{{ww}}', jun4)).toMatch(/^\d{2}$/);
+		expect(resolveSubfolder('{{WW}}', jun4)).toMatch(/^\d{2}$/);
 	});
 
-	it('pairs {{yyyy}} with {{ww}} for week-foldered layouts', () => {
-		expect(resolveSubfolder('{{yyyy}}/W{{ww}}', new Date(2026, 0, 4))).toBe('2026/W01');
+	it('pairs {{YYYY}} with {{WW}} for week-foldered layouts', () => {
+		expect(resolveSubfolder('{{YYYY}}/W{{WW}}', new Date(2026, 0, 4))).toBe('2026/W01');
 	});
 
 	it('expands {{Q}} to the calendar quarter', () => {
@@ -594,6 +700,137 @@ describe('resolveSubfolder', () => {
 		expect(resolveSubfolder('{{Q}}', new Date(2026, 3, 1))).toBe('2'); // Apr
 		expect(resolveSubfolder('{{Q}}', jun4)).toBe('2'); // Jun
 		expect(resolveSubfolder('{{Q}}', new Date(2026, 11, 31))).toBe('4'); // Dec
+	});
+});
+
+// migrateLegacyDateTemplate -------------------------------------------------
+
+describe('migrateLegacyDateTemplate', () => {
+	const jul3 = new Date(2026, 6, 3); // 2026-07-03 local (Friday)
+
+	// The three DANGER tokens: each renders a PLAUSIBLE but wrong value under
+	// Moment if left unmigrated, so the rewrite is mandatory, not cosmetic. Each
+	// assertion proves the migrated template renders exactly the legacy output.
+	it('rewrites {{dd}} to {{DD}}, preserving the day-of-month output', () => {
+		expect(migrateLegacyDateTemplate('{{dd}}')).toBe('{{DD}}');
+		// Legacy dd = "03"; unmigrated Moment dd = "Fr" (weekday abbreviation).
+		expect(formatNoteName(migrateLegacyDateTemplate('{{dd}}'), jul3, '')).toBe('03');
+	});
+
+	it('rewrites {{d}} to {{D}}, preserving the day-of-month output', () => {
+		expect(migrateLegacyDateTemplate('{{d}}')).toBe('{{D}}');
+		// Legacy d = "3"; unmigrated Moment d = "5" (day-of-week number).
+		expect(formatNoteName(migrateLegacyDateTemplate('{{d}}'), jul3, '')).toBe('3');
+	});
+
+	it('rewrites {{ww}} to {{WW}}, preserving the ISO week output', () => {
+		expect(migrateLegacyDateTemplate('{{ww}}')).toBe('{{WW}}');
+		// Jan 4 2026 is ISO week 01; unmigrated Moment ww = "02" (LOCALE week).
+		const jan4 = new Date(2026, 0, 4);
+		expect(formatNoteName(migrateLegacyDateTemplate('{{ww}}'), jan4, '')).toBe('01');
+	});
+
+	it('recases the remaining year tokens, preserving output', () => {
+		expect(migrateLegacyDateTemplate('{{yyyy}}')).toBe('{{YYYY}}');
+		expect(migrateLegacyDateTemplate('{{yy}}')).toBe('{{YY}}');
+		expect(migrateLegacyDateTemplate('{{yyyy-MM}}')).toBe('{{YYYY-MM}}');
+		// Legacy yy = "26"; unmigrated Moment yy = "2026" (full year).
+		expect(formatNoteName(migrateLegacyDateTemplate('{{yy}}'), jul3, '')).toBe('26');
+	});
+
+	it('migrates the old default note-name template output-preservingly', () => {
+		const oldDefault = '{{yyyy}}-{{MM}}-{{dd}} {{title}}';
+		expect(migrateLegacyDateTemplate(oldDefault)).toBe(DEFAULT_NOTE_NAME_TEMPLATE);
+		// The migrated template renders the exact legacy note name.
+		expect(formatNoteName(migrateLegacyDateTemplate(oldDefault), jul3, 'Sync')).toBe(
+			'2026-07-03 Sync',
+		);
+	});
+
+	it('migrates a legacy subfolder template output-preservingly', () => {
+		const jun4 = new Date(2026, 5, 4);
+		expect(migrateLegacyDateTemplate('{{yyyy}}/W{{ww}}')).toBe('{{YYYY}}/W{{WW}}');
+		expect(
+			resolveSubfolder(migrateLegacyDateTemplate('{{yyyy}}/W{{ww}}'), jun4),
+		).toBe('2026/W23');
+	});
+
+	it('leaves already-Moment tokens, {{title}}, MMMM, MM, and Q untouched', () => {
+		expect(
+			migrateLegacyDateTemplate('{{YYYY}}-{{MM}}-{{DD}} {{title}}'),
+		).toBe('{{YYYY}}-{{MM}}-{{DD}} {{title}}');
+		expect(migrateLegacyDateTemplate('{{MMMM}} {{MM}} {{Q}} {{title}}')).toBe(
+			'{{MMMM}} {{MM}} {{Q}} {{title}}',
+		);
+	});
+
+	it('is idempotent: a second pass changes nothing', () => {
+		const once = migrateLegacyDateTemplate('{{yyyy}}-{{MM}}-{{dd}} {{title}}');
+		expect(migrateLegacyDateTemplate(once)).toBe(once);
+	});
+
+	it('never throws and passes through a hand-edited unclosed template', () => {
+		expect(() => migrateLegacyDateTemplate('{{yyyy')).not.toThrow();
+		expect(migrateLegacyDateTemplate('{{yyyy')).toBe('{{yyyy');
+	});
+});
+
+// locale independence -------------------------------------------------------
+
+describe('English locale is pinned (issue #30 output-preservation)', () => {
+	// The pre-Moment engine emitted English month/weekday names from hardcoded
+	// tables. Obsidian's moment follows the app display language, so the formatter
+	// pins 'en' to keep a migrated {{MMMM}}/{{dddd}} template output-preserving on
+	// a non-English Obsidian UI.
+	it('renders English names even when the global Moment locale is not English', () => {
+		const previousLocale = moment.locale();
+		// A synthetic non-English locale, so the test needs no extra locale package.
+		// defineLocale also switches the active locale to it as a side effect.
+		moment.defineLocale('xx-test', {
+			months: 'Mo1_Mo2_Mo3_Mo4_Mo5_Mo6_Mo7_Mo8_Mo9_Mo10_Mo11_Mo12'.split('_'),
+			weekdays: 'Dy0_Dy1_Dy2_Dy3_Dy4_Dy5_Dy6'.split('_'),
+		});
+		try {
+			// Sanity: the global locale really did switch (guards the test itself).
+			expect(moment(new Date(2026, 5, 4)).format('MMMM')).toBe('Mo6');
+			// The plugin's formatters must still emit English.
+			const jun4 = new Date(2026, 5, 4); // June 4 2026 (a Thursday)
+			expect(formatNoteName('{{MMMM}}', jun4, '')).toBe('June');
+			expect(formatNoteName('{{dddd}}', jun4, '')).toBe('Thursday');
+			expect(resolveSubfolder('{{MMMM}}', jun4)).toBe('June');
+		} finally {
+			moment.locale(previousLocale);
+		}
+	});
+});
+
+// template preview rendering ------------------------------------------------
+
+describe('settings live preview', () => {
+	it('renders the subfolder preview against the shared sample date', () => {
+		// The sample recording is 2026-07-05 (a Sunday); this is what the settings
+		// preview shows under the subfolder field.
+		expect(resolveSubfolder('{{YYYY}}/{{MM MMMM}}', TEMPLATE_PREVIEW_DATE)).toBe(
+			'2026/07 July',
+		);
+	});
+
+	it('renders the note-name preview against the shared sample recording', () => {
+		expect(
+			buildNoteName(
+				TEMPLATE_PREVIEW_TITLE,
+				TEMPLATE_PREVIEW_DATE,
+				DEFAULT_NOTE_NAME_TEMPLATE,
+			),
+		).toBe('2026-07-05 Team sync');
+		// A whole layout in one {{ }} previews as one unit (Sunday, the sample day).
+		expect(
+			buildNoteName(
+				TEMPLATE_PREVIEW_TITLE,
+				TEMPLATE_PREVIEW_DATE,
+				'{{YYYY-MM-DD dddd}} {{title}}',
+			),
+		).toBe('2026-07-05 Sunday Team sync');
 	});
 });
 
@@ -1324,7 +1561,7 @@ describe('NoteWriter', () => {
 		const writer = new NoteWriter(vault, {
 			outputFolder: 'Plaud',
 			onDuplicate: 'skip',
-			noteNameTemplate: '{{MM}}-{{dd}}-{{yyyy}} {{title}}',
+			noteNameTemplate: '{{MM}}-{{DD}}-{{YYYY}} {{title}}',
 		});
 
 		const outcome = await writer.writeNote(
@@ -1345,7 +1582,7 @@ describe('NoteWriter', () => {
 		const writer = new NoteWriter(vault, {
 			outputFolder: 'Plaud',
 			onDuplicate: 'skip',
-			noteNameTemplate: '{{title}} {{MMM}} {{d}}, {{yyyy}}',
+			noteNameTemplate: '{{title}} {{MMM}} {{D}}, {{YYYY}}',
 		});
 
 		const outcome = await writer.writeNote(
@@ -1365,7 +1602,7 @@ describe('NoteWriter', () => {
 		const writer = new NoteWriter(vault, {
 			outputFolder: 'Plaud',
 			onDuplicate: 'skip',
-			noteNameTemplate: '{{yyyy}}-{{MM}}-{{dd}} {{title}}',
+			noteNameTemplate: '{{YYYY}}-{{MM}}-{{DD}} {{title}}',
 		});
 
 		// A caller passes a DIFFERENT template in the per-call formatOptions; the
@@ -1376,7 +1613,7 @@ describe('NoteWriter', () => {
 			makeTranscript(),
 			makeSummary(),
 			undefined,
-			{ noteNameTemplate: '{{MM}}-{{dd}}-{{yyyy}} {{title}}' },
+			{ noteNameTemplate: '{{MM}}-{{DD}}-{{YYYY}} {{title}}' },
 		);
 
 		expect(outcome.path).toBe('Plaud/2026-04-14 Quarterly review.md');
@@ -1575,11 +1812,11 @@ describe('NoteWriter', () => {
 			expect(vault.createdPaths).toEqual(['Plaud/2026-04-14 Morning standup.md']);
 		});
 
-		it('resolves {{yyyy-MM}} from the recording date and nests the note under it', async () => {
+		it('resolves {{YYYY-MM}} from the recording date and nests the note under it', async () => {
 			const vault = makeFakeVault();
 			const writer = new NoteWriter(vault, {
 				outputFolder: 'Plaud',
-				subfolderTemplate: '{{yyyy-MM}}',
+				subfolderTemplate: '{{YYYY-MM}}',
 				onDuplicate: 'skip',
 			});
 
@@ -1595,7 +1832,7 @@ describe('NoteWriter', () => {
 			const vault = makeFakeVault();
 			const writer = new NoteWriter(vault, {
 				outputFolder: '',
-				subfolderTemplate: '{{yyyy}}/{{MM}}',
+				subfolderTemplate: '{{YYYY}}/{{MM}}',
 				onDuplicate: 'skip',
 			});
 
@@ -1620,7 +1857,7 @@ describe('NoteWriter', () => {
 			const vault = vaultWithPriorNote();
 			const writer = new NoteWriter(vault, {
 				outputFolder: 'Plaud',
-				subfolderTemplate: '{{yyyy-MM}}',
+				subfolderTemplate: '{{YYYY-MM}}',
 				onDuplicate: 'skip',
 				existingPathForPlaudId: (id) => (id === 'abc123' ? PRIOR : null),
 			});
@@ -1637,7 +1874,7 @@ describe('NoteWriter', () => {
 			const vault = vaultWithPriorNote();
 			const writer = new NoteWriter(vault, {
 				outputFolder: 'Plaud',
-				subfolderTemplate: '{{yyyy-MM}}',
+				subfolderTemplate: '{{YYYY-MM}}',
 				onDuplicate: 'overwrite',
 				existingPathForPlaudId: (id) => (id === 'abc123' ? PRIOR : null),
 			});
@@ -1654,7 +1891,7 @@ describe('NoteWriter', () => {
 			const vault = makeFakeVault();
 			const writer = new NoteWriter(vault, {
 				outputFolder: 'Plaud',
-				subfolderTemplate: '{{yyyy-MM}}',
+				subfolderTemplate: '{{YYYY-MM}}',
 				onDuplicate: 'skip',
 				existingPathForPlaudId: () => null,
 			});
@@ -1669,7 +1906,7 @@ describe('NoteWriter', () => {
 			const vault = makeFakeVault();
 			const writer = new NoteWriter(vault, {
 				outputFolder: 'Plaud',
-				subfolderTemplate: '{{yyyy-MM}}',
+				subfolderTemplate: '{{YYYY-MM}}',
 				onDuplicate: 'skip',
 				existingPathForPlaudId: () => 'Plaud/ghost.md',
 			});
