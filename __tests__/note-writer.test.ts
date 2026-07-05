@@ -601,6 +601,13 @@ describe('resolveSubfolder', () => {
 		expect(() => resolveSubfolder('../{{YYYY}}', jun4)).toThrow(NoteWriterError);
 	});
 
+	it('returns the flat path for a template that normalizes to empty', () => {
+		// "/" and "." normalize to '' (no real segment). Sanitizing an empty
+		// segment would otherwise yield a stray "Untitled" folder.
+		expect(resolveSubfolder('/', jun4)).toBe('');
+		expect(resolveSubfolder('.', jun4)).toBe('');
+	});
+
 	it('sanitizes a Windows-forbidden character a Moment format renders into a segment', () => {
 		// A colon from a time token would fail folder creation on Windows; it is
 		// rewritten to a dash so the import does not fail, while a literal '/' stays

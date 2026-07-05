@@ -482,8 +482,12 @@ export function resolveSubfolder(template: string, date: Date): string {
 	}
 	return normalizeFolderPath(expandDateTemplate(template, date))
 		.split('/')
+		// Drop empty/whitespace-only segments BEFORE sanitizing: sanitizeFilename
+		// turns an empty string into "Untitled", so a template that normalizes to
+		// '' (e.g. "/" or ".") would otherwise yield a stray "Untitled" folder
+		// instead of the flat (empty) path.
+		.filter((segment) => segment.trim() !== '')
 		.map((segment) => sanitizeFilename(segment))
-		.filter((segment) => segment !== '')
 		.join('/');
 }
 

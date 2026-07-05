@@ -148,7 +148,7 @@ const DEFAULT_RIBBON_ICON = "audio-lines";
 // at createEl/setDesc) so the obsidianmd sentence-case lint, which inspects
 // literal arguments, leaves the token examples and proper nouns alone.
 const SUBFOLDER_TEMPLATE_INTRO =
-	"Optional. Files each imported note into a subfolder of the output folder, built from the recording's own date. Leave empty to keep every note in one folder. Text inside {{ }} is a date format written in Moment style (the same syntax core Daily Notes uses); text outside the braces is kept as-is, and a forward slash (/) starts a new nested folder level, so {{YYYY}}/{{MM}} makes a year folder holding month folders. Keep your own words and separators outside the braces.";
+	"Optional. Files each imported note into a subfolder of the output folder, built from the recording's own date. Leave empty to keep every note in one folder. Text inside {{ }} is a date format written in Moment style (the same syntax core Daily Notes uses); text outside the braces is kept as-is, and a forward slash (/) starts a new nested folder level, so {{YYYY}}/{{MM}} makes a year folder holding month folders. Separators like dashes and spaces are fine inside the braces; keep your own words (plain letters) outside them, since letters inside are read as date tokens.";
 
 // [token, what it expands to] pairs. Real Moment format tokens (case matters).
 // The same vocabulary works in the note-name field, so a user learns it once.
@@ -174,7 +174,7 @@ const SUBFOLDER_TEMPLATE_EXAMPLES: ReadonlyArray<readonly [string, string]> = [
 ];
 
 const SUBFOLDER_TEMPLATE_TOKENS_HEADING =
-	"Tokens (mix with your own text and separators, kept outside the braces):";
+	"Tokens (case matters; combine them with separators inside the braces):";
 const SUBFOLDER_TEMPLATE_EXAMPLES_HEADING = "Examples:";
 const SUBFOLDER_TEMPLATE_FOOTNOTE =
 	"Applies to new imports; notes you already imported stay where they are.";
@@ -215,7 +215,7 @@ const NOTE_NAME_TEMPLATE_EXAMPLES: ReadonlyArray<readonly [string, string]> = [
 ];
 
 const NOTE_NAME_TEMPLATE_TOKENS_HEADING =
-	"Tokens (mix with your own text and separators, kept outside the braces):";
+	"Tokens (case matters; combine them with separators inside the braces):";
 const NOTE_NAME_TEMPLATE_EXAMPLES_HEADING = "Examples:";
 const NOTE_NAME_TEMPLATE_FOOTNOTE =
 	"Applies to new imports; notes you already imported keep their current names.";
@@ -1513,9 +1513,11 @@ export default class PlaudImporterPlugin extends Plugin {
 		// v1 (issue #30): the date-template engine moved from bespoke lowercase
 		// tokens to real Moment. Rewrite the two stored templates once, output-
 		// preserving (see migrateLegacyDateTemplate), so an existing install's
-		// filenames and folders do not change. Idempotent and version-gated, so a
-		// fresh install (already at the current default) is a harmless no-op.
-		if (storedVersion < 1) {
+		// filenames and folders do not change. Gated on an EXISTING install
+		// (stored data present) so a fresh install writes nothing at startup: its
+		// templates are already the Moment defaults, and skipping the save avoids
+		// an unnecessary write and a load-time failure if saveData throws.
+		if (stored !== null && storedVersion < 1) {
 			this.settings.noteNameTemplate = migrateLegacyDateTemplate(
 				this.settings.noteNameTemplate,
 			);
