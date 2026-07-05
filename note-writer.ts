@@ -449,6 +449,20 @@ function expandDateTemplate(template: string, date: Date, title?: string): strin
 }
 
 /**
+ * Rewrite only the characters a folder name cannot hold on Windows/macOS/Linux,
+ * each to a dash. Deliberately NARROWER than sanitizeFilename: it does not trim,
+ * collapse whitespace, clamp length, strip brackets, or rewrite reserved device
+ * names, so it changes a resolved subfolder ONLY when a Moment format renders a
+ * genuinely illegal character (e.g. a colon from `{{HH:mm}}`). A legal existing
+ * folder is left byte-for-byte alone, keeping the migration output-preserving.
+ * The path separator `/` is intentionally excluded: the caller splits on it, so
+ * a segment never contains one.
+ */
+function sanitizeFolderSegment(segment: string): string {
+	return segment.replace(/[<>:"\\|?*]/g, '-');
+}
+
+/**
  * Resolve a user-configured subfolder template against a recording's date.
  *
  * The result is a vault-relative subpath (no leading/trailing slash) that the
@@ -465,12 +479,12 @@ function expandDateTemplate(template: string, date: Date, title?: string): strin
  *    rather than emitting Moment's "Invalid date" into a path segment.
  *  - The expanded path runs through normalizeFolderPath, so `..` traversal and
  *    redundant slashes are rejected/cleaned the same as the output folder.
- *  - Each surviving segment is then sanitized: a Moment format can now render a
- *    Windows-forbidden character (e.g. a colon from `{{HH:mm}}`) into a folder
- *    name, which would fail folder creation at import; sanitizeFilename rewrites
- *    those to dashes, keeping `/` as the intentional nesting separator. This runs
- *    AFTER normalizeFolderPath so the `..` traversal guard still sees a literal
- *    `..` segment (sanitizeFilename would otherwise strip it to empty).
+ *  - Each surviving segment is then run through sanitizeFolderSegment: a Moment
+ *    format can now render a Windows-forbidden character (e.g. a colon from
+ *    `{{HH:mm}}`) into a folder name, which would fail folder creation at import.
+ *    The narrow sanitizer touches only illegal characters, so a legal existing
+ *    folder is unchanged. This runs AFTER normalizeFolderPath so the `..`
+ *    traversal guard still sees a literal `..` segment.
  */
 export function resolveSubfolder(template: string, date: Date): string {
 	if (template.trim() === '') {
@@ -482,12 +496,9 @@ export function resolveSubfolder(template: string, date: Date): string {
 	}
 	return normalizeFolderPath(expandDateTemplate(template, date))
 		.split('/')
-		// Drop empty/whitespace-only segments BEFORE sanitizing: sanitizeFilename
-		// turns an empty string into "Untitled", so a template that normalizes to
-		// '' (e.g. "/" or ".") would otherwise yield a stray "Untitled" folder
-		// instead of the flat (empty) path.
+		// Drop empty/whitespace-only segments so nesting stays as authored.
 		.filter((segment) => segment.trim() !== '')
-		.map((segment) => sanitizeFilename(segment))
+		.map((segment) => sanitizeFolderSegment(segment))
 		.join('/');
 }
 

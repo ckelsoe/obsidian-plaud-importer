@@ -2958,6 +2958,20 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 		if (key === "outputFolder") {
 			this.plugin.settings.outputFolder =
 				(typeof value === "string" ? value.trim() : "") || "Plaud";
+		} else if (key === "subfolderTemplate") {
+			const next = typeof value === "string" ? value : "";
+			try {
+				// Rendering against a sample date surfaces the only case that throws
+				// at import time, a ".." vault-escape (normalizeFolderPath's traversal
+				// guard), so a value that would break every later import is not
+				// persisted. No Notice here: this field persists per keystroke, so a
+				// Notice would spam while ".." is mid-typed; the live preview already
+				// shows "(not usable)", and the previous good value stays saved.
+				resolveSubfolder(next, TEMPLATE_PREVIEW_DATE);
+				this.plugin.settings.subfolderTemplate = next;
+			} catch {
+				return;
+			}
 		} else if (key === "noteNameTemplate") {
 			const next = typeof value === "string" ? value.trim() : "";
 			if (next.length === 0) {
