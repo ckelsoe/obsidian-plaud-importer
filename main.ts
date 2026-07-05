@@ -2389,7 +2389,7 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 		let field: TextComponent | null = null;
 		let updatePreview: (template: string) => void = () => {};
 		for (const [label, token] of DATE_INSERT_TOKENS) {
-			setting.addButton((button) =>
+			setting.addButton((button) => {
 				button
 					.setButtonText(label)
 					.setTooltip(`Insert ${token}`)
@@ -2399,8 +2399,14 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 						const value = field.getValue();
 						await this.applyControlChange("subfolderTemplate", value);
 						updatePreview(value);
-					}),
-			);
+					});
+				// Keep focus in the text field on click (mousedown default is to
+				// move focus to the button) so the cursor position is preserved for
+				// the insert.
+				button.buttonEl.addEventListener("mousedown", (event) =>
+					event.preventDefault(),
+				);
+			});
 		}
 		setting.addText((text) => {
 			field = text;
@@ -2460,9 +2466,14 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 		let updatePreview: (template: string) => void = () => {};
 		// Insert-token buttons (date set + Title). Unlike the subfolder field, the
 		// note-name field persists on BLUR, so an insert only edits the field and
-		// refreshes the preview; the blur listener commits and validates once.
+		// refreshes the preview; the blur listener commits and validates once. The
+		// mousedown preventDefault is essential here, not just nice-to-have: without
+		// it, clicking a button blurs the field, and commitNoteNameTemplate resets
+		// the field to the saved value AFTER the insert runs, discarding the token.
+		// Keeping focus in the field means no blur fires, so the inserted tokens
+		// accumulate and the eventual real blur (clicking away) commits them.
 		for (const [label, token] of [...DATE_INSERT_TOKENS, TITLE_INSERT_TOKEN]) {
-			setting.addButton((button) =>
+			setting.addButton((button) => {
 				button
 					.setButtonText(label)
 					.setTooltip(`Insert ${token}`)
@@ -2470,8 +2481,11 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 						if (field === null) return;
 						this.insertTokenAtCursor(field, token);
 						updatePreview(field.getValue());
-					}),
-			);
+					});
+				button.buttonEl.addEventListener("mousedown", (event) =>
+					event.preventDefault(),
+				);
+			});
 		}
 		setting.addText((text) => {
 			field = text;

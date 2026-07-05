@@ -43,6 +43,10 @@ import type {
 	Transcript,
 	TranscriptSegment,
 } from '../plaud-client';
+// The plugin gets moment from Obsidian (mapped to the jest mock, which re-exports
+// the real moment). Reaching it the same way here shares that one singleton, so a
+// test can flip the global locale and observe the formatter's pinned English.
+import { moment } from 'obsidian';
 
 // Fixtures ------------------------------------------------------------------
 
@@ -692,6 +696,35 @@ describe('migrateLegacyDateTemplate', () => {
 	it('never throws and passes through a hand-edited unclosed template', () => {
 		expect(() => migrateLegacyDateTemplate('{{yyyy')).not.toThrow();
 		expect(migrateLegacyDateTemplate('{{yyyy')).toBe('{{yyyy');
+	});
+});
+
+// locale independence -------------------------------------------------------
+
+describe('English locale is pinned (issue #30 output-preservation)', () => {
+	// The pre-Moment engine emitted English month/weekday names from hardcoded
+	// tables. Obsidian's moment follows the app display language, so the formatter
+	// pins 'en' to keep a migrated {{MMMM}}/{{dddd}} template output-preserving on
+	// a non-English Obsidian UI.
+	it('renders English names even when the global Moment locale is not English', () => {
+		const previousLocale = moment.locale();
+		// A synthetic non-English locale, so the test needs no extra locale package.
+		// defineLocale also switches the active locale to it as a side effect.
+		moment.defineLocale('xx-test', {
+			months: 'Mo1_Mo2_Mo3_Mo4_Mo5_Mo6_Mo7_Mo8_Mo9_Mo10_Mo11_Mo12'.split('_'),
+			weekdays: 'Dy0_Dy1_Dy2_Dy3_Dy4_Dy5_Dy6'.split('_'),
+		});
+		try {
+			// Sanity: the global locale really did switch (guards the test itself).
+			expect(moment(new Date(2026, 5, 4)).format('MMMM')).toBe('Mo6');
+			// The plugin's formatters must still emit English.
+			const jun4 = new Date(2026, 5, 4); // June 4 2026 (a Thursday)
+			expect(formatNoteName('{{MMMM}}', jun4, '')).toBe('June');
+			expect(formatNoteName('{{dddd}}', jun4, '')).toBe('Thursday');
+			expect(resolveSubfolder('{{MMMM}}', jun4)).toBe('June');
+		} finally {
+			moment.locale(previousLocale);
+		}
 	});
 });
 

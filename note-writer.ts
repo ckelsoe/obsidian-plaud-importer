@@ -429,9 +429,16 @@ function formatDateYmd(d: Date): string {
  * which day a recording belongs to. When `title` is provided (the note-name
  * path) a `{{title}}` token is replaced with it BEFORE the Moment call; the
  * subfolder path passes no title, so `{{title}}` is not special there.
+ *
+ * The formatter is pinned to the English locale. Obsidian's `moment` otherwise
+ * follows the app's display language, which would make `{{MMMM}}`/`{{dddd}}`
+ * render localized month/weekday names. English is what the pre-Moment engine
+ * emitted (from hardcoded name tables), so pinning it keeps the migration
+ * output-preserving even for a user on a non-English Obsidian UI, and keeps
+ * names stable and filename-safe regardless of language.
  */
 function expandDateTemplate(template: string, date: Date, title?: string): string {
-	const m = moment(date);
+	const m = moment(date).locale('en');
 	return template.replace(/\{\{([^}]*)\}\}/g, (_match, raw: string): string => {
 		const inner = raw.trim();
 		if (title !== undefined && inner === 'title') {
