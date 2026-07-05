@@ -601,6 +601,15 @@ describe('resolveSubfolder', () => {
 		expect(() => resolveSubfolder('../{{YYYY}}', jun4)).toThrow(NoteWriterError);
 	});
 
+	it('sanitizes a Windows-forbidden character a Moment format renders into a segment', () => {
+		// A colon from a time token would fail folder creation on Windows; it is
+		// rewritten to a dash so the import does not fail, while a literal '/' stays
+		// an intentional nesting separator.
+		const withTime = new Date(2026, 5, 4, 14, 5); // 2026-06-04 14:05 local
+		expect(resolveSubfolder('{{HH:mm}}', withTime)).toBe('14-05');
+		expect(resolveSubfolder('{{YYYY}}/{{HH:mm}}', withTime)).toBe('2026/14-05');
+	});
+
 	it('uses local-time fields, matching the date: frontmatter basis', () => {
 		// A late-evening local time must not roll into the next UTC day.
 		const lateLocal = new Date(2026, 0, 31, 23, 30); // 2026-01-31 23:30 local

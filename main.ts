@@ -185,7 +185,7 @@ const SUBFOLDER_TEMPLATE_FOOTNOTE =
 // above: the sentence-case lint inspects literal arguments, so the token
 // examples and proper nouns stay untouched.
 const NOTE_NAME_TEMPLATE_INTRO =
-	"Sets each note's name from a template, using the same {{ }} Moment date formats as the subfolder setting plus a {{title}} token. The recording's date fills the date tokens, and {{title}} is the recording title with a leading numeric date removed (the MM-DD and YYYY-MM-DD style forms Plaud uses), so the recording's date takes the place of the one Plaud put in the title. Put the date wherever you like, before or after {{title}}, and keep your own words outside the braces. The date property inside the note stays YYYY-MM-DD for Dataview. The whole name has to work as a note file name, so a template that would put a character that is not allowed in a name (for example a slash, colon, or square bracket) into it is rejected.";
+	"Sets each note's name from a template, using the same {{ }} Moment date formats as the subfolder setting plus a {{title}} token. The recording's date fills the date tokens, and {{title}} is the recording title with a leading numeric date removed (the MM-DD and YYYY-MM-DD style forms Plaud uses), so the recording's date takes the place of the one Plaud put in the title. Put the date wherever you like, before or after {{title}}, and keep your own words outside the braces. The date property inside the note stays YYYY-MM-DD for Dataview. The whole name has to work as a note file name, so a template that would put a character a file name cannot contain (a slash, colon, square bracket, asterisk, question mark, angle bracket, pipe, or double quote) into it is rejected.";
 
 // [token, what it expands to] pairs for a July 3 2026 recording. Real Moment
 // tokens (case matters), the same set the subfolder field uses plus {{title}}.
@@ -2525,7 +2525,7 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 				template,
 			);
 			if (template.trim() !== "" && !isValidNoteNameTemplate(template)) {
-				return `Preview: ${name} (not a valid note name; a slash, colon, or bracket is not allowed, so this will not be saved)`;
+				return `Preview: ${name} (not a valid note name; a file name cannot contain a slash, colon, square bracket, or characters like * ? < > | ", so this will not be saved)`;
 			}
 			return `Preview: ${name}`;
 		});
@@ -2968,7 +2968,7 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 				// was not applied, rather than saving one that would break imports or
 				// write a mangled name.
 				new Notice(
-					"Plaud importer: That note name template is not valid. It uses an unknown {{token}}, or it would put a character that is not allowed in a note name (such as a slash, colon, or square bracket) into the name. The template was not changed.",
+					"Plaud importer: That note name template is not valid. It would put a character a file name cannot contain (a slash, colon, square bracket, asterisk, question mark, angle bracket, pipe, or double quote) into the name. The template was not changed.",
 				);
 				return;
 			}

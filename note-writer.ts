@@ -465,6 +465,12 @@ function expandDateTemplate(template: string, date: Date, title?: string): strin
  *    rather than emitting Moment's "Invalid date" into a path segment.
  *  - The expanded path runs through normalizeFolderPath, so `..` traversal and
  *    redundant slashes are rejected/cleaned the same as the output folder.
+ *  - Each surviving segment is then sanitized: a Moment format can now render a
+ *    Windows-forbidden character (e.g. a colon from `{{HH:mm}}`) into a folder
+ *    name, which would fail folder creation at import; sanitizeFilename rewrites
+ *    those to dashes, keeping `/` as the intentional nesting separator. This runs
+ *    AFTER normalizeFolderPath so the `..` traversal guard still sees a literal
+ *    `..` segment (sanitizeFilename would otherwise strip it to empty).
  */
 export function resolveSubfolder(template: string, date: Date): string {
 	if (template.trim() === '') {
@@ -474,7 +480,11 @@ export function resolveSubfolder(template: string, date: Date): string {
 	if (!dateValid && /\{\{[^}]*\}\}/.test(template)) {
 		return '_undated';
 	}
-	return normalizeFolderPath(expandDateTemplate(template, date));
+	return normalizeFolderPath(expandDateTemplate(template, date))
+		.split('/')
+		.map((segment) => sanitizeFilename(segment))
+		.filter((segment) => segment !== '')
+		.join('/');
 }
 
 /**
@@ -643,10 +653,13 @@ export function isValidNoteNameTemplate(template: string): boolean {
  * exact lowercase tokens the pre-Moment renderer understood; each value is the
  * Moment token that produces IDENTICAL output, so the rewrite never changes an
  * existing filename or folder. Only tokens whose meaning or casing changed under
- * Moment appear here; `MMMM`/`MMM`/`MM`/`M`/`Q` rendered the same in both engines
- * and pass through untouched. The three that would silently misrender if skipped:
- * `dd` (Moment weekday "Th", not day), `d` (Moment day-of-week 0-6), and `ww`
- * (Moment LOCALE week, not the ISO week the plugin used).
+ * Moment appear here; `MMMM`/`MMM`/`MM`/`M`/`Q` render the same in both engines
+ * and pass through untouched. (`MMMM`/`MMM` match only because expandDateTemplate
+ * pins the English locale; the old engine used hardcoded English name tables, so
+ * without that pin a non-English Obsidian UI would rename existing notes.) The
+ * three that would silently misrender if skipped: `dd` (Moment weekday "Th", not
+ * day), `d` (Moment day-of-week 0-6), and `ww` (Moment LOCALE week, not the ISO
+ * week the plugin used).
  */
 const LEGACY_TOKEN_MIGRATION: ReadonlyMap<string, string> = new Map([
 	['yyyy', 'YYYY'],
@@ -1839,8 +1852,8 @@ export class NoteWriter {
 		this.outputFolder = normalizeFolderPath(options.outputFolder);
 		this.subfolderTemplate = options.subfolderTemplate ?? '';
 		// Fall back to the default when the template is missing, empty, or invalid
-		// (an unknown token or an unsafe render) — for example from a hand-edited
-		// data.json. The settings layer already refuses to save an invalid
+		// (a render that is not filename-safe, for example from a hand-edited
+		// data.json). The settings layer already refuses to save an invalid
 		// template; this is defense-in-depth so a bad value never breaks a write.
 		const requestedTemplate = options.noteNameTemplate?.trim();
 		this.noteNameTemplate =
