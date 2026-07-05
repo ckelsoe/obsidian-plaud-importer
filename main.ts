@@ -2534,7 +2534,7 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 				template,
 			);
 			if (template.trim() !== "" && !isValidNoteNameTemplate(template)) {
-				return `Preview: ${name} (not a valid note name; a file name cannot contain a slash, colon, square bracket, or characters like * ? < > | ", so this will not be saved)`;
+				return `Preview: ${name} (not a valid note name, so it will not be saved; a file name cannot contain a slash, colon, square bracket, or a character like * ? < > | ", cannot be a reserved name such as CON, and cannot start or end with a dot or space)`;
 			}
 			return `Preview: ${name}`;
 		});
@@ -2991,7 +2991,7 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 				// was not applied, rather than saving one that would break imports or
 				// write a mangled name.
 				new Notice(
-					"Plaud importer: That note name template is not valid. It would put a character a file name cannot contain (a slash, colon, square bracket, asterisk, question mark, angle bracket, pipe, or double quote) into the name. The template was not changed.",
+					"Plaud importer: That note name template is not valid, so it was not changed. A file name cannot contain a slash, colon, square bracket, asterisk, question mark, angle bracket, pipe, or double quote, cannot be a reserved device name, and cannot start or end with a dot or space.",
 				);
 				return;
 			}
