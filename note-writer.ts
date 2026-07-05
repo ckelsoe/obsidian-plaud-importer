@@ -460,7 +460,14 @@ function formatDateYmd(d: Date): string {
  * names stable and filename-safe regardless of language.
  */
 function expandDateTemplate(template: string, date: Date, title?: string): string {
-	const m = moment(date).locale('en');
+	// Obsidian re-exports `moment`, and in the marketplace's stricter type-checking
+	// environment that re-export resolves as the `error`/`any` type, which trips
+	// @typescript-eslint/no-unsafe-* on every call in this chain. Pin the factory
+	// to moment's own module type at this one boundary so the expression is fully
+	// typed there. This casts TO moment's real type (not `as any`); it is a no-op
+	// where moment already resolves (locally), which is why the plugin config turns
+	// off no-unnecessary-type-assertion.
+	const m = (moment as typeof import('moment'))(date).locale('en');
 	return template.replace(/\{\{([^}]*)\}\}/g, (_match, raw: string): string => {
 		const inner = raw.trim();
 		if (title !== undefined && inner === 'title') {

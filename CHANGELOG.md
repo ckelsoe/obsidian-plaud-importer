@@ -4,6 +4,12 @@ All notable changes to Plaud Importer will be documented in this file.
 
 ## [Unreleased]
 
+## [0.21.1] - 2026-07-05
+
+### Fixed
+
+- Resolve type-checking warnings the marketplace scan reported on the Moment date-format code. Obsidian's `moment` re-export resolves as an untyped value in that stricter environment, so the date formatter now pins it to Moment's own type. No behavior change; date formatting works exactly as in 0.21.0.
+
 ## [0.21.0] - 2026-07-05
 
 ### Changed

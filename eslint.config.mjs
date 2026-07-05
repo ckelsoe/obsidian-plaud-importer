@@ -30,6 +30,13 @@ export default [
 			"@typescript-eslint/ban-ts-comment": "off",
 			"no-prototype-builtins": "off",
 			"@typescript-eslint/no-empty-function": "off",
+			// The Obsidian `moment` re-export resolves as a real type locally but as
+			// `error`/`any` in the marketplace's type-check. note-writer.ts casts it to
+			// moment's module type so the marketplace's no-unsafe-* rules pass; that cast
+			// is redundant locally, so this rule would otherwise fail our own lint. The
+			// cast stays necessary where moment is untyped, so disabling the redundancy
+			// check (not the safety checks) is the correct reconciliation.
+			"@typescript-eslint/no-unnecessary-type-assertion": "off",
 		},
 	},
 	{
