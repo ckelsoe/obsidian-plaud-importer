@@ -25,6 +25,7 @@
 // plain object; main.ts passes this.app.vault directly (Obsidian's Vault
 // class satisfies VaultLike structurally).
 
+import { moment } from 'obsidian';
 import type {
 	Chapter,
 	ConsumerNote,
@@ -414,36 +415,30 @@ function formatDateYmd(d: Date): string {
 }
 
 /**
- * Tokens recognized in a destination subfolder template. Each expands from
- * the recording's own date, using the SAME local-time basis as the `date:`
- * frontmatter field (formatDateYmd) so the folder and the field never
- * disagree about which day a recording belongs to.
- */
-const SUBFOLDER_TOKENS = ['yyyy', 'MM', 'dd', 'yyyy-MM', 'ww', 'Q'] as const;
-
-/**
- * ISO 8601 week number (1-53) for a date, computed from its LOCAL calendar
- * day so it agrees with the other tokens' local-time basis. Week 1 is the
- * week containing the first Thursday of the year; weeks start Monday. The
- * arithmetic runs in UTC purely to sidestep DST hour shifts — only the
- * local Y/M/D are fed in, so the result is the local day's ISO week.
+ * Expand a `{{...}}` template against a date using real Moment.js formatting.
+ * The content INSIDE each `{{}}` is a Moment format string, so a single pair can
+ * hold a whole date layout (`{{YYYY-MM-DD - dddd}}`) or several tokens with their
+ * own separators (`{{MM MMMM}}`). Text OUTSIDE the braces is literal, so a path
+ * like `meetings/{{YYYY}}` needs no Moment `[literal]` bracket-escaping — the
+ * braces ARE the escaping. Literals therefore belong OUTSIDE the braces: bare
+ * letters inside are read as Moment tokens (`{{Meeting YYYY}}` mangles "Meeting"),
+ * which the settings preview surfaces.
  *
- * Caveat for templates that pair `{{yyyy}}` with `{{ww}}`: ISO weeks belong
- * to an ISO week-year that can differ from the calendar year by one at the
- * Dec/Jan boundary (e.g. 2027-01-01 can be ISO week 53). `{{yyyy}}` is the
- * calendar year, so a handful of boundary recordings may file under a
- * calendar year that disagrees with their ISO week. This is cosmetic for
- * foldering and avoids exposing a second, confusing week-year token.
+ * Moment formats in LOCAL time, the same calendar basis as formatDateYmd, so a
+ * note name, its subfolder, and the `date:` frontmatter never disagree about
+ * which day a recording belongs to. When `title` is provided (the note-name
+ * path) a `{{title}}` token is replaced with it BEFORE the Moment call; the
+ * subfolder path passes no title, so `{{title}}` is not special there.
  */
-function isoWeekNumber(year: number, monthIndex: number, day: number): number {
-	const d = new Date(Date.UTC(year, monthIndex, day));
-	const dayOfWeek = (d.getUTCDay() + 6) % 7; // Monday = 0 ... Sunday = 6
-	d.setUTCDate(d.getUTCDate() - dayOfWeek + 3); // shift to the week's Thursday
-	const firstThursday = new Date(Date.UTC(d.getUTCFullYear(), 0, 4));
-	const firstDayOfWeek = (firstThursday.getUTCDay() + 6) % 7;
-	firstThursday.setUTCDate(firstThursday.getUTCDate() - firstDayOfWeek + 3);
-	const msPerWeek = 7 * 24 * 60 * 60 * 1000;
-	return 1 + Math.round((d.getTime() - firstThursday.getTime()) / msPerWeek);
+function expandDateTemplate(template: string, date: Date, title?: string): string {
+	const m = moment(date);
+	return template.replace(/\{\{([^}]*)\}\}/g, (_match, raw: string): string => {
+		const inner = raw.trim();
+		if (title !== undefined && inner === 'title') {
+			return title;
+		}
+		return m.format(inner);
+	});
 }
 
 /**
@@ -457,11 +452,10 @@ function isoWeekNumber(year: number, monthIndex: number, day: number): number {
  *
  * Rules:
  *  - An empty or whitespace-only template returns '' (flat, current behavior).
- *  - Literal path text is preserved: `meetings/{{yyyy}}` is valid.
- *  - An unknown `{{token}}` throws, so a typo surfaces instead of silently
- *    creating a `{{yyy}}` folder.
+ *  - Each `{{...}}` is a Moment format string; literal path text between them is
+ *    preserved, so `meetings/{{YYYY}}` is valid and a `/` starts a nested level.
  *  - A missing or invalid recording date resolves to the `_undated` bucket
- *    rather than collapsing tokens to empty path segments.
+ *    rather than emitting Moment's "Invalid date" into a path segment.
  *  - The expanded path runs through normalizeFolderPath, so `..` traversal and
  *    redundant slashes are rejected/cleaned the same as the output folder.
  */
@@ -470,45 +464,10 @@ export function resolveSubfolder(template: string, date: Date): string {
 		return '';
 	}
 	const dateValid = date instanceof Date && !Number.isNaN(date.getTime());
-	const pad = (n: number): string => String(n).padStart(2, '0');
-	const expand = (token: string): string => {
-		switch (token) {
-			case 'yyyy':
-				return String(date.getFullYear());
-			case 'MM':
-				return pad(date.getMonth() + 1);
-			case 'dd':
-				return pad(date.getDate());
-			case 'yyyy-MM':
-				return `${date.getFullYear()}-${pad(date.getMonth() + 1)}`;
-			case 'ww':
-				return pad(
-					isoWeekNumber(date.getFullYear(), date.getMonth(), date.getDate()),
-				);
-			case 'Q':
-				return String(Math.floor(date.getMonth() / 3) + 1);
-			default:
-				return '';
-		}
-	};
-	let sawUndatedToken = false;
-	const replaced = template.replace(/\{\{\s*([^}]*?)\s*\}\}/g, (_match, raw: string) => {
-		const token = raw.trim();
-		if (!(SUBFOLDER_TOKENS as readonly string[]).includes(token)) {
-			throw new NoteWriterError(
-				`Unknown subfolder template token "{{${token}}}" — valid tokens: ${SUBFOLDER_TOKENS.join(', ')}`,
-			);
-		}
-		if (!dateValid) {
-			sawUndatedToken = true;
-			return '';
-		}
-		return expand(token);
-	});
-	if (sawUndatedToken) {
+	if (!dateValid && /\{\{[^}]*\}\}/.test(template)) {
 		return '_undated';
 	}
-	return normalizeFolderPath(replaced);
+	return normalizeFolderPath(expandDateTemplate(template, date));
 }
 
 /**
@@ -542,114 +501,28 @@ const OTHER_LEADING_DATE =
 /**
  * The note-name template used when the user has not chosen one. Reproduces the
  * historical `YYYY-MM-DD <title>` naming, so leaving it unset changes nothing.
- * Uses the same `{{...}}` token syntax as the subfolder template.
+ * Uses the same `{{...}}` Moment syntax as the subfolder template.
  */
-export const DEFAULT_NOTE_NAME_TEMPLATE = '{{yyyy}}-{{MM}}-{{dd}} {{title}}';
-
-const MONTH_NAMES_LONG = [
-	'January', 'February', 'March', 'April', 'May', 'June',
-	'July', 'August', 'September', 'October', 'November', 'December',
-];
-const MONTH_NAMES_SHORT = [
-	'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-	'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
-];
-
-/**
- * The date tokens a note-name template understands: a superset of the subfolder
- * tokens (so every subfolder token also works in a note name) plus named months,
- * a 2-digit year, and single-digit month/day for layouts like `MMM d, yyyy`.
- * The `{{title}}` token (handled separately in formatNoteName) completes the
- * vocabulary. Case-sensitive, matched literally between `{{ }}`.
- */
-const NOTE_NAME_DATE_TOKENS = [
-	'yyyy', 'yy', 'MMMM', 'MMM', 'MM', 'M', 'dd', 'd', 'yyyy-MM', 'ww', 'Q',
-] as const;
-
-/**
- * Expand a single note-name date token against a date, or null when the token is
- * not a known date token (so formatNoteName can tell `{{title}}` from a typo and
- * report an unknown token). Uses LOCAL calendar fields, the same basis as
- * formatDateYmd, so a note name and the `date:` frontmatter never disagree about
- * which day a recording belongs to.
- */
-function expandNoteNameDateToken(token: string, date: Date): string | null {
-	const year = date.getFullYear();
-	const monthIndex = date.getMonth();
-	const day = date.getDate();
-	const pad = (n: number): string => String(n).padStart(2, '0');
-	switch (token) {
-		case 'yyyy':
-			return String(year);
-		case 'yy':
-			return pad(year % 100);
-		case 'MMMM':
-			return MONTH_NAMES_LONG[monthIndex];
-		case 'MMM':
-			return MONTH_NAMES_SHORT[monthIndex];
-		case 'MM':
-			return pad(monthIndex + 1);
-		case 'M':
-			return String(monthIndex + 1);
-		case 'dd':
-			return pad(day);
-		case 'd':
-			return String(day);
-		case 'yyyy-MM':
-			return `${year}-${pad(monthIndex + 1)}`;
-		case 'ww':
-			return pad(isoWeekNumber(year, monthIndex, day));
-		case 'Q':
-			return String(Math.floor(monthIndex / 3) + 1);
-		default:
-			return null;
-	}
-}
+export const DEFAULT_NOTE_NAME_TEMPLATE = '{{YYYY}}-{{MM}}-{{DD}} {{title}}';
 
 /**
  * Render a note-name template against a recording date and its (date-stripped)
- * title. `{{...}}` tokens are the note-name date tokens (see
- * NOTE_NAME_DATE_TOKENS) plus `{{title}}`; every other character is a literal.
- * Uses the same `{{...}}` syntax as the subfolder template so a user learns one
- * token language. Throws NoteWriterError on an unknown token so a typo surfaces
- * (the settings layer validates before saving, so a saved template never throws
- * at import time). Collapses whitespace and trims, so a template whose `{{title}}`
- * expands to empty (a title that was only a date) does not leave a stray
- * separator.
+ * title. Each `{{...}}` is a Moment format string (see expandDateTemplate) and
+ * `{{title}}` is the recording title; every other character is a literal. Uses
+ * the same `{{...}}` syntax as the subfolder template so a user learns one
+ * language. Real Moment never throws on an unknown token, so a typo renders to
+ * plausible-or-literal text that the settings preview and isValidNoteNameTemplate
+ * catch, rather than raising here. Collapses whitespace and trims, so a template
+ * whose `{{title}}` expands to empty (a title that was only a date) does not
+ * leave a stray separator.
  *
- *   formatNoteName("{{yyyy}}-{{MM}}-{{dd}} {{title}}", 2026-07-03, "Sync")
+ *   formatNoteName("{{YYYY}}-{{MM}}-{{DD}} {{title}}", 2026-07-03, "Sync")
  *     === "2026-07-03 Sync"
- *   formatNoteName("{{title}} {{yyyy}}-{{MM}}-{{dd}}", 2026-07-03, "Sync")
+ *   formatNoteName("{{title}} {{YYYY}}-{{MM}}-{{DD}}", 2026-07-03, "Sync")
  *     === "Sync 2026-07-03"
  */
 export function formatNoteName(template: string, date: Date, title: string): string {
-	// Reject a malformed {{ }} delimiter (e.g. "{{yyyy" with no closing braces)
-	// before rendering, so a typo is caught by isValidNoteNameTemplate at save time
-	// instead of being written literally into every note name. Checks the TEMPLATE
-	// with well-formed tokens removed, not the rendered output, so a recording
-	// title that itself contains "{{" is never mistaken for a bad token.
-	if (/\{\{|\}\}/.test(template.replace(/\{\{\s*[^}]*?\s*\}\}/g, ''))) {
-		throw new NoteWriterError(
-			'Malformed note name template: unbalanced or unclosed {{ }} delimiters',
-		);
-	}
-	const rendered = template.replace(
-		/\{\{\s*([^}]*?)\s*\}\}/g,
-		(_match, raw: string): string => {
-			const token = raw.trim();
-			if (token === 'title') {
-				return title;
-			}
-			const expanded = expandNoteNameDateToken(token, date);
-			if (expanded === null) {
-				throw new NoteWriterError(
-					`Unknown note name template token "{{${token}}}" — valid tokens: ${NOTE_NAME_DATE_TOKENS.map((t) => `{{${t}}}`).join(', ')}, {{title}}`,
-				);
-			}
-			return expanded;
-		},
-	);
-	return rendered.replace(/\s+/g, ' ').trim();
+	return expandDateTemplate(template, date, title).replace(/\s+/g, ' ').trim();
 }
 
 /**
@@ -733,35 +606,74 @@ function titleWithoutLeadingDate(title: string): string {
 
 /**
  * A fixed sample date and title used to validate a note-name template. A 2-digit
- * month and day exercise every numeric token; the safe placeholder title lets
- * the check judge the template's OWN characters (date tokens and literals),
- * never the recording title, which the writer sanitizes separately.
+ * month and day exercise the zero-padded tokens, and a time-bearing token would
+ * render a colon here; the safe placeholder title lets the check judge the
+ * template's OWN characters (date tokens and literals), never the recording
+ * title, which the writer sanitizes separately.
  */
 const NOTE_NAME_SAMPLE_DATE = new Date(2026, 11, 30); // 2026-12-30 local
 const NOTE_NAME_SAMPLE_TITLE = 'Title';
 
 /**
- * Whether a note-name template is safe to save: every `{{...}}` token is known,
- * and the rendered result (with a safe placeholder title) survives
- * sanitizeFilename byte-for-byte on Windows, macOS, and Linux (Windows is
- * strictest). The template's own characters must survive sanitizeFilename: a
- * path separator, a Windows-reserved character, a double quote, or a square
- * bracket is rewritten to a dash, and a leading or trailing dot or space is
- * stripped, so any of those makes the render differ and the template invalid.
- * Validates the RENDERED output, so a literal comma, interior dash, period, or
- * space passes while a slash, colon, bracket, quote, or unknown token is
- * rejected. Only the template's own text is judged; the recording title (a
+ * Whether a note-name template is safe to save: its rendered result (with a safe
+ * placeholder title and the sample date) survives sanitizeFilename byte-for-byte
+ * on Windows, macOS, and Linux (Windows is strictest). Real Moment never rejects
+ * an unknown token, so this is purely a render-safety check: a path separator, a
+ * colon (e.g. from an `HH:mm` token), a Windows-reserved character, a double
+ * quote, or a square bracket is rewritten to a dash by sanitizeFilename, and a
+ * leading or trailing dot or space is stripped, so any of those makes the render
+ * differ and the template invalid. A literal comma, interior dash, period, or
+ * space passes. Only the template's own text is judged; the recording title (a
  * `{{title}}` placeholder here) is sanitized separately at write time.
  */
 export function isValidNoteNameTemplate(template: string): boolean {
-	let rendered: string;
-	try {
-		rendered = formatNoteName(template, NOTE_NAME_SAMPLE_DATE, NOTE_NAME_SAMPLE_TITLE);
-	} catch {
-		return false; // unknown token
-	}
+	const rendered = formatNoteName(template, NOTE_NAME_SAMPLE_DATE, NOTE_NAME_SAMPLE_TITLE);
 	return sanitizeFilename(rendered) === rendered;
 }
+
+/**
+ * Legacy-to-Moment token map for the one-time settings migration. Keys are the
+ * exact lowercase tokens the pre-Moment renderer understood; each value is the
+ * Moment token that produces IDENTICAL output, so the rewrite never changes an
+ * existing filename or folder. Only tokens whose meaning or casing changed under
+ * Moment appear here; `MMMM`/`MMM`/`MM`/`M`/`Q` rendered the same in both engines
+ * and pass through untouched. The three that would silently misrender if skipped:
+ * `dd` (Moment weekday "Th", not day), `d` (Moment day-of-week 0-6), and `ww`
+ * (Moment LOCALE week, not the ISO week the plugin used).
+ */
+const LEGACY_TOKEN_MIGRATION: ReadonlyMap<string, string> = new Map([
+	['yyyy', 'YYYY'],
+	['yy', 'YY'],
+	['yyyy-MM', 'YYYY-MM'],
+	['dd', 'DD'],
+	['d', 'D'],
+	['ww', 'WW'],
+]);
+
+/**
+ * Rewrite a pre-Moment `{{...}}` template to the Moment vocabulary, output-
+ * preserving (see LEGACY_TOKEN_MIGRATION). Each legacy `{{}}` held exactly one
+ * exact token (the old parser threw on anything else), so a whole-inner lookup is
+ * sufficient; `{{title}}`, already-Moment tokens, and any unrecognized content
+ * pass through unchanged. Idempotent — the map keys are lowercase-legacy, so a
+ * second pass over already-migrated (uppercase) tokens matches nothing — and it
+ * never throws, so a hand-edited bad template cannot block settings load.
+ */
+export function migrateLegacyDateTemplate(template: string): string {
+	return template.replace(/\{\{([^}]*)\}\}/g, (match, raw: string): string => {
+		const mapped = LEGACY_TOKEN_MIGRATION.get(raw.trim());
+		return mapped === undefined ? match : `{{${mapped}}}`;
+	});
+}
+
+/**
+ * A representative recording date and title for the settings live preview: a
+ * Sunday on a two-digit month and day so month-name, weekday, week, and zero-pad
+ * tokens all render something distinctive. Exported so the settings UI renders
+ * (and the tests assert against) the same sample.
+ */
+export const TEMPLATE_PREVIEW_DATE = new Date(2026, 6, 5); // 2026-07-05 local (Sunday)
+export const TEMPLATE_PREVIEW_TITLE = 'Team sync';
 
 /**
  * Build a note name from a recording title and date, using a `{{...}}` template.
@@ -769,11 +681,11 @@ export function isValidNoteNameTemplate(template: string): boolean {
  * title with any leading date STRIPPED, so the recording date REPLACES whatever
  * date the Plaud title carried (a title with no date simply has the recording
  * date placed by the template). `template` defaults to DEFAULT_NOTE_NAME_TEMPLATE
- * (`{{yyyy}}-{{MM}}-{{dd}} {{title}}`), reproducing the historical
+ * (`{{YYYY}}-{{MM}}-{{DD}} {{title}}`), reproducing the historical
  * `YYYY-MM-DD <title>` naming.
  *
  *   default:                            "04-13 Sync" (rec 2026-04-14) -> "2026-04-14 Sync"
- *   "{{title}} {{yyyy}}-{{MM}}-{{dd}}":                               -> "Sync 2026-04-14"
+ *   "{{title}} {{YYYY}}-{{MM}}-{{DD}}":                               -> "Sync 2026-04-14"
  *
  * Runs once in writeNote for both the filename (via sanitizeFilename) and the H1
  * heading (via formatMarkdown), so the template's date and layout are identical

@@ -30,7 +30,12 @@ import {
 	NoteWriter,
 	DEFAULT_NOTE_NAME_TEMPLATE,
 	isValidNoteNameTemplate,
+	migrateLegacyDateTemplate,
 	renameRecordingNote,
+	resolveSubfolder,
+	buildNoteName,
+	TEMPLATE_PREVIEW_DATE,
+	TEMPLATE_PREVIEW_TITLE,
 	sanitizeFilename,
 	type RenameFileFn,
 	type TagMode,
@@ -143,32 +148,33 @@ const DEFAULT_RIBBON_ICON = "audio-lines";
 // at createEl/setDesc) so the obsidianmd sentence-case lint, which inspects
 // literal arguments, leaves the token examples and proper nouns alone.
 const SUBFOLDER_TEMPLATE_INTRO =
-	"Optional. Files each imported note into a subfolder of the output folder, built from the recording's own date. Leave empty to keep every note in one folder. Combine tokens with any literal text; a forward slash (/) starts a new nested folder level, so {{yyyy}}/{{MM}} makes a year folder containing month folders.";
+	"Optional. Files each imported note into a subfolder of the output folder, built from the recording's own date. Leave empty to keep every note in one folder. Text inside {{ }} is a date format written in Moment style (the same syntax core Daily Notes uses); text outside the braces is kept as-is, and a forward slash (/) starts a new nested folder level, so {{YYYY}}/{{MM}} makes a year folder holding month folders. Keep your own words and separators outside the braces.";
 
-// [token, what it expands to] pairs. Numeric and zero-padded so folder names
-// sort chronologically; no locale-dependent or named-month forms.
+// [token, what it expands to] pairs. Real Moment format tokens (case matters).
+// The same vocabulary works in the note-name field, so a user learns it once.
 const SUBFOLDER_TEMPLATE_TOKENS: ReadonlyArray<readonly [string, string]> = [
-	["{{yyyy}}", "year, for example 2026"],
+	["{{YYYY}}", "year, for example 2026"],
 	["{{MM}}", "month, 01 to 12"],
-	["{{dd}}", "day, 01 to 31"],
-	["{{yyyy-MM}}", "year and month together, for example 2026-06"],
-	["{{ww}}", "ISO week number, 01 to 53"],
+	["{{MMMM}}", "month name, for example June"],
+	["{{DD}}", "day, 01 to 31"],
+	["{{dddd}}", "weekday name, for example Monday"],
+	["{{WW}}", "ISO week number, 01 to 53"],
 	["{{Q}}", "quarter, 1 to 4"],
 ];
 
 // [template, resulting folder] pairs for a June 4 2026 recording. Covers
-// nesting, a custom separator, and a non-US day-first order so the answer to
-// "can I add a dash / reorder for my locale" is visible, not buried.
+// nesting, a custom separator, a day-first order, week foldering, and two tokens
+// inside one {{ }}. Outputs verified against Moment 2.29.
 const SUBFOLDER_TEMPLATE_EXAMPLES: ReadonlyArray<readonly [string, string]> = [
-	["{{yyyy-MM}}", "2026-06 (one folder)"],
-	["{{yyyy}}/{{MM}}", "2026/06 (a 2026 folder containing a 06 folder)"],
-	["{{yyyy}}-{{MM}}", "2026-06 (one folder, your own dash separator)"],
-	["{{dd}}-{{MM}}-{{yyyy}}", "04-06-2026 (day-first order)"],
-	["{{yyyy}}/W{{ww}}", "2026/W23 (by week)"],
+	["{{YYYY-MM}}", "2026-06 (one folder)"],
+	["{{YYYY}}/{{MM}}", "2026/06 (a 2026 folder holding a 06 folder)"],
+	["{{DD}}-{{MM}}-{{YYYY}}", "04-06-2026 (day-first order)"],
+	["{{YYYY}}/W{{WW}}", "2026/W23 (by week)"],
+	["{{YYYY}}/{{MM MMMM}}", "2026/06 June (two tokens in one {{ }})"],
 ];
 
 const SUBFOLDER_TEMPLATE_TOKENS_HEADING =
-	"Tokens (mix with your own text and separators):";
+	"Tokens (mix with your own text and separators, kept outside the braces):";
 const SUBFOLDER_TEMPLATE_EXAMPLES_HEADING = "Examples:";
 const SUBFOLDER_TEMPLATE_FOOTNOTE =
 	"Applies to new imports; notes you already imported stay where they are.";
@@ -179,36 +185,37 @@ const SUBFOLDER_TEMPLATE_FOOTNOTE =
 // above: the sentence-case lint inspects literal arguments, so the token
 // examples and proper nouns stay untouched.
 const NOTE_NAME_TEMPLATE_INTRO =
-	"Sets each note's name from a template, using the same {{...}} tokens as the subfolder setting plus a {{title}} token. The recording's date fills the date tokens, and {{title}} is the recording title with a leading numeric date removed (the MM-DD and YYYY-MM-DD style forms Plaud uses), so the recording's date takes the place of the one Plaud put in the title. Put the date wherever you like, before or after {{title}}. The date property inside the note stays YYYY-MM-DD for Dataview. The whole name has to work as a note file name, so a template that would put a character that is not allowed in a note name (for example a slash, colon, or square bracket) into the name is rejected.";
+	"Sets each note's name from a template, using the same {{ }} Moment date formats as the subfolder setting plus a {{title}} token. The recording's date fills the date tokens, and {{title}} is the recording title with a leading numeric date removed (the MM-DD and YYYY-MM-DD style forms Plaud uses), so the recording's date takes the place of the one Plaud put in the title. Put the date wherever you like, before or after {{title}}, and keep your own words outside the braces. The date property inside the note stays YYYY-MM-DD for Dataview. The whole name has to work as a note file name, so a template that would put a character that is not allowed in a name (for example a slash, colon, or square bracket) into it is rejected.";
 
-// [token, what it expands to] pairs for a July 3 2026 recording.
+// [token, what it expands to] pairs for a July 3 2026 recording. Real Moment
+// tokens (case matters), the same set the subfolder field uses plus {{title}}.
 const NOTE_NAME_TEMPLATE_TOKENS: ReadonlyArray<readonly [string, string]> = [
-	["{{yyyy}}", "year, for example 2026"],
-	["{{yy}}", "2-digit year, for example 26"],
+	["{{YYYY}}", "year, for example 2026"],
+	["{{YY}}", "2-digit year, for example 26"],
 	["{{MMMM}}", "month name, for example July"],
 	["{{MMM}}", "short month, for example Jul"],
 	["{{MM}}", "month, 01 to 12"],
 	["{{M}}", "month, 1 to 12"],
-	["{{dd}}", "day, 01 to 31"],
-	["{{d}}", "day, 1 to 31"],
-	["{{yyyy-MM}}", "year and month, for example 2026-07"],
-	["{{ww}}", "ISO week number, 01 to 53"],
+	["{{DD}}", "day, 01 to 31"],
+	["{{D}}", "day, 1 to 31"],
+	["{{dddd}}", "weekday name, for example Friday"],
+	["{{WW}}", "ISO week number, 01 to 53"],
 	["{{Q}}", "quarter, 1 to 4"],
 	["{{title}}", "the recording title, with a leading numeric date (MM-DD, YYYY-MM-DD, and similar) removed"],
 ];
 
 // [template, resulting name] pairs for a July 3 2026 recording titled Team sync.
-// Covers date-first, date-last, a named month, and US order so positioning and
-// ordering are both visible.
+// Covers date-first, date-last, a combined date in one {{ }}, and US order.
+// Outputs verified against Moment 2.29.
 const NOTE_NAME_TEMPLATE_EXAMPLES: ReadonlyArray<readonly [string, string]> = [
-	["{{yyyy}}-{{MM}}-{{dd}} {{title}}", "2026-07-03 Team sync"],
-	["{{title}} {{yyyy}}-{{MM}}-{{dd}}", "Team sync 2026-07-03 (date at the end)"],
-	["{{MMM}} {{d}}, {{yyyy}} - {{title}}", "Jul 3, 2026 - Team sync"],
-	["{{MM}}-{{dd}}-{{yyyy}} {{title}}", "07-03-2026 Team sync (US order)"],
+	["{{YYYY}}-{{MM}}-{{DD}} {{title}}", "2026-07-03 Team sync"],
+	["{{title}} {{YYYY}}-{{MM}}-{{DD}}", "Team sync 2026-07-03 (date at the end)"],
+	["{{MMM D, YYYY}} - {{title}}", "Jul 3, 2026 - Team sync (one combined date token)"],
+	["{{MM}}-{{DD}}-{{YYYY}} {{title}}", "07-03-2026 Team sync (US order)"],
 ];
 
 const NOTE_NAME_TEMPLATE_TOKENS_HEADING =
-	"Tokens (mix with your own text and separators):";
+	"Tokens (mix with your own text and separators, kept outside the braces):";
 const NOTE_NAME_TEMPLATE_EXAMPLES_HEADING = "Examples:";
 const NOTE_NAME_TEMPLATE_FOOTNOTE =
 	"Applies to new imports; notes you already imported keep their current names.";
@@ -217,10 +224,26 @@ const NOTE_NAME_TEMPLATE_FOOTNOTE =
 // ISO/US/EU cover the common date orders; putting the date after {{title}} (the
 // "date at the end" example in the reference) is left to the user to type.
 const NOTE_NAME_TEMPLATE_PRESETS: ReadonlyArray<readonly [string, string]> = [
-	["ISO", "{{yyyy}}-{{MM}}-{{dd}} {{title}}"],
-	["US", "{{MM}}-{{dd}}-{{yyyy}} {{title}}"],
-	["EU", "{{dd}}-{{MM}}-{{yyyy}} {{title}}"],
+	["ISO", "{{YYYY}}-{{MM}}-{{DD}} {{title}}"],
+	["US", "{{MM}}-{{DD}}-{{YYYY}} {{title}}"],
+	["EU", "{{DD}}-{{MM}}-{{YYYY}} {{title}}"],
 ];
+
+// [label, inserted token] for the insert-token buttons above each template
+// field. Labels are friendly names; clicking inserts the exact Moment token at
+// the cursor so the common path is typo-proof (bare letters typed by hand would
+// be read as tokens). The note-name field adds Title; the subfolder field does
+// not (a title in a path segment is surprising and folders are date-only).
+const DATE_INSERT_TOKENS: ReadonlyArray<readonly [string, string]> = [
+	["Year", "{{YYYY}}"],
+	["Month #", "{{MM}}"],
+	["Month name", "{{MMMM}}"],
+	["Day", "{{DD}}"],
+	["Weekday", "{{dddd}}"],
+	["Quarter", "{{Q}}"],
+	["Week", "{{WW}}"],
+];
+const TITLE_INSERT_TOKEN: readonly [string, string] = ["Title", "{{title}}"];
 
 /**
  * Coerce a stored ribbon icon ID to a known-good value. Protects against
@@ -247,8 +270,8 @@ interface PlaudImporterSettings {
 	apiBaseUrl: string;
 	outputFolder: string;
 	subfolderTemplate: string;
-	// {{...}} template for each note's name (same token syntax as
-	// subfolderTemplate, plus {{title}}). Default "{{yyyy}}-{{MM}}-{{dd}} {{title}}"
+	// {{...}} Moment template for each note's name (same syntax as
+	// subfolderTemplate, plus {{title}}). Default "{{YYYY}}-{{MM}}-{{DD}} {{title}}"
 	// reproduces the historical naming. Validated filename-safe before it is saved.
 	noteNameTemplate: string;
 	onDuplicate: "skip" | "overwrite" | "prompt";
@@ -295,6 +318,11 @@ interface PlaudImporterSettings {
 	autoSyncEnabled: boolean;
 	// Minutes between auto-sync ticks. Coerced to [15, 1440]; default 60.
 	autoSyncIntervalMinutes: number;
+	// Schema version for one-time settings migrations. Absent (pre-0.21.0) reads
+	// as 0. Version 1 rewrote the subfolder/note-name date templates from the old
+	// bespoke lowercase tokens to real Moment tokens (issue #30). Bumped only when
+	// a stored-settings shape needs an output-preserving rewrite on load.
+	settingsVersion: number;
 }
 
 const DEFAULT_SETTINGS: PlaudImporterSettings = {
@@ -329,6 +357,7 @@ const DEFAULT_SETTINGS: PlaudImporterSettings = {
 	autoUpdatePlaudTitle: false,
 	autoSyncEnabled: false,
 	autoSyncIntervalMinutes: 60,
+	settingsVersion: 1,
 };
 
 // Adapt Obsidian's requestUrl to the PlaudHttpFetcher shape the client
@@ -1458,6 +1487,12 @@ export default class PlaudImporterPlugin extends Plugin {
 
 	async loadSettings() {
 		const stored = (await this.loadData()) as Partial<PlaudImporterSettings> | null;
+		// Read the stored version BEFORE the merge: an existing pre-0.21.0
+		// data.json has no settingsVersion field, and Object.assign would fill it
+		// from DEFAULT_SETTINGS (1), hiding that a migration is due. An absent
+		// field is version 0.
+		const storedVersion =
+			typeof stored?.settingsVersion === "number" ? stored.settingsVersion : 0;
 		this.settings = Object.assign({}, DEFAULT_SETTINGS, stored ?? {});
 		// Repair a blank stored output folder back to the default. The
 		// declarative control can persist an empty string; consumers expect a
@@ -1467,6 +1502,21 @@ export default class PlaudImporterPlugin extends Plugin {
 			this.settings.outputFolder.trim().length === 0
 		) {
 			this.settings.outputFolder = "Plaud";
+		}
+		// v1 (issue #30): the date-template engine moved from bespoke lowercase
+		// tokens to real Moment. Rewrite the two stored templates once, output-
+		// preserving (see migrateLegacyDateTemplate), so an existing install's
+		// filenames and folders do not change. Idempotent and version-gated, so a
+		// fresh install (already at the current default) is a harmless no-op.
+		if (storedVersion < 1) {
+			this.settings.noteNameTemplate = migrateLegacyDateTemplate(
+				this.settings.noteNameTemplate,
+			);
+			this.settings.subfolderTemplate = migrateLegacyDateTemplate(
+				this.settings.subfolderTemplate,
+			);
+			this.settings.settingsVersion = 1;
+			await this.saveSettings();
 		}
 	}
 
@@ -2271,12 +2321,46 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 		});
 	}
 
+	// Inserts a token at the text field's cursor (replacing any selection) and
+	// keeps focus, so the insert-token buttons build a template without the user
+	// hand-typing braces (bare letters typed inside braces would be read as Moment
+	// tokens). TextComponent.setValue is programmatic and does not fire onChange,
+	// so callers persist and refresh the preview explicitly after calling this.
+	private insertTokenAtCursor(field: TextComponent, token: string): void {
+		const input = field.inputEl;
+		const value = input.value;
+		const start = input.selectionStart ?? value.length;
+		const end = input.selectionEnd ?? value.length;
+		field.setValue(value.slice(0, start) + token + value.slice(end));
+		const caret = start + token.length;
+		input.focus();
+		input.setSelectionRange(caret, caret);
+	}
+
+	// Adds a full-width live-preview line to a stacked template row and returns an
+	// updater. The updater renders the given template against the shared sample
+	// recording (TEMPLATE_PREVIEW_DATE) so a wrong token or an illegal character is
+	// visible before any file is written. This is the real safety net now that
+	// Moment does not throw on unknown tokens.
+	private attachTemplatePreview(
+		setting: Setting,
+		render: (template: string) => string,
+	): (template: string) => void {
+		const previewEl = setting.controlEl.createDiv({
+			cls: "plaud-importer-template-preview",
+		});
+		return (template: string) => {
+			previewEl.setText(render(template));
+		};
+	}
+
 	// Renders the subfolder-template row: appends the token reference (a list,
-	// not a cramped one-line desc) into the description, then adds the text
-	// control bound to subfolderTemplate. Shared by the declarative path
-	// (via the item's render callback) and the imperative display() fallback,
-	// so both Obsidian versions show the identical documentation. Building the
-	// DOM fresh on each call avoids any DocumentFragment-reuse pitfalls.
+	// not a cramped one-line desc) into the description, then adds insert-token
+	// buttons, the text control bound to subfolderTemplate, and a live preview.
+	// Shared by the declarative path (via the item's render callback) and the
+	// imperative display() fallback, so both Obsidian versions show the identical
+	// documentation. Building the DOM fresh on each call avoids any
+	// DocumentFragment-reuse pitfalls.
 	private renderSubfolderTemplateControl(setting: Setting): void {
 		// Stack the row: the token/example lists read full-width on top, the text
 		// field full-width below, rather than crammed into a narrow left column.
@@ -2298,14 +2382,49 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 		}
 		docEl.createDiv({ text: SUBFOLDER_TEMPLATE_FOOTNOTE });
 
-		setting.addText((text) =>
+		// field is captured so an insert-token button can edit the visible field,
+		// not just the saved value; updatePreview is assigned after the preview DOM
+		// exists (created last so it sits below the field) but referenced earlier by
+		// the button/field closures, which only run on later user interaction.
+		let field: TextComponent | null = null;
+		let updatePreview: (template: string) => void = () => {};
+		for (const [label, token] of DATE_INSERT_TOKENS) {
+			setting.addButton((button) =>
+				button
+					.setButtonText(label)
+					.setTooltip(`Insert ${token}`)
+					.onClick(async () => {
+						if (field === null) return;
+						this.insertTokenAtCursor(field, token);
+						const value = field.getValue();
+						await this.applyControlChange("subfolderTemplate", value);
+						updatePreview(value);
+					}),
+			);
+		}
+		setting.addText((text) => {
+			field = text;
 			text
-				.setPlaceholder("{{yyyy-MM}}")
+				.setPlaceholder("{{YYYY}}/{{MM}}")
 				.setValue(this.readSettingString("subfolderTemplate"))
 				.onChange(async (value) => {
 					await this.applyControlChange("subfolderTemplate", value);
-				}),
-		);
+					updatePreview(value);
+				});
+		});
+		updatePreview = this.attachTemplatePreview(setting, (template) => {
+			if (template.trim() === "") {
+				return "Preview: no subfolder (every note in the output folder)";
+			}
+			try {
+				return `Preview folder: ${resolveSubfolder(template, TEMPLATE_PREVIEW_DATE)}`;
+			} catch (err) {
+				return `Preview (not usable): ${
+					err instanceof Error ? err.message : String(err)
+				}`;
+			}
+		});
+		updatePreview(this.readSettingString("subfolderTemplate"));
 	}
 
 	// Renders the note-name template row: the token reference and examples (lists,
@@ -2333,9 +2452,27 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 		}
 		docEl.createDiv({ text: NOTE_NAME_TEMPLATE_FOOTNOTE });
 
-		// Captured so a preset button can update the visible field, not just the
-		// saved value.
+		// field is captured so insert-token and preset buttons can edit the visible
+		// field, not just the saved value; updatePreview is assigned after the
+		// preview DOM exists (created last, so it sits below the field) but is
+		// referenced by the earlier closures, which only run on user interaction.
 		let field: TextComponent | null = null;
+		let updatePreview: (template: string) => void = () => {};
+		// Insert-token buttons (date set + Title). Unlike the subfolder field, the
+		// note-name field persists on BLUR, so an insert only edits the field and
+		// refreshes the preview; the blur listener commits and validates once.
+		for (const [label, token] of [...DATE_INSERT_TOKENS, TITLE_INSERT_TOKEN]) {
+			setting.addButton((button) =>
+				button
+					.setButtonText(label)
+					.setTooltip(`Insert ${token}`)
+					.onClick(() => {
+						if (field === null) return;
+						this.insertTokenAtCursor(field, token);
+						updatePreview(field.getValue());
+					}),
+			);
+		}
 		setting.addText((text) => {
 			field = text;
 			text
@@ -2343,12 +2480,16 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 				.setValue(this.readSettingString("noteNameTemplate"));
 			// Validate and persist on BLUR, not on every keystroke. Editing inside a
 			// {{...}} token passes through invalid intermediate states (a half-typed
-			// {{yyy}}), and validating per keystroke would flash a Notice on each one.
+			// {{YYYY}}), and validating per keystroke would flash a Notice on each one.
 			// On blur, commitNoteNameTemplate validates once and then reflects the
 			// saved value, so a rejected or emptied entry does not linger as stale
-			// text. Preset buttons remain an explicit commit.
+			// text. Preset buttons remain an explicit commit. The preview updates
+			// live on every keystroke, independent of when the value is persisted.
+			text.inputEl.addEventListener("input", () => {
+				updatePreview(text.getValue());
+			});
 			text.inputEl.addEventListener("blur", () => {
-				void this.commitNoteNameTemplate(text);
+				void this.commitNoteNameTemplate(text, updatePreview);
 			});
 		});
 		for (const [label, template] of NOTE_NAME_TEMPLATE_PRESETS) {
@@ -2356,17 +2497,38 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 				button.setButtonText(label).onClick(async () => {
 					field?.setValue(template);
 					await this.applyControlChange("noteNameTemplate", template);
+					updatePreview(template);
 				}),
 			);
 		}
+		// Preview shows the rendered note name for a sample recording, plus a plain
+		// warning when the template would produce an illegal file name (Moment no
+		// longer rejects it, so the save-time guard would refuse it instead).
+		updatePreview = this.attachTemplatePreview(setting, (template) => {
+			const name = buildNoteName(
+				TEMPLATE_PREVIEW_TITLE,
+				TEMPLATE_PREVIEW_DATE,
+				template,
+			);
+			if (template.trim() !== "" && !isValidNoteNameTemplate(template)) {
+				return `Preview: ${name} (not a valid note name; a slash, colon, or bracket is not allowed, so this will not be saved)`;
+			}
+			return `Preview: ${name}`;
+		});
+		updatePreview(this.readSettingString("noteNameTemplate"));
 	}
 
 	// Validates and persists the note-name template field on blur (see
 	// renderNoteNameTemplateControl), then reflects the saved value back into the
-	// field so a rejected or emptied entry does not linger as stale text.
-	private async commitNoteNameTemplate(text: TextComponent): Promise<void> {
+	// field so a rejected or emptied entry does not linger as stale text, and
+	// refreshes the preview to match the value that was actually saved.
+	private async commitNoteNameTemplate(
+		text: TextComponent,
+		updatePreview: (template: string) => void,
+	): Promise<void> {
 		await this.applyControlChange("noteNameTemplate", text.getValue());
 		text.setValue(this.readSettingString("noteNameTemplate"));
+		updatePreview(text.getValue());
 	}
 
 	// Builds a Setting with name/desc set. Desc passes as an argument rather

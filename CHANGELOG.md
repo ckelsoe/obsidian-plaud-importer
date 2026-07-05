@@ -4,6 +4,15 @@ All notable changes to Plaud Importer will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- **Date formats in the subfolder and note-name templates now use real Moment syntax** (the same format the core Daily Notes plugin uses), and every token works in both fields. You can now write any date layout, including named months and weekdays, and put a whole layout in one `{{ }}`: `{{YYYY/MM MMMM/YYYY-MM-DD dddd}}` files a recording under `2026/07 July/2026-07-05 Sunday`. Tokens are the standard Moment ones, so `{{YYYY}}` is the year, `{{MM}}` the month, `{{DD}}` the day, `{{dddd}}` the weekday name, `{{WW}}` the ISO week, and `{{Q}}` the quarter. Keep your own words outside the braces, since bare letters inside are read as date tokens. This resolves a report that `{{YYYY}}`, combined tokens like `{{MM MMMM}}`, and a weekday token did not work, and that named months worked only in the note name and not the subfolder.
+- Your existing subfolder and note-name templates are migrated automatically the first time this version loads, and the migration is output-preserving: every note lands with exactly the same name and folder as before.
+
+### Added
+
+- **Live preview and insert-token buttons on both template fields.** Each template setting now shows the resulting folder or note name for a sample recording as you type, and a row of buttons (Year, Month, Day, Weekday, Quarter, Week, and Title on the note-name field) inserts the correct token at the cursor, so you do not have to remember the exact spelling. The preview also flags a template that would produce an invalid note name before you save it.
+
 ## [0.20.0] - 2026-07-04
 
 ### Added

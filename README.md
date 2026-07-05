@@ -63,8 +63,8 @@ Plaud does not offer an official API yet, so this plugin works by using Plaud's 
 - **Optional audio download.** Turn on **Audio** to save each recording's original audio next to the note and embed it as a playable clip under an `Audio` heading. Off by default because audio is large (roughly 15 MB per hour). Missing or expired audio never fails an import.
 - **Background auto-sync (optional, off by default).** Checks Plaud on a schedule and imports new recordings automatically, and re-imports recordings you changed in Plaud (edited transcript, corrected speaker names). A re-import overwrites that note and its artifacts with Plaud's current version; unchanged notes are never touched. See [Auto-sync](#auto-sync).
 - **Placeholder notes for unprocessed recordings.** When Plaud has a recording but no transcript or summary yet, the importer writes a small placeholder note (recording ID plus a link back to Plaud) instead of a bare failure, and a later import replaces it automatically. Optional, on by default.
-- **Organize into dated subfolders** — an optional path template (for example `{{yyyy-MM}}`) files notes into per-month, per-week, or per-quarter folders built from the recording date, instead of one flat folder. Attachments follow their note.
-- **Configurable note names.** A note-name template (the same tokens as the subfolder setting, plus a `{{title}}` token) puts the recording date wherever you want it and formats every note name the same way. A Plaud title with no date gets a `YYYY-MM-DD` prefix so notes sort chronologically. The default reproduces the previous `YYYY-MM-DD <title>` naming, so nothing changes unless you set it.
+- **Organize into dated subfolders** — an optional path template (for example `{{YYYY-MM}}`) files notes into per-month, per-week, or per-quarter folders built from the recording date, instead of one flat folder. Attachments follow their note.
+- **Configurable note names.** A note-name template (the same Moment date formats as the subfolder setting, plus a `{{title}}` token) puts the recording date wherever you want it and formats every note name the same way. A Plaud title with no date gets a `YYYY-MM-DD` prefix so notes sort chronologically. The default reproduces the previous `YYYY-MM-DD <title>` naming, so nothing changes unless you set it.
 - **Rename a recording from Obsidian.** A **Rename recording** command and a **Rename imported recording** right-click item rename a note and its `-assets` folder together, keeping embedded images valid. Renaming a Plaud note in the file explorer also moves its assets folder to match. And when you rename a recording in Plaud, the note and its assets folder are renamed on the next sync instead of leaving a stale-named note behind.
 - **Optionally sync a rename back to Plaud (off by default).** When you rename a recording in Obsidian, the plugin can update that recording's title in Plaud so the two stay in sync. This is opt-in and the only thing the plugin ever writes back to Plaud; with it off, renames stay entirely local. See [Renaming recordings](#renaming-recordings).
 - **"Imported" and "Update available" badges in the recording list.** Each row whose `plaud-id` already exists in your output folder shows an Imported pill; click it to open the existing note. If that recording changed in Plaud since you imported it, the row shows an Update available badge instead, so you can spot and re-import a stale note by hand. Re-importing is still possible and honors your duplicate-handling setting.
@@ -165,44 +165,46 @@ Folder inside your vault where imported notes are written. Defaults to `Plaud`. 
 
 By default every note lands directly in the output folder. To keep a growing library organized, set a **Subfolder template** that files each note into a subfolder built from the recording's date. Leave it empty to keep the flat layout.
 
-A forward slash (`/`) starts a new nested folder level, so `{{yyyy}}/{{MM}}` makes a year folder with month folders inside it. Everything else (dashes, spaces, words) stays within a single folder name.
+Text inside `{{ }}` is a date format written in [Moment](https://momentjs.com/docs/#/displaying/format/) style, the same syntax the core Daily Notes plugin uses. Text outside the braces is kept as-is, and a forward slash (`/`) starts a new nested folder level, so `{{YYYY}}/{{MM}}` makes a year folder with month folders inside it. Keep your own words and separators outside the braces, because bare letters inside are read as date tokens.
 
-Tokens (combine with your own text and separators):
+Common tokens (case matters; the same set works in the note-name field):
 
 | Token | Expands to |
 | --- | --- |
-| `{{yyyy}}` | Year, for example `2026` |
+| `{{YYYY}}` | Year, for example `2026` |
 | `{{MM}}` | Month, `01` to `12` |
-| `{{dd}}` | Day, `01` to `31` |
-| `{{yyyy-MM}}` | Year and month, for example `2026-06` |
-| `{{ww}}` | ISO week number, `01` to `53` |
+| `{{MMMM}}` | Month name, for example `June` |
+| `{{DD}}` | Day, `01` to `31` |
+| `{{dddd}}` | Weekday name, for example `Monday` |
+| `{{WW}}` | ISO week number, `01` to `53` |
 | `{{Q}}` | Quarter, `1` to `4` |
 
 Examples (folder for a June 4 2026 recording):
 
 | Template | Resulting folder |
 | --- | --- |
-| `{{yyyy-MM}}` | `2026-06` (one folder) |
-| `{{yyyy}}/{{MM}}` | `2026/06` (a `2026` folder containing a `06` folder) |
-| `{{yyyy}}-{{MM}}` | `2026-06` (one folder, your own dash) |
-| `{{dd}}-{{MM}}-{{yyyy}}` | `04-06-2026` (one folder, day-first order) |
-| `{{yyyy}}/W{{ww}}` | `2026/W23` (a `2026` folder containing a `W23` folder) |
+| `{{YYYY-MM}}` | `2026-06` (one folder) |
+| `{{YYYY}}/{{MM}}` | `2026/06` (a `2026` folder containing a `06` folder) |
+| `{{DD}}-{{MM}}-{{YYYY}}` | `04-06-2026` (one folder, day-first order) |
+| `{{YYYY}}/W{{WW}}` | `2026/W23` (a `2026` folder containing a `W23` folder) |
+| `{{YYYY}}/{{MM MMMM}}` | `2026/06 June` (two tokens in one `{{ }}`) |
 
-The numbers are fixed and not locale dependent; you choose the order and the separators, so any date layout works. The folder is built from the recording's own date, so re-importing always resolves to the same place. A recording with no usable date goes to an `_undated` subfolder.
+You choose the order and the separators, so any date layout works, and a whole layout can live in one `{{ }}`. A live preview under the field shows the resulting folder as you type, and insert-token buttons add the correct token at the cursor. The folder is built from the recording's own date, so re-importing always resolves to the same place. A recording with no usable date goes to an `_undated` subfolder.
 
 The template applies to **new imports**; notes you already imported stay where they are. Each note's `-assets` folder follows it into the same subfolder. If you change the template later, re-importing an existing recording updates the note in place instead of creating a duplicate.
 
 ### Note name
 
-By default each note is named `YYYY-MM-DD <title>`, using the recording's own date. To control the format, set a **Note name template** that builds the name from the same `{{...}}` date tokens as the subfolder setting, plus a `{{title}}` token for the recording title. Put the date before or after the title, in any order and with your own separators:
+By default each note is named `YYYY-MM-DD <title>`, using the recording's own date. To control the format, set a **Note name template** that builds the name from the same `{{ }}` Moment date formats as the subfolder setting, plus a `{{title}}` token for the recording title. Put the date before or after the title, in any order and with your own separators:
 
 | Template | Resulting note name |
 | --- | --- |
-| `{{yyyy}}-{{MM}}-{{dd}} {{title}}` | `2026-07-03 Team sync` |
-| `{{title}} {{yyyy}}-{{MM}}-{{dd}}` | `Team sync 2026-07-03` |
+| `{{YYYY}}-{{MM}}-{{DD}} {{title}}` | `2026-07-03 Team sync` |
+| `{{title}} {{YYYY}}-{{MM}}-{{DD}}` | `Team sync 2026-07-03` |
+| `{{MMM D, YYYY}} - {{title}}` | `Jul 3, 2026 - Team sync` (one combined date token) |
 | `{{title}}` | `Team sync` (no date in the name) |
 
-Preset buttons fill in ISO, US, and EU orders, or type your own. The recording's own date replaces any date already in the Plaud title, so a title like `04/13 Meeting` becomes the recording's date, and a title with no date gets one. A note name has to be a valid filename, so a template with a slash, colon, or unknown token is rejected. The `date` property inside each note stays `YYYY-MM-DD` regardless, for Dataview and sorting.
+Preset buttons fill in ISO, US, and EU orders, insert-token buttons add a token at the cursor, and a live preview shows the resulting name as you type, or type your own. Keep your own words outside the braces, since bare letters inside are read as date tokens. The recording's own date replaces any date already in the Plaud title, so a title like `04/13 Meeting` becomes the recording's date, and a title with no date gets one. A note name has to be a valid filename, so a template whose result would contain a slash, colon, or square bracket is rejected. The `date` property inside each note stays `YYYY-MM-DD` regardless, for Dataview and sorting.
 
 Like the subfolder setting, this applies to **new imports**; existing notes are renamed only when you rename them yourself or when the recording changes in Plaud (see [Renaming recordings](#renaming-recordings)).
 
