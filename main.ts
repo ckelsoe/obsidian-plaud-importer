@@ -1405,6 +1405,12 @@ export default class PlaudImporterPlugin extends Plugin {
 		// message to blink past.
 		const notice = new Notice(frag, 0);
 		this.actionNotices.add(notice);
+		// Drop the reference whenever the notice is clicked away (manual dismiss
+		// or the action itself), so dismissed notices do not accumulate in the
+		// Set for the plugin's lifetime.
+		notice.messageEl.addEventListener("click", () => {
+			this.actionNotices.delete(notice);
+		});
 		const activate = (): void => {
 			this.actionNotices.delete(notice);
 			notice.hide();
@@ -1445,7 +1451,10 @@ export default class PlaudImporterPlugin extends Plugin {
 			if (ok) {
 				new Notice("Plaud reconnected.");
 				this.resumeAutoSyncIfPaused();
-			} else {
+			} else if (!this.reauthInFlight) {
+				// A false with reauthInFlight still set means another sign-in
+				// window is already open (reauthenticate short-circuited and
+				// already said so); don't contradict it with "sign-in closed".
 				new Notice("Plaud sign-in closed. Still disconnected.");
 			}
 			return ok;
@@ -1778,8 +1787,10 @@ export default class PlaudImporterPlugin extends Plugin {
 	// adopt the redirected region (apiBaseUrl) so a region-redirected user is not
 	// stranded on a stale host. Returns true once a token is captured and saved,
 	// false if the user closed the window or the login API is unavailable on this
-	// build. Shared by the settings tab and the import modal's inline re-auth; it
-	// shows no Notice itself so each caller can phrase its own.
+	// build. Shared by the settings tab and the import modal's inline re-auth.
+	// On the happy and closed paths it shows no Notice, so each caller phrases
+	// its own; the one exception is the single-flight guard, which shows a
+	// "sign-in is already open" Notice and returns false when a window is open.
 	async reauthenticate(): Promise<boolean> {
 		// One sign-in window at a time. Concurrent windows share the same
 		// Electron capture partition and would clobber each other's token
