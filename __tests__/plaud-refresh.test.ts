@@ -116,6 +116,14 @@ describe('parseRefreshResponse', () => {
 		expect(parsed.kind).toBe('failure');
 	});
 
+	it('normalizes a switch host with a trailing dot and mixed case', () => {
+		const parsed = parseRefreshResponse(
+			{ status: 100, data: { domains: { api: 'https://API-EUC1.Plaud.AI.' } } },
+			NOW,
+		);
+		expect(parsed).toEqual({ kind: 'switch', apiBaseUrl: 'https://api-euc1.plaud.ai' });
+	});
+
 	it('rejects an embedded-credential host', () => {
 		const parsed = parseRefreshResponse(
 			{ status: 100, data: { domains: { api: 'https://api.plaud.ai@evil.example' } } },
@@ -221,6 +229,18 @@ describe('refreshPlaudSession', () => {
 		};
 		const result = await refreshPlaudSession({ ...base, refreshToken: null, transport: t });
 		expect(result).toEqual({ ok: false, reason: 'transport error: offline' });
+	});
+
+	it('fails closed on an untrusted api base url without sending credentials', async () => {
+		const t = transport([{ status: 200, json: { status: 0, access_token: FRESH_WT } }]);
+		const result = await refreshPlaudSession({
+			apiBaseUrl: 'https://evil.example',
+			now: () => NOW,
+			refreshToken: FRESH_WRT,
+			transport: t,
+		});
+		expect(result.ok).toBe(false);
+		expect(t.calls).toHaveLength(0);
 	});
 
 	it('sends no Cookie header when the partition has no cookies', async () => {

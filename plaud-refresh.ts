@@ -233,7 +233,11 @@ function normalizePlaudOrigin(value: string): string | null {
 	if (!ALLOWED_EXACT_HOSTS.has(host) && !host.endsWith(ALLOWED_HOST_SUFFIX)) {
 		return null;
 	}
-	return `https://${parsed.host}`.replace(/\/+$/, '');
+	// Rebuild from the NORMALIZED hostname (lowercased, trailing dot stripped)
+	// plus any explicit port, not parsed.host — which would carry a trailing dot
+	// or mixed case through and break equality and cookie/host matching.
+	const portSuffix = parsed.port === '' ? '' : `:${parsed.port}`;
+	return `https://${host}${portSuffix}`;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -256,8 +260,18 @@ export async function refreshPlaudSession(
 			? options.refreshToken.trim().replace(/^bearer\s+/i, '')
 			: null;
 
-	const attempt = async (baseUrl: string, depth: number): Promise<RefreshResult> => {
-		const origin = baseUrl.replace(/\/+$/, '');
+	// Fail closed: the request carries credentials (cookies + refresh bearer), so
+	// the destination is a trust boundary. Validate the caller-provided base host
+	// too, not just region-switch targets, so a corrupted stored apiBaseUrl can
+	// never steer the credentials at an arbitrary host.
+	const startOrigin = normalizePlaudOrigin(options.apiBaseUrl);
+	if (startOrigin === null) {
+		return { ok: false, reason: 'api base url is not a trusted Plaud https origin' };
+	}
+
+	const attempt = async (origin: string, depth: number): Promise<RefreshResult> => {
+		// `origin` is always a normalized trusted origin (startOrigin, or a
+		// validated switch target).
 		const url = `${origin}${REFRESH_ENDPOINT_PATH}`;
 		const headers: Record<string, string> = {
 			Accept: 'application/json',
@@ -312,7 +326,7 @@ export async function refreshPlaudSession(
 		};
 	};
 
-	return attempt(options.apiBaseUrl, 0);
+	return attempt(startOrigin, 0);
 }
 
 // Debug breadcrumb. Never logs a token, cookie, or the Authorization header —
