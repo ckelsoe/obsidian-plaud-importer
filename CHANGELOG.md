@@ -4,6 +4,11 @@ All notable changes to Plaud Importer will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **`{{title}}` in the subfolder template.** The subfolder setting now supports the `{{title}}` token, so you can file each recording in its own folder named after it (a "folder note" layout that pairs well with plugins like Notebook Navigator): `{{YYYY}}/{{title}}` files a July recording titled Team sync under `2026/Team sync`. The title has any leading date removed, the same as in the note name, so the folder and note names line up. A slash or backslash in a title is flattened to your replacement character so it stays a single folder instead of creating an accidental nested level, and a recording whose title is only a date files under `_untitled` rather than dropping into the output root. Resolves the follow-up on issue #30.
+- **Configurable forbidden-character replacement.** A new setting chooses the character that stands in for a slash, colon, or other character a file name or folder cannot contain (for example one that appears in a recording title). It defaults to a dash and applies to both note names and folder names. Set it to `_` or any other single safe character; the setting refuses a value that would itself be an illegal character.
+
 ## [0.22.1] - 2026-07-06
 
 ### Fixed

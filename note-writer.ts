@@ -140,6 +140,14 @@ export interface NoteWriterOptions {
 	 */
 	readonly datetimeTemplate?: string;
 	/**
+	 * Character that replaces a forbidden filename/folder character (the Windows
+	 * set plus control codes; brackets too in a note name). Defaults to '-'.
+	 * Applied to both the note name and each resolved subfolder segment, and to
+	 * the path separators inside an injected `{{title}}`. The settings layer
+	 * validates it is itself a safe single character before it is stored.
+	 */
+	readonly forbiddenCharReplacement?: string;
+	/**
 	 * Optional vault-wide lookup from a `plaud-id` to the path of an existing
 	 * note for that recording, anywhere under the output folder. Lets the
 	 * writer find a prior import that lives in a DIFFERENT subfolder (for
@@ -269,11 +277,32 @@ function isReservedDeviceName(name: string): boolean {
 const MAX_PATH_COMPONENT_LENGTH = 200;
 
 /**
+ * Whether a string is usable as the forbidden-character replacement. It must be
+ * a single character that does not itself reintroduce the problem the sanitizer
+ * fixes: not a forbidden filename/folder character, not a path separator, not a
+ * bracket (stripped from note names for wikilink safety), not a dot or space
+ * (Windows drops a trailing dot/space, recreating the very collision the
+ * sanitizer prevents), and not a control code. Empty fails. Shared by the
+ * settings validation and NoteWriter construction so both apply one rule.
+ */
+export function isValidReplacementChar(value: string): boolean {
+	if (value.length !== 1) {
+		return false;
+	}
+	// eslint-disable-next-line no-control-regex -- reject control codes as a replacement
+	return !/[<>:"/\\|?*[\]. \x00-\x1f]/.test(value);
+}
+
+/**
  * Sanitize a Plaud recording title into a filename that is legal on Windows,
  * macOS, and Linux and doesn't collide with Obsidian's wikilink parser.
  * Never throws, always returns a non-empty string.
  */
-export function sanitizeFilename(title: string): string {
+export function sanitizeFilename(
+	title: string,
+	replacement: string = '-',
+	emptyFallback: string = 'Untitled',
+): string {
 	// Strip leading/trailing whitespace first so subsequent length checks
 	// don't operate on padded input.
 	let out = title.trim();
@@ -285,11 +314,13 @@ export function sanitizeFilename(title: string): string {
 
 	// Now replace the Windows-forbidden chars, square brackets (wikilink
 	// collision), and any remaining non-whitespace control characters with
-	// dashes. Whitespace control chars like \t and \n were already handled
-	// by the step above, so what's left is things like NUL (\x00) and the
-	// other non-whitespace control codes.
+	// the configured replacement (default '-'). Whitespace control chars like
+	// \t and \n were already handled by the step above, so what's left is
+	// things like NUL (\x00) and the other non-whitespace control codes. A
+	// function replacer is used so a replacement containing `$` is inserted
+	// literally, not treated as a regex back-reference.
 	// eslint-disable-next-line no-control-regex -- intentional: this class strips NUL and other non-whitespace control codes from the filename
-	out = out.replace(/[<>:"/\\|?*\x00-\x08\x0b\x0c\x0e-\x1f[\]]/g, '-');
+	out = out.replace(/[<>:"/\\|?*\x00-\x08\x0b\x0c\x0e-\x1f[\]]/g, () => replacement);
 
 	// Strip trailing dots and spaces — Windows silently drops them from
 	// filenames, which causes "File.md" and "File .md" to collide.
@@ -312,9 +343,11 @@ export function sanitizeFilename(title: string): string {
 	}
 
 	// Empty-after-sanitization fallback. This can happen for titles that are
-	// entirely punctuation or whitespace.
+	// entirely punctuation or whitespace. Defaults to 'Untitled' (a note must have
+	// a name); the subfolder path passes '' so an empty title falls through to the
+	// _untitled bucket instead of a folder literally named 'Untitled'.
 	if (out.length === 0) {
-		out = 'Untitled';
+		out = emptyFallback;
 	}
 
 	return out;
@@ -455,9 +488,10 @@ function formatDateYmd(d: Date): string {
  *
  * Moment formats in LOCAL time, the same calendar basis as formatDateYmd, so a
  * note name, its subfolder, and the `date:` frontmatter never disagree about
- * which day a recording belongs to. When `title` is provided (the note-name
- * path) a `{{title}}` token is replaced with it BEFORE the Moment call; the
- * subfolder path passes no title, so `{{title}}` is not special there.
+ * which day a recording belongs to. When `title` is provided a `{{title}}` token
+ * is replaced with it BEFORE the Moment call. Both the note-name and the subfolder
+ * paths pass a title (the subfolder flattens its path separators first); a caller
+ * that passes no title gets no `{{title}}` substitution.
  *
  * The formatter is pinned to the English locale. Obsidian's `moment` otherwise
  * follows the app's display language, which would make `{{MMMM}}`/`{{dddd}}`
@@ -508,9 +542,11 @@ export function formatDatetime(template: string, date: Date): string {
  * intentionally excluded: the caller splits on it, so a segment never contains
  * one.
  */
-function sanitizeFolderSegment(segment: string): string {
+function sanitizeFolderSegment(segment: string, replacement: string = '-'): string {
+	// A function replacer inserts the replacement literally even when it contains
+	// a `$` (which would otherwise be read as a regex back-reference).
 	// eslint-disable-next-line no-control-regex -- intentional: strip ASCII control codes a folder segment cannot hold
-	return segment.replace(/[<>:"\\|?*\x00-\x1f]/g, '-');
+	return segment.replace(/[<>:"\\|?*\x00-\x1f]/g, () => replacement);
 }
 
 /**
@@ -574,7 +610,12 @@ function assertUsableFolderSegment(segment: string): string {
  *    rejected (assertUsableFolderSegment throws), rather than silently rewritten,
  *    so the settings guard refuses the template instead of relocating a folder.
  */
-export function resolveSubfolder(template: string, date: Date): string {
+export function resolveSubfolder(
+	template: string,
+	date: Date,
+	title?: string,
+	replacement: string = '-',
+): string {
 	if (template.trim() === '') {
 		return '';
 	}
@@ -582,12 +623,39 @@ export function resolveSubfolder(template: string, date: Date): string {
 	if (!dateValid && /\{\{[^}]*\}\}/.test(template)) {
 		return '_undated';
 	}
-	return normalizeFolderPath(expandDateTemplate(template, date))
+	// {{title}} support (issue #30 follow-up): strip a leading date from the title
+	// (parity with the note name, which also uses titleWithoutLeadingDate), then
+	// sanitize it into a single legal folder segment with the configured
+	// replacement. sanitizeFilename flattens path separators (so a title slash
+	// cannot add a folder level), rewrites other forbidden characters, prefixes a
+	// reserved device name, strips a trailing dot/space, and clamps the length, so
+	// an arbitrary recording title can never make assertUsableFolderSegment throw
+	// and abort the import; only authored template literals should be refused. An
+	// empty result (a title that was only a date) is kept empty so the _untitled
+	// bucket below fires, not sanitizeFilename's 'Untitled' fallback.
+	let safeTitle: string | undefined;
+	if (title !== undefined) {
+		// emptyFallback '' so a title that reduces to nothing (only a date, or only
+		// punctuation like '.') yields an empty segment for the _untitled bucket
+		// below, instead of sanitizeFilename's 'Untitled' fallback.
+		safeTitle = sanitizeFilename(titleWithoutLeadingDate(title), replacement, '');
+	}
+	const resolved = normalizeFolderPath(expandDateTemplate(template, date, safeTitle))
 		.split('/')
 		// Drop empty/whitespace-only segments so nesting stays as authored.
 		.filter((segment) => segment.trim() !== '')
-		.map((segment) => assertUsableFolderSegment(sanitizeFolderSegment(segment)))
+		.map((segment) =>
+			assertUsableFolderSegment(sanitizeFolderSegment(segment, replacement)),
+		)
 		.join('/');
+	// Empty-title bucket: a template that is only {{title}} (or otherwise renders
+	// entirely empty because the title stripped to nothing) would collapse to no
+	// subfolder, silently dropping the note into the output root. Bucket it,
+	// mirroring _undated, so the nesting the user asked for stays intentional.
+	if (resolved === '' && /\{\{\s*title\s*}}/.test(template)) {
+		return '_untitled';
+	}
+	return resolved;
 }
 
 /**
@@ -1960,6 +2028,7 @@ export class NoteWriter {
 	private readonly subfolderTemplate: string;
 	private readonly noteNameTemplate: string;
 	private readonly datetimeTemplate: string;
+	private readonly forbiddenCharReplacement: string;
 	private readonly existingPathForPlaudId?: (plaudId: string) => string | null;
 	private readonly migrateExistingNote?: (
 		oldNotePath: string,
@@ -1997,6 +2066,14 @@ export class NoteWriter {
 				? requestedTemplate
 				: DEFAULT_NOTE_NAME_TEMPLATE;
 		this.datetimeTemplate = options.datetimeTemplate ?? '';
+		// Defense-in-depth: the settings layer validates this, but a headless caller
+		// or hand-edited data.json could pass anything, so fall back to '-' for an
+		// unusable value rather than sanitizing with a forbidden character.
+		this.forbiddenCharReplacement = isValidReplacementChar(
+			options.forbiddenCharReplacement ?? '',
+		)
+			? (options.forbiddenCharReplacement as string)
+			: '-';
 		this.existingPathForPlaudId = options.existingPathForPlaudId;
 		this.migrateExistingNote = options.migrateExistingNote;
 		this.onDuplicate = options.onDuplicate;
@@ -2016,7 +2093,12 @@ export class NoteWriter {
 	 * writePlaceholderNote so both land a recording at the exact same path.
 	 */
 	private async resolveTargetPath(recording: Recording): Promise<string> {
-		const subfolder = resolveSubfolder(this.subfolderTemplate, recording.createdAt);
+		const subfolder = resolveSubfolder(
+			this.subfolderTemplate,
+			recording.createdAt,
+			recording.title,
+			this.forbiddenCharReplacement,
+		);
 		const destinationFolder = joinFolderPath(this.outputFolder, subfolder);
 		await this.ensureFolder(destinationFolder);
 		const expandedTitle = buildNoteName(
@@ -2024,7 +2106,7 @@ export class NoteWriter {
 			recording.createdAt,
 			this.noteNameTemplate,
 		);
-		const filename = `${sanitizeFilename(expandedTitle)}.md`;
+		const filename = `${sanitizeFilename(expandedTitle, this.forbiddenCharReplacement)}.md`;
 		return destinationFolder === '' ? filename : `${destinationFolder}/${filename}`;
 	}
 

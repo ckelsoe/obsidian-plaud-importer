@@ -35,6 +35,7 @@ import {
 	resolveSubfolder,
 	buildNoteName,
 	formatDatetime,
+	isValidReplacementChar,
 	TEMPLATE_PREVIEW_DATE,
 	TEMPLATE_PREVIEW_DATETIME,
 	TEMPLATE_PREVIEW_TITLE,
@@ -150,7 +151,7 @@ const DEFAULT_RIBBON_ICON = "audio-lines";
 // at createEl/setDesc) so the obsidianmd sentence-case lint, which inspects
 // literal arguments, leaves the token examples and proper nouns alone.
 const SUBFOLDER_TEMPLATE_INTRO =
-	"Optional. Files each imported note into a subfolder of the output folder, built from the recording's own date. Leave empty to keep every note in one folder. Text inside {{ }} is a date format written in Moment style (the same syntax core Daily Notes uses); text outside the braces is kept as-is, and a forward slash (/) starts a new nested folder level, so {{YYYY}}/{{MM}} makes a year folder holding month folders. Separators like dashes and spaces are fine inside the braces; keep your own words (plain letters) outside them, since letters inside are read as date tokens.";
+	"Optional. Files each imported note into a subfolder of the output folder, built from the recording's own date. Leave empty to keep every note in one folder. Text inside {{ }} is a date format written in Moment style (the same syntax core Daily Notes uses); text outside the braces is kept as-is, and a forward slash (/) starts a new nested folder level, so {{YYYY}}/{{MM}} makes a year folder holding month folders. Separators like dashes and spaces are fine inside the braces; keep your own words (plain letters) outside them, since letters inside are read as date tokens. You can also use {{title}}, the recording title (with a leading date removed, the same as in the note name), to build folder-note layouts like {{YYYY}}/{{title}}. A slash inside a title is turned into your forbidden-character replacement so the title stays a single folder.";
 
 // [token, what it expands to] pairs. Real Moment format tokens (case matters).
 // The same vocabulary works in the note-name field, so a user learns it once.
@@ -162,17 +163,20 @@ const SUBFOLDER_TEMPLATE_TOKENS: ReadonlyArray<readonly [string, string]> = [
 	["{{dddd}}", "weekday name, for example Monday"],
 	["{{WW}}", "ISO week number, 01 to 53"],
 	["{{Q}}", "quarter, 1 to 4"],
+	["{{title}}", "the recording title, with a leading numeric date removed (for folder-note layouts)"],
 ];
 
-// [template, resulting folder] pairs for a June 4 2026 recording. Covers
-// nesting, a custom separator, a day-first order, week foldering, and two tokens
-// inside one {{ }}. Outputs verified against Moment 2.29.
+// [template, resulting folder] pairs for a June 4 2026 recording titled Team
+// sync. Covers nesting, a custom separator, a day-first order, week foldering,
+// two tokens inside one {{ }}, and a folder-note title layout. Outputs verified
+// against Moment 2.29.
 const SUBFOLDER_TEMPLATE_EXAMPLES: ReadonlyArray<readonly [string, string]> = [
 	["{{YYYY-MM}}", "2026-06 (one folder)"],
 	["{{YYYY}}/{{MM}}", "2026/06 (a 2026 folder holding a 06 folder)"],
 	["{{DD}}-{{MM}}-{{YYYY}}", "04-06-2026 (day-first order)"],
 	["{{YYYY}}/W{{WW}}", "2026/W23 (by week)"],
 	["{{YYYY}}/{{MM MMMM}}", "2026/06 June (two tokens in one {{ }})"],
+	["{{YYYY}}/{{title}}", "2026/Team sync (a folder per recording)"],
 ];
 
 const SUBFOLDER_TEMPLATE_TOKENS_HEADING =
@@ -222,6 +226,12 @@ const NOTE_NAME_TEMPLATE_EXAMPLES_HEADING = "Examples:";
 const NOTE_NAME_TEMPLATE_FOOTNOTE =
 	"Applies to new imports; notes you already imported keep their current names.";
 
+// Description for the forbidden-character replacement setting. Held in a const so
+// the declarative (1.13+) and imperative (1.12) settings paths show identical
+// text and the sentence-case lint inspects one literal.
+const FORBIDDEN_CHAR_REPLACEMENT_DESC =
+	"Character that replaces a slash, colon, or other character a file name or folder cannot contain, for example one that appears in a recording title. Must be a single character; the default is a dash.";
+
 // [label, template] preset buttons. All dashes, so every preset is filename-safe.
 // ISO/US/EU cover the common date orders; putting the date after {{title}} (the
 // "date at the end" example in the reference) is left to the user to type.
@@ -234,8 +244,8 @@ const NOTE_NAME_TEMPLATE_PRESETS: ReadonlyArray<readonly [string, string]> = [
 // [label, inserted token] for the insert-token buttons above each template
 // field. Labels are friendly names; clicking inserts the exact Moment token at
 // the cursor so the common path is typo-proof (bare letters typed by hand would
-// be read as tokens). The note-name field adds Title; the subfolder field does
-// not (a title in a path segment is surprising and folders are date-only).
+// be read as tokens). Both the note-name and subfolder fields add Title; the
+// subfolder uses it for folder-note layouts, flattening any slash in the title.
 const DATE_INSERT_TOKENS: ReadonlyArray<readonly [string, string]> = [
 	["Year", "{{YYYY}}"],
 	["Month #", "{{MM}}"],
@@ -322,6 +332,11 @@ interface PlaudImporterSettings {
 	// stays YYYY-MM-DD for Dataview, so the user can add the recording time in any
 	// format (24h, 12h, ISO 8601) without disturbing existing date queries.
 	datetimeTemplate: string;
+	// Single character that replaces a forbidden filename/folder character (the
+	// Windows-forbidden set, control codes, and brackets in a note name), and the
+	// path separators inside a {{title}} folder token. Default "-". Validated to a
+	// safe single char before saving (see isValidReplacementChar).
+	forbiddenCharReplacement: string;
 	onDuplicate: "skip" | "overwrite" | "prompt";
 	showRibbonIcon: boolean;
 	ribbonIcon: string;
@@ -380,6 +395,7 @@ const DEFAULT_SETTINGS: PlaudImporterSettings = {
 	subfolderTemplate: "",
 	noteNameTemplate: DEFAULT_NOTE_NAME_TEMPLATE,
 	datetimeTemplate: "",
+	forbiddenCharReplacement: "-",
 	onDuplicate: "prompt",
 	showRibbonIcon: true,
 	ribbonIcon: DEFAULT_RIBBON_ICON,
@@ -724,6 +740,7 @@ export default class PlaudImporterPlugin extends Plugin {
 			subfolderTemplate: this.settings.subfolderTemplate,
 			noteNameTemplate: this.settings.noteNameTemplate,
 			datetimeTemplate: this.settings.datetimeTemplate,
+			forbiddenCharReplacement: this.settings.forbiddenCharReplacement,
 			onDuplicate: this.settings.onDuplicate,
 			includeTranscript: this.settings.includeTranscript,
 			includeSummary: this.settings.defaultIncludeSummary,
@@ -810,8 +827,12 @@ export default class PlaudImporterPlugin extends Plugin {
 		new RenameRecordingModal(this.app, file.basename, (rawName) => {
 			// sanitizeFilename never returns empty (it falls back to "Untitled"),
 			// and the modal already rejects an empty entry, so there is no
-			// unusable-name case to handle here.
-			const sanitized = sanitizeFilename(rawName);
+			// unusable-name case to handle here. Uses the configured replacement
+			// character so a manual rename matches how imports sanitize names.
+			const sanitized = sanitizeFilename(
+				rawName,
+				this.settings.forbiddenCharReplacement,
+			);
 			// Obsidian represents the vault root as either "" or "/" depending on
 			// the call site; treat both as no-dir so a root note does not produce
 			// a leading-slash path like "/New name.md".
@@ -1560,6 +1581,17 @@ export default class PlaudImporterPlugin extends Plugin {
 		) {
 			this.settings.outputFolder = "Plaud";
 		}
+		// Repair a hand-edited or malformed replacement character back to the
+		// default dash, so every consumer (imports and the rename command) gets a
+		// safe single character. The settings UI validates on entry, but data.json
+		// could carry anything; an unsafe value (e.g. "/") would otherwise let
+		// sanitizing produce a path separator. NoteWriter also guards defensively.
+		if (
+			typeof this.settings.forbiddenCharReplacement !== "string" ||
+			!isValidReplacementChar(this.settings.forbiddenCharReplacement)
+		) {
+			this.settings.forbiddenCharReplacement = "-";
+		}
 		// v1 (issue #30): the date-template engine moved from bespoke lowercase
 		// tokens to real Moment. Rewrite the two stored templates once, output-
 		// preserving (see migrateLegacyDateTemplate), so an existing install's
@@ -2010,6 +2042,13 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 				DATETIME_TEMPLATE_INTRO,
 			),
 		);
+		this.addTextRow(
+			containerEl,
+			"Forbidden character replacement",
+			FORBIDDEN_CHAR_REPLACEMENT_DESC,
+			"forbiddenCharReplacement",
+			"-",
+		);
 		this.addDropdownRow(
 			containerEl,
 			"Duplicate handling",
@@ -2454,7 +2493,10 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 		// the button/field closures, which only run on later user interaction.
 		let field: TextComponent | null = null;
 		let updatePreview: (template: string) => void = () => {};
-		for (const [label, token] of DATE_INSERT_TOKENS) {
+		// Date tokens plus Title: the subfolder now supports {{title}} for
+		// folder-note layouts (issue #30 follow-up), so it gets the same button set
+		// as the note-name field.
+		for (const [label, token] of [...DATE_INSERT_TOKENS, TITLE_INSERT_TOKEN]) {
 			setting.addButton((button) => {
 				button
 					.setButtonText(label)
@@ -2489,7 +2531,15 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 				return "Preview: no subfolder (every note in the output folder)";
 			}
 			try {
-				return `Preview folder: ${resolveSubfolder(template, TEMPLATE_PREVIEW_DATE)}`;
+				// Pass the sample title so a {{title}} template previews with a real
+				// folder name, and the configured replacement char so the preview
+				// matches what an import would actually write.
+				return `Preview folder: ${resolveSubfolder(
+					template,
+					TEMPLATE_PREVIEW_DATE,
+					TEMPLATE_PREVIEW_TITLE,
+					this.plugin.settings.forbiddenCharReplacement,
+				)}`;
 			} catch (err) {
 				return `Preview (not usable): ${
 					err instanceof Error ? err.message : String(err)
@@ -2868,6 +2918,15 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 							this.renderDatetimeTemplateControl(setting),
 					},
 					{
+						name: "Forbidden character replacement",
+						desc: FORBIDDEN_CHAR_REPLACEMENT_DESC,
+						control: {
+							type: "text",
+							key: "forbiddenCharReplacement",
+							placeholder: "-",
+						},
+					},
+					{
 						name: "Duplicate handling",
 						desc: "What to do when a note for the recording already exists in the output folder.",
 						control: {
@@ -3096,9 +3155,26 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 				// persisted. No Notice here: this field persists per keystroke, so a
 				// Notice would spam while ".." is mid-typed; the live preview already
 				// shows "(not usable)", and the previous good value stays saved.
-				resolveSubfolder(next, TEMPLATE_PREVIEW_DATE);
+				resolveSubfolder(next, TEMPLATE_PREVIEW_DATE, TEMPLATE_PREVIEW_TITLE);
 				this.plugin.settings.subfolderTemplate = next;
 			} catch {
+				return;
+			}
+		} else if (key === "forbiddenCharReplacement") {
+			// Coerce to a single safe character. Cleared field falls back to the
+			// default dash; an unsafe entry (a forbidden char, a separator, a dot or
+			// space, or more than one character) is refused with a Notice and the
+			// previous value is kept, so sanitizing can never reintroduce a
+			// forbidden character.
+			const next = typeof value === "string" ? value.trim() : "";
+			if (next === "") {
+				this.plugin.settings.forbiddenCharReplacement = "-";
+			} else if (isValidReplacementChar(next)) {
+				this.plugin.settings.forbiddenCharReplacement = next;
+			} else {
+				new Notice(
+					"Plaud importer: The replacement must be a single character and cannot be a slash, colon, square bracket, asterisk, question mark, angle bracket, pipe, double quote, dot, or space. Keeping the previous value.",
+				);
 				return;
 			}
 		} else if (key === "noteNameTemplate") {
