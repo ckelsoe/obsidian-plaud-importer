@@ -4,6 +4,8 @@ All notable changes to Plaud Importer will be documented in this file.
 
 ## [Unreleased]
 
+## [0.23.0] - 2026-07-06
+
 ### Added
 
 - **`{{title}}` in the subfolder template.** The subfolder setting now supports the `{{title}}` token, so you can file each recording in its own folder named after it (a "folder note" layout that pairs well with plugins like Notebook Navigator): `{{YYYY}}/{{title}}` files a July recording titled Team sync under `2026/Team sync`. The title has any leading date removed, the same as in the note name, so the folder and note names line up. A slash or backslash in a title is flattened to your replacement character so it stays a single folder instead of creating an accidental nested level, and a recording whose title is only a date files under `_untitled` rather than dropping into the output root. Resolves the follow-up on issue #30.
