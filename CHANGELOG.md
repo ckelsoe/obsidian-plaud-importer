@@ -4,6 +4,10 @@ All notable changes to Plaud Importer will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- The "Cassette tape" ribbon icon option now shows an icon instead of disappearing. It referenced a Lucide icon id (`tape`) that does not exist; the correct id is `cassette-tape`. Selecting it left the ribbon with no icon. Resolves issue #34.
+
 ## [0.22.0] - 2026-07-06
 
 ### Added

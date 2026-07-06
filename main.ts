@@ -136,7 +136,7 @@ const RIBBON_ICON_CHOICES: ReadonlyArray<{ id: string; label: string }> = [
 	{ id: "file-audio-2", label: "Audio file" },
 	{ id: "podcast", label: "Podcast" },
 	{ id: "radio", label: "Radio" },
-	{ id: "tape", label: "Cassette tape" },
+	{ id: "cassette-tape", label: "Cassette tape" },
 	{ id: "volume-2", label: "Speaker" },
 	{ id: "notebook-pen", label: "Notebook" },
 	{ id: "captions", label: "Captions" },
