@@ -1002,6 +1002,71 @@ describe('formatFrontmatter', () => {
 		).not.toMatch(/plaud-folder:/);
 	});
 
+	// datetime property (issue #32). The recording is 2026-04-14 09:30 local.
+	it('omits the datetime line when the template is absent or empty', () => {
+		expect(formatFrontmatter(makeRecording(), [])).not.toMatch(/^datetime:/m);
+		expect(
+			formatFrontmatter(makeRecording(), [], null, undefined, undefined, ''),
+		).not.toMatch(/^datetime:/m);
+		expect(
+			formatFrontmatter(makeRecording(), [], null, undefined, undefined, '   '),
+		).not.toMatch(/^datetime:/m);
+	});
+
+	it('emits a 24-hour datetime, quoted for the colon', () => {
+		const fm = formatFrontmatter(
+			makeRecording(),
+			[],
+			null,
+			undefined,
+			undefined,
+			'{{YYYY-MM-DD HH:mm}}',
+		);
+		expect(fm).toContain('datetime: "2026-04-14 09:30"');
+	});
+
+	it('emits a 12-hour datetime with AM/PM', () => {
+		const fm = formatFrontmatter(
+			makeRecording(),
+			[],
+			null,
+			undefined,
+			undefined,
+			'{{h:mm A}}',
+		);
+		expect(fm).toContain('datetime: "9:30 AM"');
+	});
+
+	it('emits an ISO datetime carrying the local UTC offset', () => {
+		const fm = formatFrontmatter(
+			makeRecording(),
+			[],
+			null,
+			undefined,
+			undefined,
+			'{{YYYY-MM-DDTHH:mm:ssZ}}',
+		);
+		// The offset depends on the machine time zone, so assert the shape, not a
+		// fixed offset. The wall-clock stays 09:30:00 because the sample date was
+		// built from local components and Moment formats in local time.
+		expect(fm).toMatch(/^datetime: "2026-04-14T09:30:00[+-]\d\d:\d\d"$/m);
+	});
+
+	it('keeps date as YYYY-MM-DD and places datetime right after it', () => {
+		const fm = formatFrontmatter(
+			makeRecording(),
+			[],
+			null,
+			undefined,
+			undefined,
+			'{{YYYY-MM-DD HH:mm}}',
+		);
+		const lines = fm.split('\n');
+		const dateIdx = lines.findIndex((l) => l.startsWith('date:'));
+		expect(lines[dateIdx]).toBe('date: 2026-04-14');
+		expect(lines[dateIdx + 1]).toBe('datetime: "2026-04-14 09:30"');
+	});
+
 	it('clamps negative/infinite durations in the duration-seconds line', () => {
 		const fm = formatFrontmatter(
 			makeRecording({ durationSeconds: -10 }),
@@ -3494,6 +3559,30 @@ describe('formatPlaceholderMarkdown', () => {
 		);
 		expect(md).toContain('line one line two');
 		expect(md).not.toContain('line one\nline two');
+	});
+
+	// datetime property (issue #32): the placeholder path mirrors formatFrontmatter,
+	// so it must emit datetime under the same conditions to stay in sync.
+	it('omits the datetime line when no datetime template is given', () => {
+		expect(formatPlaceholderMarkdown(makeRecording(), 'reason')).not.toMatch(
+			/^datetime:/m,
+		);
+		expect(
+			formatPlaceholderMarkdown(makeRecording(), 'reason', DEFAULT_NOTE_NAME_TEMPLATE, ''),
+		).not.toMatch(/^datetime:/m);
+	});
+
+	it('emits the datetime line, quoted, when a datetime template is given', () => {
+		const md = formatPlaceholderMarkdown(
+			makeRecording(),
+			'reason',
+			DEFAULT_NOTE_NAME_TEMPLATE,
+			'{{YYYY-MM-DD HH:mm}}',
+		);
+		const lines = md.split('\n');
+		const dateIdx = lines.findIndex((l) => l.startsWith('date:'));
+		expect(lines[dateIdx]).toBe('date: 2026-04-14');
+		expect(lines[dateIdx + 1]).toBe('datetime: "2026-04-14 09:30"');
 	});
 });
 
