@@ -4,6 +4,11 @@ All notable changes to Plaud Importer will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **Datetime frontmatter property.** A new setting adds a `datetime:` property to each imported note, formatted with the same `{{ }}` Moment tokens as the folder and note-name fields. It is empty by default (no property is written); set a template to turn it on. The existing `date:` property stays `YYYY-MM-DD` so Dataview queries and daily-note links keep working, and this separate field records the time in whatever format you want: 24-hour (`{{YYYY-MM-DD HH:mm}}`), 12-hour (`{{YYYY-MM-DD h:mm A}}`), or ISO 8601 with the UTC offset (`{{YYYY-MM-DDTHH:mm:ssZ}}`). The value is your computer's local time; include `{{Z}}` to record the offset so the instant stays unambiguous across devices and time zones. A live preview shows the result as you type. Resolves issue #32.
+- **Time tokens on every template field.** The insert-token buttons now include Hour, Minute, Second, AM/PM, and Offset, so you can compose a time in the subfolder and note-name templates too, not just the new datetime field.
+
 ## [0.21.1] - 2026-07-05
 
 ### Fixed

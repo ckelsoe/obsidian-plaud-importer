@@ -133,6 +133,13 @@ export interface NoteWriterOptions {
 	 */
 	readonly noteNameTemplate?: string;
 	/**
+	 * Optional `{{...}}` Moment template for a `datetime:` frontmatter property
+	 * (issue #32). Empty or omitted writes no property. Separate from the fixed
+	 * `date:` field (which stays `YYYY-MM-DD` for Dataview) so the recording time
+	 * can be recorded in any format without disturbing date queries.
+	 */
+	readonly datetimeTemplate?: string;
+	/**
 	 * Optional vault-wide lookup from a `plaud-id` to the path of an existing
 	 * note for that recording, anywhere under the output folder. Lets the
 	 * writer find a prior import that lives in a DIFFERENT subfolder (for
@@ -478,6 +485,17 @@ function expandDateTemplate(template: string, date: Date, title?: string): strin
 }
 
 /**
+ * Render a `datetime:` frontmatter value from a `{{...}}` Moment template (issue
+ * #32). A thin exported wrapper over the shared template engine so the
+ * frontmatter builder and the settings live preview format identically. An empty
+ * template yields an empty string; the caller decides whether to emit a line.
+ * Local time, the same basis as the `date:` field.
+ */
+export function formatDatetime(template: string, date: Date): string {
+	return expandDateTemplate(template, date);
+}
+
+/**
  * Rewrite only the characters a folder name cannot hold on Windows/macOS/Linux,
  * each to a dash: the Windows-forbidden punctuation and any ASCII control
  * character (0x00-0x1F, which sanitizeFilename also strips). Deliberately
@@ -778,6 +796,9 @@ export function migrateLegacyDateTemplate(template: string): string {
  * (and the tests assert against) the same sample.
  */
 export const TEMPLATE_PREVIEW_DATE = new Date(2026, 6, 5); // 2026-07-05 local (Sunday)
+// A sample with a non-midnight local time so the datetime-field preview shows a
+// meaningful time (2026-07-05 14:30:00), not 00:00:00.
+export const TEMPLATE_PREVIEW_DATETIME = new Date(2026, 6, 5, 14, 30, 0);
 export const TEMPLATE_PREVIEW_TITLE = 'Team sync';
 
 /**
@@ -1050,6 +1071,7 @@ export function formatFrontmatter(
 	summary?: Summary | null,
 	keywords?: readonly string[],
 	folders?: readonly string[],
+	datetimeTemplate?: string,
 ): string {
 	const duration = Number.isFinite(recording.durationSeconds)
 		? Math.max(0, Math.floor(recording.durationSeconds))
@@ -1064,6 +1086,14 @@ export function formatFrontmatter(
 	// parsers.
 	lines.push(`plaud-url: ${yamlScalar(formatPlaudWebUrl(recording.id))}`);
 	lines.push(`date: ${formatDateYmd(recording.createdAt)}`);
+	// Optional datetime property (issue #32): a user-formatted timestamp, emitted
+	// only when a template is configured. yamlScalar quotes it so a `:` in the time
+	// is not read as a YAML mapping. Local time, the same basis as `date:`.
+	if (datetimeTemplate && datetimeTemplate.trim() !== '') {
+		lines.push(
+			`datetime: ${yamlScalar(formatDatetime(datetimeTemplate, recording.createdAt))}`,
+		);
+	}
 	lines.push(`duration-seconds: ${duration}`);
 	// Human-readable duration alongside the raw seconds so users can read
 	// it at a glance without the note also pretending to support Dataview
@@ -1645,6 +1675,11 @@ export interface FormatMarkdownOptions {
 	 * reproduces `YYYY-MM-DD <title>`.
 	 */
 	readonly noteNameTemplate?: string;
+	/**
+	 * `{{...}}` Moment template for the `datetime:` frontmatter property (issue
+	 * #32). Empty or omitted writes no property. See `formatDatetime`.
+	 */
+	readonly datetimeTemplate?: string;
 }
 
 export function formatMarkdown(
@@ -1669,7 +1704,14 @@ export function formatMarkdown(
 		? formatTranscriptSection(transcript, groups, headerLevel)
 		: '';
 	const parts: string[] = [
-		formatFrontmatter(recording, speakers, summary, options.keywords, options.folders),
+		formatFrontmatter(
+			recording,
+			speakers,
+			summary,
+			options.keywords,
+			options.folders,
+			options.datetimeTemplate,
+		),
 		'',
 		`# ${expandedTitle}`,
 		'',
@@ -1725,6 +1767,7 @@ export function formatPlaceholderMarkdown(
 	recording: Recording,
 	reason: string,
 	template: string = DEFAULT_NOTE_NAME_TEMPLATE,
+	datetimeTemplate: string = '',
 ): string {
 	const url = formatPlaudWebUrl(recording.id);
 	const expandedTitle = buildNoteName(
@@ -1738,6 +1781,13 @@ export function formatPlaceholderMarkdown(
 		`plaud-id: ${yamlScalar(recording.id)}`,
 		`plaud-url: ${yamlScalar(url)}`,
 		`date: ${formatDateYmd(recording.createdAt)}`,
+		// Match the real note's frontmatter (issue #32): emit datetime only when a
+		// template is configured, so a Dataview query sees the same shape on stubs.
+		...(datetimeTemplate.trim() !== ''
+			? [
+					`datetime: ${yamlScalar(formatDatetime(datetimeTemplate, recording.createdAt))}`,
+				]
+			: []),
 		'source: plaud',
 		// Marker that distinguishes this stub from a real note. extractPlaud-
 		// PlaceholderFlag keys on it so a later real import always replaces it.
@@ -1909,6 +1959,7 @@ export class NoteWriter {
 	private readonly outputFolder: string;
 	private readonly subfolderTemplate: string;
 	private readonly noteNameTemplate: string;
+	private readonly datetimeTemplate: string;
 	private readonly existingPathForPlaudId?: (plaudId: string) => string | null;
 	private readonly migrateExistingNote?: (
 		oldNotePath: string,
@@ -1945,6 +1996,7 @@ export class NoteWriter {
 			requestedTemplate && isValidNoteNameTemplate(requestedTemplate)
 				? requestedTemplate
 				: DEFAULT_NOTE_NAME_TEMPLATE;
+		this.datetimeTemplate = options.datetimeTemplate ?? '';
 		this.existingPathForPlaudId = options.existingPathForPlaudId;
 		this.migrateExistingNote = options.migrateExistingNote;
 		this.onDuplicate = options.onDuplicate;
@@ -1954,6 +2006,7 @@ export class NoteWriter {
 			includeSummary: options.includeSummary,
 			transcriptHeaderLevel: options.transcriptHeaderLevel,
 			noteNameTemplate: this.noteNameTemplate,
+			datetimeTemplate: this.datetimeTemplate,
 		};
 	}
 
@@ -2050,6 +2103,7 @@ export class NoteWriter {
 			recording,
 			reason,
 			this.noteNameTemplate,
+			this.datetimeTemplate,
 		);
 		const { existing, notePath } = this.findExistingNote(recording, targetPath);
 		if (existing === null) {

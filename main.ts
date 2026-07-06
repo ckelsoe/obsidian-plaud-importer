@@ -34,7 +34,9 @@ import {
 	renameRecordingNote,
 	resolveSubfolder,
 	buildNoteName,
+	formatDatetime,
 	TEMPLATE_PREVIEW_DATE,
+	TEMPLATE_PREVIEW_DATETIME,
 	TEMPLATE_PREVIEW_TITLE,
 	sanitizeFilename,
 	type RenameFileFn,
@@ -242,8 +244,49 @@ const DATE_INSERT_TOKENS: ReadonlyArray<readonly [string, string]> = [
 	["Weekday", "{{dddd}}"],
 	["Quarter", "{{Q}}"],
 	["Week", "{{WW}}"],
+	// Time tokens (issue #32). Available in every template field so a user can
+	// compose a time however they like; most useful in the datetime frontmatter
+	// field. Offset ({{Z}}) records the UTC offset so an ISO value is unambiguous.
+	["Hour", "{{HH}}"],
+	["Minute", "{{mm}}"],
+	["Second", "{{ss}}"],
+	["AM/PM", "{{A}}"],
+	["Offset", "{{Z}}"],
 ];
 const TITLE_INSERT_TOKEN: readonly [string, string] = ["Title", "{{title}}"];
+
+// Datetime-template documentation for the `datetime:` frontmatter field (issue
+// #32). Mirrors the subfolder field's Moment-only shape (no {{title}}, no
+// presets) but leads with the time tokens, which are the reason this field
+// exists. Held in consts, like the other template strings, so the sentence-case
+// lint inspects the literal arguments and leaves the token examples untouched.
+const DATETIME_TEMPLATE_INTRO =
+	"Adds a datetime property to each note's frontmatter, formatted with the same {{ }} Moment tokens as the other fields. Leave it empty to write no datetime property. The date property stays YYYY-MM-DD for Dataview; this separate field lets you record the recording time in any format. The value is your computer's local time, so include {{Z}} to capture the UTC offset if you want the instant to stay unambiguous across devices and time zones.";
+
+const DATETIME_TEMPLATE_TOKENS: ReadonlyArray<readonly [string, string]> = [
+	["{{YYYY}}-{{MM}}-{{DD}}", "the date, for example 2026-07-05"],
+	["{{HH}}", "hour, 00 to 23"],
+	["{{mm}}", "minute, 00 to 59"],
+	["{{ss}}", "second, 00 to 59"],
+	["{{h}}", "hour, 1 to 12"],
+	["{{A}}", "AM or PM"],
+	["{{Z}}", "UTC offset, for example +02:00"],
+];
+
+// [template, resulting value] pairs for the sample datetime 2026-07-05 14:30:00.
+// The ISO example's offset depends on the user's own time zone; the live preview
+// shows their real value, so the doc labels it rather than committing to one.
+const DATETIME_TEMPLATE_EXAMPLES: ReadonlyArray<readonly [string, string]> = [
+	["{{YYYY-MM-DD HH:mm}}", "2026-07-05 14:30 (24-hour)"],
+	["{{YYYY-MM-DD h:mm A}}", "2026-07-05 2:30 PM (12-hour)"],
+	["{{YYYY-MM-DDTHH:mm:ssZ}}", "2026-07-05T14:30:00+00:00 (ISO 8601, with your UTC offset)"],
+];
+
+const DATETIME_TEMPLATE_TOKENS_HEADING =
+	"Tokens (case matters; combine them with separators inside the braces):";
+const DATETIME_TEMPLATE_EXAMPLES_HEADING = "Examples:";
+const DATETIME_TEMPLATE_FOOTNOTE =
+	"Applies to new imports; notes you already imported keep their current frontmatter.";
 
 /**
  * Coerce a stored ribbon icon ID to a known-good value. Protects against
@@ -274,6 +317,11 @@ interface PlaudImporterSettings {
 	// subfolderTemplate, plus {{title}}). Default "{{YYYY}}-{{MM}}-{{DD}} {{title}}"
 	// reproduces the historical naming. Validated filename-safe before it is saved.
 	noteNameTemplate: string;
+	// {{...}} Moment template for a `datetime:` frontmatter property (issue #32).
+	// Empty (the default) emits no property. Separate from the `date:` field, which
+	// stays YYYY-MM-DD for Dataview, so the user can add the recording time in any
+	// format (24h, 12h, ISO 8601) without disturbing existing date queries.
+	datetimeTemplate: string;
 	onDuplicate: "skip" | "overwrite" | "prompt";
 	showRibbonIcon: boolean;
 	ribbonIcon: string;
@@ -331,6 +379,7 @@ const DEFAULT_SETTINGS: PlaudImporterSettings = {
 	outputFolder: "Plaud",
 	subfolderTemplate: "",
 	noteNameTemplate: DEFAULT_NOTE_NAME_TEMPLATE,
+	datetimeTemplate: "",
 	onDuplicate: "prompt",
 	showRibbonIcon: true,
 	ribbonIcon: DEFAULT_RIBBON_ICON,
@@ -674,6 +723,7 @@ export default class PlaudImporterPlugin extends Plugin {
 			outputFolder: this.settings.outputFolder,
 			subfolderTemplate: this.settings.subfolderTemplate,
 			noteNameTemplate: this.settings.noteNameTemplate,
+			datetimeTemplate: this.settings.datetimeTemplate,
 			onDuplicate: this.settings.onDuplicate,
 			includeTranscript: this.settings.includeTranscript,
 			includeSummary: this.settings.defaultIncludeSummary,
@@ -1953,6 +2003,13 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 				NOTE_NAME_TEMPLATE_INTRO,
 			),
 		);
+		this.renderDatetimeTemplateControl(
+			this.makeSetting(
+				containerEl,
+				"Datetime property",
+				DATETIME_TEMPLATE_INTRO,
+			),
+		);
 		this.addDropdownRow(
 			containerEl,
 			"Duplicate handling",
@@ -2442,6 +2499,69 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 		updatePreview(this.readSettingString("subfolderTemplate"));
 	}
 
+	// Renders the datetime template row for the `datetime:` frontmatter property
+	// (issue #32). Mirrors the subfolder row (Moment-only, per-keystroke persist,
+	// no presets); the shared insert-token buttons now include the time tokens.
+	// Empty is a valid value (writes no property), so unlike the note-name field
+	// there is no blur-commit or invalid-template Notice — Moment never errors and
+	// the preview is the only feedback needed.
+	private renderDatetimeTemplateControl(setting: Setting): void {
+		setting.settingEl.addClass("plaud-importer-stacked-row");
+		const docEl = setting.descEl.createDiv();
+		docEl.createDiv({ text: DATETIME_TEMPLATE_TOKENS_HEADING });
+		const tokenList = docEl.createEl("ul");
+		for (const [token, meaning] of DATETIME_TEMPLATE_TOKENS) {
+			const item = tokenList.createEl("li");
+			item.createEl("code", { text: token });
+			item.createSpan({ text: ` ${meaning}` });
+		}
+		docEl.createDiv({ text: DATETIME_TEMPLATE_EXAMPLES_HEADING });
+		const exampleList = docEl.createEl("ul");
+		for (const [template, result] of DATETIME_TEMPLATE_EXAMPLES) {
+			const item = exampleList.createEl("li");
+			item.createEl("code", { text: template });
+			item.createSpan({ text: ` → ${result}` });
+		}
+		docEl.createDiv({ text: DATETIME_TEMPLATE_FOOTNOTE });
+
+		let field: TextComponent | null = null;
+		let updatePreview: (template: string) => void = () => {};
+		for (const [label, token] of DATE_INSERT_TOKENS) {
+			setting.addButton((button) => {
+				button
+					.setButtonText(label)
+					.setTooltip(`Insert ${token}`)
+					.onClick(async () => {
+						if (field === null) return;
+						this.insertTokenAtCursor(field, token);
+						const value = field.getValue();
+						await this.applyControlChange("datetimeTemplate", value);
+						updatePreview(value);
+					});
+				button.buttonEl.addEventListener("mousedown", (event) =>
+					event.preventDefault(),
+				);
+			});
+		}
+		setting.addText((text) => {
+			field = text;
+			text
+				.setPlaceholder("{{YYYY-MM-DD HH:mm}}")
+				.setValue(this.readSettingString("datetimeTemplate"))
+				.onChange(async (value) => {
+					await this.applyControlChange("datetimeTemplate", value);
+					updatePreview(value);
+				});
+		});
+		updatePreview = this.attachTemplatePreview(setting, (template) => {
+			if (template.trim() === "") {
+				return "Preview: no datetime property";
+			}
+			return `Preview datetime: ${formatDatetime(template, TEMPLATE_PREVIEW_DATETIME)}`;
+		});
+		updatePreview(this.readSettingString("datetimeTemplate"));
+	}
+
 	// Renders the note-name template row: the token reference and examples (lists,
 	// so they read clearly) into the description, then a text control bound to
 	// noteNameTemplate, then ISO/US/EU preset buttons that fill the field and
@@ -2739,6 +2859,15 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 							this.renderNoteNameTemplateControl(setting),
 					},
 					{
+						name: "Datetime property",
+						desc: DATETIME_TEMPLATE_INTRO,
+						// Rendered imperatively for the token + examples lists, like
+						// the two template rows above.
+						searchable: false,
+						render: (setting: Setting) =>
+							this.renderDatetimeTemplateControl(setting),
+					},
+					{
 						name: "Duplicate handling",
 						desc: "What to do when a note for the recording already exists in the output folder.",
 						control: {
@@ -2995,6 +3124,13 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 				);
 				return;
 			}
+		} else if (key === "datetimeTemplate") {
+			// Any {{ }} Moment template is accepted, empty included (which writes no
+			// datetime property). Moment never throws on an unknown token, and there
+			// is no path or filename safety concern here, so there is nothing to
+			// reject and the live preview is the only feedback. Persisted as typed.
+			this.plugin.settings.datetimeTemplate =
+				typeof value === "string" ? value : "";
 		} else if (key === "transcriptHeaderLevel") {
 			const level = Number(value);
 			if (level >= 1 && level <= 6) {
