@@ -818,6 +818,47 @@ describe('resolveSubfolder', () => {
 		// Only a fully-empty result buckets; a surviving date segment keeps nesting.
 		expect(resolveSubfolder('{{YYYY}}/{{title}}', jun4, '')).toBe('2026');
 	});
+
+	// {{plaud-folder}} support (issue #16 follow-up): the 5th arg is the folder.
+	it('expands {{plaud-folder}} to the Plaud folder name', () => {
+		expect(resolveSubfolder('{{plaud-folder}}', jun4, undefined, '-', 'Meetings')).toBe(
+			'Meetings',
+		);
+		expect(
+			resolveSubfolder('{{plaud-folder}}/{{YYYY}}', jun4, undefined, '-', 'Meetings'),
+		).toBe('Meetings/2026');
+	});
+
+	it('flattens a slash in a folder name and sanitizes forbidden characters', () => {
+		// Plaud folders are flat, so a '/' in a name is literal text, flattened to
+		// the replacement rather than treated as a nesting level.
+		expect(resolveSubfolder('{{plaud-folder}}', jun4, undefined, '-', 'Q3/Q4')).toBe(
+			'Q3-Q4',
+		);
+		expect(resolveSubfolder('{{plaud-folder}}', jun4, undefined, '_', 'A:B')).toBe(
+			'A_B',
+		);
+	});
+
+	it('expands an unfiled recording (empty folder) to a literal _unfiled segment', () => {
+		expect(resolveSubfolder('{{plaud-folder}}', jun4, undefined, '-', '')).toBe(
+			'_unfiled',
+		);
+		// _unfiled expands inline wherever the token sits, so unfiled recordings are
+		// visibly grouped instead of mixing into the sibling date level.
+		expect(
+			resolveSubfolder('{{YYYY}}/{{plaud-folder}}', jun4, undefined, '-', ''),
+		).toBe('2026/_unfiled');
+		expect(
+			resolveSubfolder('{{plaud-folder}}/{{YYYY}}', jun4, undefined, '-', ''),
+		).toBe('_unfiled/2026');
+	});
+
+	it('combines {{plaud-folder}} and {{title}} in one template', () => {
+		expect(
+			resolveSubfolder('{{plaud-folder}}/{{title}}', jun4, 'Team sync', '-', 'Meetings'),
+		).toBe('Meetings/Team sync');
+	});
 });
 
 // migrateLegacyDateTemplate -------------------------------------------------
@@ -2239,6 +2280,79 @@ describe('NoteWriter', () => {
 			expect(outcome.status).toBe('skipped');
 			expect(outcome.path).toBe(OLD);
 			expect(migrateCalls).toEqual([]);
+		});
+	});
+
+	describe('{{plaud-folder}} unfiled placeholder migrates to the real folder', () => {
+		it('files a stub under _unfiled, then moves it to the Plaud folder on the real import', async () => {
+			const vault = makeFakeVault();
+			vault.folders.add('Plaud');
+			const migrateCalls: Array<[string, string]> = [];
+			const unfiledPath = 'Plaud/_unfiled/2026-04-14 Morning standup.md';
+			const filedPath = 'Plaud/Meetings/2026-04-14 Morning standup.md';
+			const writer = new NoteWriter(vault, {
+				outputFolder: 'Plaud',
+				subfolderTemplate: '{{plaud-folder}}',
+				onDuplicate: 'overwrite',
+				// Vault-wide plaud-id lookup, as the plugin injects: return wherever
+				// the note for this recording currently lives.
+				existingPathForPlaudId: (id) =>
+					id === 'abc123'
+						? [...vault.files.keys()].find((p) =>
+								p.endsWith('Morning standup.md'),
+							) ?? null
+						: null,
+				migrateExistingNote: async (oldPath, newPath) => {
+					migrateCalls.push([oldPath, newPath]);
+					const c = vault.files.get(oldPath) ?? '';
+					vault.files.delete(oldPath);
+					vault.files.set(newPath, c);
+				},
+			});
+
+			// 1. Transcript/summary not ready: a placeholder is written. The error
+			// path resolves no folder names, so it lands in _unfiled.
+			const stub = await writer.writePlaceholderNote(makeRecording(), 'no content yet');
+			expect(stub.status).toBe('created');
+			expect(stub.path).toBe(unfiledPath);
+
+			// 2. The real import arrives with the resolved Plaud folder. The target is
+			// now the Meetings folder; the writer finds the _unfiled stub by plaud-id
+			// and migrates it before overwriting, so the note is not duplicated.
+			const outcome = await writer.writeNote(
+				makeRecording(),
+				makeTranscript(),
+				makeSummary(),
+				undefined,
+				{ folders: ['Meetings'] },
+			);
+			expect(migrateCalls).toEqual([[unfiledPath, filedPath]]);
+			expect(outcome.path).toBe(filedPath);
+			expect(vault.files.has(filedPath)).toBe(true);
+			expect(vault.files.has(unfiledPath)).toBe(false);
+		});
+
+		it('uses only the first folder when a recording is in multiple Plaud folders', async () => {
+			const vault = makeFakeVault();
+			vault.folders.add('Plaud');
+			const writer = new NoteWriter(vault, {
+				outputFolder: 'Plaud',
+				subfolderTemplate: '{{plaud-folder}}',
+				onDuplicate: 'skip',
+			});
+
+			const outcome = await writer.writeNote(
+				makeRecording(),
+				makeTranscript(),
+				makeSummary(),
+				undefined,
+				{ folders: ['A', 'B'] },
+			);
+
+			// The first folder wins; the second is ignored (Plaud recordings are
+			// normally single-folder).
+			expect(outcome.path).toBe('Plaud/A/2026-04-14 Morning standup.md');
+			expect(vault.files.has('Plaud/A/2026-04-14 Morning standup.md')).toBe(true);
 		});
 	});
 
