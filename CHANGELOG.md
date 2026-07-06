@@ -4,6 +4,10 @@ All notable changes to Plaud Importer will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **One-click reconnect when your Plaud session expires.** When background auto-sync pauses because your session expired (or no token is configured), the pause notice now carries a **Reconnect** link that opens sign-in and resumes auto-sync the moment a token is captured, instead of sending you to settings. The **Backfill version markers** command does the same: if it fails because the session expired, it offers **Reconnect and retry** rather than a dead-end error. Signing in this way sets the token in the not-configured case too.
+
 ### Changed
 
 - Development tooling: a CI check now validates every hardcoded ribbon-icon id against the Lucide icon set, so an invalid id (which would render a blank icon) fails the build instead of shipping. No behavior change.
