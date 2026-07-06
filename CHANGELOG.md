@@ -4,6 +4,8 @@ All notable changes to Plaud Importer will be documented in this file.
 
 ## [Unreleased]
 
+## [0.24.0] - 2026-07-06
+
 ### Added
 
 - **`{{plaud-folder}}` in the subfolder template.** The subfolder setting now supports a `{{plaud-folder}}` token that expands to the recording's Plaud folder name, so `{{plaud-folder}}/{{YYYY}}` mirrors your Plaud folders into the vault tree (nice with a folder browser like Notebook Navigator). Plaud folders are flat, so a slash in a folder name is flattened to your replacement character rather than creating a nested level, and a recording with no Plaud folder files under `_unfiled`. A recording in more than one Plaud folder uses the first. Follows up on the `plaud-folder` frontmatter field from 0.19.0 (issue #16).
