@@ -3560,6 +3560,30 @@ describe('formatPlaceholderMarkdown', () => {
 		expect(md).toContain('line one line two');
 		expect(md).not.toContain('line one\nline two');
 	});
+
+	// datetime property (issue #32): the placeholder path mirrors formatFrontmatter,
+	// so it must emit datetime under the same conditions to stay in sync.
+	it('omits the datetime line when no datetime template is given', () => {
+		expect(formatPlaceholderMarkdown(makeRecording(), 'reason')).not.toMatch(
+			/^datetime:/m,
+		);
+		expect(
+			formatPlaceholderMarkdown(makeRecording(), 'reason', DEFAULT_NOTE_NAME_TEMPLATE, ''),
+		).not.toMatch(/^datetime:/m);
+	});
+
+	it('emits the datetime line, quoted, when a datetime template is given', () => {
+		const md = formatPlaceholderMarkdown(
+			makeRecording(),
+			'reason',
+			DEFAULT_NOTE_NAME_TEMPLATE,
+			'{{YYYY-MM-DD HH:mm}}',
+		);
+		const lines = md.split('\n');
+		const dateIdx = lines.findIndex((l) => l.startsWith('date:'));
+		expect(lines[dateIdx]).toBe('date: 2026-04-14');
+		expect(lines[dateIdx + 1]).toBe('datetime: "2026-04-14 09:30"');
+	});
 });
 
 // NoteWriter.writePlaceholderNote --------------------------------------------

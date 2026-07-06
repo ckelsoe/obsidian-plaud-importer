@@ -279,7 +279,7 @@ const DATETIME_TEMPLATE_TOKENS: ReadonlyArray<readonly [string, string]> = [
 const DATETIME_TEMPLATE_EXAMPLES: ReadonlyArray<readonly [string, string]> = [
 	["{{YYYY-MM-DD HH:mm}}", "2026-07-05 14:30 (24-hour)"],
 	["{{YYYY-MM-DD h:mm A}}", "2026-07-05 2:30 PM (12-hour)"],
-	["{{YYYY-MM-DDTHH:mm:ssZ}}", "2026-07-05T14:30:00+00:00 (ISO 8601, with your UTC offset)"],
+	["{{YYYY-MM-DDTHH:mm:ssZ}}", "2026-07-05T14:30:00±hh:mm, your local UTC offset (ISO 8601)"],
 ];
 
 const DATETIME_TEMPLATE_TOKENS_HEADING =
