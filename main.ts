@@ -155,7 +155,9 @@ const SUBFOLDER_TEMPLATE_INTRO =
 	"Optional. Files each imported note into a subfolder of the output folder, built from the recording's own date. Leave empty to keep every note in one folder. Text inside {{ }} is a date format written in Moment style (the same syntax core Daily Notes uses); text outside the braces is kept as-is, and a forward slash (/) starts a new nested folder level, so {{YYYY}}/{{MM}} makes a year folder holding month folders. Separators like dashes and spaces are fine inside the braces; keep your own words (plain letters) outside them, since letters inside are read as date tokens. You can also use {{title}}, the recording title (with a leading date removed, the same as in the note name), to build folder-note layouts like {{YYYY}}/{{title}}. A slash inside a title is turned into your forbidden-character replacement so the title stays a single folder. {{plaud-folder}} is the recording's Plaud folder name, so {{plaud-folder}}/{{YYYY}} mirrors your Plaud folders into the vault; a recording with no Plaud folder files under _unfiled.";
 
 // [token, what it expands to] pairs. Real Moment format tokens (case matters).
-// The same vocabulary works in the note-name field, so a user learns it once.
+// The date and {{title}} tokens also work in the note-name field, so a user
+// learns them once; {{plaud-folder}} is subfolder-only (a folder name in a
+// per-note file name is surprising).
 const SUBFOLDER_TEMPLATE_TOKENS: ReadonlyArray<readonly [string, string]> = [
 	["{{YYYY}}", "year, for example 2026"],
 	["{{MM}}", "month, 01 to 12"],

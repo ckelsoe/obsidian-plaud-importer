@@ -840,14 +840,18 @@ describe('resolveSubfolder', () => {
 		);
 	});
 
-	it('buckets an unfiled recording (empty folder) to _unfiled', () => {
+	it('expands an unfiled recording (empty folder) to a literal _unfiled segment', () => {
 		expect(resolveSubfolder('{{plaud-folder}}', jun4, undefined, '-', '')).toBe(
 			'_unfiled',
 		);
-		// A surviving date level keeps nesting instead of bucketing.
+		// _unfiled expands inline wherever the token sits, so unfiled recordings are
+		// visibly grouped instead of mixing into the sibling date level.
 		expect(
 			resolveSubfolder('{{YYYY}}/{{plaud-folder}}', jun4, undefined, '-', ''),
-		).toBe('2026');
+		).toBe('2026/_unfiled');
+		expect(
+			resolveSubfolder('{{plaud-folder}}/{{YYYY}}', jun4, undefined, '-', ''),
+		).toBe('_unfiled/2026');
 	});
 
 	it('combines {{plaud-folder}} and {{title}} in one template', () => {
@@ -2326,6 +2330,29 @@ describe('NoteWriter', () => {
 			expect(outcome.path).toBe(filedPath);
 			expect(vault.files.has(filedPath)).toBe(true);
 			expect(vault.files.has(unfiledPath)).toBe(false);
+		});
+
+		it('uses only the first folder when a recording is in multiple Plaud folders', async () => {
+			const vault = makeFakeVault();
+			vault.folders.add('Plaud');
+			const writer = new NoteWriter(vault, {
+				outputFolder: 'Plaud',
+				subfolderTemplate: '{{plaud-folder}}',
+				onDuplicate: 'skip',
+			});
+
+			const outcome = await writer.writeNote(
+				makeRecording(),
+				makeTranscript(),
+				makeSummary(),
+				undefined,
+				{ folders: ['A', 'B'] },
+			);
+
+			// The first folder wins; the second is ignored (Plaud recordings are
+			// normally single-folder).
+			expect(outcome.path).toBe('Plaud/A/2026-04-14 Morning standup.md');
+			expect(vault.files.has('Plaud/A/2026-04-14 Morning standup.md')).toBe(true);
 		});
 	});
 

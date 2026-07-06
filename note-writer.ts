@@ -662,11 +662,15 @@ export function resolveSubfolder(
 	// {{plaud-folder}} support (issue #16 follow-up): the recording's Plaud folder
 	// name, sanitized into one legal segment the same way as {{title}}. Plaud
 	// folders are flat (plaud-client.ts: no parent_id), so a '/' in a folder name
-	// is literal text and is flattened, not treated as nesting. Empty (an unfiled
-	// recording) yields '' so the _unfiled bucket below fires.
+	// is literal text and is flattened, not treated as nesting. An unfiled
+	// recording (empty folder) expands to the literal _unfiled segment, so the
+	// token ALWAYS produces a visible bucket wherever it sits — {{plaud-folder}}
+	// alone -> _unfiled, {{plaud-folder}}/{{YYYY}} -> _unfiled/2026 — instead of
+	// dropping the empty segment and mixing unfiled recordings into the sibling
+	// levels. Mirrors the _undated bucket for a missing date.
 	let safeFolder: string | undefined;
 	if (folder !== undefined) {
-		safeFolder = sanitizeFilename(folder, replacement, '');
+		safeFolder = sanitizeFilename(folder, replacement, '') || '_unfiled';
 	}
 	const resolved = normalizeFolderPath(
 		expandDateTemplate(template, date, safeTitle, safeFolder),
@@ -678,18 +682,12 @@ export function resolveSubfolder(
 			assertUsableFolderSegment(sanitizeFolderSegment(segment, replacement)),
 		)
 		.join('/');
-	// Empty-value buckets: a template that renders entirely empty because its only
-	// dynamic token (a folder or title that reduced to nothing) was empty would
-	// collapse to no subfolder, silently dropping the note into the output root.
-	// Bucket it, mirroring _undated, so the nesting the user asked for stays
-	// intentional. plaud-folder is checked first as the primary grouping.
-	if (resolved === '') {
-		if (/\{\{\s*plaud-folder\s*}}/.test(template)) {
-			return '_unfiled';
-		}
-		if (/\{\{\s*title\s*}}/.test(template)) {
-			return '_untitled';
-		}
+	// Empty-title bucket: a {{title}}-only template whose title reduced to nothing
+	// would collapse to no subfolder, silently dropping the note into the output
+	// root. Bucket it, mirroring _undated. (The folder token handles its own empty
+	// case inline above, so it needs no bucket here.)
+	if (resolved === '' && /\{\{\s*title\s*}}/.test(template)) {
+		return '_untitled';
 	}
 	return resolved;
 }
@@ -2128,7 +2126,13 @@ export class NoteWriter {
 	/**
 	 * Resolve the per-recording destination path (folder + sanitized filename),
 	 * creating the destination folder if needed. Shared by writeNote and
-	 * writePlaceholderNote so both land a recording at the exact same path.
+	 * writePlaceholderNote. Both land a recording at the same path for a given set
+	 * of inputs; the one input that can differ between them is the Plaud folder
+	 * names, which writeNote passes and the placeholder path (an error path that
+	 * has not resolved them) does not — so a {{plaud-folder}} template can file a
+	 * placeholder under _unfiled and the later real note under its folder. The
+	 * cross-folder dedup (existingPathForPlaudId + migrateExistingNote) reconciles
+	 * that by migrating the stub to the real path on the successful import.
 	 */
 	private async resolveTargetPath(
 		recording: Recording,
