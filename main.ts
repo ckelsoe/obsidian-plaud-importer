@@ -1509,6 +1509,20 @@ export default class PlaudImporterPlugin extends Plugin {
 		};
 	}
 
+	/**
+	 * Blank any stored refresh token. Called whenever the access token is
+	 * replaced WITHOUT a matching fresh refresh token, so a later silent refresh
+	 * cannot use a previous session's WRT to authenticate as, and overwrite the
+	 * new token with, the wrong account.
+	 */
+	private clearStoredRefreshToken(): void {
+		try {
+			this.app.secretStorage.setSecret(CAPTURED_REFRESH_SECRET_ID, "");
+		} catch (err) {
+			console.error("Plaud importer: failed to blank refresh token", err);
+		}
+	}
+
 	/** The currently-active access token (trimmed), or null when none is stored. */
 	private currentAccessToken(): string | null {
 		if (this.settings.secretId.length === 0) return null;
@@ -2123,12 +2137,16 @@ export default class PlaudImporterPlugin extends Plugin {
 			this.app.secretStorage.setSecret(CAPTURED_SECRET_ID, result.token);
 			this.settings.secretId = CAPTURED_SECRET_ID;
 			// Keep the paired refresh token (typ WRT) for the silent-refresh path.
-			// It flies during login; store it stripped of any bearer prefix.
+			// It flies during login; store it stripped of any bearer prefix. When
+			// this sign-in did not capture a WRT, blank any stale one so a silent
+			// refresh cannot resurrect the previous session with a mismatched token.
 			if (result.refreshToken !== null && result.refreshToken.trim().length > 0) {
 				this.app.secretStorage.setSecret(
 					CAPTURED_REFRESH_SECRET_ID,
 					result.refreshToken.trim().replace(/^bearer\s+/i, ""),
 				);
+			} else {
+				this.clearStoredRefreshToken();
 			}
 			if (result.apiBaseUrl !== null) {
 				this.settings.apiBaseUrl = result.apiBaseUrl;
@@ -2230,11 +2248,15 @@ export default class PlaudImporterPlugin extends Plugin {
 		}
 		this.app.secretStorage.setSecret(CAPTURED_SECRET_ID, token);
 		this.settings.secretId = CAPTURED_SECRET_ID;
+		// A pasted/deep-linked token carries no refresh token (only the WT), so
+		// blank any stale WRT from a previous session; a silent refresh must not
+		// resurrect that session and overwrite this token with the wrong account's.
+		// The refresh then relies on the partition cookies until the next in-app
+		// sign-in captures a fresh WRT.
+		this.clearStoredRefreshToken();
 		await this.saveSettings();
 		// A newly pasted token clears any refresh backoff and reschedules the
-		// proactive refresh from its expiry. This paste path carries no refresh
-		// token (only the WT), so the silent refresh relies on the partition
-		// cookies until the next in-app sign-in captures a WRT.
+		// proactive refresh from its expiry.
 		this.refreshFailureStreak = 0;
 		this.reconcileTokenRefresh();
 		return true;
