@@ -19,6 +19,7 @@ import {
 	formatTranscriptSection,
 	groupTranscriptByChapters,
 	isValidNoteNameTemplate,
+	isValidReplacementChar,
 	migrateLegacyDateTemplate,
 	mergeTagSources,
 	buildNoteTags,
@@ -171,6 +172,58 @@ describe('sanitizeFilename', () => {
 		expect(sanitizeFilename('nul.md')).toBe('_nul.md');
 		// A name whose base is not a device stays unchanged.
 		expect(sanitizeFilename('console.log')).toBe('console.log');
+	});
+
+	it('uses a configured replacement character instead of a dash', () => {
+		expect(sanitizeFilename('Q2: Review', '_')).toBe('Q2_ Review');
+		expect(sanitizeFilename('A/B test', '_')).toBe('A_B test');
+		expect(sanitizeFilename('foo|bar<baz>', '~')).toBe('foo~bar~baz~');
+	});
+
+	it('inserts a replacement containing $ literally (no regex back-reference)', () => {
+		// A '$' replacement must not be read as a replacement-string special.
+		expect(sanitizeFilename('A/B', '$')).toBe('A$B');
+	});
+
+	it('falls back to a dash when given an unsafe replacement (defense-in-depth)', () => {
+		// An exported function must not trust its caller: an unsafe replacement
+		// (a forbidden char, separator, dot/space, control code, empty, or
+		// multi-char) would reintroduce what the sanitizer removes, so it coerces
+		// to '-' rather than emitting the unsafe value.
+		expect(sanitizeFilename('A/B', '/')).toBe('A-B');
+		expect(sanitizeFilename('A/B', '\\')).toBe('A-B');
+		expect(sanitizeFilename('A:B', '.')).toBe('A-B');
+		expect(sanitizeFilename('A|B', '')).toBe('A-B');
+		expect(sanitizeFilename('A|B', '__')).toBe('A-B');
+	});
+});
+
+describe('isValidReplacementChar', () => {
+	it.each([['-'], ['_'], ['~'], ['+'], ['a'], ['9'], ['$'], ['@']])(
+		'accepts the safe single character %p',
+		(char) => {
+			expect(isValidReplacementChar(char)).toBe(true);
+		},
+	);
+
+	it.each([
+		['empty', ''],
+		['two characters', '--'],
+		['slash', '/'],
+		['backslash', '\\'],
+		['colon', ':'],
+		['asterisk', '*'],
+		['question mark', '?'],
+		['angle bracket', '<'],
+		['pipe', '|'],
+		['double quote', '"'],
+		['open bracket', '['],
+		['close bracket', ']'],
+		['dot', '.'],
+		['space', ' '],
+		['control char', '\x00'],
+	])('rejects %s', (_label, value) => {
+		expect(isValidReplacementChar(value)).toBe(false);
 	});
 });
 
@@ -700,6 +753,70 @@ describe('resolveSubfolder', () => {
 		expect(resolveSubfolder('{{Q}}', new Date(2026, 3, 1))).toBe('2'); // Apr
 		expect(resolveSubfolder('{{Q}}', jun4)).toBe('2'); // Jun
 		expect(resolveSubfolder('{{Q}}', new Date(2026, 11, 31))).toBe('4'); // Dec
+	});
+
+	// {{title}} support (issue #30 follow-up) for folder-note layouts.
+	it('expands {{title}} to the recording title', () => {
+		expect(resolveSubfolder('{{title}}', jun4, 'Team sync')).toBe('Team sync');
+		expect(resolveSubfolder('{{YYYY}}/{{title}}', jun4, 'Team sync')).toBe(
+			'2026/Team sync',
+		);
+	});
+
+	it('strips a leading date from a {{title}} folder, matching the note name', () => {
+		expect(resolveSubfolder('{{title}}', jun4, '06-04 Team sync')).toBe('Team sync');
+		expect(resolveSubfolder('{{title}}', jun4, '2026-06-04 Team sync')).toBe(
+			'Team sync',
+		);
+	});
+
+	it('flattens a slash or backslash in a title so it stays one folder', () => {
+		// A slash in a title must NOT create an extra nesting level; it is flattened
+		// to the replacement char before the path split.
+		expect(resolveSubfolder('{{title}}', jun4, 'Q3/Q4 sync')).toBe('Q3-Q4 sync');
+		// normalizeFolderPath turns a stray backslash into '/', so it is flattened
+		// too, before that conversion.
+		expect(resolveSubfolder('{{title}}', jun4, 'a\\b')).toBe('a-b');
+		// A literal '/' the user types between tokens still nests.
+		expect(resolveSubfolder('{{YYYY}}/{{title}}', jun4, 'A/B')).toBe('2026/A-B');
+	});
+
+	it('uses the configured replacement char for a flattened title separator', () => {
+		expect(resolveSubfolder('{{title}}', jun4, 'Q3/Q4', '_')).toBe('Q3_Q4');
+	});
+
+	it('sanitizes other forbidden characters in a {{title}} folder per segment', () => {
+		// A colon in the title is not a path separator, so the per-segment folder
+		// sanitizer rewrites it (to the replacement char) after the split.
+		expect(resolveSubfolder('{{title}}', jun4, 'Q2: review')).toBe('Q2- review');
+	});
+
+	it('does not throw on a title that is unusable as a raw folder segment', () => {
+		// Unlike an authored template literal, a recording title is data: a reserved
+		// device name, a trailing dot/space, or an over-length title must sanitize
+		// (like a filename) rather than throw and abort the import.
+		expect(resolveSubfolder('{{title}}', jun4, 'CON')).toBe('_CON');
+		expect(resolveSubfolder('{{title}}', jun4, 'Team sync.')).toBe('Team sync');
+		expect(resolveSubfolder('{{title}}', jun4, 'Team sync ')).toBe('Team sync');
+		expect(resolveSubfolder('{{title}}', jun4, 'x'.repeat(201))).toBe(
+			'x'.repeat(200),
+		);
+	});
+
+	it('buckets an empty-title folder to _untitled instead of collapsing', () => {
+		// A title that reduces to empty (only a date, blank, or only punctuation
+		// that sanitizes away) would otherwise resolve to '' and drop the note into
+		// the output root, or produce a folder literally named 'Untitled'.
+		expect(resolveSubfolder('{{title}}', jun4, '2026-06-04')).toBe('_untitled');
+		expect(resolveSubfolder('{{title}}', jun4, '')).toBe('_untitled');
+		expect(resolveSubfolder('{{title}}', jun4, '   ')).toBe('_untitled');
+		expect(resolveSubfolder('{{title}}', jun4, '.')).toBe('_untitled');
+		expect(resolveSubfolder('{{title}}', jun4, '...')).toBe('_untitled');
+	});
+
+	it('does not bucket a template that still has a date level around an empty title', () => {
+		// Only a fully-empty result buckets; a surviving date segment keeps nesting.
+		expect(resolveSubfolder('{{YYYY}}/{{title}}', jun4, '')).toBe('2026');
 	});
 });
 
