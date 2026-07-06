@@ -4,6 +4,8 @@ All notable changes to Plaud Importer will be documented in this file.
 
 ## [Unreleased]
 
+## [0.22.0] - 2026-07-06
+
 ### Added
 
 - **Datetime frontmatter property.** A new setting adds a `datetime:` property to each imported note, formatted with the same `{{ }}` Moment tokens as the folder and note-name fields. It is empty by default (no property is written); set a template to turn it on. The existing `date:` property stays `YYYY-MM-DD` so Dataview queries and daily-note links keep working, and this separate field records the time in whatever format you want: 24-hour (`{{YYYY-MM-DD HH:mm}}`), 12-hour (`{{YYYY-MM-DD h:mm A}}`), or ISO 8601 with the UTC offset (`{{YYYY-MM-DDTHH:mm:ssZ}}`). The value is your computer's local time; include `{{Z}}` to record the offset so the instant stays unambiguous across devices and time zones. A live preview shows the result as you type. Resolves issue #32.
