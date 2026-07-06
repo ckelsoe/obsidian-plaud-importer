@@ -303,6 +303,13 @@ export function sanitizeFilename(
 	replacement: string = '-',
 	emptyFallback: string = 'Untitled',
 ): string {
+	// Defense-in-depth: this function is exported and also sanitizes an injected
+	// {{title}} before resolveSubfolder splits on '/', so it must not trust an
+	// unsafe replacement. A forbidden char, separator, dot/space, or control code
+	// would reintroduce exactly what the sanitizer removes; fall back to '-'.
+	// Production callers already pass a settings-validated char (this guards any
+	// other caller). Applied to sanitizeFolderSegment too.
+	const repl = isValidReplacementChar(replacement) ? replacement : '-';
 	// Strip leading/trailing whitespace first so subsequent length checks
 	// don't operate on padded input.
 	let out = title.trim();
@@ -320,7 +327,7 @@ export function sanitizeFilename(
 	// function replacer is used so a replacement containing `$` is inserted
 	// literally, not treated as a regex back-reference.
 	// eslint-disable-next-line no-control-regex -- intentional: this class strips NUL and other non-whitespace control codes from the filename
-	out = out.replace(/[<>:"/\\|?*\x00-\x08\x0b\x0c\x0e-\x1f[\]]/g, () => replacement);
+	out = out.replace(/[<>:"/\\|?*\x00-\x08\x0b\x0c\x0e-\x1f[\]]/g, () => repl);
 
 	// Strip trailing dots and spaces — Windows silently drops them from
 	// filenames, which causes "File.md" and "File .md" to collide.
@@ -543,10 +550,13 @@ export function formatDatetime(template: string, date: Date): string {
  * one.
  */
 function sanitizeFolderSegment(segment: string, replacement: string = '-'): string {
+	// Defense-in-depth, matching sanitizeFilename: never trust an unsafe
+	// replacement, which would reintroduce a forbidden character; fall back to '-'.
+	const repl = isValidReplacementChar(replacement) ? replacement : '-';
 	// A function replacer inserts the replacement literally even when it contains
 	// a `$` (which would otherwise be read as a regex back-reference).
 	// eslint-disable-next-line no-control-regex -- intentional: strip ASCII control codes a folder segment cannot hold
-	return segment.replace(/[<>:"\\|?*\x00-\x1f]/g, () => replacement);
+	return segment.replace(/[<>:"\\|?*\x00-\x1f]/g, () => repl);
 }
 
 /**

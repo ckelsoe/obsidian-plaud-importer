@@ -184,6 +184,18 @@ describe('sanitizeFilename', () => {
 		// A '$' replacement must not be read as a replacement-string special.
 		expect(sanitizeFilename('A/B', '$')).toBe('A$B');
 	});
+
+	it('falls back to a dash when given an unsafe replacement (defense-in-depth)', () => {
+		// An exported function must not trust its caller: an unsafe replacement
+		// (a forbidden char, separator, dot/space, control code, empty, or
+		// multi-char) would reintroduce what the sanitizer removes, so it coerces
+		// to '-' rather than emitting the unsafe value.
+		expect(sanitizeFilename('A/B', '/')).toBe('A-B');
+		expect(sanitizeFilename('A/B', '\\')).toBe('A-B');
+		expect(sanitizeFilename('A:B', '.')).toBe('A-B');
+		expect(sanitizeFilename('A|B', '')).toBe('A-B');
+		expect(sanitizeFilename('A|B', '__')).toBe('A-B');
+	});
 });
 
 describe('isValidReplacementChar', () => {

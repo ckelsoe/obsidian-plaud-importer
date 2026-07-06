@@ -3173,7 +3173,7 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 				this.plugin.settings.forbiddenCharReplacement = next;
 			} else {
 				new Notice(
-					"Plaud importer: The replacement must be a single character and cannot be a slash, colon, square bracket, asterisk, question mark, angle bracket, pipe, double quote, dot, or space. Keeping the previous value.",
+					"Plaud importer: The replacement must be a single character and cannot be a slash, backslash, colon, square bracket, asterisk, question mark, angle bracket, pipe, double quote, dot, space, or control character. Keeping the previous value.",
 				);
 				return;
 			}
