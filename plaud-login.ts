@@ -50,6 +50,11 @@ const JWT_RE = /eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/;
 // with `status: -3901 "token type does not match parse mode"`. Only accept the
 // access token. Verified against a live web.plaud.ai session on 2026-06-18.
 const ACCESS_TOKEN_TYP = 'WT';
+// The paired REFRESH token type. The web app sends the WRT in an Authorization
+// header during login before the WT; we now keep it (in addition to the WT) so
+// the silent-refresh path can send it as a bearer if that is the credential the
+// refresh endpoint wants. See plaud-refresh.ts.
+const REFRESH_TOKEN_TYP = 'WRT';
 
 // Reads the JWT header `typ` from a (possibly bearer-prefixed) token, or null
 // when the value is not a decodable JWT.
@@ -73,6 +78,10 @@ function jwtTyp(value: string): string | null {
 
 export function isAccessToken(value: string): boolean {
 	return jwtTyp(value) === ACCESS_TOKEN_TYP;
+}
+
+export function isRefreshToken(value: string): boolean {
+	return jwtTyp(value) === REFRESH_TOKEN_TYP;
 }
 
 // Injected as a fallback when the session-level capture is unavailable.
@@ -139,6 +148,12 @@ export interface PlaudLoginResult {
 	readonly token: string;
 	/** Regional API origin if discoverable, else null. */
 	readonly apiBaseUrl: string | null;
+	/**
+	 * The paired refresh token (typ WRT) if it flew by during login, else null.
+	 * Kept for the silent-refresh path (plaud-refresh.ts); the WT is what the
+	 * data API uses. May carry a "bearer " prefix.
+	 */
+	readonly refreshToken: string | null;
 }
 
 export interface PlaudLoginOptions {
@@ -172,6 +187,12 @@ interface SessionLike {
 	clearCache?(): Promise<void>;
 	// Sets the user-agent for every request in this session.
 	setUserAgent?(userAgent: string): void;
+	// Electron Session cookie store. `get` returns httpOnly cookies too (unlike
+	// document.cookie), which is what the silent refresh needs. Guarded at the
+	// call site because it may be absent where the remote module is disabled.
+	cookies?: {
+		get(filter: { url?: string }): Promise<ReadonlyArray<{ name: string; value: string }>>;
+	};
 }
 interface WebContentsLike {
 	executeJavaScript(code: string): Promise<unknown>;
@@ -253,6 +274,41 @@ export async function clearPlaudLoginSession(): Promise<boolean> {
 }
 
 /**
+ * Read the Plaud sign-in partition's cookies for `url` as a `Cookie` header
+ * value (name=value; ...), or null when there are none or the session cookie API
+ * is unavailable on this build. Includes httpOnly cookies (Electron's cookie
+ * store exposes them, unlike document.cookie), which is what the silent refresh
+ * needs. Never throws — a failure resolves to null so the refresh's bearer path
+ * can still carry the request.
+ */
+export async function readPlaudSessionCookieHeader(
+	url: string,
+): Promise<string | null> {
+	const session = requireElectron()?.remote?.session?.fromPartition(
+		PLAUD_PARTITION,
+	);
+	const cookies = session?.cookies;
+	if (cookies === undefined || typeof cookies.get !== 'function') {
+		return null;
+	}
+	try {
+		// The declared element type is { name: string; value: string }; iterate
+		// (rather than Array.isArray, which widens to any[]) and guard each field
+		// defensively in case the remote bridge returns a looser shape.
+		const list = await cookies.get({ url });
+		const parts: string[] = [];
+		for (const cookie of list) {
+			if (typeof cookie.name === 'string' && typeof cookie.value === 'string') {
+				parts.push(`${cookie.name}=${cookie.value}`);
+			}
+		}
+		return parts.length > 0 ? parts.join('; ') : null;
+	} catch {
+		return null;
+	}
+}
+
+/**
  * Open the Plaud sign-in window. Resolves with the captured token (and region)
  * once the web app makes an authenticated request, or null if the user closes
  * the window first or the BrowserWindow API is unavailable on this build.
@@ -275,6 +331,10 @@ class PlaudLoginSession {
 	private settled = false;
 	// Authorization header captured by the session-level listener (primary path).
 	private capturedAuth: string | null = null;
+	// The paired refresh token (typ WRT) seen during login, kept for the silent
+	// refresh path. It flies before the WT, so it is set by the time the WT
+	// arrives and the session settles.
+	private capturedRefresh: string | null = null;
 	private webRequestSession: SessionLike | null = null;
 
 	constructor(
@@ -385,8 +445,13 @@ class PlaudLoginSession {
 		this.note('token captured', 'note', {
 			apiBaseUrl,
 			via: this.capturedAuth !== null ? 'session' : 'page-hook',
+			refreshTokenCaptured: this.capturedRefresh !== null,
 		});
-		this.settle({ token: value, apiBaseUrl });
+		this.settle({
+			token: value,
+			apiBaseUrl,
+			refreshToken: this.capturedRefresh,
+		});
 		this.closeWindow();
 	}
 
@@ -427,11 +492,18 @@ class PlaudLoginSession {
 			session.webRequest.onSendHeaders(SESSION_FILTER, (details) => {
 				const headers = details.requestHeaders ?? {};
 				const auth = headers.Authorization ?? headers.authorization;
-				// Only keep the workspace ACCESS token (typ WT). The refresh
-				// token (WRT) is sent first during login; capturing it is what
-				// produced `-3901 "token type does not match parse mode"`.
-				if (typeof auth === 'string' && isAccessToken(auth)) {
+				if (typeof auth !== 'string') {
+					return;
+				}
+				// Only the workspace ACCESS token (typ WT) works on the data API;
+				// storing the refresh token (WRT) here is what produced
+				// `-3901 "token type does not match parse mode"`. But we DO keep the
+				// WRT separately for the silent-refresh path (plaud-refresh.ts),
+				// where it is a candidate credential, not a data-API token.
+				if (isAccessToken(auth)) {
 					this.capturedAuth = auth;
+				} else if (isRefreshToken(auth)) {
+					this.capturedRefresh = auth;
 				}
 			});
 			this.note('session header capture armed');
