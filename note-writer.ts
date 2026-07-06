@@ -507,7 +507,12 @@ function formatDateYmd(d: Date): string {
  * output-preserving even for a user on a non-English Obsidian UI, and keeps
  * names stable and filename-safe regardless of language.
  */
-function expandDateTemplate(template: string, date: Date, title?: string): string {
+function expandDateTemplate(
+	template: string,
+	date: Date,
+	title?: string,
+	folder?: string,
+): string {
 	// Obsidian re-exports `moment`, and in the marketplace's stricter type-checking
 	// environment that re-export resolves as the `error`/`any` type, which trips
 	// @typescript-eslint/no-unsafe-* on every call in this chain. Pin the factory
@@ -520,6 +525,9 @@ function expandDateTemplate(template: string, date: Date, title?: string): strin
 		const inner = raw.trim();
 		if (title !== undefined && inner === 'title') {
 			return title;
+		}
+		if (folder !== undefined && inner === 'plaud-folder') {
+			return folder;
 		}
 		return m.format(inner);
 	});
@@ -625,6 +633,7 @@ export function resolveSubfolder(
 	date: Date,
 	title?: string,
 	replacement: string = '-',
+	folder?: string,
 ): string {
 	if (template.trim() === '') {
 		return '';
@@ -650,7 +659,18 @@ export function resolveSubfolder(
 		// below, instead of sanitizeFilename's 'Untitled' fallback.
 		safeTitle = sanitizeFilename(titleWithoutLeadingDate(title), replacement, '');
 	}
-	const resolved = normalizeFolderPath(expandDateTemplate(template, date, safeTitle))
+	// {{plaud-folder}} support (issue #16 follow-up): the recording's Plaud folder
+	// name, sanitized into one legal segment the same way as {{title}}. Plaud
+	// folders are flat (plaud-client.ts: no parent_id), so a '/' in a folder name
+	// is literal text and is flattened, not treated as nesting. Empty (an unfiled
+	// recording) yields '' so the _unfiled bucket below fires.
+	let safeFolder: string | undefined;
+	if (folder !== undefined) {
+		safeFolder = sanitizeFilename(folder, replacement, '');
+	}
+	const resolved = normalizeFolderPath(
+		expandDateTemplate(template, date, safeTitle, safeFolder),
+	)
 		.split('/')
 		// Drop empty/whitespace-only segments so nesting stays as authored.
 		.filter((segment) => segment.trim() !== '')
@@ -658,12 +678,18 @@ export function resolveSubfolder(
 			assertUsableFolderSegment(sanitizeFolderSegment(segment, replacement)),
 		)
 		.join('/');
-	// Empty-title bucket: a template that is only {{title}} (or otherwise renders
-	// entirely empty because the title stripped to nothing) would collapse to no
-	// subfolder, silently dropping the note into the output root. Bucket it,
-	// mirroring _undated, so the nesting the user asked for stays intentional.
-	if (resolved === '' && /\{\{\s*title\s*}}/.test(template)) {
-		return '_untitled';
+	// Empty-value buckets: a template that renders entirely empty because its only
+	// dynamic token (a folder or title that reduced to nothing) was empty would
+	// collapse to no subfolder, silently dropping the note into the output root.
+	// Bucket it, mirroring _undated, so the nesting the user asked for stays
+	// intentional. plaud-folder is checked first as the primary grouping.
+	if (resolved === '') {
+		if (/\{\{\s*plaud-folder\s*}}/.test(template)) {
+			return '_unfiled';
+		}
+		if (/\{\{\s*title\s*}}/.test(template)) {
+			return '_untitled';
+		}
 	}
 	return resolved;
 }
@@ -878,6 +904,8 @@ export const TEMPLATE_PREVIEW_DATE = new Date(2026, 6, 5); // 2026-07-05 local (
 // meaningful time (2026-07-05 14:30:00), not 00:00:00.
 export const TEMPLATE_PREVIEW_DATETIME = new Date(2026, 6, 5, 14, 30, 0);
 export const TEMPLATE_PREVIEW_TITLE = 'Team sync';
+// Sample Plaud folder name for the subfolder preview's {{plaud-folder}} token.
+export const TEMPLATE_PREVIEW_FOLDER = 'Meetings';
 
 /**
  * Build a note name from a recording title and date, using a `{{...}}` template.
@@ -2102,12 +2130,24 @@ export class NoteWriter {
 	 * creating the destination folder if needed. Shared by writeNote and
 	 * writePlaceholderNote so both land a recording at the exact same path.
 	 */
-	private async resolveTargetPath(recording: Recording): Promise<string> {
+	private async resolveTargetPath(
+		recording: Recording,
+		folders?: readonly string[],
+	): Promise<string> {
+		// A recording is normally in a single Plaud folder; use the first resolved
+		// name for the {{plaud-folder}} token, or '' when unfiled (the token then
+		// buckets to _unfiled). Always pass a string so {{plaud-folder}} resolves
+		// instead of being handed to Moment as a format. The placeholder path passes
+		// no folders (they are not resolved on the error path); cross-folder dedup
+		// (existingPathForPlaudId) migrates such a stub to the real folder on the
+		// later successful import.
+		const folderName = folders && folders.length > 0 ? folders[0] : '';
 		const subfolder = resolveSubfolder(
 			this.subfolderTemplate,
 			recording.createdAt,
 			recording.title,
 			this.forbiddenCharReplacement,
+			folderName,
 		);
 		const destinationFolder = joinFolderPath(this.outputFolder, subfolder);
 		await this.ensureFolder(destinationFolder);
@@ -2265,10 +2305,12 @@ export class NoteWriter {
 			);
 		}
 
-		// Resolve the per-recording destination path. The subfolder template
-		// keys off the recording date, so the resolved path is a pure function
-		// of the recording's own metadata and stays stable across re-imports.
-		const targetPath = await this.resolveTargetPath(recording);
+		// Resolve the per-recording destination path. The subfolder template keys
+		// off the recording's own metadata (date, title, and now its Plaud folder),
+		// so the resolved path stays stable across re-imports. The folder names come
+		// from formatOptions so a {{plaud-folder}} template files the note under its
+		// Plaud folder.
+		const targetPath = await this.resolveTargetPath(recording, formatOptions?.folders);
 		const effectiveFormatOptions: FormatMarkdownOptions = {
 			...this.defaultFormatOptions,
 			...formatOptions,

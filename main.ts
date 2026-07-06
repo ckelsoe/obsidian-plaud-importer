@@ -39,6 +39,7 @@ import {
 	TEMPLATE_PREVIEW_DATE,
 	TEMPLATE_PREVIEW_DATETIME,
 	TEMPLATE_PREVIEW_TITLE,
+	TEMPLATE_PREVIEW_FOLDER,
 	sanitizeFilename,
 	type RenameFileFn,
 	type TagMode,
@@ -151,7 +152,7 @@ const DEFAULT_RIBBON_ICON = "audio-lines";
 // at createEl/setDesc) so the obsidianmd sentence-case lint, which inspects
 // literal arguments, leaves the token examples and proper nouns alone.
 const SUBFOLDER_TEMPLATE_INTRO =
-	"Optional. Files each imported note into a subfolder of the output folder, built from the recording's own date. Leave empty to keep every note in one folder. Text inside {{ }} is a date format written in Moment style (the same syntax core Daily Notes uses); text outside the braces is kept as-is, and a forward slash (/) starts a new nested folder level, so {{YYYY}}/{{MM}} makes a year folder holding month folders. Separators like dashes and spaces are fine inside the braces; keep your own words (plain letters) outside them, since letters inside are read as date tokens. You can also use {{title}}, the recording title (with a leading date removed, the same as in the note name), to build folder-note layouts like {{YYYY}}/{{title}}. A slash inside a title is turned into your forbidden-character replacement so the title stays a single folder.";
+	"Optional. Files each imported note into a subfolder of the output folder, built from the recording's own date. Leave empty to keep every note in one folder. Text inside {{ }} is a date format written in Moment style (the same syntax core Daily Notes uses); text outside the braces is kept as-is, and a forward slash (/) starts a new nested folder level, so {{YYYY}}/{{MM}} makes a year folder holding month folders. Separators like dashes and spaces are fine inside the braces; keep your own words (plain letters) outside them, since letters inside are read as date tokens. You can also use {{title}}, the recording title (with a leading date removed, the same as in the note name), to build folder-note layouts like {{YYYY}}/{{title}}. A slash inside a title is turned into your forbidden-character replacement so the title stays a single folder. {{plaud-folder}} is the recording's Plaud folder name, so {{plaud-folder}}/{{YYYY}} mirrors your Plaud folders into the vault; a recording with no Plaud folder files under _unfiled.";
 
 // [token, what it expands to] pairs. Real Moment format tokens (case matters).
 // The same vocabulary works in the note-name field, so a user learns it once.
@@ -164,6 +165,7 @@ const SUBFOLDER_TEMPLATE_TOKENS: ReadonlyArray<readonly [string, string]> = [
 	["{{WW}}", "ISO week number, 01 to 53"],
 	["{{Q}}", "quarter, 1 to 4"],
 	["{{title}}", "the recording title, with a leading numeric date removed (for folder-note layouts)"],
+	["{{plaud-folder}}", "the recording's Plaud folder name (or _unfiled when it has none)"],
 ];
 
 // [template, resulting folder] pairs for a June 4 2026 recording titled Team
@@ -177,6 +179,7 @@ const SUBFOLDER_TEMPLATE_EXAMPLES: ReadonlyArray<readonly [string, string]> = [
 	["{{YYYY}}/W{{WW}}", "2026/W23 (by week)"],
 	["{{YYYY}}/{{MM MMMM}}", "2026/06 June (two tokens in one {{ }})"],
 	["{{YYYY}}/{{title}}", "2026/Team sync (a folder per recording)"],
+	["{{plaud-folder}}/{{YYYY}}", "Meetings/2026 (mirror the Plaud folder)"],
 ];
 
 const SUBFOLDER_TEMPLATE_TOKENS_HEADING =
@@ -264,6 +267,10 @@ const DATE_INSERT_TOKENS: ReadonlyArray<readonly [string, string]> = [
 	["Offset", "{{Z}}"],
 ];
 const TITLE_INSERT_TOKEN: readonly [string, string] = ["Title", "{{title}}"];
+// Subfolder-only: the recording's Plaud folder name, for mirroring Plaud folders
+// into the vault tree. Not offered on the note-name field (a folder name in a
+// per-note file name is surprising).
+const FOLDER_INSERT_TOKEN: readonly [string, string] = ["Folder", "{{plaud-folder}}"];
 
 // Datetime-template documentation for the `datetime:` frontmatter field (issue
 // #32). Mirrors the subfolder field's Moment-only shape (no {{title}}, no
@@ -2493,10 +2500,15 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 		// the button/field closures, which only run on later user interaction.
 		let field: TextComponent | null = null;
 		let updatePreview: (template: string) => void = () => {};
-		// Date tokens plus Title: the subfolder now supports {{title}} for
-		// folder-note layouts (issue #30 follow-up), so it gets the same button set
-		// as the note-name field.
-		for (const [label, token] of [...DATE_INSERT_TOKENS, TITLE_INSERT_TOKEN]) {
+		// Date tokens plus Title and Folder: the subfolder supports {{title}} for
+		// folder-note layouts (issue #30 follow-up) and {{plaud-folder}} for
+		// mirroring Plaud folders (issue #16 follow-up), so it gets the date button
+		// set plus both.
+		for (const [label, token] of [
+			...DATE_INSERT_TOKENS,
+			TITLE_INSERT_TOKEN,
+			FOLDER_INSERT_TOKEN,
+		]) {
 			setting.addButton((button) => {
 				button
 					.setButtonText(label)
@@ -2531,14 +2543,15 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 				return "Preview: no subfolder (every note in the output folder)";
 			}
 			try {
-				// Pass the sample title so a {{title}} template previews with a real
-				// folder name, and the configured replacement char so the preview
-				// matches what an import would actually write.
+				// Pass the sample title and folder so {{title}} and {{plaud-folder}}
+				// templates preview with real names, and the configured replacement
+				// char so the preview matches what an import would actually write.
 				return `Preview folder: ${resolveSubfolder(
 					template,
 					TEMPLATE_PREVIEW_DATE,
 					TEMPLATE_PREVIEW_TITLE,
 					this.plugin.settings.forbiddenCharReplacement,
+					TEMPLATE_PREVIEW_FOLDER,
 				)}`;
 			} catch (err) {
 				return `Preview (not usable): ${
@@ -3155,7 +3168,13 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 				// persisted. No Notice here: this field persists per keystroke, so a
 				// Notice would spam while ".." is mid-typed; the live preview already
 				// shows "(not usable)", and the previous good value stays saved.
-				resolveSubfolder(next, TEMPLATE_PREVIEW_DATE, TEMPLATE_PREVIEW_TITLE);
+				resolveSubfolder(
+					next,
+					TEMPLATE_PREVIEW_DATE,
+					TEMPLATE_PREVIEW_TITLE,
+					this.plugin.settings.forbiddenCharReplacement,
+					TEMPLATE_PREVIEW_FOLDER,
+				);
 				this.plugin.settings.subfolderTemplate = next;
 			} catch {
 				return;
