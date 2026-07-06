@@ -7,7 +7,7 @@
 		"dev": "node esbuild.config.mjs",
 		"build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
 		"package:brat": "npm run build && node package-brat.mjs",
-		"lint": "eslint main.ts plaud-client.ts plaud-client-re.ts plaud-login.ts import-core.ts import-modal.ts import-runner.ts attachment-importer.ts note-writer.ts folder-catalog.ts debug-logger.ts vault-index.ts __tests__/plaud-client-re.test.ts __tests__/import-modal.test.ts __tests__/import-runner.test.ts __tests__/note-writer.test.ts __tests__/folder-catalog.test.ts __tests__/attachment-importer.test.ts __tests__/debug-logger.test.ts __tests__/vault-index.test.ts --max-warnings 0 && node scripts/check-submission.mjs",
+		"lint": "eslint main.ts plaud-client.ts plaud-client-re.ts plaud-login.ts import-core.ts import-modal.ts import-runner.ts attachment-importer.ts note-writer.ts folder-catalog.ts debug-logger.ts vault-index.ts __tests__/plaud-client-re.test.ts __tests__/import-modal.test.ts __tests__/import-runner.test.ts __tests__/note-writer.test.ts __tests__/folder-catalog.test.ts __tests__/attachment-importer.test.ts __tests__/debug-logger.test.ts __tests__/vault-index.test.ts --max-warnings 0 && node scripts/check-submission.mjs && node scripts/check-icons.mjs",
 		"test": "jest --passWithNoTests",
 		"version": "node version-bump.mjs && git add manifest.json versions.json"
 	},
@@ -32,6 +32,7 @@
 		"eslint-plugin-obsidianmd": "^0.4.1",
 		"globals": "^17.1.0",
 		"jest": "^30.2.0",
+		"lucide-static": "^1.23.0",
 		"moment": "^2.29.4",
 		"obsidian": "^1.13.0",
 		"ts-jest": "^29.4.6",

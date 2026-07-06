@@ -4,6 +4,10 @@ All notable changes to Plaud Importer will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- Development tooling: a CI check now validates every hardcoded ribbon-icon id against the Lucide icon set, so an invalid id (which would render a blank icon) fails the build instead of shipping. No behavior change.
+
 ## [0.24.0] - 2026-07-06
 
 ### Added
