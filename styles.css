@@ -541,3 +541,17 @@
 	user-select: text;
 	-webkit-user-select: text;
 }
+
+/* Inline action link inside a notice (e.g. the auth-pause "Reconnect"). A
+   plain span styled as a clickable accent link; keeps notices actionable
+   without opening settings. */
+.plaud-importer-notice-action {
+	color: var(--text-accent);
+	cursor: pointer;
+	text-decoration: underline;
+	font-weight: var(--font-semibold);
+}
+
+.plaud-importer-notice-action:hover {
+	color: var(--text-accent-hover);
+}

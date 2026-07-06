@@ -54,6 +54,7 @@ import {
 import { runImport } from "./import-runner";
 import {
 	PAGE_SIZE,
+	categoryAllowsReauth,
 	type ArtifactSelection,
 	type ImportModalOptions,
 } from "./import-core";
@@ -522,6 +523,14 @@ export default class PlaudImporterPlugin extends Plugin {
 	// loop; the loops poll this flag and abort so a disable/re-enable cannot leave
 	// the old instance writing while the new instance starts a tick.
 	private disposed = false;
+	// A sign-in window is open. Blocks a second concurrent sign-in from any
+	// entry point (settings, the auth-pause notice, the backfill retry), so
+	// stacked stale notices cannot launch clobbering capture sessions.
+	private reauthInFlight = false;
+	// Sticky action notices (e.g. the auth-pause "Reconnect") tracked so
+	// onunload can hide any still on screen before their click handlers can run
+	// plugin work after the plugin is gone.
+	private readonly actionNotices = new Set<Notice>();
 	// Loop guard for the rename cascade. Nonzero while WE rename a note or its
 	// assets folder (auto-migration or the local rename command). Suppresses the
 	// vault.on('rename') listener so our own rename is not treated as a
@@ -693,6 +702,12 @@ export default class PlaudImporterPlugin extends Plugin {
 			window.clearTimeout(this.autoSyncFirstRunTimeoutId);
 			this.autoSyncFirstRunTimeoutId = undefined;
 		}
+		// Hide any sticky action notice (e.g. an auth-pause "Reconnect") so its
+		// click handler cannot open sign-in or save settings after unload.
+		for (const notice of this.actionNotices) {
+			notice.hide();
+		}
+		this.actionNotices.clear();
 		// Obsidian auto-detaches ribbon icons on unload; clear our
 		// state so a subsequent onload starts from a known baseline.
 		this.ribbonIconEl = null;
@@ -1292,12 +1307,17 @@ export default class PlaudImporterPlugin extends Plugin {
 			if (outcome === "auth") {
 				// The auth outcome covers both a rejected/expired token and a
 				// missing one; word the pause Notice for the actual category so a
-				// user who never configured a token is not told it "expired".
-				const reason =
+				// user who never configured a token is not told it "expired". A
+				// one-click Reconnect action runs the sign-in flow and resumes,
+				// so the user does not have to hunt through settings. Signing in
+				// sets the token in the not-configured case too.
+				const lead =
 					classification.category === "not-configured"
-						? "no Plaud token is configured. Add one to resume."
-						: "the session expired. Reconnect to resume.";
-				new Notice(`Plaud auto-sync paused: ${reason}`);
+						? "Plaud auto-sync paused: no Plaud token is configured."
+						: "Plaud auto-sync paused: your session expired.";
+				this.showActionNotice(lead, "Reconnect", () =>
+					this.reconnectFromNotice(),
+				);
 			}
 			this.logAutoSync("tick failed", {
 				outcome,
@@ -1358,6 +1378,84 @@ export default class PlaudImporterPlugin extends Plugin {
 			this.autoSyncFirstRunTimeoutId = undefined;
 			void this.runAutoSyncTickSafe();
 		}, 1000);
+	}
+
+	/**
+	 * Show a sticky notice carrying one inline action link. Used by the
+	 * auth-pause path and the manual commands so a disconnected session offers
+	 * a one-click fix instead of a dead-end error. The notice hides as soon as
+	 * the action starts, so a slow sign-in window does not sit under a stale
+	 * message; action errors are swallowed (each action shows its own result).
+	 */
+	private showActionNotice(
+		message: string,
+		actionLabel: string,
+		onAction: () => unknown,
+	): void {
+		const frag = createFragment();
+		frag.createSpan({ text: `${message} ` });
+		// role/tabindex + key handling so keyboard and screen-reader users can
+		// activate the action, not just a mouse click.
+		const actionEl = frag.createSpan({
+			text: actionLabel,
+			cls: "plaud-importer-notice-action",
+			attr: { role: "button", tabindex: "0" },
+		});
+		// 0 = stay until the user acts (or dismisses); an auth pause is not a
+		// message to blink past.
+		const notice = new Notice(frag, 0);
+		this.actionNotices.add(notice);
+		const activate = (): void => {
+			this.actionNotices.delete(notice);
+			notice.hide();
+			// If the plugin unloaded while the notice was on screen, do nothing.
+			if (this.disposed) return;
+			void (async () => {
+				try {
+					await onAction();
+				} catch (err) {
+					console.error("Plaud importer: notice action failed", err);
+					new Notice(
+						"Plaud: that action could not be completed. Try again from settings.",
+					);
+				}
+			})();
+		};
+		actionEl.addEventListener("click", activate);
+		actionEl.addEventListener("keydown", (evt) => {
+			if (evt.key === "Enter" || evt.key === " ") {
+				evt.preventDefault();
+				activate();
+			}
+		});
+	}
+
+	/**
+	 * Reconnect from an auth-pause surface: run the sign-in flow, and on success
+	 * clear any auto-sync pause so the next tick runs. Owns its own result
+	 * notice for every outcome (success, closed, error) so the user is never
+	 * left with a hidden notice and no feedback. Returns whether a token was
+	 * captured, so a caller (e.g. a failed command) can retry itself on success.
+	 */
+	async reconnectFromNotice(): Promise<boolean> {
+		try {
+			const ok = await this.reauthenticate();
+			// Plugin unloaded mid sign-in: skip side effects and messaging.
+			if (this.disposed) return ok;
+			if (ok) {
+				new Notice("Plaud reconnected.");
+				this.resumeAutoSyncIfPaused();
+			} else {
+				new Notice("Plaud sign-in closed. Still disconnected.");
+			}
+			return ok;
+		} catch (err) {
+			console.error("Plaud importer: reconnect failed", err);
+			if (!this.disposed) {
+				new Notice("Plaud reconnect failed. Still disconnected.");
+			}
+			return false;
+		}
 	}
 
 	/**
@@ -1451,7 +1549,23 @@ export default class PlaudImporterPlugin extends Plugin {
 				reachedListEnd,
 			});
 		} catch (err) {
-			new Notice(`Plaud importer: backfill failed — ${classifyError(err).message}`);
+			const classification = classifyError(err);
+			// An expired/missing token used to dead-end here with a bare error.
+			// Offer a one-click reconnect that retries the backfill on success,
+			// matching the auth-pause notice, so a stale session is a single
+			// click to fix rather than a trip to settings and back.
+			if (categoryAllowsReauth(classification.category)) {
+				this.showActionNotice(
+					"Plaud importer: backfill needs a Plaud session.",
+					"Reconnect and retry",
+					async () => {
+						const ok = await this.reconnectFromNotice();
+						if (ok) await this.backfillVersionMarkers();
+					},
+				);
+			} else {
+				new Notice(`Plaud importer: backfill failed: ${classification.message}`);
+			}
 		} finally {
 			// Always release the gate so a failed or empty backfill never leaves
 			// auto-sync permanently blocked.
@@ -1667,19 +1781,36 @@ export default class PlaudImporterPlugin extends Plugin {
 	// build. Shared by the settings tab and the import modal's inline re-auth; it
 	// shows no Notice itself so each caller can phrase its own.
 	async reauthenticate(): Promise<boolean> {
-		const result = await openPlaudLogin(this.app, {
-			debugLogger: this.debugLogger,
-		});
-		if (result === null) {
+		// One sign-in window at a time. Concurrent windows share the same
+		// Electron capture partition and would clobber each other's token
+		// capture, so a second caller (a stacked notice, a repeated command)
+		// no-ops with a hint instead of opening a rival window.
+		if (this.reauthInFlight) {
+			new Notice("Plaud sign-in is already open.");
 			return false;
 		}
-		this.app.secretStorage.setSecret(CAPTURED_SECRET_ID, result.token);
-		this.settings.secretId = CAPTURED_SECRET_ID;
-		if (result.apiBaseUrl !== null) {
-			this.settings.apiBaseUrl = result.apiBaseUrl;
+		this.reauthInFlight = true;
+		try {
+			const result = await openPlaudLogin(this.app, {
+				debugLogger: this.debugLogger,
+			});
+			if (result === null) {
+				return false;
+			}
+			// Do not persist a token onto a plugin that unloaded mid sign-in.
+			if (this.disposed) {
+				return false;
+			}
+			this.app.secretStorage.setSecret(CAPTURED_SECRET_ID, result.token);
+			this.settings.secretId = CAPTURED_SECRET_ID;
+			if (result.apiBaseUrl !== null) {
+				this.settings.apiBaseUrl = result.apiBaseUrl;
+			}
+			await this.saveSettings();
+			return true;
+		} finally {
+			this.reauthInFlight = false;
 		}
-		await this.saveSettings();
-		return true;
 	}
 
 	// Reads a token from the clipboard and stores it via storeAccessToken,
