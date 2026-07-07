@@ -330,6 +330,7 @@ See [PRIVACY.md](./PRIVACY.md) for the full privacy policy and liability disclai
 - **"Could not reach Plaud.AI"** — network or DNS issue on your side, or Plaud is down. Retry from the modal's **Retry** button.
 - **"Plaud returned data in an unexpected shape"** — Plaud changed their API. File an issue with the debug log attached (see [Debug logging](#debug-logging)).
 - **Import silently "skipped"** — your duplicate handling was set to Skip and the note already existed. Switch to **Ask each time** (default since 0.2.0) or **Overwrite**.
+- **A brand-new recording will not import yet.** A recording does not become available to import until you have opened Plaud (web or app) and its cloud has finished finalizing the recording. Until then the plugin cannot see it. Open Plaud, let it finish processing, then run the import again. This is a Plaud-side step, not a plugin limitation.
 
 ## Support and issues
 
