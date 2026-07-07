@@ -6,7 +6,7 @@ All notable changes to Plaud Importer will be documented in this file.
 
 ### Changed
 
-- **The Duplicate handling setting now explains what background auto-sync does.** "Ask each time" has no dialog to show during an unattended sync, so background sync already imports new recordings and overwrites changed ones without prompting; only manual imports honor "Ask each time". The setting description now says this so the behavior is not a surprise. No behavior change (issue #43).
+- **The Duplicate handling setting now explains what background auto-sync does.** "Ask each time" has no dialog to show during an unattended sync, so background sync never prompts: it overwrites a note when its recording changed in Plaud. Only manual imports honor "Ask each time". The setting description now says this so the behavior is not a surprise. No behavior change (issue #43).
 
 ## [0.25.0-beta.1] - 2026-07-07
 

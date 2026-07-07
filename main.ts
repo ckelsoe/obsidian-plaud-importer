@@ -272,7 +272,7 @@ const FORBIDDEN_CHAR_REPLACEMENT_DESC =
 // prompts (skip-for-new, overwrite-for-changed); see importAutoSyncCandidates
 // (issue #43).
 const DUPLICATE_HANDLING_DESC =
-	"What to do when a note for the recording already exists in the output folder. During background auto-sync there is no prompt, so new recordings are imported and changed ones overwrite; 'Ask each time' applies to manual imports only.";
+	"What to do when a note for the recording already exists in the output folder. Background auto-sync never shows this prompt: it overwrites the note when the recording changed in Plaud. 'Ask each time' applies to manual imports only.";
 
 // Description for the silent-refresh toggle (Release B). Held in a const so the
 // declarative (1.13+) and imperative (1.12) settings paths show identical text
