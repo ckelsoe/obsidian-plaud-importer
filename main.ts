@@ -25,13 +25,9 @@ import {
 	clearPlaudLoginSession,
 	isAccessToken,
 	openPlaudLogin,
-	readPlaudSessionCookieHeader,
 } from "./plaud-login";
-import {
-	decodeJwtExpMs,
-	refreshPlaudSession,
-	type RefreshTransport,
-} from "./plaud-refresh";
+import { decodeJwtExpMs, isFreshAccessToken } from "./plaud-refresh";
+import { buildPartitionPost, performNetRefresh } from "./plaud-refresh-net";
 import {
 	NoteWriter,
 	DEFAULT_NOTE_NAME_TEMPLATE,
@@ -1485,31 +1481,6 @@ export default class PlaudImporterPlugin extends Plugin {
 	// ---- Silent session refresh (Release B) -----------------------------
 
 	/**
-	 * The Obsidian-backed transport the refresh module needs: a `requestUrl` POST
-	 * (avoids CORS/cert issues on Electron) plus a read of the Plaud partition's
-	 * cookies. Built per call so it always reads the current region.
-	 */
-	private buildRefreshTransport(): RefreshTransport {
-		return {
-			post: async ({ url, headers, body }) => {
-				const response = await requestUrl({
-					url,
-					method: "POST",
-					headers: { ...headers },
-					body,
-					throw: false,
-				});
-				return {
-					status: response.status,
-					json: safeJson(response),
-					text: response.text ?? "",
-				};
-			},
-			readCookieHeader: (url) => readPlaudSessionCookieHeader(url),
-		};
-	}
-
-	/**
 	 * Blank any stored refresh token. Called whenever the access token is
 	 * replaced WITHOUT a matching fresh refresh token, so a later silent refresh
 	 * cannot use a previous session's WRT to authenticate as, and overwrite the
@@ -1531,78 +1502,159 @@ export default class PlaudImporterPlugin extends Plugin {
 	}
 
 	/**
-	 * Attempt one silent session refresh. FAIL-SAFE: the stored token is replaced
-	 * only when the endpoint returns a fresh WT (validated in plaud-refresh, and
-	 * re-checked here as defense in depth). Any failure leaves every stored value
-	 * untouched and returns false, so the caller falls through to today's
-	 * behavior. Never throws; never logs a token value. `reason` only tags the
-	 * debug log. Serialized by `refreshInFlight` so refreshes never overlap.
+	 * Attempt one silent session refresh by re-capturing a fresh workspace token
+	 * from a HIDDEN sign-in window on the persistent Plaud partition. The web app
+	 * auto-authenticates from the stored session and mints a fresh WT on load,
+	 * which the same capture used at login grabs — no user interaction, no need to
+	 * replicate Plaud's UT->WT token derivation (the direct refresh endpoint only
+	 * returns a UT, not the WT the data API needs).
+	 *
+	 * FAIL-SAFE: the stored token is replaced only when a fresh WT (typ WT, future
+	 * exp) is captured. A timeout, a closed window, or an unusable token leaves
+	 * every stored value untouched and returns false, so the caller falls back to
+	 * today's behavior. Never throws.
+	 *
+	 * Serialized against BOTH a concurrent silent refresh (`refreshInFlight`) and
+	 * a visible interactive sign-in (`reauthInFlight`): two windows on the same
+	 * partition would clobber each other's capture.
 	 */
 	private async tryRefreshSession(
 		reason: "scheduled" | "reactive" | "manual",
 	): Promise<boolean> {
-		if (this.disposed || this.refreshInFlight) {
+		if (this.disposed || this.refreshInFlight || this.reauthInFlight) {
 			return false;
 		}
 		this.refreshInFlight = true;
+		// Also hold the interactive-sign-in gate: a manual "Sign in" opening a
+		// second window on this partition mid-refresh would clobber the capture.
+		this.reauthInFlight = true;
 		try {
-			const storedRefreshToken = this.app.secretStorage.getSecret(
-				CAPTURED_REFRESH_SECRET_ID,
-			);
-			const result = await refreshPlaudSession({
-				apiBaseUrl: this.settings.apiBaseUrl,
-				refreshToken: storedRefreshToken,
-				transport: this.buildRefreshTransport(),
-				debugLogger: this.debugLogger,
-			});
-			// The refresh awaits the network; do not persist onto a torn-down plugin.
+			// Primary: the direct, windowless refresh over the partition cookies
+			// (POST /auth/refresh-user-token then the workspace/token mint). Returns
+			// false when the session.fetch surface is unavailable or any step fails,
+			// so we fall through to the headless window below.
+			if (await this.tryNetRefresh(reason)) {
+				return true;
+			}
 			if (this.disposed) {
 				return false;
 			}
-			if (!result.ok) {
-				this.logAutoSync(`session refresh (${reason}) failed`, {
-					reason: result.reason,
-				});
+			// Fallback: re-capture a fresh WT from a HIDDEN sign-in window, letting
+			// the web app mint it on load. Slower and heavier, but needs no knowledge
+			// of the credential and covers the case where the partition did not
+			// retain the httpOnly cookies the direct path relies on.
+			const result = await openPlaudLogin(this.app, {
+				debugLogger: this.debugLogger,
+				headless: true,
+			});
+			// The capture awaits a full app load; do not persist onto a torn-down
+			// plugin, and treat a timeout / closed window (null) as a benign failure.
+			if (this.disposed || result === null) {
+				if (result === null) {
+					this.logAutoSync(
+						`session refresh (${reason}) captured no token (timed out or session needs interaction)`,
+					);
+				}
 				return false;
 			}
-			// Defense in depth: the module already guarantees a fresh WT, but never
-			// overwrite a working token with something that is not even an access
-			// token if that guarantee ever regresses.
-			if (!isAccessToken(result.accessToken)) {
-				this.logAutoSync(
-					`session refresh (${reason}) returned a non-WT token; keeping existing`,
-				);
-				return false;
-			}
-			// Update the active secret in place (keeps a user's chosen secret slot),
-			// falling back to the captured-token slot when none is linked yet.
-			const targetSecretId =
-				this.settings.secretId.length > 0
-					? this.settings.secretId
-					: CAPTURED_SECRET_ID;
-			this.app.secretStorage.setSecret(targetSecretId, result.accessToken);
-			this.settings.secretId = targetSecretId;
-			if (result.refreshToken !== null && result.refreshToken.length > 0) {
-				// The refresh token rotates on each use; store the new one, stripped
-				// of any bearer prefix, for the next refresh.
-				this.app.secretStorage.setSecret(
-					CAPTURED_REFRESH_SECRET_ID,
-					result.refreshToken.replace(/^bearer\s+/i, ""),
-				);
-			}
-			if (result.apiBaseUrl.length > 0) {
-				this.settings.apiBaseUrl = result.apiBaseUrl;
-			}
-			await this.saveSettings();
-			this.logAutoSync(`session refreshed (${reason})`);
-			return true;
+			return await this.applyRefreshedToken(
+				result.token,
+				result.refreshToken,
+				result.apiBaseUrl,
+				reason,
+				"window",
+			);
 		} catch (err) {
 			// A refresh bug must log, not throw into the timer or the auto-sync tick.
 			console.error("Plaud importer: silent session refresh failed", err);
 			return false;
 		} finally {
 			this.refreshInFlight = false;
+			this.reauthInFlight = false;
 		}
+	}
+
+	/**
+	 * Primary refresh: the direct, windowless path. Reads `wid`/`client_id` off
+	 * the stored token, runs the two-step refresh over the partition cookie jar,
+	 * and hands the candidate WT to the shared fail-safe. Returns false (never
+	 * throws) when the session.fetch surface is missing, no token is stored, or
+	 * any step fails, so `tryRefreshSession` falls back to the headless window.
+	 */
+	private async tryNetRefresh(
+		reason: "scheduled" | "reactive" | "manual",
+	): Promise<boolean> {
+		const post = buildPartitionPost();
+		if (post === null) {
+			// No session.fetch on this runtime; the window path is the only option.
+			return false;
+		}
+		const token = this.currentAccessToken();
+		if (token === null) {
+			return false;
+		}
+		const result = await performNetRefresh({
+			currentToken: token,
+			baseUrl: this.settings.apiBaseUrl,
+			post,
+		});
+		if (this.disposed || result === null) {
+			return false;
+		}
+		return this.applyRefreshedToken(
+			result.token,
+			result.refreshToken,
+			result.apiBaseUrl,
+			reason,
+			"direct",
+		);
+	}
+
+	/**
+	 * Shared fail-safe for both refresh paths. Replaces the stored secrets ONLY
+	 * when the candidate decodes as a fresh workspace token (typ WT, future exp);
+	 * a non-WT or already-expired value is rejected and nothing is written, so a
+	 * failed refresh can never make things worse than the current stored token.
+	 */
+	private async applyRefreshedToken(
+		candidate: string,
+		refreshToken: string | null,
+		apiBaseUrl: string | null,
+		reason: "scheduled" | "reactive" | "manual",
+		via: "direct" | "window",
+	): Promise<boolean> {
+		if (
+			!isAccessToken(candidate) ||
+			!isFreshAccessToken(candidate, Date.now())
+		) {
+			this.logAutoSync(
+				`session refresh (${reason}, ${via}) produced a token that is not a fresh WT; keeping existing`,
+			);
+			return false;
+		}
+		const token = candidate.trim().replace(/^bearer\s+/i, "");
+		// Update the active secret in place (keeps a user's chosen secret slot),
+		// falling back to the captured-token slot when none is linked yet.
+		const targetSecretId =
+			this.settings.secretId.length > 0
+				? this.settings.secretId
+				: CAPTURED_SECRET_ID;
+		this.app.secretStorage.setSecret(targetSecretId, token);
+		this.settings.secretId = targetSecretId;
+		// Keep the paired refresh token if this refresh produced one; otherwise
+		// leave the stored one so a future attempt can still use it.
+		if (refreshToken !== null && refreshToken.trim().length > 0) {
+			this.app.secretStorage.setSecret(
+				CAPTURED_REFRESH_SECRET_ID,
+				refreshToken.trim().replace(/^bearer\s+/i, ""),
+			);
+		}
+		if (apiBaseUrl !== null) {
+			this.settings.apiBaseUrl = apiBaseUrl;
+		}
+		await this.saveSettings();
+		this.logAutoSync(`session refreshed (${reason}, ${via})`);
+		return true;
 	}
 
 	/**
