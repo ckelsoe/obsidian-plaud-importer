@@ -4,6 +4,10 @@ All notable changes to Plaud Importer will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- **The Duplicate handling setting now explains what background auto-sync does.** "Ask each time" has no dialog to show during an unattended sync, so background sync already imports new recordings and overwrites changed ones without prompting; only manual imports honor "Ask each time". The setting description now says this so the behavior is not a surprise. No behavior change (issue #43).
+
 ## [0.25.0-beta.1] - 2026-07-07
 
 > Beta release for BRAT testers. The background session renewal talks to Plaud's live endpoint, which cannot be exercised in CI, so it ships to beta first for hands-on validation. Use **Refresh session now** to confirm it works in your vault.

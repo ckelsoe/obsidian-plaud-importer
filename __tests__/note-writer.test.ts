@@ -1716,6 +1716,17 @@ describe('renameRecordingNote', () => {
 });
 
 describe('NoteWriter', () => {
+	// Locks the #43 safe fallback's second guard: a background auto-sync tick
+	// builds its writer with skip/overwrite and never a prompt callback, so if a
+	// refactor ever let onDuplicate='prompt' reach a headless writer, construction
+	// throws instead of silently stalling with no dialog to answer it.
+	it("throws when onDuplicate is 'prompt' without a promptOnDuplicate callback", () => {
+		const vault = makeFakeVault();
+		expect(
+			() => new NoteWriter(vault, { outputFolder: 'Plaud', onDuplicate: 'prompt' }),
+		).toThrow("a promptOnDuplicate callback is required");
+	});
+
 	it('creates the output folder if it does not exist', async () => {
 		const vault = makeFakeVault();
 		const writer = new NoteWriter(vault, { outputFolder: 'Plaud', onDuplicate: 'skip' });

@@ -265,6 +265,15 @@ const NOTE_NAME_TEMPLATE_FOOTNOTE =
 const FORBIDDEN_CHAR_REPLACEMENT_DESC =
 	"Character that replaces a slash, colon, or other character a file name or folder cannot contain, for example one that appears in a recording title. Must be a single character; the default is a dash.";
 
+// Description for the duplicate-handling dropdown. Held in a const so the
+// declarative (1.13+) and imperative (1.12) settings paths show identical text
+// and the sentence-case lint inspects one literal. The second sentence clarifies
+// that 'Ask each time' does not apply during background auto-sync, which never
+// prompts (skip-for-new, overwrite-for-changed); see importAutoSyncCandidates
+// (issue #43).
+const DUPLICATE_HANDLING_DESC =
+	"What to do when a note for the recording already exists in the output folder. During background auto-sync there is no prompt, so new recordings are imported and changed ones overwrite; 'Ask each time' applies to manual imports only.";
+
 // Description for the silent-refresh toggle (Release B). Held in a const so the
 // declarative (1.13+) and imperative (1.12) settings paths show identical text
 // and the sentence-case lint inspects one literal.
@@ -1256,6 +1265,14 @@ export default class PlaudImporterPlugin extends Plugin {
 		const fetchAudioUrl = selection.includeAudio
 			? (id: PlaudRecordingId) => client.getAudioTempUrl(id)
 			: undefined;
+		// The policy is constrained to skip | overwrite (never 'prompt'): a
+		// background tick has no dialog, so 'Ask each time' would have nothing to
+		// answer it. options.onDuplicate (which may be 'prompt' from settings) is
+		// spread in but overridden here, so the user's manual-import setting can
+		// never reach the headless writer. This is the #43 safe fallback; keep the
+		// override even when refactoring, or a background run could stall. The
+		// NoteWriter constructor also throws on 'prompt' without a callback, so a
+		// regression fails loud rather than hanging.
 		const makeWriter = (policy: "skip" | "overwrite"): NoteWriter =>
 			new NoteWriter(this.app.vault, {
 				...options,
@@ -2603,7 +2620,7 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 		this.addDropdownRow(
 			containerEl,
 			"Duplicate handling",
-			"What to do when a note for the recording already exists in the output folder.",
+			DUPLICATE_HANDLING_DESC,
 			"onDuplicate",
 			{ skip: "Skip", overwrite: "Overwrite", prompt: "Ask each time" },
 		);
@@ -3491,7 +3508,7 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 					},
 					{
 						name: "Duplicate handling",
-						desc: "What to do when a note for the recording already exists in the output folder.",
+						desc: DUPLICATE_HANDLING_DESC,
 						control: {
 							type: "dropdown",
 							key: "onDuplicate",
