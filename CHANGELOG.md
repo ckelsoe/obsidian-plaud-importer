@@ -4,6 +4,10 @@ All notable changes to Plaud Importer will be documented in this file.
 
 ## [Unreleased]
 
+## [0.25.0-beta.1] - 2026-07-07
+
+> Beta release for BRAT testers. The background session renewal talks to Plaud's live endpoint, which cannot be exercised in CI, so it ships to beta first for hands-on validation. Use **Refresh session now** to confirm it works in your vault.
+
 ### Added
 
 - **Your Plaud session now stays connected on its own.** Plaud's access token expires about every 24 hours, which used to pause background auto-sync roughly once a day until you reconnected. The plugin now renews the session quietly in the background before the token expires, so auto-sync and imports keep working without a daily reconnect. It is on by default and can be turned off under Settings, Automatic sync, "Keep the session alive automatically". A new **Refresh session now** command renews immediately and reports whether it worked, so you can confirm the whole path in seconds. Renewal is fail-safe: your stored token is only ever replaced after a renewal succeeds, so a failed renewal (or turning the feature off) simply falls back to the one-click reconnect prompt (issue #5).
