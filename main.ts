@@ -441,7 +441,7 @@ const DEFAULT_SETTINGS: PlaudImporterSettings = {
 	secretId: "",
 	apiBaseUrl: "https://api.plaud.ai",
 	outputFolder: "Plaud",
-	subfolderTemplate: "",
+	subfolderTemplate: "{{YYYY}}/{{MM}}",
 	noteNameTemplate: DEFAULT_NOTE_NAME_TEMPLATE,
 	datetimeTemplate: "",
 	forbiddenCharReplacement: "-",

@@ -4,6 +4,10 @@ All notable changes to Plaud Importer will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- **New installs now file recordings into dated `{{YYYY}}/{{MM}}` subfolders by default.** The subfolder template previously defaulted to empty, which wrote every note flat into the output folder and surprised users who expected a dated layout. Fresh installs now get a year/month folder tree out of the box. This only affects new installs: if you already set (or deliberately cleared) the subfolder template, your choice is untouched. Set it back to empty under Settings if you prefer a flat layout (issue #45).
+
 ## [0.25.0-beta.1] - 2026-07-07
 
 > Beta release for BRAT testers. The background session renewal talks to Plaud's live endpoint, which cannot be exercised in CI, so it ships to beta first for hands-on validation. Use **Refresh session now** to confirm it works in your vault.
