@@ -3258,18 +3258,25 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 
 		// Working copy of the rows, persisted to settings on every edit. A mutable
 		// shape (the stored CustomFrontmatterRow is readonly) so an in-place field
-		// edit is allowed; mapped back to fresh objects on persist.
+		// edit is allowed. Blank rows are dropped on persist, and one blank row is
+		// always shown so there is somewhere to start typing.
 		type EditableRow = { key: string; value: string; preserve: boolean };
 		const rows: EditableRow[] = this.plugin.settings.customFrontmatter.map(
 			(r) => ({ key: r.key, value: r.value, preserve: r.preserve }),
 		);
+		if (rows.length === 0) {
+			rows.push({ key: "", value: "", preserve: true });
+		}
 
-		// Create the three regions up front so their visual order is fixed (rows,
-		// then controls, then preview) regardless of when they are populated.
+		// Regions in fixed visual order: the property rows, the add-row button, the
+		// token palette, then the live preview.
 		const rowsEl = setting.controlEl.createDiv({
 			cls: "plaud-importer-frontmatter-rows",
 		});
-		const controlsEl = setting.controlEl.createDiv({
+		const actionsEl = setting.controlEl.createDiv({
+			cls: "plaud-importer-frontmatter-actions",
+		});
+		const paletteEl = setting.controlEl.createDiv({
 			cls: "plaud-importer-frontmatter-controls",
 		});
 		const previewEl = setting.controlEl.createDiv({
@@ -3287,13 +3294,33 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 			);
 		};
 		const persist = async (): Promise<void> => {
-			this.plugin.settings.customFrontmatter = rows.map((r) => ({ ...r }));
+			// Store only rows that name a property; the blank starter row is not saved.
+			this.plugin.settings.customFrontmatter = rows
+				.filter((r) => r.key.trim() !== "")
+				.map((r) => ({ key: r.key, value: r.value, preserve: r.preserve }));
 			await this.plugin.saveSettings();
 			updatePreview();
 		};
 
 		const renderRows = (): void => {
 			rowsEl.empty();
+			// Column headings so the three fields read clearly.
+			const headerEl = rowsEl.createDiv({
+				cls: "plaud-importer-frontmatter-header",
+			});
+			headerEl.createSpan({
+				cls: "plaud-importer-frontmatter-key",
+				text: "Property name",
+			});
+			headerEl.createSpan({
+				cls: "plaud-importer-frontmatter-value",
+				text: "Value (text or {{token}})",
+			});
+			headerEl.createSpan({
+				cls: "plaud-importer-frontmatter-preserve",
+				text: "Preserve",
+			});
+
 			rows.forEach((row, index) => {
 				const rowEl = rowsEl.createDiv({
 					cls: "plaud-importer-frontmatter-row",
@@ -3302,7 +3329,7 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 					cls: "plaud-importer-frontmatter-key",
 					attr: {
 						type: "text",
-						placeholder: "Property",
+						placeholder: "Status",
 						"aria-label": "Property name",
 					},
 				});
@@ -3316,7 +3343,7 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 					cls: "plaud-importer-frontmatter-value",
 					attr: {
 						type: "text",
-						placeholder: "Value or {{token}}",
+						placeholder: "e.g. unprocessed or Q{{Q}}-{{YYYY}}",
 						"aria-label": "Property value",
 					},
 				});
@@ -3340,7 +3367,7 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 					row.preserve = preserveInput.checked;
 					void persist();
 				});
-				preserveLabel.createSpan({ text: "Preserve" });
+				preserveLabel.createSpan({ text: "Keep on re-import" });
 
 				const removeButton = rowEl.createEl("button", {
 					cls: "plaud-importer-frontmatter-remove",
@@ -3349,11 +3376,26 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 				});
 				removeButton.addEventListener("click", () => {
 					rows.splice(index, 1);
+					if (rows.length === 0) {
+						// Always leave one editable row so the control is never empty.
+						rows.push({ key: "", value: "", preserve: true });
+					}
 					renderRows();
 					void persist();
 				});
 			});
 		};
+
+		const addButton = actionsEl.createEl("button", {
+			cls: "plaud-importer-frontmatter-add mod-cta",
+			text: "Add property",
+			attr: { type: "button" },
+		});
+		addButton.addEventListener("click", () => {
+			rows.push({ key: "", value: "", preserve: true });
+			renderRows();
+			void persist();
+		});
 
 		const insertToken = (token: string): void => {
 			const input = lastFocusedValue;
@@ -3369,13 +3411,17 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 			// Route the edit through the input handler so the row updates and saves.
 			input.dispatchEvent(new Event("input"));
 		};
+		paletteEl.createDiv({
+			cls: "plaud-importer-frontmatter-palette-label",
+			text: "Insert a token into the value field you last clicked in:",
+		});
 		for (const [label, token] of [
 			...DATE_INSERT_TOKENS,
 			TITLE_INSERT_TOKEN,
 			FOLDER_INSERT_TOKEN,
 			...CONTENT_INSERT_TOKENS,
 		]) {
-			const tokenButton = controlsEl.createEl("button", {
+			const tokenButton = paletteEl.createEl("button", {
 				cls: "plaud-importer-frontmatter-token",
 				text: label,
 				attr: { type: "button", title: `Insert ${token}` },
@@ -3386,17 +3432,6 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 			);
 			tokenButton.addEventListener("click", () => insertToken(token));
 		}
-
-		const addButton = controlsEl.createEl("button", {
-			cls: "plaud-importer-frontmatter-add",
-			text: "Add property",
-			attr: { type: "button" },
-		});
-		addButton.addEventListener("click", () => {
-			rows.push({ key: "", value: "", preserve: true });
-			renderRows();
-			void persist();
-		});
 
 		renderRows();
 		updatePreview();

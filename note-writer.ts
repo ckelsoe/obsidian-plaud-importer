@@ -1250,16 +1250,28 @@ export function expandCustomFrontmatterValue(
 		template: ctx.template,
 		model: ctx.model,
 	};
-	const withContent = value.replace(
+	// Single pass: each `{{...}}` is resolved exactly once, so a substituted value
+	// that itself contains braces (a Plaud category holding "{{...}}") is never
+	// re-interpreted as another token. Content tokens win, then title/folder, then
+	// the Moment date engine. The moment cast mirrors expandDateTemplate: it pins
+	// the factory to moment's own type at the marketplace type-check boundary.
+	const m = (moment as typeof import('moment'))(ctx.date).locale('en');
+	return value.replace(
 		/\{\{([^}]*)\}\}/g,
-		(match, raw: string): string => {
+		(_match, raw: string): string => {
 			const inner = raw.trim();
-			return Object.prototype.hasOwnProperty.call(content, inner)
-				? content[inner]
-				: match;
+			if (Object.prototype.hasOwnProperty.call(content, inner)) {
+				return content[inner];
+			}
+			if (inner === 'title') {
+				return ctx.title;
+			}
+			if (inner === 'plaud-folder') {
+				return ctx.folderName;
+			}
+			return m.format(inner);
 		},
 	);
-	return expandDateTemplate(withContent, ctx.date, ctx.title, ctx.folderName);
 }
 
 /**
@@ -1297,7 +1309,12 @@ export function renderCustomFrontmatterPreview(
 			row.value,
 			TEMPLATE_PREVIEW_CUSTOM_CONTEXT,
 		);
-		lines.push(expanded.length > 0 ? `${key}: ${yamlScalar(expanded)}` : `${key}:`);
+		const safeKey = yamlScalar(key);
+		lines.push(
+			expanded.length > 0
+				? `${safeKey}: ${yamlScalar(expanded)}`
+				: `${safeKey}:`,
+		);
 	}
 	return lines;
 }
@@ -1423,7 +1440,11 @@ export function formatFrontmatter(
 
 	const lines: string[] = ['---'];
 	for (const [key, value] of entries) {
-		lines.push(value === '' ? `${key}:` : `${key}: ${value}`);
+		// yamlScalar the key so a custom property whose name would need quoting (a
+		// colon, a leading digit) cannot break the block. Built-in keys are plain
+		// identifiers, so this passes them through unquoted (byte-identical).
+		const safeKey = yamlScalar(key);
+		lines.push(value === '' ? `${safeKey}:` : `${safeKey}: ${value}`);
 	}
 	lines.push('---');
 	return lines.join('\n');
@@ -1481,9 +1502,12 @@ export function extractFrontmatterValues(content: string): Map<string, string> {
 	if (!block) {
 		return values;
 	}
-	for (const line of block[1].split('\n')) {
+	const lines = block[1].split('\n');
+	for (let i = 0; i < lines.length; i++) {
+		const line = lines[i];
 		if (/^\s/.test(line)) {
-			// Indented: part of a nested mapping or list item, not a top-level key.
+			// Indented: a nested mapping, a list item, or a block-scalar body that
+			// the preceding key already consumed. Not a top-level key.
 			continue;
 		}
 		const colon = line.indexOf(':');
@@ -1495,14 +1519,37 @@ export function extractFrontmatterValues(content: string): Map<string, string> {
 			// A top-level key never contains whitespace; skip prose or malformed lines.
 			continue;
 		}
-		if (values.has(key)) {
-			continue;
-		}
-		const rawValue = line
+		let rawValue = line
 			.slice(colon + 1)
 			.replace(/^[ \t]/, '')
 			.replace(/\s+$/, '');
-		values.set(key, rawValue);
+		// Block scalar (`|` or `>`, with optional chomping/indent indicator):
+		// capture the indented body verbatim so a preserved multi-line value
+		// round-trips instead of collapsing to just the indicator on re-import.
+		if (/^[|>][+-]?\d*$/.test(rawValue)) {
+			const body: string[] = [];
+			let j = i + 1;
+			while (
+				j < lines.length &&
+				(lines[j].trim() === '' || /^\s/.test(lines[j]))
+			) {
+				body.push(lines[j]);
+				j++;
+			}
+			// Drop trailing blank lines: they separate the next key, not the block.
+			while (body.length > 0 && body[body.length - 1].trim() === '') {
+				body.pop();
+			}
+			if (body.length > 0) {
+				rawValue = `${rawValue}\n${body.join('\n')}`;
+			}
+			i = j - 1;
+		}
+		// First occurrence of a key wins; the body above is still consumed so a
+		// duplicate key's indented lines are not misread as top-level.
+		if (!values.has(key)) {
+			values.set(key, rawValue);
+		}
 	}
 	return values;
 }

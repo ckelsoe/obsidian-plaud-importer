@@ -1383,6 +1383,18 @@ describe('expandCustomFrontmatterValue', () => {
 		const noSummary = customFrontmatterContext(makeRecording(), null, '');
 		expect(expandCustomFrontmatterValue('{{category}}', noSummary)).toBe('');
 	});
+
+	it('does not re-expand braces inside a substituted value', () => {
+		const braced = customFrontmatterContext(
+			makeRecording(),
+			makeSummary({ category: 'Report {{YYYY}}' }),
+			'',
+		);
+		// The literal {{YYYY}} from Plaud's value must survive, not become a year.
+		expect(expandCustomFrontmatterValue('{{category}}', braced)).toBe(
+			'Report {{YYYY}}',
+		);
+	});
 });
 
 // extractFrontmatterValues -------------------------------------------------
@@ -1419,6 +1431,14 @@ describe('extractFrontmatterValues', () => {
 		);
 		expect(values.has('child')).toBe(false);
 		expect(values.get('status')).toBe('first');
+	});
+
+	it('captures a block scalar body so a preserved value round-trips', () => {
+		const values = extractFrontmatterValues(
+			'---\nnotes: |\n  line one\n  line two\nstatus: done\n---\n',
+		);
+		expect(values.get('notes')).toBe('|\n  line one\n  line two');
+		expect(values.get('status')).toBe('done');
 	});
 });
 
@@ -1547,6 +1567,33 @@ describe('formatFrontmatter custom rows', () => {
 		);
 		expect(fm).toContain('plaud-id: abc123');
 		expect(fm).not.toContain('HACKED');
+	});
+
+	it('quotes a custom key that would otherwise break the YAML', () => {
+		const fm = formatFrontmatter(
+			makeRecording(),
+			[],
+			null,
+			undefined,
+			undefined,
+			undefined,
+			rows({ key: 'foo: bar', value: 'x', preserve: false }),
+		);
+		expect(fm).toContain('"foo: bar": x');
+	});
+
+	it('round-trips a preserved block scalar value', () => {
+		const fm = formatFrontmatter(
+			makeRecording(),
+			[],
+			null,
+			undefined,
+			undefined,
+			undefined,
+			rows({ key: 'notes', value: 'ignored', preserve: true }),
+			new Map([['notes', '|\n  line one\n  line two']]),
+		);
+		expect(fm).toContain('notes: |\n  line one\n  line two');
 	});
 
 	it('produces identical output to no custom rows when the list is empty', () => {

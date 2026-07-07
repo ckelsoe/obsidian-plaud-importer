@@ -341,6 +341,38 @@
 	margin-top: 0.4em;
 }
 
+/* Column headings above the property rows, aligned to the input columns. */
+.plaud-importer-frontmatter-header {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.4em;
+	margin-bottom: 0.1em;
+	color: var(--text-muted);
+	font-size: var(--font-ui-smaller);
+}
+
+.plaud-importer-frontmatter-header .plaud-importer-frontmatter-key {
+	flex: 0 1 10em;
+}
+
+.plaud-importer-frontmatter-header .plaud-importer-frontmatter-value {
+	flex: 1 1 16em;
+}
+
+/* Add-property button on its own line so it is not lost among token buttons. */
+.plaud-importer-frontmatter-actions {
+	flex-basis: 100%;
+	margin-top: 0.5em;
+}
+
+/* Label above the token palette explaining where an inserted token lands. */
+.plaud-importer-frontmatter-palette-label {
+	flex-basis: 100%;
+	margin-top: 0.6em;
+	color: var(--text-muted);
+	font-size: var(--font-ui-smaller);
+}
+
 /*
  * Off-screen focus shim used to force input focus into the sign-in webview on
  * first attach (Electron webview input-focus workaround). Must be focusable, so
