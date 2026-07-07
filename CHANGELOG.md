@@ -6,6 +6,7 @@ All notable changes to Plaud Importer will be documented in this file.
 
 ### Added
 
+- **Your Plaud session now stays connected on its own.** Plaud's access token expires about every 24 hours, which used to pause background auto-sync roughly once a day until you reconnected. The plugin now renews the session quietly in the background before the token expires, so auto-sync and imports keep working without a daily reconnect. It is on by default and can be turned off under Settings, Automatic sync, "Keep the session alive automatically". A new **Refresh session now** command renews immediately and reports whether it worked, so you can confirm the whole path in seconds. Renewal is fail-safe: your stored token is only ever replaced after a renewal succeeds, so a failed renewal (or turning the feature off) simply falls back to the one-click reconnect prompt (issue #5).
 - **One-click reconnect when your Plaud session expires.** When background auto-sync pauses because your session expired (or no token is configured), the pause notice now carries a **Reconnect** link that opens sign-in and resumes auto-sync the moment a token is captured, instead of sending you to settings. The **Backfill version markers** command does the same: if it fails because the session expired, it offers **Reconnect and retry** rather than a dead-end error. Signing in this way sets the token in the not-configured case too.
 
 ### Changed

@@ -1,0 +1,329 @@
+// Direct, windowless session refresh (Release B, primary path).
+//
+// Replaces the hidden-BrowserWindow re-capture with two API calls on the
+// persistent Plaud sign-in partition. Reverse-engineered from a full login HAR
+// on 2026-07-06 (see dev-docs/plaud-importer/2026-07-06-token-refresh-mechanism.md,
+// "WT-mint endpoint IDENTIFIED"). Both the user token (UT) and workspace token
+// (WT) live ~24h, so after a day both are stale and the refresh is two steps:
+//
+//   1. POST /auth/refresh-user-token           empty body; the URT cookie mints a
+//                                               fresh UT and rotates the URT cookie
+//   2. POST /user-app/auth/workspace/token/{wid}  body {}; the fresh UT cookie
+//                                               mints the 24h WT the data API needs
+//
+// Auth on both calls is the partition's httpOnly cookies, NOT a bearer header
+// (the real requests carry no Authorization; the login response body even
+// returns empty token strings). A session-bound transport is therefore
+// mandatory: it auto-attaches those cookies AND persists call 1's rotated
+// Set-Cookie into the jar so call 2 sees the fresh UT. Manual cookie forwarding
+// would drop the rotation between the two calls.
+//
+// FAIL-SAFE: this module only ever RETURNS a candidate token; it never writes
+// storage. The caller re-validates (typ WT, future exp) before replacing
+// anything, and on any null result falls back to the headless-window path. Every
+// step is guarded and the orchestrator never throws.
+//
+// NOT YET HANDS-ON VALIDATED: exercised only by unit tests with a stubbed
+// transport. The live assumptions (partition retains the api.plaud.ai httpOnly
+// cookies across restarts; the mint call needs no x-device-id) are unproven
+// until Charles runs "Refresh session now" in his vault. A failure here is
+// benign: it returns null and the headless fallback runs.
+
+import { readJwtPayloadClaim } from './plaud-refresh';
+
+// The Plaud web app's sign-in partition. Mirrors PLAUD_PARTITION in
+// plaud-login.ts (kept local so this module has no import cycle with the login
+// window it falls back to).
+const PLAUD_PARTITION = 'persist:plaud-importer';
+
+const REFRESH_USER_TOKEN_PATH = '/auth/refresh-user-token';
+const WORKSPACE_TOKEN_PATH_PREFIX = '/user-app/auth/workspace/token/';
+
+// Plaud's "success" status in a JSON envelope. Anything else is treated as a
+// failure (fall back), except the region-redirect status handled below.
+const STATUS_OK = 0;
+// Region-mismatch soft redirect: HTTP 200 whose body carries the regional host
+// in data.domains.api. Matches detectRegionRedirect() in plaud-client-re.ts.
+const STATUS_REGION_REDIRECT = -302;
+
+// Only ever talk to Plaud's own hosts, even when a redirect body names the
+// target. A tampered redirect must not steer a cookie-authenticated call to an
+// arbitrary origin.
+const ALLOWED_HOST_SUFFIX = '.plaud.ai';
+const ALLOWED_EXACT_HOSTS = new Set(['plaud.ai', 'api.plaud.ai']);
+
+/** A single session-bound POST. Injected so tests drive it without Electron. */
+export interface SessionPost {
+	(
+		url: string,
+		body: string,
+		headers: Readonly<Record<string, string>>,
+	): Promise<{ status: number; text: string }>;
+}
+
+export interface NetRefreshDeps {
+	/** The stored workspace token (may be expired). Source of `wid`/`client_id`. */
+	readonly currentToken: string;
+	/** Current API origin, no trailing slash, e.g. `https://api.plaud.ai`. */
+	readonly baseUrl: string;
+	/** Session-bound transport (partition cookie jar). */
+	readonly post: SessionPost;
+}
+
+export interface NetRefreshResult {
+	/** The fresh workspace token (typ WT). Caller validates before storing. */
+	readonly token: string;
+	/** The rotated workspace refresh token, when the mint returned one. */
+	readonly refreshToken: string | null;
+	/** A regional API origin to persist, when a redirect moved us. */
+	readonly apiBaseUrl: string | null;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === 'object' && value !== null;
+}
+
+/** Parse a JSON envelope, or null when the text is not a JSON object. */
+function parseEnvelope(text: string): Record<string, unknown> | null {
+	try {
+		const parsed: unknown = JSON.parse(text);
+		return isRecord(parsed) ? parsed : null;
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * The `wid` claim off the stored token, validated to look like a workspace id.
+ * Exported for direct unit testing.
+ */
+export function extractWorkspaceId(token: string): string | null {
+	const wid = readJwtPayloadClaim(token, 'wid');
+	return wid !== null && wid.startsWith('ws_') ? wid : null;
+}
+
+/**
+ * Normalize a URL to its origin (scheme + host, no path/query/userinfo) IF it is
+ * a trusted Plaud https host, else null. The cookie-authenticated POSTs attach
+ * the partition's httpOnly Plaud session, so every target host this module talks
+ * to must pass through here first: a malformed or tampered base/redirect must
+ * never be able to steer those cookies at an arbitrary origin. Exported for
+ * unit testing.
+ */
+export function normalizeTrustedOrigin(raw: string): string | null {
+	let parsed: URL;
+	try {
+		parsed = new URL(raw);
+	} catch {
+		return null;
+	}
+	if (parsed.protocol !== 'https:') {
+		return null;
+	}
+	const host = parsed.hostname.toLowerCase();
+	const trusted =
+		ALLOWED_EXACT_HOSTS.has(host) || host.endsWith(ALLOWED_HOST_SUFFIX);
+	return trusted ? `${parsed.protocol}//${parsed.host}` : null;
+}
+
+/**
+ * Pull a validated regional origin from a redirect envelope, or null when the
+ * body is not a redirect or the target is not a trusted Plaud https host.
+ * Exported for unit testing.
+ */
+export function readRegionRedirect(envelope: Record<string, unknown>): string | null {
+	if (envelope.status !== STATUS_REGION_REDIRECT) {
+		return null;
+	}
+	const data = envelope.data;
+	if (!isRecord(data)) {
+		return null;
+	}
+	const domains = data.domains;
+	if (!isRecord(domains)) {
+		return null;
+	}
+	const api = domains.api;
+	return typeof api === 'string' ? normalizeTrustedOrigin(api) : null;
+}
+
+/**
+ * Extract the workspace token + rotated refresh token from a mint response,
+ * or null when the envelope is not a success carrying a `workspace_token`
+ * string. Exported for unit testing.
+ */
+export function parseWorkspaceTokenResponse(
+	envelope: Record<string, unknown>,
+): { token: string; refreshToken: string | null } | null {
+	if (envelope.status !== STATUS_OK) {
+		return null;
+	}
+	const data = envelope.data;
+	if (!isRecord(data)) {
+		return null;
+	}
+	const token = data.workspace_token;
+	if (typeof token !== 'string' || token.length === 0) {
+		return null;
+	}
+	const refresh = data.refresh_token;
+	return {
+		token,
+		refreshToken:
+			typeof refresh === 'string' && refresh.length > 0 ? refresh : null,
+	};
+}
+
+// Headers common to Plaud's browser API calls, minus auth (cookies) and the
+// per-request nonce. app-platform/edit-from track the token's client_id so the
+// server's parse-mode check agrees (see plaud-client-re.ts). x-device-id is
+// deliberately omitted: it lives in the partition's localStorage, out of reach
+// without a window, and the mint call authenticates by cookie. If the server
+// turns out to require it, this path fails and the headless fallback runs.
+function baseHeaders(clientId: string): Record<string, string> {
+	return {
+		accept: 'application/json, text/plain, */*',
+		'content-type': 'application/json',
+		'app-platform': clientId,
+		'app-language': 'en',
+		'edit-from': clientId,
+		origin: 'https://web.plaud.ai',
+		referer: 'https://web.plaud.ai/',
+	};
+}
+
+/**
+ * Run the two-step direct refresh. Returns a candidate WT (never stores it), or
+ * null on any failure so the caller falls back to the headless window. Never
+ * throws.
+ */
+export async function performNetRefresh(
+	deps: NetRefreshDeps,
+): Promise<NetRefreshResult | null> {
+	try {
+		const wid = extractWorkspaceId(deps.currentToken);
+		if (wid === null) {
+			return null;
+		}
+		const clientId = readJwtPayloadClaim(deps.currentToken, 'client_id') ?? 'web';
+		const headers = baseHeaders(clientId);
+
+		// Validate the starting host BEFORE any cookie-bearing POST: a malformed
+		// or tampered stored base must never send the partition's Plaud session
+		// cookies to a non-Plaud origin. Redirect targets are validated the same
+		// way inside the loop.
+		let base = normalizeTrustedOrigin(deps.baseUrl);
+		if (base === null) {
+			return null;
+		}
+		let apiBaseUrl: string | null = null;
+		for (let attempt = 0; attempt < 2; attempt++) {
+			const res = await deps.post(
+				`${base}${REFRESH_USER_TOKEN_PATH}`,
+				'{}',
+				headers,
+			);
+			const envelope = parseEnvelope(res.text);
+			if (envelope === null) {
+				return null;
+			}
+			if (envelope.status === STATUS_OK) {
+				break;
+			}
+			const redirect = readRegionRedirect(envelope);
+			if (redirect === null || attempt === 1) {
+				return null;
+			}
+			base = redirect;
+			apiBaseUrl = redirect;
+		}
+
+		// Step 2: mint the workspace token. The fresh UT cookie from step 1 is
+		// already in the session jar, so this call just needs the cookie + wid.
+		const mint = await deps.post(
+			`${base}${WORKSPACE_TOKEN_PATH_PREFIX}${wid}`,
+			'{}',
+			headers,
+		);
+		const mintEnvelope = parseEnvelope(mint.text);
+		if (mintEnvelope === null) {
+			return null;
+		}
+		const parsed = parseWorkspaceTokenResponse(mintEnvelope);
+		if (parsed === null) {
+			return null;
+		}
+		return {
+			token: parsed.token,
+			refreshToken: parsed.refreshToken,
+			apiBaseUrl,
+		};
+	} catch {
+		// A refresh bug must never throw into the timer or the auto-sync tick.
+		return null;
+	}
+}
+
+// --- Electron runtime adapter (guarded; untyped remote surface) --------------
+
+interface ElectronSessionFetchResponse {
+	status: number;
+	text(): Promise<string>;
+}
+interface ElectronSessionLike {
+	fetch?(
+		url: string,
+		options: { method: string; body: string; headers: Record<string, string> },
+	): Promise<ElectronSessionFetchResponse>;
+}
+interface ElectronRemoteLike {
+	session?: { fromPartition(partition: string): ElectronSessionLike };
+}
+interface ElectronLike {
+	remote?: ElectronRemoteLike;
+}
+
+type SessionWithFetch = ElectronSessionLike & {
+	fetch: NonNullable<ElectronSessionLike['fetch']>;
+};
+
+function hasFetch(session: ElectronSessionLike): session is SessionWithFetch {
+	return typeof session.fetch === 'function';
+}
+
+function requireElectron(): ElectronLike | null {
+	const req = (window as { require?: (id: string) => unknown }).require;
+	if (typeof req !== 'function') {
+		return null;
+	}
+	try {
+		return req('electron') as ElectronLike;
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * Build a session-bound POST over the sign-in partition using Electron's
+ * `session.fetch` (Electron 28+, present on Obsidian 1.11.4's runtime). Returns
+ * null when the remote/session/fetch surface is unavailable, so the caller
+ * skips the direct path and uses the headless window instead.
+ */
+export function buildPartitionPost(): SessionPost | null {
+	const session = requireElectron()?.remote?.session?.fromPartition(
+		PLAUD_PARTITION,
+	);
+	if (session === undefined || !hasFetch(session)) {
+		return null;
+	}
+	return async (url, body, headers) => {
+		// Member call (not a detached reference) so `this` stays bound to session.
+		const res = await session.fetch(url, {
+			method: 'POST',
+			body,
+			headers: { ...headers },
+		});
+		const text = await res.text();
+		return { status: res.status, text };
+	};
+}

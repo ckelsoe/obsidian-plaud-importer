@@ -37,6 +37,9 @@ const PLAUD_LOGIN_URL = 'https://web.plaud.ai';
 // not have to sign in every time. Isolated from Obsidian's own web sessions.
 const PLAUD_PARTITION = 'persist:plaud-importer';
 const POLL_INTERVAL_MS = 1000;
+// Silent-refresh giveup. The app boot + auto-auth + first data call took ~30s in
+// practice; 90s gives comfortable headroom before falling back to interactive.
+const DEFAULT_HEADLESS_TIMEOUT_MS = 90 * 1000;
 // Match patterns for Plaud API hosts (covers regional hosts like api-euc1).
 const SESSION_FILTER = { urls: ['*://*.plaud.ai/*'] };
 // A JWT, optionally bearer-prefixed.
@@ -50,6 +53,11 @@ const JWT_RE = /eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/;
 // with `status: -3901 "token type does not match parse mode"`. Only accept the
 // access token. Verified against a live web.plaud.ai session on 2026-06-18.
 const ACCESS_TOKEN_TYP = 'WT';
+// The paired REFRESH token type. The web app sends the WRT in an Authorization
+// header during login before the WT; we now keep it (in addition to the WT) so
+// the silent-refresh path can send it as a bearer if that is the credential the
+// refresh endpoint wants. See plaud-refresh.ts.
+const REFRESH_TOKEN_TYP = 'WRT';
 
 // Reads the JWT header `typ` from a (possibly bearer-prefixed) token, or null
 // when the value is not a decodable JWT.
@@ -73,6 +81,10 @@ function jwtTyp(value: string): string | null {
 
 export function isAccessToken(value: string): boolean {
 	return jwtTyp(value) === ACCESS_TOKEN_TYP;
+}
+
+export function isRefreshToken(value: string): boolean {
+	return jwtTyp(value) === REFRESH_TOKEN_TYP;
 }
 
 // Injected as a fallback when the session-level capture is unavailable.
@@ -139,10 +151,30 @@ export interface PlaudLoginResult {
 	readonly token: string;
 	/** Regional API origin if discoverable, else null. */
 	readonly apiBaseUrl: string | null;
+	/**
+	 * The paired refresh token (typ WRT) if it flew by during login, else null.
+	 * Kept for the silent-refresh path (plaud-refresh.ts); the WT is what the
+	 * data API uses. May carry a "bearer " prefix.
+	 */
+	readonly refreshToken: string | null;
 }
 
 export interface PlaudLoginOptions {
 	readonly debugLogger?: DebugLogger;
+	/**
+	 * Silent refresh mode: open the window hidden and expect no user interaction.
+	 * The persistent partition auto-authenticates and the web app mints a fresh
+	 * WT on load, which the same capture grabs. Paired with `timeoutMs` so a
+	 * session that DOES need interaction (e.g. a 30-day-expired login) times out
+	 * and resolves null instead of leaving an invisible window open forever.
+	 */
+	readonly headless?: boolean;
+	/**
+	 * When `headless`, give up and resolve null after this long if no token was
+	 * captured. Ignored for the visible flow (the user drives that). Defaults to
+	 * DEFAULT_HEADLESS_TIMEOUT_MS.
+	 */
+	readonly timeoutMs?: number;
 }
 
 interface ProbeResult {
@@ -175,6 +207,14 @@ interface SessionLike {
 }
 interface WebContentsLike {
 	executeJavaScript(code: string): Promise<unknown>;
+	// Deny/allow popups and new windows the loaded page requests. Present on real
+	// Electron builds; guarded at the call site. We deny all: the sign-in only
+	// needs the main frame's own API call, never a popup, and the Plaud web app
+	// otherwise spawns feedback/analytics popups that Obsidian routes to the
+	// system browser.
+	setWindowOpenHandler?(
+		handler: (details: { url: string }) => { action: 'deny' | 'allow' },
+	): void;
 }
 interface BrowserWindowLike {
 	webContents: WebContentsLike;
@@ -188,7 +228,10 @@ interface BrowserWindowOptions {
 	height?: number;
 	title?: string;
 	autoHideMenuBar?: boolean;
-	webPreferences?: { partition?: string };
+	// false opens the window hidden (silent-refresh mode). Omitted/true is the
+	// visible sign-in window.
+	show?: boolean;
+	webPreferences?: { partition?: string; backgroundThrottling?: boolean };
 }
 interface BrowserWindowConstructor {
 	new (options: BrowserWindowOptions): BrowserWindowLike;
@@ -275,7 +318,15 @@ class PlaudLoginSession {
 	private settled = false;
 	// Authorization header captured by the session-level listener (primary path).
 	private capturedAuth: string | null = null;
+	// The paired refresh token (typ WRT) seen during login, kept for the silent
+	// refresh path. It flies before the WT, so it is set by the time the WT
+	// arrives and the session settles.
+	private capturedRefresh: string | null = null;
 	private webRequestSession: SessionLike | null = null;
+	// Silent-refresh mode: window opens hidden and auto-gives-up after the timeout.
+	private readonly headless: boolean;
+	private readonly timeoutMs: number;
+	private timeoutHandle: number | null = null;
 
 	constructor(
 		options: PlaudLoginOptions,
@@ -283,6 +334,8 @@ class PlaudLoginSession {
 	) {
 		this.debugLogger = options.debugLogger ?? new NoopDebugLogger();
 		this.resolve = resolve;
+		this.headless = options.headless === true;
+		this.timeoutMs = options.timeoutMs ?? DEFAULT_HEADLESS_TIMEOUT_MS;
 	}
 
 	start(): void {
@@ -303,12 +356,46 @@ class PlaudLoginSession {
 				height: 760,
 				title: 'Plaud sign-in',
 				autoHideMenuBar: true,
-				webPreferences: { partition: PLAUD_PARTITION },
+				// Silent refresh opens hidden: the persistent partition auto-
+				// authenticates and the web app mints a fresh WT on load with no
+				// user interaction, which the same capture grabs.
+				show: !this.headless,
+				webPreferences: {
+					partition: PLAUD_PARTITION,
+					// A hidden window is otherwise timer-throttled by Electron, which
+					// would stall the web app's auth/boot in the headless refresh.
+					backgroundThrottling: !this.headless,
+				},
 			});
 		} catch (err) {
 			this.note(`failed to open sign-in window: ${String(err)}`, 'error');
 			this.settle(null);
 			return;
+		}
+
+		// In headless mode a session that genuinely needs interaction (e.g. the
+		// 30-day login finally expired) would otherwise leave an invisible window
+		// open forever. Give up after the timeout and resolve null so the caller
+		// falls back to the interactive flow. No timer in the visible flow — the
+		// user drives that and closing the window resolves null.
+		if (this.headless && Number.isFinite(this.timeoutMs)) {
+			this.timeoutHandle = window.setTimeout(() => {
+				this.note('headless refresh timed out; no token captured');
+				this.settle(null);
+			}, this.timeoutMs);
+		}
+
+		// Deny every popup / new window the page requests, BEFORE loading it. The
+		// Plaud web app fires window.open on load (feedback widget, analytics, an
+		// auth-redirect popup); Obsidian routes those to the system browser, which
+		// spawned stray tabs. We only need the main frame's own API call.
+		const contents = this.win.webContents;
+		if (typeof contents.setWindowOpenHandler === 'function') {
+			try {
+				contents.setWindowOpenHandler(() => ({ action: 'deny' }));
+			} catch (err) {
+				this.note(`could not install window-open handler: ${String(err)}`, 'error');
+			}
 		}
 
 		// If the user closes the window before a token is captured, the caller
@@ -385,8 +472,13 @@ class PlaudLoginSession {
 		this.note('token captured', 'note', {
 			apiBaseUrl,
 			via: this.capturedAuth !== null ? 'session' : 'page-hook',
+			refreshTokenCaptured: this.capturedRefresh !== null,
 		});
-		this.settle({ token: value, apiBaseUrl });
+		this.settle({
+			token: value,
+			apiBaseUrl,
+			refreshToken: this.capturedRefresh,
+		});
 		this.closeWindow();
 	}
 
@@ -427,11 +519,18 @@ class PlaudLoginSession {
 			session.webRequest.onSendHeaders(SESSION_FILTER, (details) => {
 				const headers = details.requestHeaders ?? {};
 				const auth = headers.Authorization ?? headers.authorization;
-				// Only keep the workspace ACCESS token (typ WT). The refresh
-				// token (WRT) is sent first during login; capturing it is what
-				// produced `-3901 "token type does not match parse mode"`.
-				if (typeof auth === 'string' && isAccessToken(auth)) {
+				if (typeof auth !== 'string') {
+					return;
+				}
+				// Only the workspace ACCESS token (typ WT) works on the data API;
+				// storing the refresh token (WRT) here is what produced
+				// `-3901 "token type does not match parse mode"`. But we DO keep the
+				// WRT separately for the silent-refresh path (plaud-refresh.ts),
+				// where it is a candidate credential, not a data-API token.
+				if (isAccessToken(auth)) {
 					this.capturedAuth = auth;
+				} else if (isRefreshToken(auth)) {
+					this.capturedRefresh = auth;
 				}
 			});
 			this.note('session header capture armed');
@@ -468,8 +567,16 @@ class PlaudLoginSession {
 			return;
 		}
 		this.settled = true;
+		if (this.timeoutHandle !== null) {
+			window.clearTimeout(this.timeoutHandle);
+			this.timeoutHandle = null;
+		}
 		this.stopPolling();
 		this.teardownSessionCapture();
+		// Close the window on every settle path (success closes it too, via
+		// captureToken). Matters for the headless timeout: without this the hidden
+		// window would leak. Guarded/idempotent; a no-op once 'closed' has fired.
+		this.closeWindow();
 		this.resolve(result);
 	}
 
