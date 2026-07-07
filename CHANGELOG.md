@@ -4,6 +4,10 @@ All notable changes to Plaud Importer will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **Add your own properties to every imported note (Extra frontmatter).** A new setting lets you define extra frontmatter properties that are written on each import: give each one a name, a value, and whether to preserve it. The value can be plain text (`status: unprocessed`) or use the same `{{ }}` tokens as the other fields, the date set plus `{{title}}` and `{{plaud-folder}}`, and content tokens like `{{category}}`, `{{headline}}`, and `{{duration}}` that pull from the recording and its AI summary. So `quarter: Q{{Q}}-{{YYYY}}` writes `quarter: Q3-2026`, and `type: {{category}}` files the recording's own category under your key name. Turn on preserve for a property you maintain by hand (a status, a project) so a re-import keeps your value; leave it off for a value that should refresh from the recording each time. This applies identically to manual imports and background auto-sync. The recording's identity field (`plaud-id`) is locked and can never be overridden. Thanks to @jtsmith2 for proposing the feature (PR #50).
+
 ## [0.25.0-beta.1] - 2026-07-07
 
 > Beta release for BRAT testers. The background session renewal talks to Plaud's live endpoint, which cannot be exercised in CI, so it ships to beta first for hands-on validation. Use **Refresh session now** to confirm it works in your vault.

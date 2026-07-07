@@ -283,6 +283,62 @@
 	font-family: var(--font-monospace);
 	font-size: var(--font-ui-smaller);
 	overflow-wrap: anywhere;
+	/* Extra-frontmatter preview spans several lines; keep the newlines. */
+	white-space: pre-wrap;
+}
+
+/*
+ * Extra-frontmatter rowset: a dynamic list of key / value / preserve rows, then
+ * a token palette and add-row button, each region on its own full-width line
+ * within the wrapping stacked-row control.
+ */
+.plaud-importer-frontmatter-rows {
+	flex-basis: 100%;
+	display: flex;
+	flex-direction: column;
+	gap: 0.4em;
+}
+
+.plaud-importer-frontmatter-row {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 0.4em;
+}
+
+/*
+ * Higher specificity than the generic stacked-row text-input rule above so the
+ * key stays narrow and the value takes the remaining width, without !important.
+ */
+.plaud-importer-stacked-row
+	.setting-item-control
+	.plaud-importer-frontmatter-row
+	input.plaud-importer-frontmatter-key {
+	flex: 0 1 10em;
+}
+
+.plaud-importer-stacked-row
+	.setting-item-control
+	.plaud-importer-frontmatter-row
+	input.plaud-importer-frontmatter-value {
+	flex: 1 1 16em;
+}
+
+.plaud-importer-frontmatter-preserve {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.3em;
+	white-space: nowrap;
+	color: var(--text-muted);
+	font-size: var(--font-ui-smaller);
+}
+
+.plaud-importer-frontmatter-controls {
+	flex-basis: 100%;
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.4em;
+	margin-top: 0.4em;
 }
 
 /*
