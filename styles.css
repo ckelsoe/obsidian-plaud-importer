@@ -283,6 +283,7 @@
 	font-family: var(--font-monospace);
 	font-size: var(--font-ui-smaller);
 	overflow-wrap: anywhere;
+	white-space: pre-wrap;
 }
 
 /*

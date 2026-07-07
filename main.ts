@@ -7,6 +7,7 @@ import {
 	SecretComponent,
 	Setting,
 	type TextComponent,
+	type TextAreaComponent,
 	TFile,
 	type SettingDefinitionItem,
 	type ObsidianProtocolData,
@@ -37,6 +38,7 @@ import {
 	resolveSubfolder,
 	buildNoteName,
 	formatDatetime,
+	expandCustomFrontmatterLines,
 	isValidReplacementChar,
 	TEMPLATE_PREVIEW_DATE,
 	TEMPLATE_PREVIEW_DATETIME,
@@ -341,6 +343,38 @@ const DATETIME_TEMPLATE_EXAMPLES_HEADING = "Examples:";
 const DATETIME_TEMPLATE_FOOTNOTE =
 	"Applies to new imports; notes you already imported keep their current frontmatter.";
 
+// Custom frontmatter template documentation. Mirrors the datetime-template
+// section: Moment-only values (no path-safety concern), empty is valid, and the
+// live preview is the only feedback. Each line the user types is a `key: value`
+// pair; values expand the same {{ }} tokens as the other template fields.
+const CUSTOM_FRONTMATTER_INTRO =
+	"Adds extra properties to each note's frontmatter. Write one property per line as key: value. Values support the same {{ }} Moment date tokens as the other template fields — leave a value blank to write the key with no value (null). These properties are appended after the plugin's own fields, so a key that matches a built-in field (like date or source) is simply a duplicate in the YAML; prefer unique names.";
+
+const CUSTOM_FRONTMATTER_TOKENS: ReadonlyArray<readonly [string, string]> = [
+	["{{YYYY}}", "four-digit year, for example 2026"],
+	["{{MM}}", "two-digit month, 01 to 12"],
+	["{{MMMM}}", "full month name, for example July"],
+	["{{DD}}", "two-digit day, 01 to 31"],
+	["{{dddd}}", "full weekday name, for example Monday"],
+	["{{Q}}", "quarter, 1 to 4"],
+	["{{WW}}", "ISO week number, 01 to 53"],
+	["{{HH}}", "hour, 00 to 23"],
+	["{{mm}}", "minute, 00 to 59"],
+];
+
+const CUSTOM_FRONTMATTER_EXAMPLES: ReadonlyArray<readonly [string, string]> = [
+	["project:", "writes project: with no value (null) — fill it in later"],
+	["status: unprocessed", "writes status: unprocessed on every import"],
+	["quarter: Q{{Q}}-{{YYYY}}", "writes quarter: Q3-2026 for a July recording"],
+	["week: Week {{WW}}", "writes week: Week 27"],
+];
+
+const CUSTOM_FRONTMATTER_TOKENS_HEADING =
+	"Tokens (same {{ }} syntax as the other template fields):";
+const CUSTOM_FRONTMATTER_EXAMPLES_HEADING = "Examples:";
+const CUSTOM_FRONTMATTER_FOOTNOTE =
+	"Applies to new imports; notes you already imported keep their current frontmatter.";
+
 /**
  * Coerce a stored ribbon icon ID to a known-good value. Protects against
  * a hand-edited `data.json` or a setting left over from a future build
@@ -375,6 +409,10 @@ interface PlaudImporterSettings {
 	// stays YYYY-MM-DD for Dataview, so the user can add the recording time in any
 	// format (24h, 12h, ISO 8601) without disturbing existing date queries.
 	datetimeTemplate: string;
+	// Multiline template for user-defined extra frontmatter properties. Each line
+	// is a `key: value` pair; values may use {{ }} Moment tokens. Empty (the
+	// default) appends nothing. Lines without a colon are ignored.
+	customFrontmatterTemplate: string;
 	// Single character that replaces a forbidden filename/folder character (the
 	// Windows-forbidden set, control codes, and brackets in a note name), and the
 	// path separators inside a {{title}} folder token. Default "-". Validated to a
@@ -444,6 +482,7 @@ const DEFAULT_SETTINGS: PlaudImporterSettings = {
 	subfolderTemplate: "",
 	noteNameTemplate: DEFAULT_NOTE_NAME_TEMPLATE,
 	datetimeTemplate: "",
+	customFrontmatterTemplate: "",
 	forbiddenCharReplacement: "-",
 	onDuplicate: "prompt",
 	showRibbonIcon: true,
@@ -836,6 +875,7 @@ export default class PlaudImporterPlugin extends Plugin {
 			subfolderTemplate: this.settings.subfolderTemplate,
 			noteNameTemplate: this.settings.noteNameTemplate,
 			datetimeTemplate: this.settings.datetimeTemplate,
+			customFrontmatterTemplate: this.settings.customFrontmatterTemplate,
 			forbiddenCharReplacement: this.settings.forbiddenCharReplacement,
 			onDuplicate: this.settings.onDuplicate,
 			includeTranscript: this.settings.includeTranscript,
@@ -2593,6 +2633,13 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 				DATETIME_TEMPLATE_INTRO,
 			),
 		);
+		this.renderCustomFrontmatterControl(
+			this.makeSetting(
+				containerEl,
+				"Extra frontmatter",
+				CUSTOM_FRONTMATTER_INTRO,
+			),
+		);
 		this.addTextRow(
 			containerEl,
 			"Forbidden character replacement",
@@ -3175,6 +3222,85 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 		updatePreview(this.readSettingString("datetimeTemplate"));
 	}
 
+	// Renders the custom frontmatter template row: token reference, examples, a
+	// textarea (multiline, one key: value per line), and a live preview that shows
+	// the expanded lines. Insert-token buttons cover the date set. Mirrors the
+	// datetime-template row pattern; empty is valid (no extra properties written).
+	private renderCustomFrontmatterControl(setting: Setting): void {
+		setting.settingEl.addClass("plaud-importer-stacked-row");
+		const docEl = setting.descEl.createDiv();
+		docEl.createDiv({ text: CUSTOM_FRONTMATTER_TOKENS_HEADING });
+		const tokenList = docEl.createEl("ul");
+		for (const [token, meaning] of CUSTOM_FRONTMATTER_TOKENS) {
+			const item = tokenList.createEl("li");
+			item.createEl("code", { text: token });
+			item.createSpan({ text: ` ${meaning}` });
+		}
+		docEl.createDiv({ text: CUSTOM_FRONTMATTER_EXAMPLES_HEADING });
+		const exampleList = docEl.createEl("ul");
+		for (const [template, result] of CUSTOM_FRONTMATTER_EXAMPLES) {
+			const item = exampleList.createEl("li");
+			item.createEl("code", { text: template });
+			item.createSpan({ text: ` → ${result}` });
+		}
+		docEl.createDiv({ text: CUSTOM_FRONTMATTER_FOOTNOTE });
+
+		// field is TextAreaComponent; captured so token-insert buttons can edit
+		// the visible field, not just the saved value. updatePreview is assigned
+		// after the preview DOM exists but referenced earlier by the closures,
+		// which only run on later user interaction.
+		let field: TextAreaComponent | null = null;
+		let updatePreview: (template: string) => void = () => {};
+		for (const [label, token] of DATE_INSERT_TOKENS) {
+			setting.addButton((button) => {
+				button
+					.setButtonText(label)
+					.setTooltip(`Insert ${token}`)
+					.onClick(async () => {
+						if (field === null) return;
+						// Reuse insertTokenAtCursor logic; HTMLTextAreaElement
+						// supports the same selectionStart/End/setSelectionRange API.
+						const input = field.inputEl;
+						const value = input.value;
+						const start = input.selectionStart ?? value.length;
+						const end = input.selectionEnd ?? value.length;
+						field.setValue(value.slice(0, start) + token + value.slice(end));
+						const caret = start + token.length;
+						input.focus();
+						input.setSelectionRange(caret, caret);
+						const newValue = field.getValue();
+						await this.applyControlChange("customFrontmatterTemplate", newValue);
+						updatePreview(newValue);
+					});
+				button.buttonEl.addEventListener("mousedown", (event) =>
+					event.preventDefault(),
+				);
+			});
+		}
+		setting.addTextArea((text) => {
+			field = text;
+			text.inputEl.rows = 5;
+			text
+				.setPlaceholder("project:\nstatus: unprocessed\nquarter: Q{{Q}}-{{YYYY}}")
+				.setValue(this.readSettingString("customFrontmatterTemplate"))
+				.onChange(async (value) => {
+					await this.applyControlChange("customFrontmatterTemplate", value);
+					updatePreview(value);
+				});
+		});
+		updatePreview = this.attachTemplatePreview(setting, (template) => {
+			if (template.trim() === "") {
+				return "Preview: no extra frontmatter properties";
+			}
+			const lines = expandCustomFrontmatterLines(template, TEMPLATE_PREVIEW_DATE);
+			if (lines.length === 0) {
+				return "Preview: no valid key: value lines found";
+			}
+			return `Preview:\n${lines.join('\n')}`;
+		});
+		updatePreview(this.readSettingString("customFrontmatterTemplate"));
+	}
+
 	// Renders the note-name template row: the token reference and examples (lists,
 	// so they read clearly) into the description, then a text control bound to
 	// noteNameTemplate, then ISO/US/EU preset buttons that fill the field and
@@ -3481,6 +3607,15 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 							this.renderDatetimeTemplateControl(setting),
 					},
 					{
+						name: "Extra frontmatter",
+						desc: CUSTOM_FRONTMATTER_INTRO,
+						// Rendered imperatively for the token + examples lists and
+						// the textarea, like the template rows above.
+						searchable: false,
+						render: (setting: Setting) =>
+							this.renderCustomFrontmatterControl(setting),
+					},
+					{
 						name: "Forbidden character replacement",
 						desc: FORBIDDEN_CHAR_REPLACEMENT_DESC,
 						control: {
@@ -3780,6 +3915,13 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 			// is no path or filename safety concern here, so there is nothing to
 			// reject and the live preview is the only feedback. Persisted as typed.
 			this.plugin.settings.datetimeTemplate =
+				typeof value === "string" ? value : "";
+		} else if (key === "customFrontmatterTemplate") {
+			// Any multiline key: value text is accepted; individual lines that don't
+			// parse are silently skipped at render time. Moment never throws, and
+			// frontmatter values have no path-safety concern, so no rejection is
+			// needed. The live preview is the only feedback.
+			this.plugin.settings.customFrontmatterTemplate =
 				typeof value === "string" ? value : "";
 		} else if (key === "transcriptHeaderLevel") {
 			const level = Number(value);

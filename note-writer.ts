@@ -140,6 +140,14 @@ export interface NoteWriterOptions {
 	 */
 	readonly datetimeTemplate?: string;
 	/**
+	 * Optional multiline template for appending user-defined properties to each
+	 * note's frontmatter. Each non-empty line should be a `key: value` pair;
+	 * values may contain `{{...}}` Moment tokens (same syntax as the other
+	 * template fields). Lines without a colon are ignored. Empty or omitted
+	 * writes no extra properties.
+	 */
+	readonly customFrontmatterTemplate?: string;
+	/**
 	 * Character that replaces a forbidden filename/folder character (the Windows
 	 * set plus control codes; brackets too in a note name). Defaults to '-'.
 	 * Applied to both the note name and each resolved subfolder segment, and to
@@ -542,6 +550,35 @@ function expandDateTemplate(
  */
 export function formatDatetime(template: string, date: Date): string {
 	return expandDateTemplate(template, date);
+}
+
+/**
+ * Expand a multiline custom frontmatter template into a list of `key: value`
+ * lines ready to splice into a YAML frontmatter block. Each non-empty line is
+ * expected to be `key: value`; values may contain `{{...}}` Moment date tokens
+ * (same engine as the other template fields). Lines with no colon, or with an
+ * empty key, are skipped. An empty expanded value produces `key:` (YAML null).
+ * An empty or whitespace-only template yields an empty array.
+ */
+export function expandCustomFrontmatterLines(template: string, date: Date): string[] {
+	if (!template || template.trim() === '') return [];
+	return template
+		.split('\n')
+		.map((line) => line.trim())
+		.filter((line) => line.length > 0)
+		.flatMap((line) => {
+			const colonIdx = line.indexOf(':');
+			if (colonIdx < 1) return [];
+			const key = line.slice(0, colonIdx).trim();
+			if (key.length === 0) return [];
+			const rawValue = line.slice(colonIdx + 1).trim();
+			const expandedValue = expandDateTemplate(rawValue, date);
+			return [
+				expandedValue.length > 0
+					? `${key}: ${yamlScalar(expandedValue)}`
+					: `${key}:`,
+			];
+		});
 }
 
 /**
@@ -1176,6 +1213,7 @@ export function formatFrontmatter(
 	keywords?: readonly string[],
 	folders?: readonly string[],
 	datetimeTemplate?: string,
+	customFrontmatterTemplate?: string,
 ): string {
 	const duration = Number.isFinite(recording.durationSeconds)
 		? Math.max(0, Math.floor(recording.durationSeconds))
@@ -1253,6 +1291,17 @@ export function formatFrontmatter(
 			if (value !== undefined) {
 				lines.push(`${key}: ${yamlScalar(value)}`);
 			}
+		}
+	}
+
+	// User-defined extra frontmatter properties from the custom template
+	// setting. Appended last so they never shadow the plugin's own fields.
+	if (customFrontmatterTemplate && customFrontmatterTemplate.trim() !== '') {
+		for (const line of expandCustomFrontmatterLines(
+			customFrontmatterTemplate,
+			recording.createdAt,
+		)) {
+			lines.push(line);
 		}
 	}
 
@@ -1784,6 +1833,12 @@ export interface FormatMarkdownOptions {
 	 * #32). Empty or omitted writes no property. See `formatDatetime`.
 	 */
 	readonly datetimeTemplate?: string;
+	/**
+	 * Multiline template for appending user-defined frontmatter properties.
+	 * Same `{{...}}` token syntax as `datetimeTemplate`. Empty or omitted
+	 * appends no extra properties. See `expandCustomFrontmatterLines`.
+	 */
+	readonly customFrontmatterTemplate?: string;
 }
 
 export function formatMarkdown(
@@ -1815,6 +1870,7 @@ export function formatMarkdown(
 			options.keywords,
 			options.folders,
 			options.datetimeTemplate,
+			options.customFrontmatterTemplate,
 		),
 		'',
 		`# ${expandedTitle}`,
@@ -2064,6 +2120,7 @@ export class NoteWriter {
 	private readonly subfolderTemplate: string;
 	private readonly noteNameTemplate: string;
 	private readonly datetimeTemplate: string;
+	private readonly customFrontmatterTemplate: string;
 	private readonly forbiddenCharReplacement: string;
 	private readonly existingPathForPlaudId?: (plaudId: string) => string | null;
 	private readonly migrateExistingNote?: (
@@ -2102,6 +2159,7 @@ export class NoteWriter {
 				? requestedTemplate
 				: DEFAULT_NOTE_NAME_TEMPLATE;
 		this.datetimeTemplate = options.datetimeTemplate ?? '';
+		this.customFrontmatterTemplate = options.customFrontmatterTemplate ?? '';
 		// Defense-in-depth: the settings layer validates this, but a headless caller
 		// or hand-edited data.json could pass anything, so fall back to '-' for an
 		// unusable value rather than sanitizing with a forbidden character.
@@ -2120,6 +2178,7 @@ export class NoteWriter {
 			transcriptHeaderLevel: options.transcriptHeaderLevel,
 			noteNameTemplate: this.noteNameTemplate,
 			datetimeTemplate: this.datetimeTemplate,
+			customFrontmatterTemplate: this.customFrontmatterTemplate,
 		};
 	}
 
