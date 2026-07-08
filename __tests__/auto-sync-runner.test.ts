@@ -42,6 +42,7 @@ function deps(
 		pageSize: over.pageSize ?? 10,
 		maxImportsPerTick: over.maxImportsPerTick ?? 100,
 		maxPagesPerTick: over.maxPagesPerTick ?? 10,
+		ignoredIds: over.ignoredIds,
 		listPage: async (skip) => {
 			listSkips.push(skip);
 			const pageIndex = Math.floor(skip / (over.pageSize ?? 10));
@@ -153,6 +154,18 @@ describe('runAutoSyncTick', () => {
 		expect(result.imported).toBe(0);
 		expect(result.updated).toBe(0);
 		expect(result.reachedUpToDate).toBe(true);
+	});
+
+	it('excludes ignored recordings from the tick candidates', async () => {
+		const { deps: d, importCalls } = deps({
+			index: new Map(),
+			pageSize: 10,
+			ignoredIds: new Set(['junk' as PlaudRecordingId]),
+			pages: [[rec('junk', 900), rec('keep', 800)]],
+		});
+		const result = await runAutoSyncTick(d);
+		expect(importCalls[0].newIds).toEqual(['keep']);
+		expect(result.imported).toBe(1);
 	});
 
 	it('stops on a short page (remote exhausted) without a boundary', async () => {

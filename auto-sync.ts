@@ -21,6 +21,11 @@ import {
 	type ErrorCategory,
 } from './import-core';
 
+// isUpdateAvailable moved to import-core.ts (the acyclic pure base) so the list-
+// view filter can share it without a cycle. Re-exported here so existing import
+// paths (`import { isUpdateAvailable } from './auto-sync'`) keep resolving.
+export { isUpdateAvailable } from './import-core';
+
 /**
  * Per-recording classification against the vault index.
  *  - `new`: not in the vault. Import it.
@@ -40,18 +45,31 @@ import {
  *    continues past it.
  *  - `skipped-wait-pull`: still syncing from the capture device
  *    (`wait_pull === 1`); skip and catch it on a later tick.
+ *  - `ignored`: the user permanently ignored this recording (its id is in the
+ *    ignore set). Skip it and keep paging, exactly like `skipped-wait-pull`: it
+ *    is NOT a frontier, so an importable recording below it is still reached.
  */
 export type AutoSyncClassification =
 	| 'new'
 	| 'changed'
 	| 'up-to-date-boundary'
 	| 'up-to-date-current'
-	| 'skipped-wait-pull';
+	| 'skipped-wait-pull'
+	| 'ignored';
+
+/** Shared empty ignore set so callers that pass none avoid allocating one. */
+const NO_IGNORED_IDS: ReadonlySet<PlaudRecordingId> = new Set();
 
 export function classifyRecording(
 	recording: Recording,
 	index: ReadonlyMap<PlaudRecordingId, ImportedRecord>,
+	ignoredIds: ReadonlySet<PlaudRecordingId> = NO_IGNORED_IDS,
 ): AutoSyncClassification {
+	// Ignore wins over every other state: an ignored recording must never be
+	// imported by auto-sync, even if it is new or has changed in Plaud.
+	if (ignoredIds.has(recording.id)) {
+		return 'ignored';
+	}
 	// `wait_pull` tracks the device's ORIGINAL-AUDIO pull (the list's
 	// `ori_ready`), NOT transcript/summary readiness. A recording is routinely
 	// fully transcribed and summarized (`transcriptAvailable` / `summaryAvailable`
@@ -82,24 +100,6 @@ export function classifyRecording(
 	return recording.versionMs > existing.versionMs
 		? 'changed'
 		: 'up-to-date-boundary';
-}
-
-/**
- * True when an already-imported recording has changed in Plaud since import:
- * both the listed and the stored `version_ms` are known and the listed one is
- * greater. Used by the import dialog's "update available" badge (a manual-
- * import cue) and mirrors the `changed` classification. A missing stored marker
- * (legacy note) is NOT flagged, matching the migration rule.
- */
-export function isUpdateAvailable(
-	listedVersionMs: number | undefined,
-	storedVersionMs: number | undefined,
-): boolean {
-	return (
-		listedVersionMs !== undefined &&
-		storedVersionMs !== undefined &&
-		listedVersionMs > storedVersionMs
-	);
 }
 
 export interface AutoSyncCandidate {
@@ -141,25 +141,27 @@ export interface SelectCandidatesResult {
 export function selectAutoSyncCandidates(
 	page: readonly Recording[],
 	index: ReadonlyMap<PlaudRecordingId, ImportedRecord>,
+	ignoredIds: ReadonlySet<PlaudRecordingId> = NO_IGNORED_IDS,
 ): SelectCandidatesResult {
 	// Never import trash. filterVisibleRecordings preserves order.
 	const visible = filterVisibleRecordings(page, false);
 	const candidates: AutoSyncCandidate[] = [];
 	// The frontier is reached only if the page has at least one recording and
 	// every one of them is an `up-to-date-boundary`. Any candidate, legacy
-	// (`up-to-date-current`), or pending (`skipped-wait-pull`) row means an
-	// importable recording could still be below, so we must keep paging.
+	// (`up-to-date-current`), pending (`skipped-wait-pull`), or `ignored` row
+	// means an importable recording could still be below, so we must keep paging.
 	let sawRecording = false;
 	let allProvenUpToDate = true;
 	for (const recording of visible) {
 		sawRecording = true;
-		const classification = classifyRecording(recording, index);
+		const classification = classifyRecording(recording, index, ignoredIds);
 		if (classification === 'new' || classification === 'changed') {
 			candidates.push({ recording, kind: classification });
 			allProvenUpToDate = false;
 		} else if (classification !== 'up-to-date-boundary') {
-			// 'up-to-date-current' (legacy) or 'skipped-wait-pull' (pending):
-			// non-importable here, but NOT a frontier. Skip and keep scanning.
+			// 'up-to-date-current' (legacy), 'skipped-wait-pull' (pending), or
+			// 'ignored': non-importable here, but NOT a frontier. Skip and keep
+			// scanning so a ready recording below is still reached.
 			allProvenUpToDate = false;
 		}
 	}

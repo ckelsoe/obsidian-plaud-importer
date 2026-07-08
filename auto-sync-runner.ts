@@ -31,6 +31,11 @@ export interface AutoSyncTickDeps {
 	readonly maxImportsPerTick: number;
 	/** Max pages to scan in one tick (bounds an empty-index first run). */
 	readonly maxPagesPerTick: number;
+	/**
+	 * Recording ids the user permanently ignored. Excluded from candidate
+	 * selection so auto-sync never pulls them. Omitted -> nothing ignored.
+	 */
+	readonly ignoredIds?: ReadonlySet<PlaudRecordingId>;
 	log?(message: string, payload?: unknown): void;
 }
 
@@ -71,6 +76,7 @@ export async function runAutoSyncTick(deps: AutoSyncTickDeps): Promise<AutoSyncT
 		const { candidates, reachedUpToDate: hitBoundary } = selectAutoSyncCandidates(
 			page,
 			index,
+			deps.ignoredIds,
 		);
 		for (const candidate of candidates) {
 			if (newRecs.length + changedRecs.length >= deps.maxImportsPerTick) {

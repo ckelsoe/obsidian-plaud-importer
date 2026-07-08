@@ -4,6 +4,13 @@ All notable changes to Plaud Importer will be documented in this file.
 
 ## [Unreleased]
 
+## [0.26.0] - 2026-07-08
+
+### Added
+
+- **The import list can now hide recordings you have already imported.** The import dialog has a new filter bar. "Hide already-processed", on by default, drops recordings that are already imported and unchanged, so the list shows only new recordings and ones that changed in Plaud since you imported them. This is issue #54: setting "Duplicate handling" to "Skip" made people expect imported recordings to leave the list, but that setting only ever governed whether a note is written, never what the list shows. The filter bar is what controls the list now, and it is independent of duplicate handling. "Show trashed" also moved into the bar so all three list toggles sit together.
+- **Ignore recordings you never want imported.** Each row in the import dialog has an eye button. Click it to ignore a recording, for example a junk clip or a personal note: it drops out of the list when "Hide ignored" (on by default) is set, and background automatic sync never pulls it either. Ignoring works even on recordings you never imported, since it does not depend on a note existing. Turn "Hide ignored" off to see ignored recordings again, each with a crossed-eye button you can click to un-ignore. The ignore list is saved with the plugin's settings and keyed by each recording's stable id.
+
 ## [0.25.2] - 2026-07-08
 
 ### Changed

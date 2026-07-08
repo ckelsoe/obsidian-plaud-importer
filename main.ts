@@ -66,6 +66,7 @@ import {
 	categoryAllowsReauth,
 	type ArtifactSelection,
 	type ImportModalOptions,
+	type ImportViewStatePatch,
 } from "./import-core";
 import type { PlaudClient, PlaudRecordingId, Recording } from "./plaud-client";
 import { runAutoSyncTick } from "./auto-sync-runner";
@@ -463,6 +464,22 @@ interface PlaudImporterSettings {
 	// default, matching the Plaud web UI which hides trash. Trashed recordings
 	// are short accidental clips with no transcript more often than not.
 	showTrashedRecordings: boolean;
+	// Import-dialog view preference: hide recordings already imported AND
+	// unchanged since import. New and changed (update-available) recordings
+	// always show. Defaults on (issue #54: a "Skip" duplicate policy led users
+	// to expect processed recordings to drop out of the list). Toggled from the
+	// dialog filter bar, NOT the settings tab, so it stays out of the
+	// imperative/declarative settings twin edit.
+	hideProcessedRecordings: boolean;
+	// Import-dialog view preference: hide recordings the user has ignored. Also
+	// dialog-only, defaults on.
+	hideIgnoredRecordings: boolean;
+	// Plaud recording ids the user has permanently ignored (junk/personal
+	// clips). Ignored recordings are dropped from the dialog list (when
+	// hideIgnoredRecordings) and never pulled by auto-sync. Plugin state, not a
+	// note tag: it must cover recordings that were never imported, so no note
+	// exists to carry a marker. Keyed by the stable plaud-id.
+	ignoredRecordingIds: string[];
 	// Title write-back: when on, renaming an imported recording (via the Rename
 	// recording command or a file-explorer rename) also updates that recording's
 	// title in Plaud to match the new note name. OFF by default because it is the
@@ -528,6 +545,9 @@ const DEFAULT_SETTINGS: PlaudImporterSettings = {
 	autoCloseSummarySeconds: 20,
 	writePlaceholderForUnprocessed: true,
 	showTrashedRecordings: false,
+	hideProcessedRecordings: true,
+	hideIgnoredRecordings: true,
+	ignoredRecordingIds: [],
 	autoUpdatePlaudTitle: false,
 	autoSyncEnabled: false,
 	autoSyncIntervalMinutes: 60,
@@ -931,6 +951,14 @@ export default class PlaudImporterPlugin extends Plugin {
 			writePlaceholderForUnprocessed:
 				this.settings.writePlaceholderForUnprocessed,
 			showTrashedRecordings: this.settings.showTrashedRecordings,
+			hideProcessedRecordings: this.settings.hideProcessedRecordings,
+			hideIgnoredRecordings: this.settings.hideIgnoredRecordings,
+			// data.json stores plain strings; PlaudRecordingId is a compile-time
+			// brand over string. Re-tag each id at this boundary (a per-element
+			// cast is legal where an array cast is not).
+			ignoredRecordingIds: this.settings.ignoredRecordingIds.map(
+				(id) => id as PlaudRecordingId,
+			),
 			debugLogger: this.debugLogger,
 			getAuthToken: () =>
 				this.settings.secretId.length > 0
@@ -1523,6 +1551,14 @@ export default class PlaudImporterPlugin extends Plugin {
 				pageSize: PAGE_SIZE,
 				maxImportsPerTick: 25,
 				maxPagesPerTick: 5,
+				// Honor the ignore set: an ignored recording is never pulled in the
+				// background. Rebuilt each tick so an ignore/unignore mid-session
+				// takes effect on the next run. Per-element re-tag (branded id).
+				ignoredIds: new Set(
+					this.settings.ignoredRecordingIds.map(
+						(id) => id as PlaudRecordingId,
+					),
+				),
 				listPage: (skip, limit) =>
 					client.listRecordings({ sortBy: "edit_time", skip, limit }),
 				buildIndex: () => index,
@@ -2216,6 +2252,13 @@ export default class PlaudImporterPlugin extends Plugin {
 				onClosed: () => {
 					this.importModalOpen = false;
 				},
+				// Persist dialog filter toggles and ignore-set changes back to
+				// settings so they survive reopen and auto-sync sees the updated
+				// ignore set on its next tick. The modal owns its own in-memory
+				// copy and calls this after each change.
+				onViewStateChange: (patch) => {
+					void this.applyImportViewState(patch);
+				},
 			}).open();
 		} catch (err) {
 			// If constructing/opening the modal throws, onClosed never fires;
@@ -2282,6 +2325,30 @@ export default class PlaudImporterPlugin extends Plugin {
 
 	async saveSettings() {
 		await this.saveData(this.settings);
+	}
+
+	/**
+	 * Persist a change to the import dialog's view state (the filter-bar toggles
+	 * and the ignore set). Called by the modal after every toggle so the choice
+	 * survives reopen and a background auto-sync tick, which reads
+	 * `settings.ignoredRecordingIds` fresh each run, honors the updated ignore
+	 * set. Stores a fresh plain-string array for the ignore set so the module-
+	 * level DEFAULT_SETTINGS array is never mutated by reference.
+	 */
+	private async applyImportViewState(patch: ImportViewStatePatch): Promise<void> {
+		if (patch.showTrashedRecordings !== undefined) {
+			this.settings.showTrashedRecordings = patch.showTrashedRecordings;
+		}
+		if (patch.hideProcessedRecordings !== undefined) {
+			this.settings.hideProcessedRecordings = patch.hideProcessedRecordings;
+		}
+		if (patch.hideIgnoredRecordings !== undefined) {
+			this.settings.hideIgnoredRecordings = patch.hideIgnoredRecordings;
+		}
+		if (patch.ignoredRecordingIds !== undefined) {
+			this.settings.ignoredRecordingIds = [...patch.ignoredRecordingIds];
+		}
+		await this.saveSettings();
 	}
 
 	// Returns the plugin to a pre-sign-in state for a clean re-authentication:

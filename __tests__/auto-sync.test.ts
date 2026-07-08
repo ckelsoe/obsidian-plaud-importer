@@ -88,6 +88,26 @@ describe('classifyRecording', () => {
 			),
 		).toBe('skipped-wait-pull');
 	});
+
+	it('classifies an ignored recording as ignored (ignore wins over new/changed)', () => {
+		const ignoredIds = new Set(['a' as PlaudRecordingId]);
+		// New but ignored.
+		expect(classifyRecording(rec({ id: 'a', versionMs: 100 }), idx([]), ignoredIds)).toBe(
+			'ignored',
+		);
+		// Changed (listed > stored) but ignored.
+		const index = idx([['a', { path: 'p', versionMs: 100 }]]);
+		expect(
+			classifyRecording(rec({ id: 'a', versionMs: 200 }), index, ignoredIds),
+		).toBe('ignored');
+	});
+
+	it('does not classify a non-ignored recording as ignored', () => {
+		const ignoredIds = new Set(['other' as PlaudRecordingId]);
+		expect(classifyRecording(rec({ id: 'a', versionMs: 100 }), idx([]), ignoredIds)).toBe(
+			'new',
+		);
+	});
 });
 
 describe('selectAutoSyncCandidates', () => {
@@ -209,6 +229,36 @@ describe('selectAutoSyncCandidates', () => {
 		const page = [rec({ id: 'pending-with-content', versionMs: 900, waitPull: true })];
 		const { candidates } = selectAutoSyncCandidates(page, idx([]));
 		expect(candidates.map((c) => c.recording.id)).toEqual(['pending-with-content']);
+	});
+
+	it('skips an ignored recording and keeps scanning so a ready one below is caught', () => {
+		const ignoredIds = new Set(['ignored-top' as PlaudRecordingId]);
+		const page = [
+			rec({ id: 'ignored-top', versionMs: 900 }), // ignored -> skip, NOT a frontier
+			rec({ id: 'ready-below', versionMs: 800 }), // new -> candidate
+		];
+		const { candidates, reachedUpToDate } = selectAutoSyncCandidates(
+			page,
+			idx([]),
+			ignoredIds,
+		);
+		expect(candidates.map((c) => c.recording.id)).toEqual(['ready-below']);
+		expect(reachedUpToDate).toBe(false);
+	});
+
+	it('a page of only ignored recordings is not a frontier (paging continues)', () => {
+		const ignoredIds = new Set(['i1' as PlaudRecordingId, 'i2' as PlaudRecordingId]);
+		const page = [
+			rec({ id: 'i1', versionMs: 900 }),
+			rec({ id: 'i2', versionMs: 800 }),
+		];
+		const { candidates, reachedUpToDate } = selectAutoSyncCandidates(
+			page,
+			idx([]),
+			ignoredIds,
+		);
+		expect(candidates).toEqual([]);
+		expect(reachedUpToDate).toBe(false);
 	});
 });
 

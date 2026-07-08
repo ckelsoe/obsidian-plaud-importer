@@ -3,6 +3,7 @@ import {
 	MarkdownView,
 	Modal,
 	Notice,
+	setIcon,
 	TFile,
 } from 'obsidian';
 import type {
@@ -20,7 +21,6 @@ import {
 } from './note-writer';
 import { runImport } from './import-runner';
 import { buildPlaudIdIndex, type ImportedRecord } from './vault-index';
-import { isUpdateAvailable } from './auto-sync';
 import { AttachmentImporter } from './attachment-importer';
 import {
 	classifyError,
@@ -33,8 +33,12 @@ import {
 	formatErrorForClipboard,
 	mergeRecordings,
 	filterVisibleRecordings,
+	filterListView,
+	isUpdateAvailable,
 	PAGE_SIZE,
 	type ImportModalOptions,
+	type ImportViewStatePatch,
+	type ListViewFilter,
 	type ErrorCategory,
 	type ErrorClassification,
 	type ImportResult,
@@ -460,10 +464,27 @@ export class ImportModal extends Modal {
 	// can `.has()` without guarding.
 	private importedIndex: Map<PlaudRecordingId, ImportedRecord> = new Map();
 
+	// Dialog view state: the three filter-bar toggles and the ignore set.
+	// Snapshotted from the options at open, mutated locally when the user
+	// toggles a filter or ignores/unignores a row, and persisted back to plugin
+	// settings via onViewStateChange so the choice survives reopen and auto-sync
+	// sees the updated ignore set. The Set mirrors the persisted array for O(1)
+	// per-row membership checks.
+	private showTrashed: boolean;
+	private hideProcessed: boolean;
+	private hideIgnored: boolean;
+	private readonly ignoredIds: Set<PlaudRecordingId>;
+
 	constructor(app: App, client: PlaudClient, noteWriterOptions: ImportModalOptions) {
 		super(app);
 		this.client = client;
 		this.noteWriterOptions = noteWriterOptions;
+		this.showTrashed = noteWriterOptions.showTrashedRecordings === true;
+		// The two hide-prefs default ON when the host omits them (a fresh install
+		// or a pre-0.26.0 data.json), matching DEFAULT_SETTINGS.
+		this.hideProcessed = noteWriterOptions.hideProcessedRecordings !== false;
+		this.hideIgnored = noteWriterOptions.hideIgnoredRecordings !== false;
+		this.ignoredIds = new Set(noteWriterOptions.ignoredRecordingIds ?? []);
 		this.attachments = new AttachmentImporter({
 			app,
 			getAuthToken: noteWriterOptions.getAuthToken,
@@ -655,13 +676,14 @@ export class ImportModal extends Modal {
 			this.hasMore = hasMore;
 
 			if (this.listEl !== null) {
-				// Render only the newly-arrived rows that are visible; trashed
-				// rows stay in currentRecordings (for paging) but are not shown.
-				const showTrashed = this.noteWriterOptions.showTrashedRecordings === true;
-				for (const rec of newRows) {
-					if (showTrashed || !rec.isTrashed) {
-						this.renderRow(this.listEl, rec);
-					}
+				// Render only the newly-arrived rows that pass the current filter
+				// bar; everything stays in currentRecordings (for paging) but the
+				// filtered-out rows are not shown. Same predicate as the full
+				// render via filterListView, so incremental append and a full
+				// re-render agree on visibility.
+				const visibleNew = filterListView(newRows, this.listViewFilter());
+				for (const rec of visibleNew) {
+					this.renderRow(this.listEl, rec);
 				}
 			}
 			this.updateIntroCount();
@@ -881,15 +903,39 @@ export class ImportModal extends Modal {
 	}
 
 	/**
-	 * Recordings to display: all fetched recordings minus trash (unless the
-	 * user opted in). Trash stays in `currentRecordings` for pagination; this
-	 * is the view over it.
+	 * Recordings to display: `currentRecordings` (the full paged accumulator)
+	 * with the filter-bar toggles applied. Everything stays in
+	 * `currentRecordings` for pagination; this is the filtered view over it.
 	 */
 	private visibleRecordings(): readonly Recording[] {
-		return filterVisibleRecordings(
-			this.currentRecordings,
-			this.noteWriterOptions.showTrashedRecordings === true,
-		);
+		return filterListView(this.currentRecordings, this.listViewFilter());
+	}
+
+	// Remove from selectedIds any recording not in the visible set, so the
+	// selection stays a subset of what is shown. Called on every (re)render:
+	// the import batch and the import-button enabled state are both derived from
+	// selectedIds, so a hidden recording must be deselected to stay unimportable.
+	private reconcileSelectionToVisible(visible: readonly Recording[]): void {
+		if (this.selectedIds.size === 0) {
+			return;
+		}
+		const visibleIds = new Set<string>(visible.map((r) => r.id));
+		for (const id of [...this.selectedIds]) {
+			if (!visibleIds.has(id)) {
+				this.selectedIds.delete(id);
+			}
+		}
+	}
+
+	/** Current filter-bar state as the pure `filterListView` argument. */
+	private listViewFilter(): ListViewFilter {
+		return {
+			showTrashed: this.showTrashed,
+			hideProcessed: this.hideProcessed,
+			hideIgnored: this.hideIgnored,
+			index: this.importedIndex,
+			ignoredIds: this.ignoredIds,
+		};
 	}
 
 	private renderList(): void {
@@ -900,9 +946,18 @@ export class ImportModal extends Modal {
 		});
 		this.updateIntroCount();
 
+		this.renderFilterBar(contentEl);
+
 		const listEl = contentEl.createDiv({ cls: 'plaud-importer-list' });
 		this.listEl = listEl;
-		for (const rec of this.visibleRecordings()) {
+		const visible = this.visibleRecordings();
+		// Drop selections for rows the current filters hide. A recording hidden
+		// by a filter (processed/ignored/trashed) or by the ignore toggle must
+		// not stay importable: onImportClick and the customization flow build
+		// their batch from selectedIds, so a stale selection would import a
+		// recording the user can no longer see.
+		this.reconcileSelectionToVisible(visible);
+		for (const rec of visible) {
 			this.renderRow(listEl, rec);
 		}
 		// Footer sits BELOW the scroll list (a sibling, not a child) so the
@@ -947,6 +1002,70 @@ export class ImportModal extends Modal {
 		const cancelButton = buttonRow.createEl('button', { text: 'Cancel' });
 		cancelButton.addEventListener('click', () => this.close());
 		this.updateImportButtonState();
+	}
+
+	// Filter bar above the list: three independent view toggles. Each writes its
+	// setting through onViewStateChange (so it survives reopen and auto-sync sees
+	// the same ignore/show state) and re-renders the list in place.
+	private renderFilterBar(parent: HTMLElement): void {
+		const bar = parent.createDiv({ cls: 'plaud-importer-filter-bar' });
+		this.renderFilterToggle(
+			bar,
+			'Hide already-processed',
+			this.hideProcessed,
+			(checked) => {
+				this.hideProcessed = checked;
+				this.persistViewState({ hideProcessedRecordings: checked });
+			},
+		);
+		this.renderFilterToggle(bar, 'Hide ignored', this.hideIgnored, (checked) => {
+			this.hideIgnored = checked;
+			this.persistViewState({ hideIgnoredRecordings: checked });
+		});
+		this.renderFilterToggle(bar, 'Show trashed', this.showTrashed, (checked) => {
+			this.showTrashed = checked;
+			this.persistViewState({ showTrashedRecordings: checked });
+		});
+	}
+
+	private renderFilterToggle(
+		bar: HTMLElement,
+		labelText: string,
+		checked: boolean,
+		onChange: (checked: boolean) => void,
+	): void {
+		const label = bar.createEl('label', { cls: 'plaud-importer-filter-toggle' });
+		const box = label.createEl('input', { type: 'checkbox' });
+		box.checked = checked;
+		label.createSpan({ text: labelText });
+		box.addEventListener('change', () => {
+			onChange(box.checked);
+			// Re-render the list against the new filter. currentRecordings is
+			// retained, so this re-filters without refetching.
+			this.renderList();
+		});
+	}
+
+	// Persist a view-state change back to plugin settings. Fire-and-forget: the
+	// host owns save-error handling and the in-memory state is already updated,
+	// so a failed save only means the choice does not survive a reopen.
+	private persistViewState(patch: ImportViewStatePatch): void {
+		this.noteWriterOptions.onViewStateChange?.(patch);
+	}
+
+	// Toggle a recording's ignore state from its row button. Immutable array
+	// update (never mutate the shared settings default), persist, then re-render
+	// so the row drops out when "Hide ignored" is on. Works on never-imported
+	// rows too: the ignore set is plugin state keyed by plaud-id, independent of
+	// whether a note exists.
+	private toggleIgnore(recId: PlaudRecordingId): void {
+		if (this.ignoredIds.has(recId)) {
+			this.ignoredIds.delete(recId);
+		} else {
+			this.ignoredIds.add(recId);
+		}
+		this.persistViewState({ ignoredRecordingIds: [...this.ignoredIds] });
+		this.renderList();
 	}
 
 	private renderRow(listEl: HTMLElement, rec: Recording): void {
@@ -1001,6 +1120,31 @@ export class ImportModal extends Modal {
 		meta.createSpan({ text: formatDate(rec.createdAt) });
 		meta.createSpan({ text: '  ·  ', cls: 'plaud-importer-sep' });
 		meta.createSpan({ text: formatDuration(rec.durationSeconds) });
+
+		// Per-row ignore control. A direct child of the row (not the label) so it
+		// sits at the row's trailing edge. Toggling re-renders the list, so the
+		// icon state is set once here from the current ignore set.
+		const ignoreButton = row.createEl('button', {
+			cls: 'plaud-importer-ignore-button',
+		});
+		this.decorateIgnoreButton(ignoreButton, rec.id);
+		ignoreButton.addEventListener('click', (evt) => {
+			evt.preventDefault();
+			evt.stopPropagation();
+			this.toggleIgnore(rec.id);
+		});
+	}
+
+	// Set an ignore button's icon and labels from the recording's current ignore
+	// state. `eye-off` means "click to ignore"; `eye` means "click to unignore"
+	// (shown on an already-ignored row when "Hide ignored" is off). Both are real
+	// Lucide ids so scripts/check-icons.mjs passes.
+	private decorateIgnoreButton(button: HTMLElement, recId: PlaudRecordingId): void {
+		const ignored = this.ignoredIds.has(recId);
+		setIcon(button, ignored ? 'eye' : 'eye-off');
+		const label = ignored ? 'Unignore this recording' : 'Ignore this recording';
+		button.setAttribute('aria-label', label);
+		button.setAttribute('title', label);
 	}
 
 	// Refresh the vault index from scratch. Cheap — Obsidian's

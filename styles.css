@@ -11,6 +11,29 @@
 	margin-bottom: 1em;
 }
 
+/* Filter bar above the recording list: independent view toggles. */
+.plaud-importer-filter-bar {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 1em;
+	margin-bottom: 0.75em;
+	padding-bottom: 0.6em;
+	border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.plaud-importer-filter-toggle {
+	display: flex;
+	align-items: center;
+	gap: 0.4em;
+	font-size: 0.85em;
+	color: var(--text-muted);
+	cursor: pointer;
+}
+
+.plaud-importer-filter-toggle input {
+	cursor: pointer;
+}
+
 /* Recording list — comfortable layout (two lines per row) */
 .plaud-importer-list {
 	display: flex;
@@ -82,6 +105,27 @@
 	background: var(--color-orange);
 	border-radius: 0.7em;
 	flex-shrink: 0;
+}
+
+/* Per-row ignore/unignore icon button at the row's trailing edge. */
+.plaud-importer-ignore-button {
+	flex-shrink: 0;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	margin-top: 0.2em;
+	padding: 0.25em;
+	background: transparent;
+	border: none;
+	border-radius: var(--radius-s);
+	color: var(--text-faint);
+	cursor: pointer;
+	box-shadow: none;
+}
+
+.plaud-importer-ignore-button:hover {
+	color: var(--text-normal);
+	background: var(--background-modifier-hover);
 }
 
 .plaud-importer-footer {

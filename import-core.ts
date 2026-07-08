@@ -13,7 +13,8 @@
 // (main.ts, the test suite) keep resolving unchanged.
 // -----------------------------------------------------------------------------
 
-import type { Recording } from './plaud-client';
+import type { PlaudRecordingId, Recording } from './plaud-client';
+import type { ImportedRecord } from './vault-index';
 import {
 	PlaudApiError,
 	PlaudAuthError,
@@ -71,6 +72,33 @@ export interface ImportModalOptions extends NoteWriterOptions {
 	 * unaffected.
 	 */
 	readonly showTrashedRecordings?: boolean;
+	/**
+	 * Hide recordings already imported AND unchanged since import. New and
+	 * changed (update-available) recordings always show. Defaults to true.
+	 * A dialog view preference, toggled from the filter bar; not a settings-tab
+	 * field. See `filterListView`.
+	 */
+	readonly hideProcessedRecordings?: boolean;
+	/**
+	 * Hide recordings the user has ignored (their id is in `ignoredRecordingIds`).
+	 * Defaults to true. A dialog view preference toggled from the filter bar.
+	 */
+	readonly hideIgnoredRecordings?: boolean;
+	/**
+	 * Plaud recording ids the user has permanently ignored. Ignored recordings
+	 * are dropped from the dialog list (when `hideIgnoredRecordings`) and never
+	 * pulled by auto-sync. Snapshot at modal-open; the modal mutates its own copy
+	 * and persists changes via `onViewStateChange`.
+	 */
+	readonly ignoredRecordingIds?: readonly PlaudRecordingId[];
+	/**
+	 * Persist a change to the dialog's view state (the three filter toggles and
+	 * the ignore set) back to plugin settings. The modal calls this after every
+	 * filter toggle or per-row ignore/unignore so the choice survives reopen and
+	 * auto-sync sees the updated ignore set. Fire-and-forget from the modal's
+	 * perspective; the host owns save-error handling.
+	 */
+	readonly onViewStateChange?: (patch: ImportViewStatePatch) => void;
 	readonly defaultIncludeSummary?: boolean;
 	readonly defaultIncludeAttachments?: boolean;
 	readonly defaultIncludeMindmap?: boolean;
@@ -573,6 +601,99 @@ export function filterVisibleRecordings(
 		return recordings;
 	}
 	return recordings.filter((r) => !r.isTrashed);
+}
+
+/**
+ * True when an already-imported recording has changed in Plaud since import:
+ * both the listed and the stored `version_ms` are known and the listed one is
+ * greater. Used by the import dialog's "update available" badge (a manual-
+ * import cue), by `filterListView` (a changed recording always shows even when
+ * "hide already-processed" is on), and mirrored by the auto-sync `changed`
+ * classification. A missing stored marker (legacy note) is NOT flagged,
+ * matching the migration rule.
+ *
+ * Lives here (the acyclic pure base) rather than in auto-sync.ts because the
+ * list-view filter needs it and auto-sync.ts already depends on this module;
+ * importing it the other way would create a cycle. `auto-sync.ts` re-exports it
+ * so its existing import paths keep resolving.
+ */
+export function isUpdateAvailable(
+	listedVersionMs: number | undefined,
+	storedVersionMs: number | undefined,
+): boolean {
+	return (
+		listedVersionMs !== undefined &&
+		storedVersionMs !== undefined &&
+		listedVersionMs > storedVersionMs
+	);
+}
+
+/**
+ * The import dialog's persisted view state: the three filter-bar toggles plus
+ * the ignore set. Snapshotted into the modal at open; changes are pushed back
+ * to plugin settings via `ImportModalOptions.onViewStateChange`.
+ */
+export interface ImportViewState {
+	readonly showTrashedRecordings: boolean;
+	readonly hideProcessedRecordings: boolean;
+	readonly hideIgnoredRecordings: boolean;
+	readonly ignoredRecordingIds: readonly PlaudRecordingId[];
+}
+
+/** A partial view-state update carried by `onViewStateChange`. */
+export type ImportViewStatePatch = Partial<ImportViewState>;
+
+export interface ListViewFilter {
+	/** Show recordings in Plaud's trash. */
+	readonly showTrashed: boolean;
+	/** Hide imported-and-unchanged recordings (new/changed still show). */
+	readonly hideProcessed: boolean;
+	/** Hide recordings whose id is in `ignoredIds`. */
+	readonly hideIgnored: boolean;
+	/** Vault index (plaud-id -> imported note) used to decide "processed". */
+	readonly index: ReadonlyMap<PlaudRecordingId, ImportedRecord>;
+	/** Ignored recording ids. */
+	readonly ignoredIds: ReadonlySet<PlaudRecordingId>;
+}
+
+/**
+ * Filter the recordings the dialog should DISPLAY, applying the filter-bar
+ * toggles. Distinct from `filterVisibleRecordings` (which is shared with
+ * auto-sync and only ever drops trash): this is the richer view-only filter and
+ * must not be used by the import/auto-sync write paths.
+ *
+ * Order and rules:
+ *  1. Drop trash unless `showTrashed`.
+ *  2. Drop ignored ids when `hideIgnored`.
+ *  3. When `hideProcessed`, drop a recording ONLY if it is in the vault index
+ *     (processed) AND unchanged since import. A new recording (not in the
+ *     index) and a changed one (`isUpdateAvailable`) always show, so the user
+ *     never loses sight of importable or update-available work.
+ *
+ * Pure and exported so the view logic is unit-testable without a DOM.
+ */
+export function filterListView(
+	recordings: readonly Recording[],
+	filter: ListViewFilter,
+): readonly Recording[] {
+	return recordings.filter((r) => {
+		if (r.isTrashed && !filter.showTrashed) {
+			return false;
+		}
+		if (filter.hideIgnored && filter.ignoredIds.has(r.id)) {
+			return false;
+		}
+		if (filter.hideProcessed) {
+			const existing = filter.index.get(r.id);
+			if (
+				existing !== undefined &&
+				!isUpdateAvailable(r.versionMs, existing.versionMs)
+			) {
+				return false;
+			}
+		}
+		return true;
+	});
 }
 
 export interface ArtifactSelection {
