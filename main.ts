@@ -48,7 +48,12 @@ import {
 	type TagMode,
 	type CustomFrontmatterRow,
 } from "./note-writer";
-import { AttachmentImporter } from "./attachment-importer";
+import {
+	AttachmentImporter,
+	// DEPRECATED one-time #52 migration; remove with the repair command below.
+	isLocalCardImage,
+	repairLegacyCardEmbeds,
+} from "./attachment-importer";
 import {
 	buildPlaudIdIndex,
 	buildPlaudIdIndexWithColdCheck,
@@ -722,6 +727,18 @@ export default class PlaudImporterPlugin extends Plugin {
 			},
 		});
 
+		// DEPRECATED ONE-TIME MIGRATION (issue #52) — REMOVE IN A FUTURE VERSION.
+		// The import-time fix only repoints card embeds on (re)import; notes
+		// imported before it keep the broken inline embed. This user-invoked
+		// (never automatic) command repairs those existing notes in place.
+		this.addCommand({
+			id: "repair-legacy-card-links",
+			name: "Repair card image links from older imports (one-time)",
+			callback: () => {
+				void this.repairLegacyCardLinks();
+			},
+		});
+
 		// Issue B: let the user rename an imported recording from Obsidian and
 		// keep its `<base>-assets` folder in sync. A palette command and a note
 		// context-menu item both open the rename prompt; a vault rename listener
@@ -968,6 +985,63 @@ export default class PlaudImporterPlugin extends Plugin {
 			file instanceof TFile &&
 			file.extension === "md" &&
 			this.plaudIdOf(file) !== null
+		);
+	}
+
+	// DEPRECATED ONE-TIME MIGRATION (issue #52) — REMOVE IN A FUTURE VERSION.
+	// Scans this plugin's imported notes for Plaud's broken inline card-poster
+	// embed and repoints each at the card image already in the note's `-assets`
+	// folder. User-invoked only, idempotent (a repointed wikilink is not matched
+	// again), and never touches non-Plaud notes. Notes whose card was never
+	// downloaded are left for a re-import and counted in the report.
+	private async repairLegacyCardLinks(): Promise<void> {
+		let notesRepaired = 0;
+		let linksRepointed = 0;
+		let notesNeedingReimport = 0;
+		for (const file of this.app.vault.getMarkdownFiles()) {
+			if (!this.isPlaudNote(file)) {
+				continue;
+			}
+			let content: string;
+			try {
+				content = await this.app.vault.read(file);
+			} catch {
+				continue;
+			}
+			// Cheap prefilter: Plaud's card poster path always carries this marker.
+			if (!content.includes("summary_poster")) {
+				continue;
+			}
+			const assetsPath = file.path.replace(/\.md$/i, "-assets");
+			const folder = this.app.vault.getFolderByPath(assetsPath);
+			const cardPaths: string[] = [];
+			if (folder !== null) {
+				for (const child of folder.children) {
+					if (child instanceof TFile && isLocalCardImage(child.name)) {
+						cardPaths.push(child.path);
+					}
+				}
+			}
+			const result = repairLegacyCardEmbeds(content, cardPaths);
+			if (result.repointed > 0) {
+				try {
+					await this.app.vault.process(file, () => result.content);
+					notesRepaired += 1;
+					linksRepointed += result.repointed;
+				} catch {
+					// A single-note write failure must not abort the whole batch.
+				}
+			}
+			if (result.unrepairable > 0) {
+				notesNeedingReimport += 1;
+			}
+		}
+		const tail =
+			notesNeedingReimport > 0
+				? ` ${notesNeedingReimport} note${notesNeedingReimport === 1 ? "" : "s"} had a broken card with no local copy; re-import those.`
+				: "";
+		new Notice(
+			`Plaud Importer: repaired ${linksRepointed} card link${linksRepointed === 1 ? "" : "s"} in ${notesRepaired} note${notesRepaired === 1 ? "" : "s"}.${tail}`,
 		);
 	}
 

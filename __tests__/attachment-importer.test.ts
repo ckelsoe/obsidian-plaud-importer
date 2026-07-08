@@ -1,6 +1,8 @@
 import {
 	inferAssetExtension,
 	rewriteInlineSummaryEmbeds,
+	isLocalCardImage,
+	repairLegacyCardEmbeds,
 } from '../attachment-importer';
 import type { AttachmentAsset } from '../plaud-client';
 
@@ -144,5 +146,61 @@ describe('rewriteInlineSummaryEmbeds', () => {
 		const bare = 'See ' + url + ' for the card.\n';
 		expect(rewriteInlineSummaryEmbeds(html, map)).toBe(html);
 		expect(rewriteInlineSummaryEmbeds(bare, map)).toBe(bare);
+	});
+});
+
+// DEPRECATED one-time #52 migration; remove these with the repair command.
+describe('isLocalCardImage', () => {
+	it('matches a downloaded card poster image', () => {
+		expect(isLocalCardImage('abc123-card.png')).toBe(true);
+		expect(isLocalCardImage('abc123-card2.jpg')).toBe(true);
+		expect(isLocalCardImage('card.webp')).toBe(true);
+	});
+
+	it('does not match non-card, non-image, or non-boundary names', () => {
+		expect(isLocalCardImage('abc123-mindmap.png')).toBe(false);
+		expect(isLocalCardImage('abc123-card.html')).toBe(false);
+		expect(isLocalCardImage('abc123-card-file.png')).toBe(false);
+		expect(isLocalCardImage('flashcard.png')).toBe(false);
+		expect(isLocalCardImage('abc123-audio.ogg')).toBe(false);
+	});
+});
+
+describe('repairLegacyCardEmbeds', () => {
+	const brokenBody =
+		'## Summary\n\n![PLAUD NOTE](permanent/e25/abc/summary_poster/card_2026@1024)\n\nEnd.\n';
+
+	it('repoints a broken card embed at the single local card image', () => {
+		const r = repairLegacyCardEmbeds(brokenBody, [
+			'Meetings/Note-assets/abc-card.png',
+		]);
+		expect(r.repointed).toBe(1);
+		expect(r.unrepairable).toBe(0);
+		expect(r.content).toContain('![[Meetings/Note-assets/abc-card.png]]');
+		expect(r.content).not.toContain('summary_poster');
+	});
+
+	it('leaves the embed and counts it unrepairable when no local card exists', () => {
+		const r = repairLegacyCardEmbeds(brokenBody, []);
+		expect(r.repointed).toBe(0);
+		expect(r.unrepairable).toBe(1);
+		expect(r.content).toBe(brokenBody);
+	});
+
+	it('does not guess when the card match is ambiguous (2+ local cards)', () => {
+		const r = repairLegacyCardEmbeds(brokenBody, [
+			'n-assets/a-card.png',
+			'n-assets/a-card2.png',
+		]);
+		expect(r.repointed).toBe(0);
+		expect(r.unrepairable).toBe(1);
+		expect(r.content).toBe(brokenBody);
+	});
+
+	it('is a no-op on a note that has no broken card embed (idempotent)', () => {
+		const clean = '## Summary\n\n![[n-assets/a-card.png]]\n';
+		const r = repairLegacyCardEmbeds(clean, ['n-assets/a-card.png']);
+		expect(r.repointed).toBe(0);
+		expect(r.content).toBe(clean);
 	});
 });

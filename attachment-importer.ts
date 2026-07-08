@@ -1330,6 +1330,65 @@ export function rewriteInlineSummaryEmbeds(
 	});
 }
 
+// ===========================================================================
+// DEPRECATED ONE-TIME MIGRATION (issue #52) — REMOVE IN A FUTURE VERSION.
+//
+// The rewrite above fixes card embeds only on (re)import. Notes imported BEFORE
+// that fix keep the broken inline embed. The pure helpers below back a one-time,
+// user-run "Repair card image links from older imports" command that repoints
+// those existing notes at the card already sitting in their `-assets` folder.
+// Once users have run it (a release or two out), delete this block, the command
+// in main.ts, and their tests.
+// ===========================================================================
+
+/**
+ * One-time #52 migration helper (REMOVE IN A FUTURE VERSION). True when a
+ * filename is a downloaded card poster image. The importer names card posters
+ * `<idPrefix>-card.<ext>` (or `card2`, ...), so the base ends with `card` or
+ * `card<n>` and the extension is an image type.
+ */
+export function isLocalCardImage(fileName: string): boolean {
+	return /(?:^|-)card\d*\.(?:png|jpe?g|gif|webp|bmp|svg)$/i.test(fileName);
+}
+
+/** One-time #52 migration result (REMOVE IN A FUTURE VERSION). */
+export interface CardRepairResult {
+	readonly content: string;
+	/** How many broken inline card embeds were repointed at a local copy. */
+	readonly repointed: number;
+	/** Broken card embeds left as-is (no local card, or an ambiguous match). */
+	readonly unrepairable: number;
+}
+
+/**
+ * One-time #52 migration (REMOVE IN A FUTURE VERSION).
+ * Repoint an ALREADY-IMPORTED note's broken inline card-poster embed
+ * (`![...](.../summary_poster/...)`) at the card image already downloaded into
+ * its `-assets` folder. Conservative: only touches embeds whose target carries
+ * Plaud's `summary_poster` marker, and only repoints when EXACTLY ONE local card
+ * image is available (0 or an ambiguous 2+ are left alone and counted). Existing
+ * `![[...]]` wikilinks are never matched, so re-running is a no-op.
+ */
+export function repairLegacyCardEmbeds(
+	content: string,
+	cardAssetPaths: readonly string[],
+): CardRepairResult {
+	const brokenCard =
+		/!\[[^\]]*]\(\s*<?([^)\s>]*summary_poster[^)\s>]*)>?(?:\s+"[^"]*")?\s*\)/g;
+	const target = cardAssetPaths.length === 1 ? cardAssetPaths[0] : null;
+	let repointed = 0;
+	let unrepairable = 0;
+	const out = content.replace(brokenCard, (whole) => {
+		if (target === null) {
+			unrepairable += 1;
+			return whole;
+		}
+		repointed += 1;
+		return `![[${target}]]`;
+	});
+	return { content: out, repointed, unrepairable };
+}
+
 /**
  * Choose a file extension for a downloaded attachment from its MIME hint,
  * URL, and body. Mime wins, then a real extension on the URL, then a JSON
