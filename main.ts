@@ -1643,16 +1643,21 @@ export default class PlaudImporterPlugin extends Plugin {
 		const post = buildPartitionPost();
 		if (post === null) {
 			// No session.fetch on this runtime; the window path is the only option.
+			this.logAutoSync(
+				"net refresh unavailable: no partition session.fetch transport (Electron remote/session/fetch missing); falling back to the window",
+			);
 			return false;
 		}
 		const token = this.currentAccessToken();
 		if (token === null) {
+			this.logAutoSync("net refresh skipped: no stored access token");
 			return false;
 		}
 		const result = await performNetRefresh({
 			currentToken: token,
 			baseUrl: this.settings.apiBaseUrl,
 			post,
+			log: (message, payload) => this.logAutoSync(message, payload),
 		});
 		if (this.disposed || result === null) {
 			return false;

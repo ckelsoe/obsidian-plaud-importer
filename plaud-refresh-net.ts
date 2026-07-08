@@ -68,6 +68,25 @@ export interface NetRefreshDeps {
 	readonly baseUrl: string;
 	/** Session-bound transport (partition cookie jar). */
 	readonly post: SessionPost;
+	/**
+	 * Optional diagnostic sink. Called at each step/failure so one debug run
+	 * pinpoints why the direct path fell back to the window. Only ever receives
+	 * HTTP status, the envelope's numeric status, and a short body snippet of a
+	 * FAILING response; never a token value.
+	 */
+	readonly log?: (message: string, payload?: unknown) => void;
+}
+
+/** First 200 chars of a response body, for a failure diagnostic. */
+function bodySnippet(text: string): string {
+	return text.length > 200 ? `${text.slice(0, 200)}…` : text;
+}
+
+/** A human-readable `message`/`msg` field off an envelope, when present. */
+function envelopeMessage(envelope: Record<string, unknown>): string | undefined {
+	if (typeof envelope.message === 'string') return envelope.message;
+	if (typeof envelope.msg === 'string') return envelope.msg;
+	return undefined;
 }
 
 export interface NetRefreshResult {
@@ -200,9 +219,11 @@ function baseHeaders(clientId: string): Record<string, string> {
 export async function performNetRefresh(
 	deps: NetRefreshDeps,
 ): Promise<NetRefreshResult | null> {
+	const log = deps.log ?? ((): void => {});
 	try {
 		const wid = extractWorkspaceId(deps.currentToken);
 		if (wid === null) {
+			log('net refresh aborted: stored token has no wid claim to mint against');
 			return null;
 		}
 		const clientId = readJwtPayloadClaim(deps.currentToken, 'client_id') ?? 'web';
@@ -214,6 +235,9 @@ export async function performNetRefresh(
 		// way inside the loop.
 		let base = normalizeTrustedOrigin(deps.baseUrl);
 		if (base === null) {
+			log('net refresh aborted: stored base URL is not a trusted Plaud host', {
+				baseUrl: deps.baseUrl,
+			});
 			return null;
 		}
 		let apiBaseUrl: string | null = null;
@@ -225,6 +249,10 @@ export async function performNetRefresh(
 			);
 			const envelope = parseEnvelope(res.text);
 			if (envelope === null) {
+				log('net refresh step 1 (refresh-user-token): non-JSON response', {
+					httpStatus: res.status,
+					body: bodySnippet(res.text),
+				});
 				return null;
 			}
 			if (envelope.status === STATUS_OK) {
@@ -232,6 +260,11 @@ export async function performNetRefresh(
 			}
 			const redirect = readRegionRedirect(envelope);
 			if (redirect === null || attempt === 1) {
+				log('net refresh step 1 (refresh-user-token): non-OK envelope', {
+					httpStatus: res.status,
+					envelopeStatus: envelope.status,
+					message: envelopeMessage(envelope),
+				});
 				return null;
 			}
 			base = redirect;
@@ -247,19 +280,32 @@ export async function performNetRefresh(
 		);
 		const mintEnvelope = parseEnvelope(mint.text);
 		if (mintEnvelope === null) {
+			log('net refresh step 2 (workspace token mint): non-JSON response', {
+				httpStatus: mint.status,
+				body: bodySnippet(mint.text),
+			});
 			return null;
 		}
 		const parsed = parseWorkspaceTokenResponse(mintEnvelope);
 		if (parsed === null) {
+			log('net refresh step 2 (workspace token mint): no workspace_token', {
+				httpStatus: mint.status,
+				envelopeStatus: mintEnvelope.status,
+				message: envelopeMessage(mintEnvelope),
+			});
 			return null;
 		}
+		log('net refresh succeeded via the direct (windowless) path');
 		return {
 			token: parsed.token,
 			refreshToken: parsed.refreshToken,
 			apiBaseUrl,
 		};
-	} catch {
+	} catch (err) {
 		// A refresh bug must never throw into the timer or the auto-sync tick.
+		log('net refresh threw', {
+			error: err instanceof Error ? err.message : String(err),
+		});
 		return null;
 	}
 }
@@ -273,7 +319,12 @@ interface ElectronSessionFetchResponse {
 interface ElectronSessionLike {
 	fetch?(
 		url: string,
-		options: { method: string; body: string; headers: Record<string, string> },
+		options: {
+			method: string;
+			body: string;
+			headers: Record<string, string>;
+			credentials?: 'include' | 'omit' | 'same-origin';
+		},
 	): Promise<ElectronSessionFetchResponse>;
 }
 interface ElectronRemoteLike {
@@ -318,10 +369,15 @@ export function buildPartitionPost(): SessionPost | null {
 	}
 	return async (url, body, headers) => {
 		// Member call (not a detached reference) so `this` stays bound to session.
+		// credentials:'include' is REQUIRED: these POSTs authenticate purely with
+		// the partition's httpOnly Plaud cookies, and fetch's default same-origin
+		// credentials mode would send none (the call has no document origin that
+		// matches api.plaud.ai), so the refresh would silently 401/return empty.
 		const res = await session.fetch(url, {
 			method: 'POST',
 			body,
 			headers: { ...headers },
+			credentials: 'include',
 		});
 		const text = await res.text();
 		return { status: res.status, text };
