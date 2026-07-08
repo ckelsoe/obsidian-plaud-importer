@@ -4,6 +4,12 @@ All notable changes to Plaud Importer will be documented in this file.
 
 ## [Unreleased]
 
+## [0.27.2] - 2026-07-08
+
+### Fixed
+
+- **Recordings in Plaud's trash are now recognized correctly.** Plaud's trash flag can arrive as a number or string rather than a strict boolean, so the plugin was treating every recording as not-trashed. That left the new "Trashed" badge and the "Hide trashed" filter with nothing to act on. The flag is now read in all its forms, so trashed recordings show the badge (when "Hide trashed" is off) and the filter works.
+
 ## [0.27.1] - 2026-07-08
 
 ### Fixed

@@ -209,6 +209,31 @@ describe('listRecordings happy path', () => {
 		expect(r.isTrashed).toBe(true);
 	});
 
+	it('treats a numeric or string is_trash as trashed (Plaud enum encoding)', async () => {
+		// Plaud queries the list with is_trash=2 (a numeric enum), so the
+		// per-record flag can come back as 1 / "1" rather than boolean true. All
+		// must map to isTrashed=true or the Trashed badge and filter go inert.
+		for (const value of [1, '1', 'true'] as const) {
+			const { fetcher } = captureFetcher(
+				ok(listEnvelope([record({ is_trash: value })])),
+			);
+			const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+			const [r] = await client.listRecordings();
+			expect(r.isTrashed).toBe(true);
+		}
+	});
+
+	it('treats a falsy is_trash (0 / "0" / false) as not trashed', async () => {
+		for (const value of [0, '0', false] as const) {
+			const { fetcher } = captureFetcher(
+				ok(listEnvelope([record({ is_trash: value })])),
+			);
+			const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+			const [r] = await client.listRecordings();
+			expect(r.isTrashed).toBe(false);
+		}
+	});
+
 	it('defaults isTrashed to false when is_trash is absent', async () => {
 		const { fetcher } = captureFetcher(
 			ok(listEnvelope([record({ is_trash: undefined })])),

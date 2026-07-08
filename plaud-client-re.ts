@@ -1142,8 +1142,11 @@ interface RawRecording {
 	readonly is_trans: boolean;
 	readonly is_summary: boolean;
 	// Optional: present on current Plaud payloads, absent on some older ones.
-	// Treated as not-trashed when missing.
-	readonly is_trash?: boolean;
+	// Treated as not-trashed when missing. Typed loosely because Plaud's trash
+	// flag is not reliably a boolean: the list is QUERIED with `is_trash=2` (a
+	// numeric enum), so the per-record field can come back as a number (1) or a
+	// string ("1") rather than boolean `true`. `parseRecording` normalizes it.
+	readonly is_trash?: boolean | number | string;
 	readonly filetag_id_list?: readonly string[];
 	// The recording's edit version in unix ms (equals edit_time * 1000).
 	// Present on current payloads; the auto-sync change cursor. Optional so an
@@ -1319,7 +1322,16 @@ function parseRecording(raw: RawRecording, endpoint: string): Recording {
 		durationSeconds: raw.duration / 1000,
 		transcriptAvailable: raw.is_trans,
 		summaryAvailable: raw.is_summary,
-		isTrashed: raw.is_trash === true,
+		// Normalize the trash flag across Plaud's inconsistent encodings: boolean
+		// true, numeric 1, or string "1"/"true" all mean trashed. A strict
+		// `=== true` missed a numeric/string encoding, which would leave every
+		// recording flagged not-trashed (so the "Trashed" badge and the
+		// show/hide-trashed filter silently do nothing).
+		isTrashed:
+			raw.is_trash === true ||
+			raw.is_trash === 1 ||
+			raw.is_trash === '1' ||
+			raw.is_trash === 'true',
 		tags: raw.filetag_id_list,
 		// The change cursor for auto-sync. Only trust a finite number; the guard
 		// treats version_ms as optional, so a malformed value stays undefined
