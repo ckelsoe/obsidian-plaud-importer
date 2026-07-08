@@ -4,6 +4,11 @@ All notable changes to Plaud Importer will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The card image in an imported note no longer shows "could not be found."** Plaud's AI summary embeds its card poster with an inline link that only resolves inside Plaud's own app. The plugin already downloads that image into the note's attachments folder, but left the summary's original embed pointing at Plaud. It now repoints the inline embed at the local copy, so the card renders in Obsidian (issue #52).
+- **A one-time command repairs the card image in notes you imported earlier.** The fix above only applies as notes are imported, so notes imported before it keep the broken card. Run **Repair card image links from older imports (one-time)** from the command palette to repoint those existing notes at the card already in their attachments folder. It only touches this plugin's notes, is safe to run more than once, and reports how many it fixed. Notes whose card was never downloaded are left for a re-import (issue #52).
+
 ## [0.25.0] - 2026-07-08
 
 Promotes the background session refresh previewed in 0.25.0-beta.1 to a stable release, with the hourly-window bug fixed, and adds user-defined frontmatter and a dated default subfolder layout.

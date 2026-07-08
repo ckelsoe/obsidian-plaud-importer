@@ -110,6 +110,11 @@ export class AttachmentImporter {
 		const mindmapLinks: string[] = [];
 		const cardLinks: string[] = [];
 		const payloadToPath = new Map<string, string>();
+		// Maps a downloaded asset's ORIGINAL Plaud link (asset.url, the same
+		// normalized string the summary extractor produced) to its local vault
+		// path, so inline `![](permanent/...)` embeds in the summary body can be
+		// repointed at the local copy after download (issue #52).
+		const summaryEmbedRewrites = new Map<string, string>();
 		const renderedLinks = new Set<string>();
 		const namingCounters: AttachmentNamingCounters = {
 			mindmapImage: 0,
@@ -343,6 +348,7 @@ export class AttachmentImporter {
 						existingPath,
 					});
 					if (this.isImageExtension(ext)) {
+						summaryEmbedRewrites.set(asset.url, existingPath);
 						pushRenderedAsset(kind, existingPath, true);
 					} else {
 						pushRenderedAsset(kind, existingPath, false);
@@ -367,6 +373,7 @@ export class AttachmentImporter {
 					byteLength: bytes.byteLength,
 				});
 				if (this.isImageExtension(ext)) {
+					summaryEmbedRewrites.set(asset.url, attachmentPath);
 					pushRenderedAsset(kind, attachmentPath, true);
 				} else {
 					pushRenderedAsset(kind, attachmentPath, false);
@@ -478,7 +485,9 @@ export class AttachmentImporter {
 				attachmentUrls: attachments.map((a) => this.sanitizeUrlForDebug(a.url)),
 			});
 		}
-		if (genericLinks.length + mindmapLinks.length + cardLinks.length === 0) {
+		const hasManagedLinks =
+			genericLinks.length + mindmapLinks.length + cardLinks.length > 0;
+		if (!hasManagedLinks && summaryEmbedRewrites.size === 0) {
 			this.logAttachmentDebug('attachment import completed with no rendered links', {
 				notePath,
 			});
@@ -486,7 +495,15 @@ export class AttachmentImporter {
 		}
 
 		await this.app.vault.process(noteFile, (content) => {
-			const withoutManagedSection = this.stripManagedAttachmentsSection(content);
+			// Repoint Plaud's inline `![](permanent/...)` summary embeds at the
+			// local copies we just downloaded (issue #52) BEFORE building the
+			// managed section. The managed section uses `![[...]]` wikilinks,
+			// which the inline-embed regex never matches, so ordering is safe.
+			const repointed = rewriteInlineSummaryEmbeds(content, summaryEmbedRewrites);
+			if (!hasManagedLinks) {
+				return repointed;
+			}
+			const withoutManagedSection = this.stripManagedAttachmentsSection(repointed);
 			const trimmed = withoutManagedSection.replace(/\s+$/, '');
 			const section: string[] = [
 				'## Images and Attachments',
@@ -1278,6 +1295,98 @@ export class AttachmentImporter {
 			'\n',
 		);
 	}
+}
+
+/**
+ * Repoint Plaud's inline image embeds in a note body at the locally
+ * downloaded copies. Plaud's newer AI summary markdown embeds its card
+ * poster (and any other picture) as `![alt](permanent/.../summary_poster/...)`
+ * — a path that only resolves inside Plaud's own app, so Obsidian renders it
+ * as "could not be found" (issue #52). The importer downloads the same asset
+ * into the note's `-assets` folder; this rewrites every inline embed whose
+ * target matches a downloaded asset into an Obsidian wikilink embed
+ * `![[<local path>]]`. Embeds whose target is not in the map (external images
+ * the user intentionally referenced) are left untouched.
+ *
+ * `urlToLocalPath` is keyed by the SAME normalized link string the extractor
+ * produced (see `normalizeSummaryLink`), so the captured target is normalized
+ * identically before lookup. Exported as a pure function so the rewrite is
+ * unit-testable without the vault/network plumbing in AttachmentImporter.
+ */
+export function rewriteInlineSummaryEmbeds(
+	content: string,
+	urlToLocalPath: ReadonlyMap<string, string>,
+): string {
+	if (urlToLocalPath.size === 0) {
+		return content;
+	}
+	// Inline markdown image: ![alt](<target>) with an optional angle-bracket
+	// wrapper and an optional "title". Capture the bare target only.
+	const inlineImage = /!\[[^\]]*]\(\s*<?([^)\s>]+)>?(?:\s+"[^"]*")?\s*\)/g;
+	return content.replace(inlineImage, (whole, rawTarget: string) => {
+		const normalized = rawTarget.replace(/^<|>$/g, '').replace(/^['"]|['"]$/g, '');
+		const local = urlToLocalPath.get(normalized);
+		return local !== undefined ? `![[${local}]]` : whole;
+	});
+}
+
+// ===========================================================================
+// DEPRECATED ONE-TIME MIGRATION (issue #52) — REMOVE IN A FUTURE VERSION.
+//
+// The rewrite above fixes card embeds only on (re)import. Notes imported BEFORE
+// that fix keep the broken inline embed. The pure helpers below back a one-time,
+// user-run "Repair card image links from older imports" command that repoints
+// those existing notes at the card already sitting in their `-assets` folder.
+// Once users have run it (a release or two out), delete this block, the command
+// in main.ts, and their tests.
+// ===========================================================================
+
+/**
+ * One-time #52 migration helper (REMOVE IN A FUTURE VERSION). True when a
+ * filename is a downloaded card poster image. The importer names card posters
+ * `<idPrefix>-card.<ext>` (or `card2`, ...), so the base ends with `card` or
+ * `card<n>` and the extension is an image type.
+ */
+export function isLocalCardImage(fileName: string): boolean {
+	return /(?:^|-)card\d*\.(?:png|jpe?g|gif|webp|bmp|svg)$/i.test(fileName);
+}
+
+/** One-time #52 migration result (REMOVE IN A FUTURE VERSION). */
+export interface CardRepairResult {
+	readonly content: string;
+	/** How many broken inline card embeds were repointed at a local copy. */
+	readonly repointed: number;
+	/** Broken card embeds left as-is (no local card, or an ambiguous match). */
+	readonly unrepairable: number;
+}
+
+/**
+ * One-time #52 migration (REMOVE IN A FUTURE VERSION).
+ * Repoint an ALREADY-IMPORTED note's broken inline card-poster embed
+ * (`![...](.../summary_poster/...)`) at the card image already downloaded into
+ * its `-assets` folder. Conservative: only touches embeds whose target carries
+ * Plaud's `summary_poster` marker, and only repoints when EXACTLY ONE local card
+ * image is available (0 or an ambiguous 2+ are left alone and counted). Existing
+ * `![[...]]` wikilinks are never matched, so re-running is a no-op.
+ */
+export function repairLegacyCardEmbeds(
+	content: string,
+	cardAssetPaths: readonly string[],
+): CardRepairResult {
+	const brokenCard =
+		/!\[[^\]]*]\(\s*<?([^)\s>]*summary_poster[^)\s>]*)>?(?:\s+"[^"]*")?\s*\)/g;
+	const target = cardAssetPaths.length === 1 ? cardAssetPaths[0] : null;
+	let repointed = 0;
+	let unrepairable = 0;
+	const out = content.replace(brokenCard, (whole) => {
+		if (target === null) {
+			unrepairable += 1;
+			return whole;
+		}
+		repointed += 1;
+		return `![[${target}]]`;
+	});
+	return { content: out, repointed, unrepairable };
 }
 
 /**

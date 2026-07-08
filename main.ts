@@ -48,7 +48,12 @@ import {
 	type TagMode,
 	type CustomFrontmatterRow,
 } from "./note-writer";
-import { AttachmentImporter } from "./attachment-importer";
+import {
+	AttachmentImporter,
+	// DEPRECATED one-time #52 migration; remove with the repair command below.
+	isLocalCardImage,
+	repairLegacyCardEmbeds,
+} from "./attachment-importer";
 import {
 	buildPlaudIdIndex,
 	buildPlaudIdIndexWithColdCheck,
@@ -631,6 +636,9 @@ export default class PlaudImporterPlugin extends Plugin {
 	// entry point (settings, the auth-pause notice, the backfill retry), so
 	// stacked stale notices cannot launch clobbering capture sessions.
 	private reauthInFlight = false;
+	// DEPRECATED one-time #52 repair: guards against a double-invoke running two
+	// bulk vault scans at once. REMOVE with the repair command.
+	private repairInFlight = false;
 	// Sticky action notices (e.g. the auth-pause "Reconnect") tracked so
 	// onunload can hide any still on screen before their click handlers can run
 	// plugin work after the plugin is gone.
@@ -719,6 +727,18 @@ export default class PlaudImporterPlugin extends Plugin {
 						count === 1 ? "" : "s"
 					}.`,
 				);
+			},
+		});
+
+		// DEPRECATED ONE-TIME MIGRATION (issue #52) — REMOVE IN A FUTURE VERSION.
+		// The import-time fix only repoints card embeds on (re)import; notes
+		// imported before it keep the broken inline embed. This user-invoked
+		// (never automatic) command repairs those existing notes in place.
+		this.addCommand({
+			id: "repair-legacy-card-links",
+			name: "Repair card image links from older imports (one-time)",
+			callback: () => {
+				void this.repairLegacyCardLinks();
 			},
 		});
 
@@ -968,6 +988,96 @@ export default class PlaudImporterPlugin extends Plugin {
 			file instanceof TFile &&
 			file.extension === "md" &&
 			this.plaudIdOf(file) !== null
+		);
+	}
+
+	// DEPRECATED ONE-TIME MIGRATION (issue #52) — REMOVE IN A FUTURE VERSION.
+	// Scans this plugin's imported notes for Plaud's broken inline card-poster
+	// embed and repoints each at the card image already in the note's `-assets`
+	// folder. User-invoked only, idempotent (a repointed wikilink is not matched
+	// again), and never touches non-Plaud notes. Notes whose card was never
+	// downloaded are left for a re-import and counted in the report.
+	private async repairLegacyCardLinks(): Promise<void> {
+		if (this.disposed) {
+			return;
+		}
+		if (this.repairInFlight) {
+			new Notice("Plaud importer: card link repair is already running.");
+			return;
+		}
+		this.repairInFlight = true;
+		let notesRepaired = 0;
+		let linksRepointed = 0;
+		let notesNeedingReimport = 0;
+		try {
+			for (const file of this.app.vault.getMarkdownFiles()) {
+				// Stop cleanly if the plugin unloads mid-scan.
+				if (this.disposed) {
+					return;
+				}
+				if (!this.isPlaudNote(file)) {
+					continue;
+				}
+				let content: string;
+				try {
+					content = await this.app.vault.read(file);
+				} catch {
+					continue;
+				}
+				if (this.disposed) {
+					return;
+				}
+				// Cheap prefilter: Plaud's card poster path always carries this marker.
+				if (!content.includes("summary_poster")) {
+					continue;
+				}
+				const assetsPath = file.path.replace(/\.md$/i, "-assets");
+				const folder = this.app.vault.getFolderByPath(assetsPath);
+				const cardPaths: string[] = [];
+				if (folder !== null) {
+					for (const child of folder.children) {
+						if (child instanceof TFile && isLocalCardImage(child.name)) {
+							cardPaths.push(child.path);
+						}
+					}
+				}
+				// Gate the write on the read content, but recompute inside process on
+				// the FRESH content so a concurrent edit is never clobbered.
+				const preview = repairLegacyCardEmbeds(content, cardPaths);
+				if (preview.repointed === 0) {
+					if (preview.unrepairable > 0) {
+						notesNeedingReimport += 1;
+					}
+					continue;
+				}
+				let written = { repointed: 0, unrepairable: 0 };
+				try {
+					await this.app.vault.process(file, (fresh) => {
+						const r = repairLegacyCardEmbeds(fresh, cardPaths);
+						written = { repointed: r.repointed, unrepairable: r.unrepairable };
+						return r.content;
+					});
+				} catch {
+					// A single-note write failure must not abort the whole batch.
+					continue;
+				}
+				if (written.repointed > 0) {
+					notesRepaired += 1;
+					linksRepointed += written.repointed;
+				}
+				if (written.unrepairable > 0) {
+					notesNeedingReimport += 1;
+				}
+			}
+		} finally {
+			this.repairInFlight = false;
+		}
+		const tail =
+			notesNeedingReimport > 0
+				? ` ${notesNeedingReimport} note${notesNeedingReimport === 1 ? "" : "s"} had a broken card with no local copy; re-import those.`
+				: "";
+		new Notice(
+			`Plaud Importer: repaired ${linksRepointed} card link${linksRepointed === 1 ? "" : "s"} in ${notesRepaired} note${notesRepaired === 1 ? "" : "s"}.${tail}`,
 		);
 	}
 
