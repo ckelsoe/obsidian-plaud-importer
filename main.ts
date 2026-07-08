@@ -2780,8 +2780,8 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 		);
 		this.addDropdownRow(
 			containerEl,
-			"Duplicate handling",
-			"What to do when a note for the recording already exists in the output folder.",
+			"Duplicate handling for manual imports",
+			"Controls what happens when you run Import recent recordings and a note for the recording already exists. Skip keeps your copy, overwrite replaces it, and ask each time prompts you for each one. Automatic sync ignores this and never prompts.",
 			"onDuplicate",
 			{ skip: "Skip", overwrite: "Overwrite", prompt: "Ask each time" },
 		);
@@ -2903,7 +2903,7 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 		this.addToggleRow(
 			containerEl,
 			"Enable automatic sync",
-			"Off by default. Runs a background import on a schedule using your default import options: new recordings are imported, and a recording you changed in Plaud (edited speaker names, corrected transcript, or finished processing) is re-imported. IMPORTANT: a re-import OVERWRITES that note and its downloaded artifacts with Plaud's current version, so edits you made to a synced note or its attachment files are lost on the next change. Only recordings that actually changed are touched; unchanged notes are never modified. Desktop only, and the ~24 hour token means the background job pauses for reconnection roughly daily.",
+			"Off by default. Runs a background import on a schedule, unattended and never prompting. It uses your default import options: new recordings are imported, and a recording you changed in Plaud (edited speaker names, corrected transcript, or finished processing) is re-imported. IMPORTANT: a re-import OVERWRITES that note and its downloaded artifacts with Plaud's current version, so edits you made to a synced note or its attachment files are lost on the next change. Only recordings that actually changed are touched; unchanged notes are never modified. Desktop only, and the ~24 hour token means the background job pauses for reconnection roughly daily.",
 			"autoSyncEnabled",
 		);
 		this.addDropdownRow(
@@ -3877,8 +3877,8 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 						},
 					},
 					{
-						name: "Duplicate handling",
-						desc: "What to do when a note for the recording already exists in the output folder.",
+						name: "Duplicate handling for manual imports",
+						desc: "Controls what happens when you run Import recent recordings and a note for the recording already exists. Skip keeps your copy, overwrite replaces it, and ask each time prompts you for each one. Automatic sync ignores this and never prompts.",
 						control: {
 							type: "dropdown",
 							key: "onDuplicate",
@@ -4007,7 +4007,7 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 				items: [
 					{
 						name: "Enable automatic sync",
-						desc: "Off by default. Runs a background import on a schedule using your default import options: new recordings are imported, and a recording you changed in Plaud (edited speaker names, corrected transcript, or finished processing) is re-imported. IMPORTANT: a re-import OVERWRITES that note and its downloaded artifacts with Plaud's current version, so edits you made to a synced note or its attachment files are lost on the next change. Only recordings that actually changed are touched; unchanged notes are never modified. Desktop only, and the ~24 hour token means the background job pauses for reconnection roughly daily.",
+						desc: "Off by default. Runs a background import on a schedule, unattended and never prompting. It uses your default import options: new recordings are imported, and a recording you changed in Plaud (edited speaker names, corrected transcript, or finished processing) is re-imported. IMPORTANT: a re-import OVERWRITES that note and its downloaded artifacts with Plaud's current version, so edits you made to a synced note or its attachment files are lost on the next change. Only recordings that actually changed are touched; unchanged notes are never modified. Desktop only, and the ~24 hour token means the background job pauses for reconnection roughly daily.",
 						control: { type: "toggle", key: "autoSyncEnabled" },
 					},
 					{

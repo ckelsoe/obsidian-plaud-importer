@@ -4,6 +4,12 @@ All notable changes to Plaud Importer will be documented in this file.
 
 ## [Unreleased]
 
+## [0.25.2] - 2026-07-08
+
+### Changed
+
+- **The "Duplicate handling" setting is now labelled "Duplicate handling for manual imports", and its description says automatic sync ignores it.** The old label read as though it governed every import, so choosing "Ask each time" while automatic sync was on looked like it would make a background run stop and wait for a prompt that can never appear unattended. It never did: automatic sync has always run headless, importing new recordings and re-importing only the ones you changed in Plaud, and never prompts. The clearer wording and a matching line on the automatic sync setting spell that out so the two settings no longer look linked (issue #43).
+
 ## [0.25.1] - 2026-07-08
 
 ### Fixed
