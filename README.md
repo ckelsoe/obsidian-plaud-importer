@@ -68,6 +68,7 @@ Plaud does not offer an official API yet, so this plugin works by using Plaud's 
 - **Rename a recording from Obsidian.** A **Rename recording** command and a **Rename imported recording** right-click item rename a note and its `-assets` folder together, keeping embedded images valid. Renaming a Plaud note in the file explorer also moves its assets folder to match. And when you rename a recording in Plaud, the note and its assets folder are renamed on the next sync instead of leaving a stale-named note behind.
 - **Optionally sync a rename back to Plaud (off by default).** When you rename a recording in Obsidian, the plugin can update that recording's title in Plaud so the two stay in sync. This is opt-in and the only thing the plugin ever writes back to Plaud; with it off, renames stay entirely local. See [Renaming recordings](#renaming-recordings).
 - **"Imported" and "Update available" badges in the recording list.** Each row whose `plaud-id` already exists in your output folder shows an Imported pill; click it to open the existing note. If that recording changed in Plaud since you imported it, the row shows an Update available badge instead, so you can spot and re-import a stale note by hand. Re-importing is still possible and honors your duplicate-handling setting.
+- **Filter the import list, and ignore recordings you never want.** A filter bar at the top of the import dialog hides recordings you have already imported (on by default), so the list shows what is left to import instead of everything. Separate toggles also hide update-available, ignored, and trashed recordings. Each row has an eye button to **ignore** a recording (a junk or personal clip): ignored recordings drop out of the list and are skipped by background auto-sync, and ignoring works even on recordings you never imported. Recordings in Plaud's trash show a **Trashed** badge when you choose to show them.
 - **Resume an interrupted import.** If your Plaud session expires partway through a multi-select import, the run stops at the first recording that fails to authenticate, keeps what it already imported, and lets you sign in again right there; a **Resume remaining** button then finishes the recordings that were left.
 - **Duplicate handling** is configurable — Skip, Overwrite, or Ask each time. "Ask each time" prompts per file with an explicit warning that the existing note body AND its `-assets` folder will be replaced; in a multi-select import you can escalate to "Overwrite all remaining" / "Skip all remaining" or cancel the batch.
 - **Transcript folding** — imported notes open with the transcript section collapsed by default so the summary is what you see first. Toggleable in settings.
@@ -262,10 +263,13 @@ If your Plaud session expires, auto-sync pauses with a single notice and resumes
 ### Unprocessed and trashed recordings
 
 - **Write placeholder for unprocessed recordings** (on by default). When Plaud has a recording but no transcript or summary yet, write a small placeholder note (recording ID plus a link back to Plaud) instead of recording a bare failure. A later successful import replaces the placeholder automatically, even under Skip or Ask each time. Turn it off to leave such recordings as plain failures with no file written.
-- **Show trashed recordings** (off by default). The import list hides recordings that are in your Plaud trash, matching the Plaud app. Turn this on to bring them back when you want to import something you trashed in Plaud but still want in your vault.
+- **Show trashed recordings** (off by default). The import list hides recordings that are in your Plaud trash, matching the Plaud app. Turn this on to bring them back when you want to import something you trashed in Plaud but still want in your vault. The same control is mirrored in the import dialog's filter bar as **Hide trashed**, and any trashed recording that is shown carries a **Trashed** badge so it is easy to tell apart from your live recordings.
 
 ### Import dialog
 
+- **Filter bar.** Four toggles at the top of the dialog, all phrased as "Hide" so a ticked box always means hidden: **Hide already-processed** (on by default; hides recordings already imported and unchanged), **Hide updates available** (off by default; hides imported recordings that changed in Plaud, which stay shown by default because re-importing them is real work), **Hide ignored** (on by default), and **Hide trashed** (on by default). Your choices are remembered between sessions.
+- **Ignore a recording.** Each row has an eye button. Ignoring a recording drops it from the list (while Hide ignored is on) and stops background auto-sync from ever importing it, and it works on recordings you never imported. Turn off Hide ignored to see ignored recordings again and un-ignore any of them.
+- **Empty list.** Once auto-sync has imported your newest recordings, opening the dialog with Hide already-processed on can leave nothing to show. The dialog pages past the hidden recordings on its own to find any still worth importing, and when there is genuinely nothing left it says so and points you to the filters, instead of showing a blank list.
 - **Auto-close summary** (on by default). The post-import summary closes itself after a short countdown. Only a fully successful run auto-closes; any failure keeps the window open so the error list stays visible, and clicking inside the window cancels the countdown.
 - **Auto-close delay.** Seconds to wait before the summary closes (default 20).
 
@@ -281,10 +285,11 @@ Off by default. When on, captures API request/response metadata and parsed resul
 ## Using it
 
 1. Click the **audio-lines** ribbon icon on the left rail, or run the command **Plaud Importer: Import recent recordings**.
-2. Scroll the recording list to load older pages (handled automatically as you scroll).
-3. Tick the recordings you want.
-4. Click **Import N recordings** (or **Review artifacts first** to uncheck specific artifacts for this batch).
-5. Watch the per-file progress counter. A final Notice summarizes how many were imported, skipped, or failed; failures are listed in the modal with a Copy button for bug reports.
+2. The list shows recordings still worth importing; recordings you already imported are hidden by default. Use the **Hide** filter bar at the top to change what is shown, and each row's eye button to ignore a recording you never want.
+3. Scroll the recording list to load older pages (handled automatically as you scroll).
+4. Tick the recordings you want.
+5. Click **Import N recordings** (or **Review artifacts first** to uncheck specific artifacts for this batch).
+6. Watch the per-file progress counter. A final Notice summarizes how many were imported, skipped, or failed; failures are listed in the modal with a Copy button for bug reports.
 
 ## Capturing a debug log
 
