@@ -4,26 +4,24 @@ All notable changes to Plaud Importer will be documented in this file.
 
 ## [Unreleased]
 
+## [0.25.0] - 2026-07-08
+
+Promotes the background session refresh previewed in 0.25.0-beta.1 to a stable release, with the hourly-window bug fixed, and adds user-defined frontmatter and a dated default subfolder layout.
+
 ### Added
 
 - **Add your own properties to every imported note (Extra frontmatter).** A new setting lets you define extra frontmatter properties that are written on each import: give each one a name, a value, and whether to preserve it. The value can be plain text (`status: unprocessed`) or use the same `{{ }}` tokens as the other fields, the date set plus `{{title}}` and `{{plaud-folder}}`, and content tokens like `{{category}}`, `{{headline}}`, and `{{duration}}` that pull from the recording and its AI summary. So `quarter: Q{{Q}}-{{YYYY}}` writes `quarter: Q3-2026`, and `type: {{category}}` files the recording's own category under your key name. Turn on preserve for a property you maintain by hand (a status, a project) so a re-import keeps your value; leave it off for a value that should refresh from the recording each time. This applies identically to manual imports and background auto-sync. Custom properties are added alongside the plugin's own fields; a name that matches a built-in field (like `date` or `plaud-id`) is reserved and left to the plugin. Thanks to @jtsmith2 for proposing the feature (PR #50).
-
-### Changed
-
-- **New installs now file recordings into dated `{{YYYY}}/{{MM}}` subfolders by default.** The subfolder template previously defaulted to empty, which wrote every note flat into the output folder and surprised users who expected a dated layout. Fresh installs now get a year/month folder tree out of the box. This only affects new installs: if you already set (or deliberately cleared) the subfolder template, your choice is untouched. Set it back to empty under Settings if you prefer a flat layout (issue #45).
-
-## [0.25.0-beta.1] - 2026-07-07
-
-> Beta release for BRAT testers. The background session renewal talks to Plaud's live endpoint, which cannot be exercised in CI, so it ships to beta first for hands-on validation. Use **Refresh session now** to confirm it works in your vault.
-
-### Added
-
 - **Your Plaud session now stays connected on its own.** Plaud's access token expires about every 24 hours, which used to pause background auto-sync roughly once a day until you reconnected. The plugin now renews the session quietly in the background before the token expires, so auto-sync and imports keep working without a daily reconnect. It is on by default and can be turned off under Settings, Automatic sync, "Keep the session alive automatically". A new **Refresh session now** command renews immediately and reports whether it worked, so you can confirm the whole path in seconds. Renewal is fail-safe: your stored token is only ever replaced after a renewal succeeds, so a failed renewal (or turning the feature off) simply falls back to the one-click reconnect prompt (issue #5).
 - **One-click reconnect when your Plaud session expires.** When background auto-sync pauses because your session expired (or no token is configured), the pause notice now carries a **Reconnect** link that opens sign-in and resumes auto-sync the moment a token is captured, instead of sending you to settings. The **Backfill version markers** command does the same: if it fails because the session expired, it offers **Reconnect and retry** rather than a dead-end error. Signing in this way sets the token in the not-configured case too.
 
 ### Changed
 
+- **New installs now file recordings into dated `{{YYYY}}/{{MM}}` subfolders by default.** The subfolder template previously defaulted to empty, which wrote every note flat into the output folder and surprised users who expected a dated layout. Fresh installs now get a year/month folder tree out of the box. This only affects new installs: if you already set (or deliberately cleared) the subfolder template, your choice is untouched. Set it back to empty under Settings if you prefer a flat layout (issue #45).
 - Development tooling: a CI check now validates every hardcoded ribbon-icon id against the Lucide icon set, so an invalid id (which would render a blank icon) fails the build instead of shipping. No behavior change.
+
+### Fixed
+
+- **The background session refresh no longer opens a browser window on its own.** The windowless refresh was authenticating without the sign-in session's cookies, so it failed on every attempt and fell back to a hidden sign-in window that leaked a visible browser window roughly once an hour (10+ overnight for some testers). It now renews the session directly over the session cookies with no window, and reschedules about a day out. A debug run also reports exactly why a refresh fell back, if one ever does (issue #5).
 
 ## [0.24.0] - 2026-07-06
 
