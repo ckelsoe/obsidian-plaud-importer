@@ -1440,6 +1440,21 @@ describe('extractFrontmatterValues', () => {
 		expect(values.get('notes')).toBe('|\n  line one\n  line two');
 		expect(values.get('status')).toBe('done');
 	});
+
+	it('parses a quoted key containing a colon', () => {
+		const values = extractFrontmatterValues(
+			'---\n"foo: bar": baz\nstatus: done\n---\n',
+		);
+		expect(values.get('foo: bar')).toBe('baz');
+		expect(values.get('status')).toBe('done');
+	});
+
+	it('parses an unquoted key that contains spaces', () => {
+		const values = extractFrontmatterValues(
+			'---\nmy status: in progress\n---\n',
+		);
+		expect(values.get('my status')).toBe('in progress');
+	});
 });
 
 // formatFrontmatter custom rows + preserve ---------------------------------
@@ -1567,6 +1582,48 @@ describe('formatFrontmatter custom rows', () => {
 		);
 		expect(fm).toContain('plaud-id: abc123');
 		expect(fm).not.toContain('HACKED');
+	});
+
+	it('ignores a custom row whose name matches a plugin field', () => {
+		const fm = formatFrontmatter(
+			makeRecording(),
+			[],
+			null,
+			undefined,
+			undefined,
+			undefined,
+			rows({ key: 'source', value: 'mine', preserve: false }),
+		);
+		expect(fm).toContain('source: plaud');
+		expect(fm).not.toContain('source: mine');
+	});
+
+	it('preserves a value for an unquoted key with spaces', () => {
+		const fm = formatFrontmatter(
+			makeRecording(),
+			[],
+			null,
+			undefined,
+			undefined,
+			undefined,
+			rows({ key: 'my status', value: 'fresh', preserve: true }),
+			extractFrontmatterValues('---\nmy status: kept\n---\n'),
+		);
+		expect(fm).toContain('my status: kept');
+	});
+
+	it('preserves a value for a quoted key that contains a colon', () => {
+		const fm = formatFrontmatter(
+			makeRecording(),
+			[],
+			null,
+			undefined,
+			undefined,
+			undefined,
+			rows({ key: 'foo: bar', value: 'fresh', preserve: true }),
+			extractFrontmatterValues('---\n"foo: bar": kept\n---\n'),
+		);
+		expect(fm).toContain('"foo: bar": kept');
 	});
 
 	it('quotes a custom key that would otherwise break the YAML', () => {

@@ -1190,6 +1190,37 @@ export interface CustomFrontmatterRow {
 }
 
 /**
+ * Every frontmatter key the plugin manages itself. A custom row whose name
+ * matches one of these is ignored, so an "extra" property can only ADD a field,
+ * never override a plugin field. This protects identity (`plaud-id`), the
+ * auto-sync change cursor (`plaud-version-ms`), and the Dataview-facing fields
+ * (`date`, `source`, ...) from being silently rewritten by a template. Keep in
+ * sync with the keys formatFrontmatter emits.
+ */
+export const RESERVED_FRONTMATTER_KEYS: ReadonlySet<string> = new Set([
+	'plaud-id',
+	'plaud-url',
+	'date',
+	'datetime',
+	'duration-seconds',
+	'duration',
+	'speakers',
+	'tags',
+	'plaud-folder',
+	'keywords',
+	'source',
+	'plaud-version-ms',
+	'plaud-headline',
+	'plaud-category',
+	'plaud-language',
+	'plaud-template',
+	'plaud-model',
+	'plaud-note-id',
+	'plaud-summary-id',
+	'plaud-summary-version',
+]);
+
+/**
  * Values a custom frontmatter token can resolve to, already flattened for one
  * recording. Decoupling the expander from `Recording`/`Summary` keeps it a pure
  * function of primitives, so the settings live preview and unit tests build a
@@ -1300,11 +1331,15 @@ export function renderCustomFrontmatterPreview(
 	rows: readonly CustomFrontmatterRow[],
 ): string[] {
 	const lines: string[] = [];
+	const seen = new Set<string>();
 	for (const row of rows) {
 		const key = row.key.trim();
-		if (key === '' || key === 'plaud-id') {
+		// Mirror formatFrontmatter: skip blanks, reserved plugin keys, and a
+		// repeat of a key already shown (first occurrence wins).
+		if (key === '' || RESERVED_FRONTMATTER_KEYS.has(key) || seen.has(key)) {
 			continue;
 		}
+		seen.add(key);
 		const expanded = expandCustomFrontmatterValue(
 			row.value,
 			TEMPLATE_PREVIEW_CUSTOM_CONTEXT,
@@ -1424,7 +1459,15 @@ export function formatFrontmatter(
 		const ctx = customFrontmatterContext(recording, summary, folderName);
 		for (const row of customRows) {
 			const key = row.key.trim();
-			if (key === '' || key === 'plaud-id') {
+			// Extra properties only ADD: skip a blank name, any plugin-managed key
+			// (RESERVED), or a key an earlier custom row already claimed (first
+			// wins). This keeps identity, the auto-sync cursor, and the built-in
+			// Dataview fields safe from being overridden by a template.
+			if (
+				key === '' ||
+				RESERVED_FRONTMATTER_KEYS.has(key) ||
+				entries.has(key)
+			) {
 				continue;
 			}
 			let serialized: string;
@@ -1487,6 +1530,38 @@ export function extractPlaudIdFromFrontmatter(content: string): string | null {
 }
 
 /**
+ * Read a leading double-quoted YAML scalar off the front of a string, undoing
+ * the same escapes yamlScalar writes (`\\`, `\"`, `\n`, `\r`, `\t`). Returns the
+ * decoded value and the remainder after the closing quote, or null if the string
+ * does not start with a quote or the quote is never closed.
+ */
+function parseLeadingQuotedScalar(
+	s: string,
+): { value: string; rest: string } | null {
+	if (s[0] !== '"') {
+		return null;
+	}
+	let out = '';
+	for (let i = 1; i < s.length; i++) {
+		const ch = s[i];
+		if (ch === '\\') {
+			const next = s[i + 1];
+			if (next === 'n') out += '\n';
+			else if (next === 'r') out += '\r';
+			else if (next === 't') out += '\t';
+			else out += next ?? '';
+			i++;
+			continue;
+		}
+		if (ch === '"') {
+			return { value: out, rest: s.slice(i + 1) };
+		}
+		out += ch;
+	}
+	return null;
+}
+
+/**
  * Parse the top `---...---` frontmatter block of a note into a key -> verbatim
  * value map. The value is captured exactly as written after the first colon
  * (quotes, brackets, and inline arrays kept intact) so a preserved value can be
@@ -1510,19 +1585,32 @@ export function extractFrontmatterValues(content: string): Map<string, string> {
 			// the preceding key already consumed. Not a top-level key.
 			continue;
 		}
-		const colon = line.indexOf(':');
-		if (colon < 1) {
-			continue;
+		// Parse the key, matching what yamlScalar emits: either a double-quoted
+		// scalar (so a name with a colon or spaces round-trips) or an unquoted
+		// name of letters/digits/spaces/_-. starting with a letter. Anything else
+		// (prose, malformed lines) is skipped.
+		let key: string;
+		let rest: string;
+		if (line.startsWith('"')) {
+			const parsed = parseLeadingQuotedScalar(line);
+			if (parsed === null || !parsed.rest.startsWith(':')) {
+				continue;
+			}
+			key = parsed.value;
+			rest = parsed.rest.slice(1);
+		} else {
+			const colon = line.indexOf(':');
+			if (colon < 1) {
+				continue;
+			}
+			const candidate = line.slice(0, colon).replace(/\s+$/, '');
+			if (!/^[A-Za-z][A-Za-z0-9 _.-]*$/.test(candidate)) {
+				continue;
+			}
+			key = candidate;
+			rest = line.slice(colon + 1);
 		}
-		const key = line.slice(0, colon);
-		if (/\s/.test(key)) {
-			// A top-level key never contains whitespace; skip prose or malformed lines.
-			continue;
-		}
-		let rawValue = line
-			.slice(colon + 1)
-			.replace(/^[ \t]/, '')
-			.replace(/\s+$/, '');
+		let rawValue = rest.replace(/^[ \t]/, '').replace(/\s+$/, '');
 		// Block scalar (`|` or `>`, with optional chomping/indent indicator):
 		// capture the indented body verbatim so a preserved multi-line value
 		// round-trips instead of collapsing to just the indicator on re-import.

@@ -350,7 +350,7 @@ const CUSTOM_FRONTMATTER_TOKENS_HEADING =
 	"Tokens (same {{ }} syntax as the other fields, plus content tokens):";
 const CUSTOM_FRONTMATTER_EXAMPLES_HEADING = "Examples:";
 const CUSTOM_FRONTMATTER_FOOTNOTE =
-	"Applies to new imports. On a re-import, a preserved property keeps the note's current value; an unpreserved one is rewritten. The note's identity field (plaud-id) can never be overridden here.";
+	"Applies to new imports. On a re-import, a preserved property keeps the note's current value; an unpreserved one is rewritten. A name that matches one of the plugin's own fields (like date, source, or plaud-id) is reserved and left to the plugin, so an extra property can only add a field, never override one.";
 
 // Datetime-template documentation for the `datetime:` frontmatter field (issue
 // #32). Mirrors the subfolder field's Moment-only shape (no {{title}}, no
@@ -3304,6 +3304,9 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 
 		const renderRows = (): void => {
 			rowsEl.empty();
+			// The old value inputs are about to be detached, so drop any reference to
+			// one; a token button must target a currently-mounted field or no-op.
+			lastFocusedValue = null;
 			// Column headings so the three fields read clearly.
 			const headerEl = rowsEl.createDiv({
 				cls: "plaud-importer-frontmatter-header",
