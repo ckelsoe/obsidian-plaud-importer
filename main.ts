@@ -636,6 +636,9 @@ export default class PlaudImporterPlugin extends Plugin {
 	// entry point (settings, the auth-pause notice, the backfill retry), so
 	// stacked stale notices cannot launch clobbering capture sessions.
 	private reauthInFlight = false;
+	// DEPRECATED one-time #52 repair: guards against a double-invoke running two
+	// bulk vault scans at once. REMOVE with the repair command.
+	private repairInFlight = false;
 	// Sticky action notices (e.g. the auth-pause "Reconnect") tracked so
 	// onunload can hide any still on screen before their click handlers can run
 	// plugin work after the plugin is gone.
@@ -995,46 +998,79 @@ export default class PlaudImporterPlugin extends Plugin {
 	// again), and never touches non-Plaud notes. Notes whose card was never
 	// downloaded are left for a re-import and counted in the report.
 	private async repairLegacyCardLinks(): Promise<void> {
+		if (this.disposed) {
+			return;
+		}
+		if (this.repairInFlight) {
+			new Notice("Plaud importer: card link repair is already running.");
+			return;
+		}
+		this.repairInFlight = true;
 		let notesRepaired = 0;
 		let linksRepointed = 0;
 		let notesNeedingReimport = 0;
-		for (const file of this.app.vault.getMarkdownFiles()) {
-			if (!this.isPlaudNote(file)) {
-				continue;
-			}
-			let content: string;
-			try {
-				content = await this.app.vault.read(file);
-			} catch {
-				continue;
-			}
-			// Cheap prefilter: Plaud's card poster path always carries this marker.
-			if (!content.includes("summary_poster")) {
-				continue;
-			}
-			const assetsPath = file.path.replace(/\.md$/i, "-assets");
-			const folder = this.app.vault.getFolderByPath(assetsPath);
-			const cardPaths: string[] = [];
-			if (folder !== null) {
-				for (const child of folder.children) {
-					if (child instanceof TFile && isLocalCardImage(child.name)) {
-						cardPaths.push(child.path);
+		try {
+			for (const file of this.app.vault.getMarkdownFiles()) {
+				// Stop cleanly if the plugin unloads mid-scan.
+				if (this.disposed) {
+					return;
+				}
+				if (!this.isPlaudNote(file)) {
+					continue;
+				}
+				let content: string;
+				try {
+					content = await this.app.vault.read(file);
+				} catch {
+					continue;
+				}
+				if (this.disposed) {
+					return;
+				}
+				// Cheap prefilter: Plaud's card poster path always carries this marker.
+				if (!content.includes("summary_poster")) {
+					continue;
+				}
+				const assetsPath = file.path.replace(/\.md$/i, "-assets");
+				const folder = this.app.vault.getFolderByPath(assetsPath);
+				const cardPaths: string[] = [];
+				if (folder !== null) {
+					for (const child of folder.children) {
+						if (child instanceof TFile && isLocalCardImage(child.name)) {
+							cardPaths.push(child.path);
+						}
 					}
 				}
-			}
-			const result = repairLegacyCardEmbeds(content, cardPaths);
-			if (result.repointed > 0) {
+				// Gate the write on the read content, but recompute inside process on
+				// the FRESH content so a concurrent edit is never clobbered.
+				const preview = repairLegacyCardEmbeds(content, cardPaths);
+				if (preview.repointed === 0) {
+					if (preview.unrepairable > 0) {
+						notesNeedingReimport += 1;
+					}
+					continue;
+				}
+				let written = { repointed: 0, unrepairable: 0 };
 				try {
-					await this.app.vault.process(file, () => result.content);
-					notesRepaired += 1;
-					linksRepointed += result.repointed;
+					await this.app.vault.process(file, (fresh) => {
+						const r = repairLegacyCardEmbeds(fresh, cardPaths);
+						written = { repointed: r.repointed, unrepairable: r.unrepairable };
+						return r.content;
+					});
 				} catch {
 					// A single-note write failure must not abort the whole batch.
+					continue;
+				}
+				if (written.repointed > 0) {
+					notesRepaired += 1;
+					linksRepointed += written.repointed;
+				}
+				if (written.unrepairable > 0) {
+					notesNeedingReimport += 1;
 				}
 			}
-			if (result.unrepairable > 0) {
-				notesNeedingReimport += 1;
-			}
+		} finally {
+			this.repairInFlight = false;
 		}
 		const tail =
 			notesNeedingReimport > 0
