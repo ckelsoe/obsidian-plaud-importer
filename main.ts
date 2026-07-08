@@ -492,7 +492,13 @@ const DEFAULT_SETTINGS: PlaudImporterSettings = {
 	subfolderTemplate: "{{YYYY}}/{{MM}}",
 	noteNameTemplate: DEFAULT_NOTE_NAME_TEMPLATE,
 	datetimeTemplate: "",
-	customFrontmatter: [],
+	// A real, editable example so the setting is self-documenting on a fresh
+	// install. Writes "Recording Source: Plaud Importer" to new imports until the
+	// user edits or removes it. Existing configs (which already stored a value)
+	// are unaffected.
+	customFrontmatter: [
+		{ key: "Recording Source", value: "Plaud Importer", preserve: true },
+	],
 	forbiddenCharReplacement: "-",
 	onDuplicate: "prompt",
 	showRibbonIcon: true,
@@ -3307,34 +3313,29 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 			// The old value inputs are about to be detached, so drop any reference to
 			// one; a token button must target a currently-mounted field or no-op.
 			lastFocusedValue = null;
-			// Column headings so the three fields read clearly.
-			const headerEl = rowsEl.createDiv({
-				cls: "plaud-importer-frontmatter-header",
+
+			// Every cell (headings and each row's inputs) is a DIRECT child of the
+			// one grid, so the columns are literally the same tracks and each heading
+			// sits left-aligned over its column. Four cells per line; the header adds
+			// an empty cell over the Remove column so auto-flow stays on the grid.
+			rowsEl.createSpan({
+				cls: "plaud-importer-frontmatter-heading",
+				text: "Property",
 			});
-			headerEl.createSpan({
-				cls: "plaud-importer-frontmatter-key",
-				text: "Property name",
+			rowsEl.createSpan({
+				cls: "plaud-importer-frontmatter-heading",
+				text: "Value",
 			});
-			headerEl.createSpan({
-				cls: "plaud-importer-frontmatter-value",
-				text: "Value (text or {{token}})",
-			});
-			headerEl.createSpan({
-				cls: "plaud-importer-frontmatter-preserve",
+			rowsEl.createSpan({
+				cls: "plaud-importer-frontmatter-heading",
 				text: "Preserve",
 			});
+			rowsEl.createSpan({ cls: "plaud-importer-frontmatter-heading" });
 
 			rows.forEach((row, index) => {
-				const rowEl = rowsEl.createDiv({
-					cls: "plaud-importer-frontmatter-row",
-				});
-				const keyInput = rowEl.createEl("input", {
+				const keyInput = rowsEl.createEl("input", {
 					cls: "plaud-importer-frontmatter-key",
-					attr: {
-						type: "text",
-						placeholder: "Status",
-						"aria-label": "Property name",
-					},
+					attr: { type: "text", "aria-label": "Property name" },
 				});
 				keyInput.value = row.key;
 				keyInput.addEventListener("input", () => {
@@ -3342,13 +3343,9 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 					void persist();
 				});
 
-				const valueInput = rowEl.createEl("input", {
+				const valueInput = rowsEl.createEl("input", {
 					cls: "plaud-importer-frontmatter-value",
-					attr: {
-						type: "text",
-						placeholder: "e.g. unprocessed or Q{{Q}}-{{YYYY}}",
-						"aria-label": "Property value",
-					},
+					attr: { type: "text", "aria-label": "Property value" },
 				});
 				valueInput.value = row.value;
 				valueInput.addEventListener("focus", () => {
@@ -3359,8 +3356,10 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 					void persist();
 				});
 
-				const preserveLabel = rowEl.createEl("label", {
+				// Checkbox only; the "Preserve" column heading labels it.
+				const preserveLabel = rowsEl.createEl("label", {
 					cls: "plaud-importer-frontmatter-preserve",
+					attr: { "aria-label": "Preserve on re-import" },
 				});
 				const preserveInput = preserveLabel.createEl("input", {
 					attr: { type: "checkbox", "aria-label": "Preserve on re-import" },
@@ -3370,9 +3369,8 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 					row.preserve = preserveInput.checked;
 					void persist();
 				});
-				preserveLabel.createSpan({ text: "Keep on re-import" });
 
-				const removeButton = rowEl.createEl("button", {
+				const removeButton = rowsEl.createEl("button", {
 					cls: "plaud-importer-frontmatter-remove",
 					text: "Remove",
 					attr: { type: "button", "aria-label": "Remove property" },

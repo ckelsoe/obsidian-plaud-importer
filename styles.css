@@ -288,49 +288,58 @@
 }
 
 /*
- * Extra-frontmatter rowset: a dynamic list of key / value / preserve rows, then
- * a token palette and add-row button, each region on its own full-width line
- * within the wrapping stacked-row control.
+ * Extra-frontmatter rowset: a dynamic list of property rows (name / value /
+ * preserve / remove), then a token palette and add-row button, each region on
+ * its own full-width line within the wrapping stacked-row control. The header
+ * and each row share one column layout so the headings sit over their columns.
+ */
+/*
+ * ONE grid holds the headings and every row's inputs as DIRECT children, so all
+ * four columns are the same tracks and each heading is left-aligned over its
+ * column. Four cells per line (a heading, then key/value/preserve/remove per
+ * row), so auto-flow wraps to one line per row. The Preserve and Remove tracks
+ * size to their content; the value track takes the remaining width.
  */
 .plaud-importer-frontmatter-rows {
 	flex-basis: 100%;
-	display: flex;
-	flex-direction: column;
-	gap: 0.4em;
-}
-
-.plaud-importer-frontmatter-row {
-	display: flex;
-	flex-wrap: wrap;
+	display: grid;
+	grid-template-columns: minmax(6em, 12em) minmax(0, 1fr) auto auto;
+	gap: 0.4em 0.6em;
 	align-items: center;
-	gap: 0.4em;
 }
 
-/*
- * Higher specificity than the generic stacked-row text-input rule above so the
- * key stays narrow and the value takes the remaining width, without !important.
- */
-.plaud-importer-stacked-row
-	.setting-item-control
-	.plaud-importer-frontmatter-row
-	input.plaud-importer-frontmatter-key {
-	flex: 0 1 10em;
+/* Column headings, left-aligned at the left edge of their track. */
+.plaud-importer-frontmatter-heading {
+	justify-self: start;
+	color: var(--text-muted);
+	font-size: var(--font-ui-smaller);
 }
 
+/* Inputs fill their grid cell instead of the generic stacked-row flex width.
+ * Extra specificity beats that generic input rule without !important. */
 .plaud-importer-stacked-row
 	.setting-item-control
-	.plaud-importer-frontmatter-row
+	.plaud-importer-frontmatter-rows
+	input.plaud-importer-frontmatter-key,
+.plaud-importer-stacked-row
+	.setting-item-control
+	.plaud-importer-frontmatter-rows
 	input.plaud-importer-frontmatter-value {
-	flex: 1 1 16em;
+	width: 100%;
+	min-width: 0;
+	box-sizing: border-box;
 }
 
+/* Checkbox and Remove button sit at the left of their columns, under their
+ * headings, rather than stretching across the cell. */
 .plaud-importer-frontmatter-preserve {
 	display: inline-flex;
 	align-items: center;
-	gap: 0.3em;
-	white-space: nowrap;
-	color: var(--text-muted);
-	font-size: var(--font-ui-smaller);
+	justify-self: start;
+}
+
+.plaud-importer-frontmatter-remove {
+	justify-self: start;
 }
 
 .plaud-importer-frontmatter-controls {
@@ -339,24 +348,6 @@
 	flex-wrap: wrap;
 	gap: 0.4em;
 	margin-top: 0.4em;
-}
-
-/* Column headings above the property rows, aligned to the input columns. */
-.plaud-importer-frontmatter-header {
-	display: flex;
-	flex-wrap: wrap;
-	gap: 0.4em;
-	margin-bottom: 0.1em;
-	color: var(--text-muted);
-	font-size: var(--font-ui-smaller);
-}
-
-.plaud-importer-frontmatter-header .plaud-importer-frontmatter-key {
-	flex: 0 1 10em;
-}
-
-.plaud-importer-frontmatter-header .plaud-importer-frontmatter-value {
-	flex: 1 1 16em;
 }
 
 /* Add-property button on its own line so it is not lost among token buttons. */
