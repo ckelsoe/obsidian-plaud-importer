@@ -109,7 +109,7 @@ const AUTO_LOAD_ROOT_MARGIN_PX = 240;
 const AUTO_LOAD_THROTTLE_MS = 300;
 const AUTO_LOAD_SILENT_RETRY_DELAY_MS = 350;
 
-type LoadMoreTrigger = 'auto' | 'manual' | 'retry';
+type LoadMoreTrigger = 'auto' | 'manual' | 'retry' | 'auto-advance';
 
 interface ArtifactAvailability {
 	readonly selectedCount: number;
@@ -391,6 +391,10 @@ export class ImportModal extends Modal {
 	private progressTextEl: HTMLElement | null = null;
 	private progressSpinnerEl: HTMLElement | null = null;
 	private progressActionButton: HTMLButtonElement | null = null;
+	// Message shown inside the list when the filters hide every loaded row, so an
+	// empty list explains itself (scanning / capped / everything imported) rather
+	// than reading as a broken blank panel.
+	private emptyStateEl: HTMLElement | null = null;
 	// Invisible sentinel watched by IntersectionObserver. When it enters view
 	// (near list bottom), we auto-fetch another page.
 	private autoLoadSentinelEl: HTMLElement | null = null;
@@ -403,6 +407,19 @@ export class ImportModal extends Modal {
 	// Set from mergeRecordings() on every page. When false, the Load More
 	// button is removed.
 	private hasMore = false;
+	// Auto-advance: when the filters hide every loaded row, page forward on our
+	// own so the user reaches importable (un-imported) recordings without having
+	// to scroll through invisible rows. Needed because auto-sync imports the
+	// newest recordings, so with "Hide already-processed" on the first pages are
+	// usually all hidden and the scroll-driven auto-loader has nothing to scroll.
+	// Bounded per burst so a large imported history does not trigger an unbounded
+	// fetch storm; the footer then offers a manual "Load more".
+	private static readonly MAX_AUTO_ADVANCE_PAGES = 10;
+	private autoAdvancing = false;
+	// Set true once a burst hits the page cap with still nothing visible, so the
+	// footer shows a manual continue instead of looping. Reset when a fetch
+	// surfaces a visible row or a filter toggle reveals hidden rows.
+	private autoAdvanceCapped = false;
 	// Guard against re-entry from rapid Load More clicks — the button is
 	// also disabled while this is true, but this belt-and-suspenders guard
 	// also prevents an in-flight fetch from being duplicated by keyboard
@@ -517,6 +534,11 @@ export class ImportModal extends Modal {
 		// start mid-write. `aborted = true` is a plain assignment that cannot
 		// throw. The loop fires a partial Notice if it was interrupted.
 		this.aborted = true;
+		// Invalidate any in-flight page fetch: loadMore captures fetchGeneration
+		// and bails (before mutating currentRecordings/hasMore or rendering) when
+		// it changes, so a close during an awaited fetch cannot repopulate a
+		// torn-down modal or let the auto-advance loop keep paging.
+		this.fetchGeneration += 1;
 		// Release the shared gate (onClosed) only after any in-flight import loop
 		// settles; if none is running, release now. onClosed is an injected
 		// callback, so a throw from it must not escape teardown.
@@ -721,6 +743,62 @@ export class ImportModal extends Modal {
 		} finally {
 			this.loadingMore = false;
 			this.updateProgressUi();
+		}
+	}
+
+	// Page forward while the filters hide every loaded row, so an empty view is
+	// only ever the true "nothing to import" state, not "the newest N are all
+	// imported and the un-imported ones are deeper than page 1". Fire-and-forget
+	// from render/loadMore; the loop awaits each page so it never overlaps a
+	// fetch, and the re-entry guard keeps a filter toggle mid-burst from stacking
+	// a second loop. Stops at the first visible row, exhaustion, an error, or the
+	// page cap (after which the footer offers a manual "Load more").
+	private async pageUntilVisibleOrCapped(): Promise<void> {
+		if (this.autoAdvancing) {
+			return;
+		}
+		this.autoAdvancing = true;
+		// Capture the fetch generation so a refresh()/onClose during an awaited
+		// page fetch stops the burst instead of paging a torn-down or closed
+		// modal (onClose sets `aborted`; refresh() bumps fetchGeneration).
+		const generation = this.fetchGeneration;
+		try {
+			let pages = 0;
+			while (
+				!this.aborted &&
+				generation === this.fetchGeneration &&
+				this.visibleRecordings().length === 0 &&
+				this.hasMore &&
+				this.loadMoreErrorMessage === null &&
+				pages < ImportModal.MAX_AUTO_ADVANCE_PAGES
+			) {
+				const before = this.currentRecordings.length;
+				await this.loadMore('auto-advance');
+				// Stop if the modal was closed or refreshed while we awaited.
+				if (this.aborted || generation !== this.fetchGeneration) {
+					return;
+				}
+				// Count only real progress. loadMore is a no-op if another load is
+				// already in flight (concurrent scroll/prefetch) or the page was
+				// entirely duplicates; incrementing pages on a no-op would burn the
+				// cap without fetching. Break instead — the manual "Load more"
+				// button (shown in the capped/empty state) lets the user resume.
+				if (this.currentRecordings.length === before) {
+					break;
+				}
+				pages += 1;
+			}
+			// Capped only if we stopped with rows still hidden and more to fetch.
+			this.autoAdvanceCapped =
+				this.visibleRecordings().length === 0 &&
+				this.hasMore &&
+				this.loadMoreErrorMessage === null;
+		} finally {
+			this.autoAdvancing = false;
+			if (!this.aborted && generation === this.fetchGeneration) {
+				this.updateIntroCount();
+				this.updateProgressUi();
+			}
 		}
 	}
 
@@ -961,6 +1039,9 @@ export class ImportModal extends Modal {
 		// their batch from selectedIds, so a stale selection would import a
 		// recording the user can no longer see.
 		this.reconcileSelectionToVisible(visible);
+		this.emptyStateEl = listEl.createDiv({
+			cls: 'plaud-importer-empty-state plaud-importer-hidden',
+		});
 		for (const rec of visible) {
 			this.renderRow(listEl, rec);
 		}
@@ -973,6 +1054,10 @@ export class ImportModal extends Modal {
 		this.ensureProgressElements();
 		this.updateProgressUi();
 		this.setupAutoLoadObserver();
+		// Page past fully-hidden pages so the list is not left stuck empty when
+		// the newest recordings are all imported (the common case with auto-sync
+		// on). No-op when a row is already visible or nothing more can be fetched.
+		void this.pageUntilVisibleOrCapped();
 
 		const buttonRow = contentEl.createDiv({ cls: 'plaud-importer-buttons' });
 		this.importButton = buttonRow.createEl('button', {
@@ -1008,17 +1093,21 @@ export class ImportModal extends Modal {
 		this.updateImportButtonState();
 	}
 
-	// Filter bar above the list: three independent view toggles. Each writes its
-	// setting through onViewStateChange (so it survives reopen and auto-sync sees
-	// the same ignore/show state) and re-renders the list in place.
+	// Filter bar above the list: a compact "Hide:" group of four view toggles on
+	// one line. Each writes its setting through onViewStateChange (so it survives
+	// reopen and auto-sync sees the same ignore/show state) and re-renders the
+	// list in place.
 	private renderFilterBar(parent: HTMLElement): void {
-		// All toggles read as "Hide X" so a checked box always means "hidden"
-		// (consistent polarity). "Show trashed" is expressed as its inverse,
-		// "Hide trashed", writing the underlying showTrashedRecordings setting.
+		// One "Hide:" group, short labels, full meaning in the tooltip so it fits
+		// a single line without wrapping. A checked box always means "hidden"
+		// (consistent polarity): "Trashed" is the inverse of the underlying
+		// showTrashedRecordings setting.
 		const bar = parent.createDiv({ cls: 'plaud-importer-filter-bar' });
+		bar.createSpan({ cls: 'plaud-importer-filter-label', text: 'Hide:' });
 		this.renderFilterToggle(
 			bar,
-			'Hide already-processed',
+			'Processed',
+			'Hide recordings already imported and unchanged',
 			this.hideProcessed,
 			(checked) => {
 				this.hideProcessed = checked;
@@ -1027,31 +1116,51 @@ export class ImportModal extends Modal {
 		);
 		this.renderFilterToggle(
 			bar,
-			'Hide updates available',
+			'Updates',
+			'Hide imported recordings that changed in Plaud since import',
 			this.hideUpdates,
 			(checked) => {
 				this.hideUpdates = checked;
 				this.persistViewState({ hideUpdatesRecordings: checked });
 			},
 		);
-		this.renderFilterToggle(bar, 'Hide ignored', this.hideIgnored, (checked) => {
-			this.hideIgnored = checked;
-			this.persistViewState({ hideIgnoredRecordings: checked });
-		});
-		this.renderFilterToggle(bar, 'Hide trashed', !this.showTrashed, (checked) => {
-			this.showTrashed = !checked;
-			this.persistViewState({ showTrashedRecordings: !checked });
-		});
+		this.renderFilterToggle(
+			bar,
+			'Ignored',
+			'Hide recordings you have ignored',
+			this.hideIgnored,
+			(checked) => {
+				this.hideIgnored = checked;
+				this.persistViewState({ hideIgnoredRecordings: checked });
+			},
+		);
+		this.renderFilterToggle(
+			bar,
+			'Trashed',
+			"Hide recordings in Plaud's trash",
+			!this.showTrashed,
+			(checked) => {
+				this.showTrashed = !checked;
+				this.persistViewState({ showTrashedRecordings: !checked });
+			},
+		);
 	}
 
 	private renderFilterToggle(
 		bar: HTMLElement,
 		labelText: string,
+		tooltip: string,
 		checked: boolean,
 		onChange: (checked: boolean) => void,
 	): void {
-		const label = bar.createEl('label', { cls: 'plaud-importer-filter-toggle' });
-		const box = label.createEl('input', { type: 'checkbox' });
+		const label = bar.createEl('label', {
+			cls: 'plaud-importer-filter-toggle',
+			attr: { title: tooltip },
+		});
+		const box = label.createEl('input', {
+			type: 'checkbox',
+			attr: { 'aria-label': tooltip },
+		});
 		box.checked = checked;
 		label.createSpan({ text: labelText });
 		box.addEventListener('change', () => {
@@ -1130,6 +1239,11 @@ export class ImportModal extends Modal {
 			if (isUpdateAvailable(rec.versionMs, existing.versionMs)) {
 				this.renderUpdateAvailableBadge(titleRow);
 			}
+		}
+		// Mark trashed rows (only ever visible when "Hide trashed" is off) so they
+		// are visually distinct from live recordings instead of looking identical.
+		if (rec.isTrashed) {
+			this.renderTrashedBadge(titleRow);
 		}
 
 		const meta = labelWrap.createDiv({ cls: 'plaud-importer-meta' });
@@ -1229,6 +1343,20 @@ export class ImportModal extends Modal {
 			attr: {
 				'aria-label': 'This recording changed in Plaud since it was imported',
 				title: 'Changed in Plaud since import — re-importing overwrites this note',
+			},
+		});
+	}
+
+	// A "Trashed" badge on a recording that is in Plaud's trash. Only rendered
+	// when the row is visible at all, which is only when "Hide trashed" is off.
+	private renderTrashedBadge(parent: HTMLElement): void {
+		if (parent.querySelector('.plaud-importer-trashed-badge') !== null) return;
+		parent.createSpan({
+			cls: 'plaud-importer-trashed-badge',
+			text: 'Trashed',
+			attr: {
+				'aria-label': "This recording is in Plaud's trash",
+				title: "In Plaud's trash — showing because \"Hide trashed\" is off",
 			},
 		});
 	}
@@ -1387,10 +1515,25 @@ export class ImportModal extends Modal {
 		if (this.introEl === null) {
 			return;
 		}
-		const n = this.visibleRecordings().length;
-		const suffix = this.hasMore ? ' (scroll for more)' : '';
+		const shown = this.visibleRecordings().length;
+		const loaded = this.currentRecordings.length;
+		const hidden = loaded - shown;
+		if (loaded === 0) {
+			this.introEl.setText('Loading your recordings...');
+			return;
+		}
+		if (shown === 0) {
+			// The empty-state block below carries the actionable explanation;
+			// the intro just states the filtered count honestly.
+			this.introEl.setText(
+				`Nothing to import right now (${loaded} loaded, all hidden by filters).`,
+			);
+			return;
+		}
+		const hiddenNote = hidden > 0 ? `, ${hidden} hidden by filters` : '';
+		const scroll = this.hasMore ? ' Scroll for older recordings.' : '';
 		this.introEl.setText(
-			`${n} recording${n === 1 ? '' : 's'} loaded${suffix}. Select which to import.`,
+			`${shown} recording${shown === 1 ? '' : 's'} to import${hiddenNote}.${scroll}`,
 		);
 	}
 
@@ -1433,10 +1576,15 @@ export class ImportModal extends Modal {
 			this.loadMoreErrorMessage !== null ? 'retry' : 'manual';
 		this.userStartedScrolling = true;
 		this.startPrefetchIfNeeded();
-		void this.loadMore(trigger).catch((err) => {
-			console.error('Plaud importer: unexpected error in loadMore', err);
-			new Notice('Plaud importer: could not load more — see the developer console.');
-		});
+		// Clear the cap so one click resumes a full auto-advance burst rather than
+		// fetching a single page at a time when the whole head is filtered out.
+		this.autoAdvanceCapped = false;
+		void this.loadMore(trigger)
+			.then(() => this.pageUntilVisibleOrCapped())
+			.catch((err) => {
+				console.error('Plaud importer: unexpected error in loadMore', err);
+				new Notice('Plaud importer: could not load more — see the developer console.');
+			});
 	}
 
 	private updateProgressUi(): void {
@@ -1450,31 +1598,38 @@ export class ImportModal extends Modal {
 		}
 		this.progressEl.hidden = false;
 		this.setProgressActionButton(null);
+		this.updateEmptyState();
+		const shown = this.visibleRecordings().length;
 		// Spinner shows the moment a page fetch starts — including the
-		// background prefetch, which is where the real network wait happens.
-		// Gating it on loadingMore alone made it flash only when the cached
-		// page was consumed (after the wait), reading as a frozen list.
-		const fetching = this.loadingMore || this.prefetchInFlight;
+		// background prefetch and an auto-advance burst, which is where the real
+		// network wait happens.
+		const fetching = this.loadingMore || this.prefetchInFlight || this.autoAdvancing;
 		this.progressSpinnerEl?.toggleClass('plaud-importer-hidden', !fetching);
-		if (this.loadingMore) {
-			this.progressTextEl.setText('Loading more recordings...');
-			return;
-		}
-		if (!this.hasMore) {
-			this.progressTextEl.setText('You are all caught up.');
-			return;
-		}
 		if (this.loadMoreErrorMessage !== null) {
 			this.progressTextEl.setText(`Could not load more: ${this.loadMoreErrorMessage}`);
 			this.setProgressActionButton('Retry loading');
 			return;
 		}
-		if (this.prefetchInFlight) {
-			this.progressTextEl.setText('Caching next recordings...');
+		if (this.loadingMore || this.autoAdvancing) {
+			// While auto-advancing past hidden pages the empty-state block carries
+			// the "looking..." message, so keep the footer text out of the way.
+			this.progressTextEl.setText(shown === 0 ? '' : 'Loading more recordings...');
 			return;
 		}
-		if (!this.userStartedScrolling) {
-			this.progressTextEl.setText('Scroll to browse older recordings.');
+		if (!this.hasMore) {
+			this.progressTextEl.setText(shown === 0 ? '' : 'You are all caught up.');
+			return;
+		}
+		// More recordings exist and nothing is visible: an auto-advance burst hit
+		// its page cap without surfacing a match. Offer a manual continue instead
+		// of looping the fetch forever.
+		if (shown === 0) {
+			this.progressTextEl.setText('');
+			this.setProgressActionButton('Load more recordings');
+			return;
+		}
+		if (this.prefetchInFlight) {
+			this.progressTextEl.setText('Caching next recordings...');
 			return;
 		}
 		if (this.prefetchedRecordings !== null) {
@@ -1482,6 +1637,51 @@ export class ImportModal extends Modal {
 			return;
 		}
 		this.progressTextEl.setText('Scroll to load more recordings.');
+	}
+
+	// Show or hide the in-list empty-state message. Only visible when the filters
+	// hide every loaded row; its wording distinguishes an active scan, a capped
+	// scan with more to fetch, and a genuine "nothing to import" end state.
+	private updateEmptyState(): void {
+		if (this.emptyStateEl === null) {
+			return;
+		}
+		if (this.visibleRecordings().length > 0) {
+			this.emptyStateEl.toggleClass('plaud-importer-hidden', true);
+			return;
+		}
+		this.emptyStateEl.toggleClass('plaud-importer-hidden', false);
+		this.emptyStateEl.empty();
+		if (this.loadingMore || this.autoAdvancing) {
+			this.emptyStateEl.createEl('p', {
+				text: `Looking for recordings to import... (${this.currentRecordings.length} scanned)`,
+			});
+			return;
+		}
+		if (this.loadMoreErrorMessage !== null) {
+			this.emptyStateEl.createEl('p', {
+				text: 'Could not load more recordings. Try again with the button below.',
+			});
+			return;
+		}
+		if (this.autoAdvanceCapped && this.hasMore) {
+			this.emptyStateEl.createEl('p', {
+				text: `Scanned ${this.currentRecordings.length} recordings, none match your filters yet.`,
+			});
+			this.emptyStateEl.createEl('p', {
+				cls: 'plaud-importer-empty-hint',
+				text: 'Keep looking with the button below, or turn off a filter above.',
+			});
+			return;
+		}
+		// Exhausted: nothing left to fetch and nothing visible.
+		this.emptyStateEl.createEl('p', { text: 'No recordings to import.' });
+		if (this.hideProcessed || this.hideUpdates || this.hideIgnored) {
+			this.emptyStateEl.createEl('p', {
+				cls: 'plaud-importer-empty-hint',
+				text: 'Everything available is already imported or hidden. Turn off a filter above to review or re-import existing recordings.',
+			});
+		}
 	}
 
 	private setProgressActionButton(label: string | null): void {

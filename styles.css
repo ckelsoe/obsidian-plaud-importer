@@ -11,27 +11,55 @@
 	margin-bottom: 1em;
 }
 
-/* Filter bar above the recording list: independent view toggles. */
+/* Filter bar above the recording list: one compact "Hide:" group, single line.
+ * No wrap: short labels keep it on one row even in a narrow modal; if it ever
+ * overflows it scrolls horizontally rather than stacking. */
 .plaud-importer-filter-bar {
 	display: flex;
-	flex-wrap: wrap;
-	gap: 1em;
+	flex-wrap: nowrap;
+	align-items: center;
+	gap: 0.85em;
 	margin-bottom: 0.75em;
 	padding-bottom: 0.6em;
 	border-bottom: 1px solid var(--background-modifier-border);
+	overflow-x: auto;
+	font-size: 0.85em;
+	color: var(--text-muted);
+}
+
+.plaud-importer-filter-label {
+	flex-shrink: 0;
+	font-weight: 600;
+	color: var(--text-normal);
 }
 
 .plaud-importer-filter-toggle {
 	display: flex;
 	align-items: center;
-	gap: 0.4em;
-	font-size: 0.85em;
-	color: var(--text-muted);
+	gap: 0.3em;
+	flex-shrink: 0;
+	white-space: nowrap;
 	cursor: pointer;
 }
 
 .plaud-importer-filter-toggle input {
 	cursor: pointer;
+}
+
+/* In-list empty-state message shown when the filters hide every loaded row. */
+.plaud-importer-empty-state {
+	padding: 1.5em 0.5em;
+	text-align: center;
+	color: var(--text-muted);
+}
+
+.plaud-importer-empty-state p {
+	margin: 0 0 0.4em 0;
+}
+
+.plaud-importer-empty-hint {
+	font-size: 0.9em;
+	color: var(--text-faint);
 }
 
 /* Recording list — comfortable layout (two lines per row) */
@@ -103,6 +131,17 @@
 	font-weight: 500;
 	color: var(--text-on-accent);
 	background: var(--color-orange);
+	border-radius: 0.7em;
+	flex-shrink: 0;
+}
+
+.plaud-importer-trashed-badge {
+	display: inline-block;
+	padding: 0.05em 0.5em;
+	font-size: 0.75em;
+	font-weight: 500;
+	color: var(--text-on-accent);
+	background: var(--color-red);
 	border-radius: 0.7em;
 	flex-shrink: 0;
 }

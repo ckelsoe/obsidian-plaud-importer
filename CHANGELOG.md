@@ -4,6 +4,17 @@ All notable changes to Plaud Importer will be documented in this file.
 
 ## [Unreleased]
 
+## [0.27.1] - 2026-07-08
+
+### Fixed
+
+- **The import dialog no longer gets stuck on an empty list.** When automatic sync had already imported your newest recordings, opening the dialog with "Hide already-processed" on could leave the list blank with nothing to scroll, so older recordings you had not imported yet were unreachable. The dialog now pages past fully-hidden recordings on its own until it finds ones to import. When there is genuinely nothing to import it says so and tells you to turn off a filter to review existing notes, instead of showing a blank panel with a misleading "scroll to browse" hint.
+
+### Changed
+
+- **The filter toggles are now one compact "Hide:" group on a single line** (Processed, Updates, Ignored, Trashed), so they no longer wrap and take up less room. Each keeps its full description in a tooltip.
+- **Recordings in Plaud's trash now show a "Trashed" badge** when "Hide trashed" is turned off, so they are no longer indistinguishable from your live recordings.
+
 ## [0.27.0] - 2026-07-08
 
 ### Added
