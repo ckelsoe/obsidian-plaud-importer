@@ -110,6 +110,11 @@ export class AttachmentImporter {
 		const mindmapLinks: string[] = [];
 		const cardLinks: string[] = [];
 		const payloadToPath = new Map<string, string>();
+		// Maps a downloaded asset's ORIGINAL Plaud link (asset.url, the same
+		// normalized string the summary extractor produced) to its local vault
+		// path, so inline `![](permanent/...)` embeds in the summary body can be
+		// repointed at the local copy after download (issue #52).
+		const summaryEmbedRewrites = new Map<string, string>();
 		const renderedLinks = new Set<string>();
 		const namingCounters: AttachmentNamingCounters = {
 			mindmapImage: 0,
@@ -343,6 +348,7 @@ export class AttachmentImporter {
 						existingPath,
 					});
 					if (this.isImageExtension(ext)) {
+						summaryEmbedRewrites.set(asset.url, existingPath);
 						pushRenderedAsset(kind, existingPath, true);
 					} else {
 						pushRenderedAsset(kind, existingPath, false);
@@ -367,6 +373,7 @@ export class AttachmentImporter {
 					byteLength: bytes.byteLength,
 				});
 				if (this.isImageExtension(ext)) {
+					summaryEmbedRewrites.set(asset.url, attachmentPath);
 					pushRenderedAsset(kind, attachmentPath, true);
 				} else {
 					pushRenderedAsset(kind, attachmentPath, false);
@@ -478,7 +485,9 @@ export class AttachmentImporter {
 				attachmentUrls: attachments.map((a) => this.sanitizeUrlForDebug(a.url)),
 			});
 		}
-		if (genericLinks.length + mindmapLinks.length + cardLinks.length === 0) {
+		const hasManagedLinks =
+			genericLinks.length + mindmapLinks.length + cardLinks.length > 0;
+		if (!hasManagedLinks && summaryEmbedRewrites.size === 0) {
 			this.logAttachmentDebug('attachment import completed with no rendered links', {
 				notePath,
 			});
@@ -486,7 +495,15 @@ export class AttachmentImporter {
 		}
 
 		await this.app.vault.process(noteFile, (content) => {
-			const withoutManagedSection = this.stripManagedAttachmentsSection(content);
+			// Repoint Plaud's inline `![](permanent/...)` summary embeds at the
+			// local copies we just downloaded (issue #52) BEFORE building the
+			// managed section. The managed section uses `![[...]]` wikilinks,
+			// which the inline-embed regex never matches, so ordering is safe.
+			const repointed = rewriteInlineSummaryEmbeds(content, summaryEmbedRewrites);
+			if (!hasManagedLinks) {
+				return repointed;
+			}
+			const withoutManagedSection = this.stripManagedAttachmentsSection(repointed);
 			const trimmed = withoutManagedSection.replace(/\s+$/, '');
 			const section: string[] = [
 				'## Images and Attachments',
@@ -1278,6 +1295,39 @@ export class AttachmentImporter {
 			'\n',
 		);
 	}
+}
+
+/**
+ * Repoint Plaud's inline image embeds in a note body at the locally
+ * downloaded copies. Plaud's newer AI summary markdown embeds its card
+ * poster (and any other picture) as `![alt](permanent/.../summary_poster/...)`
+ * — a path that only resolves inside Plaud's own app, so Obsidian renders it
+ * as "could not be found" (issue #52). The importer downloads the same asset
+ * into the note's `-assets` folder; this rewrites every inline embed whose
+ * target matches a downloaded asset into an Obsidian wikilink embed
+ * `![[<local path>]]`. Embeds whose target is not in the map (external images
+ * the user intentionally referenced) are left untouched.
+ *
+ * `urlToLocalPath` is keyed by the SAME normalized link string the extractor
+ * produced (see `normalizeSummaryLink`), so the captured target is normalized
+ * identically before lookup. Exported as a pure function so the rewrite is
+ * unit-testable without the vault/network plumbing in AttachmentImporter.
+ */
+export function rewriteInlineSummaryEmbeds(
+	content: string,
+	urlToLocalPath: ReadonlyMap<string, string>,
+): string {
+	if (urlToLocalPath.size === 0) {
+		return content;
+	}
+	// Inline markdown image: ![alt](<target>) with an optional angle-bracket
+	// wrapper and an optional "title". Capture the bare target only.
+	const inlineImage = /!\[[^\]]*]\(\s*<?([^)\s>]+)>?(?:\s+"[^"]*")?\s*\)/g;
+	return content.replace(inlineImage, (whole, rawTarget: string) => {
+		const normalized = rawTarget.replace(/^<|>$/g, '').replace(/^['"]|['"]$/g, '');
+		const local = urlToLocalPath.get(normalized);
+		return local !== undefined ? `![[${local}]]` : whole;
+	});
 }
 
 /**
