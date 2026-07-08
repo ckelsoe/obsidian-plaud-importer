@@ -42,9 +42,11 @@ import {
 	TEMPLATE_PREVIEW_DATETIME,
 	TEMPLATE_PREVIEW_TITLE,
 	TEMPLATE_PREVIEW_FOLDER,
+	renderCustomFrontmatterPreview,
 	sanitizeFilename,
 	type RenameFileFn,
 	type TagMode,
+	type CustomFrontmatterRow,
 } from "./note-writer";
 import { AttachmentImporter } from "./attachment-importer";
 import {
@@ -308,6 +310,48 @@ const TITLE_INSERT_TOKEN: readonly [string, string] = ["Title", "{{title}}"];
 // per-note file name is surprising).
 const FOLDER_INSERT_TOKEN: readonly [string, string] = ["Folder", "{{plaud-folder}}"];
 
+// Content tokens available only in the extra-frontmatter value field. They
+// surface recording/summary data the plugin already parses; they are not offered
+// on the note-name or subfolder fields, where a nullable value has no place in a
+// path. The summary-derived ones are empty on a recording with no AI summary.
+const CONTENT_INSERT_TOKENS: ReadonlyArray<readonly [string, string]> = [
+	["Duration", "{{duration}}"],
+	["Category", "{{category}}"],
+	["Headline", "{{headline}}"],
+	["Language", "{{language}}"],
+	["Summary template", "{{template}}"],
+	["Model", "{{model}}"],
+];
+
+// Extra-frontmatter documentation. Each row is a property; its value takes the
+// same {{ }} tokens as the other fields plus the content tokens above. Held in
+// consts so the sentence-case lint inspects the literal and leaves the token
+// examples alone.
+const CUSTOM_FRONTMATTER_INTRO =
+	"Adds your own properties to each imported note's frontmatter. Each row is one property: a name, a value, and whether to preserve it. A value can be plain text or use the same {{ }} tokens as the other fields (the date set, {{title}}, {{plaud-folder}}) plus content tokens like {{category}} and {{duration}}. Leave a value empty to write the property with no value. Turn on preserve for a property you edit by hand (a status, a project) so a re-import keeps your value; leave it off for a value that should refresh from the recording each time.";
+
+const CUSTOM_FRONTMATTER_TOKENS: ReadonlyArray<readonly [string, string]> = [
+	["{{title}}", "the recording title"],
+	["{{plaud-folder}}", "the recording's Plaud folder name"],
+	["{{duration}}", "the recording length, for example 30m"],
+	["{{category}}", "the summary's category (empty with no AI summary)"],
+	["{{headline}}", "the summary's one-line headline"],
+	["{{YYYY}} {{MM}} {{DD}} {{Q}} {{WW}}", "the date set, same as the other fields"],
+];
+
+const CUSTOM_FRONTMATTER_EXAMPLES: ReadonlyArray<readonly [string, string]> = [
+	["status: unprocessed", "a fixed value you triage later (preserve on)"],
+	["quarter: Q{{Q}}-{{YYYY}}", "writes quarter: Q3-2026 for a July recording"],
+	["type: {{category}}", "the recording's own category under your key name"],
+	["project:", "writes project: with no value, to fill in by hand"],
+];
+
+const CUSTOM_FRONTMATTER_TOKENS_HEADING =
+	"Tokens (same {{ }} syntax as the other fields, plus content tokens):";
+const CUSTOM_FRONTMATTER_EXAMPLES_HEADING = "Examples:";
+const CUSTOM_FRONTMATTER_FOOTNOTE =
+	"Applies to new imports. On a re-import, a preserved property keeps the note's current value; an unpreserved one is rewritten. A name that matches one of the plugin's own fields (like date, source, or plaud-id) is reserved and left to the plugin, so an extra property can only add a field, never override one.";
+
 // Datetime-template documentation for the `datetime:` frontmatter field (issue
 // #32). Mirrors the subfolder field's Moment-only shape (no {{title}}, no
 // presets) but leads with the time tokens, which are the reason this field
@@ -375,6 +419,10 @@ interface PlaudImporterSettings {
 	// stays YYYY-MM-DD for Dataview, so the user can add the recording time in any
 	// format (24h, 12h, ISO 8601) without disturbing existing date queries.
 	datetimeTemplate: string;
+	// User-defined extra frontmatter properties (see CustomFrontmatterRow). Each
+	// row's value may use {{ }} tokens; preserve keeps the note's existing value on
+	// re-import. Empty (the default) writes no extra properties.
+	customFrontmatter: CustomFrontmatterRow[];
 	// Single character that replaces a forbidden filename/folder character (the
 	// Windows-forbidden set, control codes, and brackets in a note name), and the
 	// path separators inside a {{title}} folder token. Default "-". Validated to a
@@ -444,6 +492,13 @@ const DEFAULT_SETTINGS: PlaudImporterSettings = {
 	subfolderTemplate: "{{YYYY}}/{{MM}}",
 	noteNameTemplate: DEFAULT_NOTE_NAME_TEMPLATE,
 	datetimeTemplate: "",
+	// A real, editable example so the setting is self-documenting on a fresh
+	// install. Writes "Recording Source: Plaud Importer" to new imports until the
+	// user edits or removes it. Existing configs (which already stored a value)
+	// are unaffected.
+	customFrontmatter: [
+		{ key: "Recording Source", value: "Plaud Importer", preserve: true },
+	],
 	forbiddenCharReplacement: "-",
 	onDuplicate: "prompt",
 	showRibbonIcon: true,
@@ -836,6 +891,7 @@ export default class PlaudImporterPlugin extends Plugin {
 			subfolderTemplate: this.settings.subfolderTemplate,
 			noteNameTemplate: this.settings.noteNameTemplate,
 			datetimeTemplate: this.settings.datetimeTemplate,
+			customFrontmatter: this.settings.customFrontmatter,
 			forbiddenCharReplacement: this.settings.forbiddenCharReplacement,
 			onDuplicate: this.settings.onDuplicate,
 			includeTranscript: this.settings.includeTranscript,
@@ -2593,6 +2649,13 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 				DATETIME_TEMPLATE_INTRO,
 			),
 		);
+		this.renderCustomFrontmatterControl(
+			this.makeSetting(
+				containerEl,
+				"Extra frontmatter",
+				CUSTOM_FRONTMATTER_INTRO,
+			),
+		);
 		this.addTextRow(
 			containerEl,
 			"Forbidden character replacement",
@@ -3175,6 +3238,206 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 		updatePreview(this.readSettingString("datetimeTemplate"));
 	}
 
+	// Renders the "Extra frontmatter" row: the token/example reference in the
+	// description, then a dynamic list of key / value / preserve rows with a
+	// token palette, an add-row button, and a live preview of the expanded
+	// output. Structured (not a template string), so it persists directly to
+	// settings.customFrontmatter rather than through applyControlChange.
+	private renderCustomFrontmatterControl(setting: Setting): void {
+		setting.settingEl.addClass("plaud-importer-stacked-row");
+		const docEl = setting.descEl.createDiv();
+		docEl.createDiv({ text: CUSTOM_FRONTMATTER_TOKENS_HEADING });
+		const tokenList = docEl.createEl("ul");
+		for (const [token, meaning] of CUSTOM_FRONTMATTER_TOKENS) {
+			const item = tokenList.createEl("li");
+			item.createEl("code", { text: token });
+			item.createSpan({ text: ` ${meaning}` });
+		}
+		docEl.createDiv({ text: CUSTOM_FRONTMATTER_EXAMPLES_HEADING });
+		const exampleList = docEl.createEl("ul");
+		for (const [template, result] of CUSTOM_FRONTMATTER_EXAMPLES) {
+			const item = exampleList.createEl("li");
+			item.createEl("code", { text: template });
+			item.createSpan({ text: ` → ${result}` });
+		}
+		docEl.createDiv({ text: CUSTOM_FRONTMATTER_FOOTNOTE });
+
+		// Working copy of the rows, persisted to settings on every edit. A mutable
+		// shape (the stored CustomFrontmatterRow is readonly) so an in-place field
+		// edit is allowed. Blank rows are dropped on persist, and one blank row is
+		// always shown so there is somewhere to start typing.
+		type EditableRow = { key: string; value: string; preserve: boolean };
+		const rows: EditableRow[] = this.plugin.settings.customFrontmatter.map(
+			(r) => ({ key: r.key, value: r.value, preserve: r.preserve }),
+		);
+		if (rows.length === 0) {
+			rows.push({ key: "", value: "", preserve: true });
+		}
+
+		// Regions in fixed visual order: the property rows, the add-row button, the
+		// token palette, then the live preview.
+		const rowsEl = setting.controlEl.createDiv({
+			cls: "plaud-importer-frontmatter-rows",
+		});
+		const actionsEl = setting.controlEl.createDiv({
+			cls: "plaud-importer-frontmatter-actions",
+		});
+		const paletteEl = setting.controlEl.createDiv({
+			cls: "plaud-importer-frontmatter-controls",
+		});
+		const previewEl = setting.controlEl.createDiv({
+			cls: "plaud-importer-template-preview",
+		});
+
+		let lastFocusedValue: HTMLInputElement | null = null;
+
+		const updatePreview = (): void => {
+			const lines = renderCustomFrontmatterPreview(rows);
+			previewEl.setText(
+				lines.length > 0
+					? `Preview:\n${lines.join("\n")}`
+					: "Preview: no extra frontmatter properties",
+			);
+		};
+		const persist = async (): Promise<void> => {
+			// Store only rows that name a property; the blank starter row is not saved.
+			this.plugin.settings.customFrontmatter = rows
+				.filter((r) => r.key.trim() !== "")
+				.map((r) => ({ key: r.key, value: r.value, preserve: r.preserve }));
+			await this.plugin.saveSettings();
+			updatePreview();
+		};
+
+		const renderRows = (): void => {
+			rowsEl.empty();
+			// The old value inputs are about to be detached, so drop any reference to
+			// one; a token button must target a currently-mounted field or no-op.
+			lastFocusedValue = null;
+
+			// Every cell (headings and each row's inputs) is a DIRECT child of the
+			// one grid, so the columns are literally the same tracks and each heading
+			// sits left-aligned over its column. Four cells per line; the header adds
+			// an empty cell over the Remove column so auto-flow stays on the grid.
+			rowsEl.createSpan({
+				cls: "plaud-importer-frontmatter-heading",
+				text: "Property",
+			});
+			rowsEl.createSpan({
+				cls: "plaud-importer-frontmatter-heading",
+				text: "Value",
+			});
+			rowsEl.createSpan({
+				cls: "plaud-importer-frontmatter-heading",
+				text: "Preserve",
+			});
+			rowsEl.createSpan({ cls: "plaud-importer-frontmatter-heading" });
+
+			rows.forEach((row, index) => {
+				const keyInput = rowsEl.createEl("input", {
+					cls: "plaud-importer-frontmatter-key",
+					attr: { type: "text", "aria-label": "Property name" },
+				});
+				keyInput.value = row.key;
+				keyInput.addEventListener("input", () => {
+					row.key = keyInput.value;
+					void persist();
+				});
+
+				const valueInput = rowsEl.createEl("input", {
+					cls: "plaud-importer-frontmatter-value",
+					attr: { type: "text", "aria-label": "Property value" },
+				});
+				valueInput.value = row.value;
+				valueInput.addEventListener("focus", () => {
+					lastFocusedValue = valueInput;
+				});
+				valueInput.addEventListener("input", () => {
+					row.value = valueInput.value;
+					void persist();
+				});
+
+				// Checkbox only; the "Preserve" column heading labels it.
+				const preserveLabel = rowsEl.createEl("label", {
+					cls: "plaud-importer-frontmatter-preserve",
+					attr: { "aria-label": "Preserve on re-import" },
+				});
+				const preserveInput = preserveLabel.createEl("input", {
+					attr: { type: "checkbox", "aria-label": "Preserve on re-import" },
+				});
+				preserveInput.checked = row.preserve;
+				preserveInput.addEventListener("change", () => {
+					row.preserve = preserveInput.checked;
+					void persist();
+				});
+
+				const removeButton = rowsEl.createEl("button", {
+					cls: "plaud-importer-frontmatter-remove",
+					text: "Remove",
+					attr: { type: "button", "aria-label": "Remove property" },
+				});
+				removeButton.addEventListener("click", () => {
+					rows.splice(index, 1);
+					if (rows.length === 0) {
+						// Always leave one editable row so the control is never empty.
+						rows.push({ key: "", value: "", preserve: true });
+					}
+					renderRows();
+					void persist();
+				});
+			});
+		};
+
+		const addButton = actionsEl.createEl("button", {
+			cls: "plaud-importer-frontmatter-add mod-cta",
+			text: "Add property",
+			attr: { type: "button" },
+		});
+		addButton.addEventListener("click", () => {
+			rows.push({ key: "", value: "", preserve: true });
+			renderRows();
+			void persist();
+		});
+
+		const insertToken = (token: string): void => {
+			const input = lastFocusedValue;
+			if (input === null) {
+				return;
+			}
+			const start = input.selectionStart ?? input.value.length;
+			const end = input.selectionEnd ?? input.value.length;
+			input.value = input.value.slice(0, start) + token + input.value.slice(end);
+			const caret = start + token.length;
+			input.focus();
+			input.setSelectionRange(caret, caret);
+			// Route the edit through the input handler so the row updates and saves.
+			input.dispatchEvent(new Event("input"));
+		};
+		paletteEl.createDiv({
+			cls: "plaud-importer-frontmatter-palette-label",
+			text: "Insert a token into the value field you last clicked in:",
+		});
+		for (const [label, token] of [
+			...DATE_INSERT_TOKENS,
+			TITLE_INSERT_TOKEN,
+			FOLDER_INSERT_TOKEN,
+			...CONTENT_INSERT_TOKENS,
+		]) {
+			const tokenButton = paletteEl.createEl("button", {
+				cls: "plaud-importer-frontmatter-token",
+				text: label,
+				attr: { type: "button", title: `Insert ${token}` },
+			});
+			// Keep the caret in the focused value field when a token button is clicked.
+			tokenButton.addEventListener("mousedown", (event) =>
+				event.preventDefault(),
+			);
+			tokenButton.addEventListener("click", () => insertToken(token));
+		}
+
+		renderRows();
+		updatePreview();
+	}
+
 	// Renders the note-name template row: the token reference and examples (lists,
 	// so they read clearly) into the description, then a text control bound to
 	// noteNameTemplate, then ISO/US/EU preset buttons that fill the field and
@@ -3479,6 +3742,15 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 						searchable: false,
 						render: (setting: Setting) =>
 							this.renderDatetimeTemplateControl(setting),
+					},
+					{
+						name: "Extra frontmatter",
+						desc: CUSTOM_FRONTMATTER_INTRO,
+						// Rendered imperatively for the token/example lists and the
+						// dynamic key/value/preserve rowset.
+						searchable: false,
+						render: (setting: Setting) =>
+							this.renderCustomFrontmatterControl(setting),
 					},
 					{
 						name: "Forbidden character replacement",

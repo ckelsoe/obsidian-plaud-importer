@@ -140,6 +140,13 @@ export interface NoteWriterOptions {
 	 */
 	readonly datetimeTemplate?: string;
 	/**
+	 * User-defined extra frontmatter properties (the "Extra frontmatter"
+	 * setting). Each row's value may embed `{{...}}` tokens (see
+	 * `expandCustomFrontmatterValue`). A row with `preserve` keeps the note's
+	 * existing value on re-import. Omitted or empty writes no extra properties.
+	 */
+	readonly customFrontmatter?: readonly CustomFrontmatterRow[];
+	/**
 	 * Character that replaces a forbidden filename/folder character (the Windows
 	 * set plus control codes; brackets too in a note name). Defaults to '-'.
 	 * Applied to both the note name and each resolved subfolder segment, and to
@@ -1169,6 +1176,184 @@ export function buildNoteTags(
 	return { tags, keywords };
 }
 
+/**
+ * One user-defined frontmatter property from the "Extra frontmatter" setting.
+ * `value` is a template that may embed `{{...}}` tokens (see
+ * `expandCustomFrontmatterValue`). `preserve` true means a re-import keeps the
+ * note's existing value for this key instead of regenerating it, so a field the
+ * user maintains by hand (a status, a project) survives re-import.
+ */
+export interface CustomFrontmatterRow {
+	readonly key: string;
+	readonly value: string;
+	readonly preserve: boolean;
+}
+
+/**
+ * Every frontmatter key the plugin manages itself. A custom row whose name
+ * matches one of these is ignored, so an "extra" property can only ADD a field,
+ * never override a plugin field. This protects identity (`plaud-id`), the
+ * auto-sync change cursor (`plaud-version-ms`), and the Dataview-facing fields
+ * (`date`, `source`, ...) from being silently rewritten by a template. Keep in
+ * sync with the keys formatFrontmatter emits.
+ */
+export const RESERVED_FRONTMATTER_KEYS: ReadonlySet<string> = new Set([
+	'plaud-id',
+	'plaud-url',
+	'date',
+	'datetime',
+	'duration-seconds',
+	'duration',
+	'speakers',
+	'tags',
+	'plaud-folder',
+	'keywords',
+	'source',
+	'plaud-version-ms',
+	'plaud-headline',
+	'plaud-category',
+	'plaud-language',
+	'plaud-template',
+	'plaud-model',
+	'plaud-note-id',
+	'plaud-summary-id',
+	'plaud-summary-version',
+]);
+
+/**
+ * Values a custom frontmatter token can resolve to, already flattened for one
+ * recording. Decoupling the expander from `Recording`/`Summary` keeps it a pure
+ * function of primitives, so the settings live preview and unit tests build a
+ * context directly without a full recording fixture. A missing summary field is
+ * '' here, which the expander turns into an empty expansion (YAML null).
+ */
+export interface CustomFrontmatterContext {
+	readonly date: Date;
+	readonly title: string;
+	readonly folderName: string;
+	readonly durationSeconds: number;
+	readonly category: string;
+	readonly headline: string;
+	readonly language: string;
+	readonly template: string;
+	readonly model: string;
+}
+
+/** Build the token context for one recording (folderName '' when unfiled). */
+export function customFrontmatterContext(
+	recording: Recording,
+	summary: Summary | null | undefined,
+	folderName: string,
+): CustomFrontmatterContext {
+	return {
+		date: recording.createdAt,
+		title: recording.title,
+		folderName,
+		durationSeconds: Number.isFinite(recording.durationSeconds)
+			? Math.max(0, Math.floor(recording.durationSeconds))
+			: 0,
+		category: summary?.category ?? '',
+		headline: summary?.headline ?? '',
+		language: summary?.language ?? '',
+		template: summary?.template ?? '',
+		model: summary?.model ?? '',
+	};
+}
+
+/**
+ * Expand a custom frontmatter value template into its final (unquoted) string.
+ * Content tokens (`{{category}}`, `{{duration}}`, ...) are substituted first,
+ * then the shared date engine handles the Moment date set plus `{{title}}` and
+ * `{{plaud-folder}}`, so the token vocabulary matches the other template fields.
+ * These content tokens are deliberately NOT wired into the note-name/subfolder
+ * engine, since a filename must not depend on a nullable AI field. An empty
+ * result is the caller's signal to write `key:` (YAML null).
+ */
+export function expandCustomFrontmatterValue(
+	value: string,
+	ctx: CustomFrontmatterContext,
+): string {
+	const content: Record<string, string> = {
+		duration: formatDurationHoursMinutes(ctx.durationSeconds),
+		category: ctx.category,
+		headline: ctx.headline,
+		language: ctx.language,
+		template: ctx.template,
+		model: ctx.model,
+	};
+	// Single pass: each `{{...}}` is resolved exactly once, so a substituted value
+	// that itself contains braces (a Plaud category holding "{{...}}") is never
+	// re-interpreted as another token. Content tokens win, then title/folder, then
+	// the Moment date engine. The moment cast mirrors expandDateTemplate: it pins
+	// the factory to moment's own type at the marketplace type-check boundary.
+	const m = (moment as typeof import('moment'))(ctx.date).locale('en');
+	return value.replace(
+		/\{\{([^}]*)\}\}/g,
+		(_match, raw: string): string => {
+			const inner = raw.trim();
+			if (Object.prototype.hasOwnProperty.call(content, inner)) {
+				return content[inner];
+			}
+			if (inner === 'title') {
+				return ctx.title;
+			}
+			if (inner === 'plaud-folder') {
+				return ctx.folderName;
+			}
+			return m.format(inner);
+		},
+	);
+}
+
+/**
+ * A representative context for the settings live preview, so a user sees the
+ * date set plus the content tokens (`{{duration}}`, `{{category}}`, ...) resolve
+ * to sample values as they type.
+ */
+export const TEMPLATE_PREVIEW_CUSTOM_CONTEXT: CustomFrontmatterContext = {
+	date: TEMPLATE_PREVIEW_DATE,
+	title: TEMPLATE_PREVIEW_TITLE,
+	folderName: TEMPLATE_PREVIEW_FOLDER,
+	durationSeconds: 1830,
+	category: 'Meeting',
+	headline: 'Weekly team sync recap',
+	language: 'en',
+	template: 'Meeting notes',
+	model: 'gpt-5',
+};
+
+/**
+ * Render the custom rows as the `key: value` lines they would produce, against
+ * the preview context. Skips blank keys and the locked `plaud-id`. Preserve is
+ * not reflected here: it only affects re-import, not the generated value.
+ */
+export function renderCustomFrontmatterPreview(
+	rows: readonly CustomFrontmatterRow[],
+): string[] {
+	const lines: string[] = [];
+	const seen = new Set<string>();
+	for (const row of rows) {
+		const key = row.key.trim();
+		// Mirror formatFrontmatter: skip blanks, reserved plugin keys, and a
+		// repeat of a key already shown (first occurrence wins).
+		if (key === '' || RESERVED_FRONTMATTER_KEYS.has(key) || seen.has(key)) {
+			continue;
+		}
+		seen.add(key);
+		const expanded = expandCustomFrontmatterValue(
+			row.value,
+			TEMPLATE_PREVIEW_CUSTOM_CONTEXT,
+		);
+		const safeKey = yamlScalar(key);
+		lines.push(
+			expanded.length > 0
+				? `${safeKey}: ${yamlScalar(expanded)}`
+				: `${safeKey}:`,
+		);
+	}
+	return lines;
+}
+
 export function formatFrontmatter(
 	recording: Recording,
 	speakers: readonly string[],
@@ -1176,60 +1361,68 @@ export function formatFrontmatter(
 	keywords?: readonly string[],
 	folders?: readonly string[],
 	datetimeTemplate?: string,
+	customRows?: readonly CustomFrontmatterRow[],
+	existingValues?: ReadonlyMap<string, string>,
 ): string {
 	const duration = Number.isFinite(recording.durationSeconds)
 		? Math.max(0, Math.floor(recording.durationSeconds))
 		: 0;
 
-	const lines: string[] = ['---'];
-	lines.push(`plaud-id: ${yamlScalar(recording.id)}`);
+	// Build the frontmatter as an ordered key -> serialized-value map so custom
+	// rows can merge by key (override a slot, or preserve an existing value on
+	// re-import) without ever producing a duplicate key. Insertion order is the
+	// emit order; a `set` on an existing key updates its value in place.
+	const entries = new Map<string, string>();
+
+	entries.set('plaud-id', yamlScalar(recording.id));
 	// plaud-url is a clickable breadcrumb back to the Plaud web app.
 	// yamlScalar force-quotes it (colons and slashes aren't in the
 	// unquoted allowlist), which is what we want — YAML treats an
 	// unquoted `https://...` scalar as a mapping key + value on some
 	// parsers.
-	lines.push(`plaud-url: ${yamlScalar(formatPlaudWebUrl(recording.id))}`);
-	lines.push(`date: ${formatDateYmd(recording.createdAt)}`);
+	entries.set('plaud-url', yamlScalar(formatPlaudWebUrl(recording.id)));
+	entries.set('date', formatDateYmd(recording.createdAt));
 	// Optional datetime property (issue #32): a user-formatted timestamp, emitted
 	// only when a template is configured. yamlScalar quotes it so a `:` in the time
 	// is not read as a YAML mapping. Local time, the same basis as `date:`.
 	if (datetimeTemplate && datetimeTemplate.trim() !== '') {
-		lines.push(
-			`datetime: ${yamlScalar(formatDatetime(datetimeTemplate, recording.createdAt))}`,
+		entries.set(
+			'datetime',
+			yamlScalar(formatDatetime(datetimeTemplate, recording.createdAt)),
 		);
 	}
-	lines.push(`duration-seconds: ${duration}`);
+	entries.set('duration-seconds', String(duration));
 	// Human-readable duration alongside the raw seconds so users can read
 	// it at a glance without the note also pretending to support Dataview
 	// arithmetic on a pre-formatted string.
-	lines.push(`duration: ${yamlScalar(formatDurationHoursMinutes(duration))}`);
+	entries.set('duration', yamlScalar(formatDurationHoursMinutes(duration)));
 	if (speakers.length > 0) {
-		lines.push(`speakers: ${yamlArray(speakers)}`);
+		entries.set('speakers', yamlArray(speakers));
 	}
 	if (recording.tags && recording.tags.length > 0) {
-		lines.push(`tags: ${yamlArray(recording.tags)}`);
+		entries.set('tags', yamlArray(recording.tags));
 	}
 	// Resolved Plaud folder name(s) for the recording (issue #16). Separate from
 	// tags: this keeps the original folder name (case, spaces, `&`) for humans
 	// and Dataview, while tags: carries the slugified tag form. Emitted only for
 	// filed recordings; unfiled ones get no key.
 	if (folders && folders.length > 0) {
-		lines.push(`plaud-folder: ${yamlArray(folders)}`);
+		entries.set('plaud-folder', yamlArray(folders));
 	}
 	// AI keywords demoted from tags by the tag-mode setting. A plain
 	// frontmatter property is searchable and Dataview-queryable but does
 	// not feed Obsidian's vault-wide tag pane.
 	if (keywords && keywords.length > 0) {
-		lines.push(`keywords: ${yamlArray(keywords)}`);
+		entries.set('keywords', yamlArray(keywords));
 	}
-	lines.push('source: plaud');
+	entries.set('source', 'plaud');
 	// Auto-sync change cursor: the recording's edit version (unix ms). Stored so
 	// a later sync can compare the list's current version_ms against it and
 	// re-import only when Plaud actually changed the recording. Emitted as a raw
 	// number (no quoting) so metadataCache surfaces it as a number. Absent for
 	// recordings whose list payload omitted version_ms.
 	if (recording.versionMs !== undefined) {
-		lines.push(`plaud-version-ms: ${recording.versionMs}`);
+		entries.set('plaud-version-ms', String(recording.versionMs));
 	}
 
 	// Optional Plaud summary extras. Each line is emitted only when the
@@ -1251,11 +1444,51 @@ export function formatFrontmatter(
 		];
 		for (const [key, value] of extras) {
 			if (value !== undefined) {
-				lines.push(`${key}: ${yamlScalar(value)}`);
+				entries.set(key, yamlScalar(value));
 			}
 		}
 	}
 
+	// User-defined extra properties from the "Extra frontmatter" setting,
+	// appended after the built-in fields. A row with preserve on keeps the note's
+	// existing value on re-import (existingValues carries the current note's
+	// frontmatter); otherwise the value is regenerated from the template. plaud-id
+	// is the note's locked identity and can never be set by a custom row.
+	if (customRows && customRows.length > 0) {
+		const folderName = folders && folders.length > 0 ? folders[0] : '';
+		const ctx = customFrontmatterContext(recording, summary, folderName);
+		for (const row of customRows) {
+			const key = row.key.trim();
+			// Extra properties only ADD: skip a blank name, any plugin-managed key
+			// (RESERVED), or a key an earlier custom row already claimed (first
+			// wins). This keeps identity, the auto-sync cursor, and the built-in
+			// Dataview fields safe from being overridden by a template.
+			if (
+				key === '' ||
+				RESERVED_FRONTMATTER_KEYS.has(key) ||
+				entries.has(key)
+			) {
+				continue;
+			}
+			let serialized: string;
+			if (row.preserve && existingValues && existingValues.has(key)) {
+				serialized = existingValues.get(key) ?? '';
+			} else {
+				const expanded = expandCustomFrontmatterValue(row.value, ctx);
+				serialized = expanded.length > 0 ? yamlScalar(expanded) : '';
+			}
+			entries.set(key, serialized);
+		}
+	}
+
+	const lines: string[] = ['---'];
+	for (const [key, value] of entries) {
+		// yamlScalar the key so a custom property whose name would need quoting (a
+		// colon, a leading digit) cannot break the block. Built-in keys are plain
+		// identifiers, so this passes them through unquoted (byte-identical).
+		const safeKey = yamlScalar(key);
+		lines.push(value === '' ? `${safeKey}:` : `${safeKey}: ${value}`);
+	}
 	lines.push('---');
 	return lines.join('\n');
 }
@@ -1294,6 +1527,119 @@ export function extractPlaudIdFromFrontmatter(content: string): string | null {
 			.replace(/\\\\/g, '\\');
 	}
 	return value.length > 0 ? value : null;
+}
+
+/**
+ * Read a leading double-quoted YAML scalar off the front of a string, undoing
+ * the same escapes yamlScalar writes (`\\`, `\"`, `\n`, `\r`, `\t`). Returns the
+ * decoded value and the remainder after the closing quote, or null if the string
+ * does not start with a quote or the quote is never closed.
+ */
+function parseLeadingQuotedScalar(
+	s: string,
+): { value: string; rest: string } | null {
+	if (s[0] !== '"') {
+		return null;
+	}
+	let out = '';
+	for (let i = 1; i < s.length; i++) {
+		const ch = s[i];
+		if (ch === '\\') {
+			const next = s[i + 1];
+			if (next === 'n') out += '\n';
+			else if (next === 'r') out += '\r';
+			else if (next === 't') out += '\t';
+			else out += next ?? '';
+			i++;
+			continue;
+		}
+		if (ch === '"') {
+			return { value: out, rest: s.slice(i + 1) };
+		}
+		out += ch;
+	}
+	return null;
+}
+
+/**
+ * Parse the top `---...---` frontmatter block of a note into a key -> verbatim
+ * value map. The value is captured exactly as written after the first colon
+ * (quotes, brackets, and inline arrays kept intact) so a preserved value can be
+ * re-emitted byte-for-byte. Only flat, top-level `key: value` lines are read:
+ * indented lines (nested mappings, list items) and lines whose key holds
+ * whitespace are skipped, which is sufficient because every property this plugin
+ * writes and every custom row is flat and single-line. A `key:` with no value
+ * maps to ''. Returns an empty map when the content has no frontmatter block.
+ */
+export function extractFrontmatterValues(content: string): Map<string, string> {
+	const values = new Map<string, string>();
+	const block = content.match(/^---\s*\r?\n([\s\S]*?)\r?\n---/);
+	if (!block) {
+		return values;
+	}
+	const lines = block[1].split('\n');
+	for (let i = 0; i < lines.length; i++) {
+		const line = lines[i];
+		if (/^\s/.test(line)) {
+			// Indented: a nested mapping, a list item, or a block-scalar body that
+			// the preceding key already consumed. Not a top-level key.
+			continue;
+		}
+		// Parse the key, matching what yamlScalar emits: either a double-quoted
+		// scalar (so a name with a colon or spaces round-trips) or an unquoted
+		// name of letters/digits/spaces/_-. starting with a letter. Anything else
+		// (prose, malformed lines) is skipped.
+		let key: string;
+		let rest: string;
+		if (line.startsWith('"')) {
+			const parsed = parseLeadingQuotedScalar(line);
+			if (parsed === null || !parsed.rest.startsWith(':')) {
+				continue;
+			}
+			key = parsed.value;
+			rest = parsed.rest.slice(1);
+		} else {
+			const colon = line.indexOf(':');
+			if (colon < 1) {
+				continue;
+			}
+			const candidate = line.slice(0, colon).replace(/\s+$/, '');
+			if (!/^[A-Za-z][A-Za-z0-9 _.-]*$/.test(candidate)) {
+				continue;
+			}
+			key = candidate;
+			rest = line.slice(colon + 1);
+		}
+		let rawValue = rest.replace(/^[ \t]/, '').replace(/\s+$/, '');
+		// Block scalar (`|` or `>`, with optional chomping/indent indicator):
+		// capture the indented body verbatim so a preserved multi-line value
+		// round-trips instead of collapsing to just the indicator on re-import.
+		if (/^[|>][+-]?\d*$/.test(rawValue)) {
+			const body: string[] = [];
+			let j = i + 1;
+			while (
+				j < lines.length &&
+				(lines[j].trim() === '' || /^\s/.test(lines[j]))
+			) {
+				body.push(lines[j]);
+				j++;
+			}
+			// Drop trailing blank lines: they separate the next key, not the block.
+			while (body.length > 0 && body[body.length - 1].trim() === '') {
+				body.pop();
+			}
+			if (body.length > 0) {
+				rawValue = `${rawValue}\n${body.join('\n')}`;
+			}
+			i = j - 1;
+		}
+		// First occurrence of a key wins; the body above is still consumed so a
+		// duplicate key's indented lines are not misread as top-level.
+		if (!values.has(key)) {
+			values.set(key, rawValue);
+		}
+	}
+	return values;
 }
 
 /**
@@ -1784,6 +2130,18 @@ export interface FormatMarkdownOptions {
 	 * #32). Empty or omitted writes no property. See `formatDatetime`.
 	 */
 	readonly datetimeTemplate?: string;
+	/**
+	 * User-defined extra frontmatter properties. See
+	 * `expandCustomFrontmatterValue`. Empty or omitted writes no extra properties.
+	 */
+	readonly customFrontmatter?: readonly CustomFrontmatterRow[];
+	/**
+	 * The existing note's parsed frontmatter (key -> verbatim value), supplied on
+	 * the re-import overwrite path so preserve-on custom rows keep their current
+	 * value. Omitted on first creation (nothing to preserve). See
+	 * `extractFrontmatterValues`.
+	 */
+	readonly existingFrontmatter?: ReadonlyMap<string, string>;
 }
 
 export function formatMarkdown(
@@ -1815,6 +2173,8 @@ export function formatMarkdown(
 			options.keywords,
 			options.folders,
 			options.datetimeTemplate,
+			options.customFrontmatter,
+			options.existingFrontmatter,
 		),
 		'',
 		`# ${expandedTitle}`,
@@ -2064,6 +2424,7 @@ export class NoteWriter {
 	private readonly subfolderTemplate: string;
 	private readonly noteNameTemplate: string;
 	private readonly datetimeTemplate: string;
+	private readonly customFrontmatter: readonly CustomFrontmatterRow[];
 	private readonly forbiddenCharReplacement: string;
 	private readonly existingPathForPlaudId?: (plaudId: string) => string | null;
 	private readonly migrateExistingNote?: (
@@ -2102,6 +2463,7 @@ export class NoteWriter {
 				? requestedTemplate
 				: DEFAULT_NOTE_NAME_TEMPLATE;
 		this.datetimeTemplate = options.datetimeTemplate ?? '';
+		this.customFrontmatter = options.customFrontmatter ?? [];
 		// Defense-in-depth: the settings layer validates this, but a headless caller
 		// or hand-edited data.json could pass anything, so fall back to '-' for an
 		// unusable value rather than sanitizing with a forbidden character.
@@ -2120,6 +2482,7 @@ export class NoteWriter {
 			transcriptHeaderLevel: options.transcriptHeaderLevel,
 			noteNameTemplate: this.noteNameTemplate,
 			datetimeTemplate: this.datetimeTemplate,
+			customFrontmatter: this.customFrontmatter,
 		};
 	}
 
@@ -2278,6 +2641,40 @@ export class NoteWriter {
 		return { status: 'refreshed', path: notePath };
 	}
 
+	/**
+	 * Render the note markdown and its fold metadata for one write. Shared by the
+	 * create and overwrite branches so both compute foldInfo identically; only the
+	 * overwrite branch passes `existingFrontmatter` (to preserve user-owned values).
+	 */
+	private buildNote(
+		recording: Recording,
+		transcript: Transcript | null,
+		summary: Summary | null,
+		chapters: readonly Chapter[] | undefined,
+		options: FormatMarkdownOptions,
+	): { markdown: string; foldInfo: WriteFoldInfo | undefined } {
+		const markdown = formatMarkdown(
+			recording,
+			transcript,
+			summary,
+			chapters,
+			options,
+		);
+		// `transcriptHeadingLine` is null when the markdown lacks a wrapping
+		// transcript heading (no chapters, transcript excluded, or empty-segment
+		// fallback), which the caller treats as "no fold state to apply".
+		const headerLevel: HeadingLevel = options.transcriptHeaderLevel ?? 4;
+		const transcriptHeadingLine = findTranscriptHeadingLine(markdown, headerLevel);
+		const foldInfo: WriteFoldInfo | undefined =
+			transcriptHeadingLine !== null
+				? {
+						transcriptHeadingLine,
+						totalLines: markdown.split('\n').length,
+					}
+				: undefined;
+		return { markdown, foldInfo };
+	}
+
 	async writeNote(
 		recording: Recording,
 		transcript: Transcript | null,
@@ -2324,36 +2721,22 @@ export class NoteWriter {
 			// which always uses this.noteNameTemplate).
 			noteNameTemplate: this.noteNameTemplate,
 		};
-		const markdown = formatMarkdown(
-			recording,
-			transcript,
-			summary,
-			chapters,
-			effectiveFormatOptions,
-		);
-
-		// Compute fold metadata once per write. `transcriptHeadingLine`
-		// is null when the markdown lacks a wrapping transcript heading
-		// (no chapters, transcript excluded, or empty-segment fallback)
-		// which the caller should treat as "no fold state to apply".
-		const headerLevel: HeadingLevel =
-			effectiveFormatOptions.transcriptHeaderLevel ?? 4;
-		const transcriptHeadingLine = findTranscriptHeadingLine(markdown, headerLevel);
-		const foldInfo: WriteFoldInfo | undefined =
-			transcriptHeadingLine !== null
-				? {
-						transcriptHeadingLine,
-						totalLines: markdown.split('\n').length,
-					}
-				: undefined;
-
 		// Look for a prior note for this recording (exact path, then cross-folder
 		// lookup). Matching cross-folder is what stops a subfolder-template
 		// change from writing a second copy of a recording already imported
 		// elsewhere. The existing note is left in place — this is dedup, not
 		// migration; moving notes is a separate, opt-in feature.
 		const { existing, notePath } = this.findExistingNote(recording, targetPath);
+
 		if (existing === null) {
+			// Fresh note: nothing to preserve, so build with no existing frontmatter.
+			const { markdown, foldInfo } = this.buildNote(
+				recording,
+				transcript,
+				summary,
+				chapters,
+				effectiveFormatOptions,
+			);
 			try {
 				await this.vault.create(targetPath, markdown);
 			} catch (cause) {
@@ -2368,11 +2751,23 @@ export class NoteWriter {
 
 		// A note for this recording already exists (at notePath). Read it and
 		// assert it belongs to this recording (throws on a filename collision
-		// with a DIFFERENT recording).
+		// with a DIFFERENT recording). Its parsed frontmatter feeds preserve-on
+		// custom rows so a re-import keeps user-owned values; reading it before the
+		// markdown build is what makes the merge possible.
 		const existingContent = await this.readExistingContent(
 			existing,
 			notePath,
 			recording.id,
+		);
+		const { markdown, foldInfo } = this.buildNote(
+			recording,
+			transcript,
+			summary,
+			chapters,
+			{
+				...effectiveFormatOptions,
+				existingFrontmatter: extractFrontmatterValues(existingContent),
+			},
 		);
 
 		// Real content always supersedes a placeholder stub: if the existing

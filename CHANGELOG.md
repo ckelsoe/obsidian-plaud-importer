@@ -4,6 +4,10 @@ All notable changes to Plaud Importer will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **Add your own properties to every imported note (Extra frontmatter).** A new setting lets you define extra frontmatter properties that are written on each import: give each one a name, a value, and whether to preserve it. The value can be plain text (`status: unprocessed`) or use the same `{{ }}` tokens as the other fields, the date set plus `{{title}}` and `{{plaud-folder}}`, and content tokens like `{{category}}`, `{{headline}}`, and `{{duration}}` that pull from the recording and its AI summary. So `quarter: Q{{Q}}-{{YYYY}}` writes `quarter: Q3-2026`, and `type: {{category}}` files the recording's own category under your key name. Turn on preserve for a property you maintain by hand (a status, a project) so a re-import keeps your value; leave it off for a value that should refresh from the recording each time. This applies identically to manual imports and background auto-sync. Custom properties are added alongside the plugin's own fields; a name that matches a built-in field (like `date` or `plaud-id`) is reserved and left to the plugin. Thanks to @jtsmith2 for proposing the feature (PR #50).
+
 ### Changed
 
 - **New installs now file recordings into dated `{{YYYY}}/{{MM}}` subfolders by default.** The subfolder template previously defaulted to empty, which wrote every note flat into the output folder and surprised users who expected a dated layout. Fresh installs now get a year/month folder tree out of the box. This only affects new installs: if you already set (or deliberately cleared) the subfolder template, your choice is untouched. Set it back to empty under Settings if you prefer a flat layout (issue #45).

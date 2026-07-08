@@ -11,6 +11,13 @@ import {
 	formatChapterIndexSection,
 	formatDurationHoursMinutes,
 	formatFrontmatter,
+	expandCustomFrontmatterValue,
+	extractFrontmatterValues,
+	customFrontmatterContext,
+	renderCustomFrontmatterPreview,
+	TEMPLATE_PREVIEW_CUSTOM_CONTEXT,
+	type CustomFrontmatterRow,
+	type CustomFrontmatterContext,
 	formatMarkdown,
 	formatNoteName,
 	formatPlaceholderMarkdown,
@@ -1307,6 +1314,382 @@ describe('formatFrontmatter', () => {
 		expect(fm).toContain('plaud-language: en');
 		expect(fm).not.toMatch(/plaud-headline:/);
 		expect(fm).not.toMatch(/plaud-model:/);
+	});
+});
+
+// customFrontmatterContext + expandCustomFrontmatterValue ------------------
+
+describe('customFrontmatterContext', () => {
+	it('maps recording and summary fields into the token context', () => {
+		const ctx = customFrontmatterContext(
+			makeRecording({ durationSeconds: 1830 }),
+			makeSummary({ category: 'Meeting', headline: 'Recap', model: 'gpt-5' }),
+			'Meetings',
+		);
+		expect(ctx.title).toBe('Morning standup');
+		expect(ctx.folderName).toBe('Meetings');
+		expect(ctx.durationSeconds).toBe(1830);
+		expect(ctx.category).toBe('Meeting');
+		expect(ctx.headline).toBe('Recap');
+		expect(ctx.model).toBe('gpt-5');
+	});
+
+	it('uses empty strings for a missing summary or missing fields', () => {
+		const ctx = customFrontmatterContext(makeRecording(), null, '');
+		expect(ctx.category).toBe('');
+		expect(ctx.headline).toBe('');
+		expect(ctx.language).toBe('');
+		expect(ctx.template).toBe('');
+		expect(ctx.model).toBe('');
+	});
+});
+
+describe('expandCustomFrontmatterValue', () => {
+	// makeRecording is 2026-04-14 (Q2); the context carries a Meeting category.
+	const ctx: CustomFrontmatterContext = customFrontmatterContext(
+		makeRecording({ durationSeconds: 1830 }),
+		makeSummary({ category: 'Meeting' }),
+		'Meetings',
+	);
+
+	it('returns an empty string for an empty template', () => {
+		expect(expandCustomFrontmatterValue('', ctx)).toBe('');
+	});
+
+	it('passes plain text through unchanged', () => {
+		expect(expandCustomFrontmatterValue('unprocessed', ctx)).toBe('unprocessed');
+	});
+
+	it('expands the Moment date set', () => {
+		expect(expandCustomFrontmatterValue('Q{{Q}}-{{YYYY}}', ctx)).toBe('Q2-2026');
+	});
+
+	it('expands the title and folder tokens', () => {
+		expect(expandCustomFrontmatterValue('{{title}}', ctx)).toBe('Morning standup');
+		expect(expandCustomFrontmatterValue('{{plaud-folder}}', ctx)).toBe('Meetings');
+	});
+
+	it('expands the duration content token', () => {
+		expect(expandCustomFrontmatterValue('{{duration}}', ctx)).toBe(
+			formatDurationHoursMinutes(1830),
+		);
+	});
+
+	it('expands a present summary content token', () => {
+		expect(expandCustomFrontmatterValue('{{category}}', ctx)).toBe('Meeting');
+	});
+
+	it('expands an absent summary content token to empty', () => {
+		const noSummary = customFrontmatterContext(makeRecording(), null, '');
+		expect(expandCustomFrontmatterValue('{{category}}', noSummary)).toBe('');
+	});
+
+	it('does not re-expand braces inside a substituted value', () => {
+		const braced = customFrontmatterContext(
+			makeRecording(),
+			makeSummary({ category: 'Report {{YYYY}}' }),
+			'',
+		);
+		// The literal {{YYYY}} from Plaud's value must survive, not become a year.
+		expect(expandCustomFrontmatterValue('{{category}}', braced)).toBe(
+			'Report {{YYYY}}',
+		);
+	});
+});
+
+// extractFrontmatterValues -------------------------------------------------
+
+describe('extractFrontmatterValues', () => {
+	it('parses flat top-level keys to their verbatim values', () => {
+		const values = extractFrontmatterValues(
+			'---\nstatus: done\nproject: alpha\n---\n\n# Note\n',
+		);
+		expect(values.get('status')).toBe('done');
+		expect(values.get('project')).toBe('alpha');
+	});
+
+	it('keeps a quoted value and an inline array verbatim', () => {
+		const values = extractFrontmatterValues(
+			'---\nplaud-url: "https://web.plaud.ai/file/x"\ntags: [a, "B&B"]\n---\n',
+		);
+		expect(values.get('plaud-url')).toBe('"https://web.plaud.ai/file/x"');
+		expect(values.get('tags')).toBe('[a, "B&B"]');
+	});
+
+	it('maps a keyless line to an empty string', () => {
+		const values = extractFrontmatterValues('---\nproject:\n---\n');
+		expect(values.get('project')).toBe('');
+	});
+
+	it('returns an empty map when there is no frontmatter block', () => {
+		expect(extractFrontmatterValues('# Just a heading\n').size).toBe(0);
+	});
+
+	it('skips indented (nested) lines and the first duplicate wins', () => {
+		const values = extractFrontmatterValues(
+			'---\nnested:\n  child: 1\nstatus: first\nstatus: second\n---\n',
+		);
+		expect(values.has('child')).toBe(false);
+		expect(values.get('status')).toBe('first');
+	});
+
+	it('captures a block scalar body so a preserved value round-trips', () => {
+		const values = extractFrontmatterValues(
+			'---\nnotes: |\n  line one\n  line two\nstatus: done\n---\n',
+		);
+		expect(values.get('notes')).toBe('|\n  line one\n  line two');
+		expect(values.get('status')).toBe('done');
+	});
+
+	it('parses a quoted key containing a colon', () => {
+		const values = extractFrontmatterValues(
+			'---\n"foo: bar": baz\nstatus: done\n---\n',
+		);
+		expect(values.get('foo: bar')).toBe('baz');
+		expect(values.get('status')).toBe('done');
+	});
+
+	it('parses an unquoted key that contains spaces', () => {
+		const values = extractFrontmatterValues(
+			'---\nmy status: in progress\n---\n',
+		);
+		expect(values.get('my status')).toBe('in progress');
+	});
+});
+
+// formatFrontmatter custom rows + preserve ---------------------------------
+
+describe('formatFrontmatter custom rows', () => {
+	const rows = (
+		...items: CustomFrontmatterRow[]
+	): CustomFrontmatterRow[] => items;
+
+	it('appends a custom property after the built-in fields', () => {
+		const fm = formatFrontmatter(
+			makeRecording(),
+			[],
+			null,
+			undefined,
+			undefined,
+			undefined,
+			rows({ key: 'status', value: 'unprocessed', preserve: true }),
+		);
+		expect(fm).toMatch(/^status: unprocessed$/m);
+		expect(fm.indexOf('source: plaud')).toBeLessThan(fm.indexOf('status:'));
+	});
+
+	it('writes an empty value as YAML null', () => {
+		const fm = formatFrontmatter(
+			makeRecording(),
+			[],
+			null,
+			undefined,
+			undefined,
+			undefined,
+			rows({ key: 'project', value: '', preserve: true }),
+		);
+		expect(fm).toMatch(/^project:$/m);
+	});
+
+	it('expands tokens in a custom value', () => {
+		const fm = formatFrontmatter(
+			makeRecording(),
+			[],
+			null,
+			undefined,
+			undefined,
+			undefined,
+			rows({ key: 'quarter', value: 'Q{{Q}}-{{YYYY}}', preserve: false }),
+		);
+		expect(fm).toMatch(/^quarter: Q2-2026$/m);
+	});
+
+	it('expands a content token, and writes null when the summary is absent', () => {
+		const withSummary = formatFrontmatter(
+			makeRecording(),
+			[],
+			makeSummary({ category: 'Lecture' }),
+			undefined,
+			undefined,
+			undefined,
+			rows({ key: 'type', value: '{{category}}', preserve: false }),
+		);
+		expect(withSummary).toMatch(/^type: Lecture$/m);
+		const noSummary = formatFrontmatter(
+			makeRecording(),
+			[],
+			null,
+			undefined,
+			undefined,
+			undefined,
+			rows({ key: 'type', value: '{{category}}', preserve: false }),
+		);
+		expect(noSummary).toMatch(/^type:$/m);
+	});
+
+	it('keeps the existing value when preserve is on and the key already exists', () => {
+		const fm = formatFrontmatter(
+			makeRecording(),
+			[],
+			null,
+			undefined,
+			undefined,
+			undefined,
+			rows({ key: 'status', value: 'unprocessed', preserve: true }),
+			new Map([['status', 'done']]),
+		);
+		expect(fm).toMatch(/^status: done$/m);
+		expect(fm).not.toMatch(/^status: unprocessed$/m);
+	});
+
+	it('regenerates when preserve is on but the key is not in the existing note', () => {
+		const fm = formatFrontmatter(
+			makeRecording(),
+			[],
+			null,
+			undefined,
+			undefined,
+			undefined,
+			rows({ key: 'status', value: 'unprocessed', preserve: true }),
+			new Map([['other', 'x']]),
+		);
+		expect(fm).toMatch(/^status: unprocessed$/m);
+	});
+
+	it('refreshes an existing value when preserve is off', () => {
+		const fm = formatFrontmatter(
+			makeRecording(),
+			[],
+			null,
+			undefined,
+			undefined,
+			undefined,
+			rows({ key: 'status', value: 'unprocessed', preserve: false }),
+			new Map([['status', 'done']]),
+		);
+		expect(fm).toMatch(/^status: unprocessed$/m);
+	});
+
+	it('never lets a custom row override the locked plaud-id', () => {
+		const fm = formatFrontmatter(
+			makeRecording(),
+			[],
+			null,
+			undefined,
+			undefined,
+			undefined,
+			rows({ key: 'plaud-id', value: 'HACKED', preserve: false }),
+		);
+		expect(fm).toContain('plaud-id: abc123');
+		expect(fm).not.toContain('HACKED');
+	});
+
+	it('ignores a custom row whose name matches a plugin field', () => {
+		const fm = formatFrontmatter(
+			makeRecording(),
+			[],
+			null,
+			undefined,
+			undefined,
+			undefined,
+			rows({ key: 'source', value: 'mine', preserve: false }),
+		);
+		expect(fm).toContain('source: plaud');
+		expect(fm).not.toContain('source: mine');
+	});
+
+	it('preserves a value for an unquoted key with spaces', () => {
+		const fm = formatFrontmatter(
+			makeRecording(),
+			[],
+			null,
+			undefined,
+			undefined,
+			undefined,
+			rows({ key: 'my status', value: 'fresh', preserve: true }),
+			extractFrontmatterValues('---\nmy status: kept\n---\n'),
+		);
+		expect(fm).toContain('my status: kept');
+	});
+
+	it('preserves a value for a quoted key that contains a colon', () => {
+		const fm = formatFrontmatter(
+			makeRecording(),
+			[],
+			null,
+			undefined,
+			undefined,
+			undefined,
+			rows({ key: 'foo: bar', value: 'fresh', preserve: true }),
+			extractFrontmatterValues('---\n"foo: bar": kept\n---\n'),
+		);
+		expect(fm).toContain('"foo: bar": kept');
+	});
+
+	it('quotes a custom key that would otherwise break the YAML', () => {
+		const fm = formatFrontmatter(
+			makeRecording(),
+			[],
+			null,
+			undefined,
+			undefined,
+			undefined,
+			rows({ key: 'foo: bar', value: 'x', preserve: false }),
+		);
+		expect(fm).toContain('"foo: bar": x');
+	});
+
+	it('round-trips a preserved block scalar value', () => {
+		const fm = formatFrontmatter(
+			makeRecording(),
+			[],
+			null,
+			undefined,
+			undefined,
+			undefined,
+			rows({ key: 'notes', value: 'ignored', preserve: true }),
+			new Map([['notes', '|\n  line one\n  line two']]),
+		);
+		expect(fm).toContain('notes: |\n  line one\n  line two');
+	});
+
+	it('produces identical output to no custom rows when the list is empty', () => {
+		const base = formatFrontmatter(makeRecording(), ['Charles']);
+		const withEmpty = formatFrontmatter(
+			makeRecording(),
+			['Charles'],
+			null,
+			undefined,
+			undefined,
+			undefined,
+			[],
+		);
+		expect(withEmpty).toBe(base);
+	});
+});
+
+describe('renderCustomFrontmatterPreview', () => {
+	it('renders each row against the preview context', () => {
+		const lines = renderCustomFrontmatterPreview([
+			{ key: 'status', value: 'unprocessed', preserve: true },
+			{ key: 'quarter', value: 'Q{{Q}}-{{YYYY}}', preserve: false },
+		]);
+		expect(lines).toContain('status: unprocessed');
+		// TEMPLATE_PREVIEW_CUSTOM_CONTEXT is 2026-07-05 (Q3).
+		expect(lines).toContain('quarter: Q3-2026');
+	});
+
+	it('skips a blank key and the locked plaud-id, and nulls an empty value', () => {
+		const lines = renderCustomFrontmatterPreview([
+			{ key: '', value: 'x', preserve: true },
+			{ key: 'plaud-id', value: 'nope', preserve: false },
+			{ key: 'project', value: '', preserve: true },
+		]);
+		expect(lines).toEqual(['project:']);
+	});
+
+	it('exposes a preview context dated in Q3 2026', () => {
+		expect(TEMPLATE_PREVIEW_CUSTOM_CONTEXT.date.getFullYear()).toBe(2026);
 	});
 });
 
