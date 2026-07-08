@@ -4,6 +4,8 @@ All notable changes to Plaud Importer will be documented in this file.
 
 ## [Unreleased]
 
+## [0.25.1] - 2026-07-08
+
 ### Fixed
 
 - **The card image in an imported note no longer shows "could not be found."** Plaud's AI summary embeds its card poster with an inline link that only resolves inside Plaud's own app. The plugin already downloads that image into the note's attachments folder, but left the summary's original embed pointing at Plaud. It now repoints the inline embed at the local copy, so the card renders in Obsidian (issue #52).
