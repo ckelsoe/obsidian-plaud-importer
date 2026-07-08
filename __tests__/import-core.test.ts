@@ -32,6 +32,7 @@ function filter(over: Partial<ListViewFilter>): ListViewFilter {
 	return {
 		showTrashed: over.showTrashed ?? false,
 		hideProcessed: over.hideProcessed ?? false,
+		hideUpdates: over.hideUpdates ?? false,
 		hideIgnored: over.hideIgnored ?? false,
 		index: over.index ?? idx([]),
 		ignoredIds: over.ignoredIds ?? ignored([]),
@@ -54,12 +55,52 @@ describe('filterListView', () => {
 		]);
 	});
 
-	it('always shows a changed recording even when hideProcessed is on', () => {
+	it('always shows a changed recording even when hideProcessed is on (governed by hideUpdates)', () => {
 		const index = idx([['a', { path: 'a.md', versionMs: 100 }]]);
 		const page = [rec({ id: 'a', versionMs: 200 })]; // listed > stored -> update available
 		expect(ids(filterListView(page, filter({ hideProcessed: true, index })))).toEqual([
 			'a',
 		]);
+	});
+
+	it('hides a changed recording when hideUpdates is on', () => {
+		const index = idx([['a', { path: 'a.md', versionMs: 100 }]]);
+		const page = [
+			rec({ id: 'a', versionMs: 200 }), // update available -> hidden by hideUpdates
+			rec({ id: 'b', versionMs: 500 }), // new -> still shown
+		];
+		expect(ids(filterListView(page, filter({ hideUpdates: true, index })))).toEqual([
+			'b',
+		]);
+	});
+
+	it('hideUpdates does not hide an unchanged processed recording', () => {
+		const index = idx([['a', { path: 'a.md', versionMs: 100 }]]);
+		const page = [rec({ id: 'a', versionMs: 100 })]; // unchanged
+		// hideUpdates on but hideProcessed off -> unchanged import still shows.
+		expect(
+			ids(filterListView(page, filter({ hideUpdates: true, hideProcessed: false, index }))),
+		).toEqual(['a']);
+	});
+
+	it('hideProcessed and hideUpdates together hide every imported row, new still shows', () => {
+		const index = idx([
+			['unchanged', { path: 'u.md', versionMs: 100 }],
+			['changed', { path: 'c.md', versionMs: 100 }],
+		]);
+		const page = [
+			rec({ id: 'unchanged', versionMs: 100 }),
+			rec({ id: 'changed', versionMs: 200 }),
+			rec({ id: 'new', versionMs: 500 }),
+		];
+		expect(
+			ids(
+				filterListView(
+					page,
+					filter({ hideProcessed: true, hideUpdates: true, index }),
+				),
+			),
+		).toEqual(['new']);
 	});
 
 	it('always shows a new (not-in-index) recording when hideProcessed is on', () => {

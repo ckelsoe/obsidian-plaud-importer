@@ -80,6 +80,12 @@ export interface ImportModalOptions extends NoteWriterOptions {
 	 */
 	readonly hideProcessedRecordings?: boolean;
 	/**
+	 * Hide imported recordings that have changed in Plaud since import. Defaults
+	 * to false: an update is actionable work, so update-available rows show
+	 * unless the user opts to collapse them. A dialog view preference.
+	 */
+	readonly hideUpdatesRecordings?: boolean;
+	/**
 	 * Hide recordings the user has ignored (their id is in `ignoredRecordingIds`).
 	 * Defaults to true. A dialog view preference toggled from the filter bar.
 	 */
@@ -636,6 +642,7 @@ export function isUpdateAvailable(
 export interface ImportViewState {
 	readonly showTrashedRecordings: boolean;
 	readonly hideProcessedRecordings: boolean;
+	readonly hideUpdatesRecordings: boolean;
 	readonly hideIgnoredRecordings: boolean;
 	readonly ignoredRecordingIds: readonly PlaudRecordingId[];
 }
@@ -646,8 +653,16 @@ export type ImportViewStatePatch = Partial<ImportViewState>;
 export interface ListViewFilter {
 	/** Show recordings in Plaud's trash. */
 	readonly showTrashed: boolean;
-	/** Hide imported-and-unchanged recordings (new/changed still show). */
+	/** Hide imported recordings that are unchanged since import. */
 	readonly hideProcessed: boolean;
+	/**
+	 * Hide imported recordings that have CHANGED in Plaud since import (an
+	 * update is available). Separate from `hideProcessed` because an update is
+	 * actionable work (re-importing overwrites the note with Plaud's newer
+	 * version), so it shows by default; this toggle is the opt-in to collapse
+	 * those too.
+	 */
+	readonly hideUpdates: boolean;
 	/** Hide recordings whose id is in `ignoredIds`. */
 	readonly hideIgnored: boolean;
 	/** Vault index (plaud-id -> imported note) used to decide "processed". */
@@ -665,10 +680,10 @@ export interface ListViewFilter {
  * Order and rules:
  *  1. Drop trash unless `showTrashed`.
  *  2. Drop ignored ids when `hideIgnored`.
- *  3. When `hideProcessed`, drop a recording ONLY if it is in the vault index
- *     (processed) AND unchanged since import. A new recording (not in the
- *     index) and a changed one (`isUpdateAvailable`) always show, so the user
- *     never loses sight of importable or update-available work.
+ *  3. For an imported recording (present in the index): if it has changed in
+ *     Plaud (`isUpdateAvailable`) it is governed by `hideUpdates`; otherwise it
+ *     is governed by `hideProcessed`. A new recording (not in the index) always
+ *     shows, so importable work is never hidden.
  *
  * Pure and exported so the view logic is unit-testable without a DOM.
  */
@@ -683,12 +698,11 @@ export function filterListView(
 		if (filter.hideIgnored && filter.ignoredIds.has(r.id)) {
 			return false;
 		}
-		if (filter.hideProcessed) {
-			const existing = filter.index.get(r.id);
-			if (
-				existing !== undefined &&
-				!isUpdateAvailable(r.versionMs, existing.versionMs)
-			) {
+		const existing = filter.index.get(r.id);
+		if (existing !== undefined) {
+			// Imported. Split by whether Plaud has a newer version than the note.
+			const updated = isUpdateAvailable(r.versionMs, existing.versionMs);
+			if (updated ? filter.hideUpdates : filter.hideProcessed) {
 				return false;
 			}
 		}

@@ -472,6 +472,7 @@ export class ImportModal extends Modal {
 	// per-row membership checks.
 	private showTrashed: boolean;
 	private hideProcessed: boolean;
+	private hideUpdates: boolean;
 	private hideIgnored: boolean;
 	private readonly ignoredIds: Set<PlaudRecordingId>;
 
@@ -483,6 +484,8 @@ export class ImportModal extends Modal {
 		// The two hide-prefs default ON when the host omits them (a fresh install
 		// or a pre-0.26.0 data.json), matching DEFAULT_SETTINGS.
 		this.hideProcessed = noteWriterOptions.hideProcessedRecordings !== false;
+		// Updates default to SHOWN (hide off): an update is actionable work.
+		this.hideUpdates = noteWriterOptions.hideUpdatesRecordings === true;
 		this.hideIgnored = noteWriterOptions.hideIgnoredRecordings !== false;
 		this.ignoredIds = new Set(noteWriterOptions.ignoredRecordingIds ?? []);
 		this.attachments = new AttachmentImporter({
@@ -932,6 +935,7 @@ export class ImportModal extends Modal {
 		return {
 			showTrashed: this.showTrashed,
 			hideProcessed: this.hideProcessed,
+			hideUpdates: this.hideUpdates,
 			hideIgnored: this.hideIgnored,
 			index: this.importedIndex,
 			ignoredIds: this.ignoredIds,
@@ -1008,6 +1012,9 @@ export class ImportModal extends Modal {
 	// setting through onViewStateChange (so it survives reopen and auto-sync sees
 	// the same ignore/show state) and re-renders the list in place.
 	private renderFilterBar(parent: HTMLElement): void {
+		// All toggles read as "Hide X" so a checked box always means "hidden"
+		// (consistent polarity). "Show trashed" is expressed as its inverse,
+		// "Hide trashed", writing the underlying showTrashedRecordings setting.
 		const bar = parent.createDiv({ cls: 'plaud-importer-filter-bar' });
 		this.renderFilterToggle(
 			bar,
@@ -1018,13 +1025,22 @@ export class ImportModal extends Modal {
 				this.persistViewState({ hideProcessedRecordings: checked });
 			},
 		);
+		this.renderFilterToggle(
+			bar,
+			'Hide updates available',
+			this.hideUpdates,
+			(checked) => {
+				this.hideUpdates = checked;
+				this.persistViewState({ hideUpdatesRecordings: checked });
+			},
+		);
 		this.renderFilterToggle(bar, 'Hide ignored', this.hideIgnored, (checked) => {
 			this.hideIgnored = checked;
 			this.persistViewState({ hideIgnoredRecordings: checked });
 		});
-		this.renderFilterToggle(bar, 'Show trashed', this.showTrashed, (checked) => {
-			this.showTrashed = checked;
-			this.persistViewState({ showTrashedRecordings: checked });
+		this.renderFilterToggle(bar, 'Hide trashed', !this.showTrashed, (checked) => {
+			this.showTrashed = !checked;
+			this.persistViewState({ showTrashedRecordings: !checked });
 		});
 	}
 

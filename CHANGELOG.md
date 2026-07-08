@@ -4,6 +4,16 @@ All notable changes to Plaud Importer will be documented in this file.
 
 ## [Unreleased]
 
+## [0.27.0] - 2026-07-08
+
+### Added
+
+- **New "Hide updates available" filter in the import dialog.** A recording you already imported but later changed in Plaud shows an "Update available" badge; re-importing it overwrites the note with Plaud's newer version. Those rows stay visible by default, because they are work you may still want to do. The new "Hide updates available" toggle collapses them too, so the list can show only brand-new recordings when you want the shortest possible list.
+
+### Changed
+
+- **The import dialog's filter toggles now read consistently.** All four are phrased as "Hide ...": "Hide already-processed", "Hide updates available", "Hide ignored", and "Hide trashed" (previously "Show trashed"). A checked box now always means "this is hidden", so the whole bar reads the same way instead of mixing hide and show. Behavior is unchanged: trash is still hidden by default.
+
 ## [0.26.0] - 2026-07-08
 
 ### Added

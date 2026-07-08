@@ -471,6 +471,11 @@ interface PlaudImporterSettings {
 	// dialog filter bar, NOT the settings tab, so it stays out of the
 	// imperative/declarative settings twin edit.
 	hideProcessedRecordings: boolean;
+	// Import-dialog view preference: hide imported recordings that CHANGED in
+	// Plaud since import (an update is available). Defaults OFF: an update is
+	// actionable (re-import overwrites the note), so those rows show unless the
+	// user opts to collapse them too. Dialog-only.
+	hideUpdatesRecordings: boolean;
 	// Import-dialog view preference: hide recordings the user has ignored. Also
 	// dialog-only, defaults on.
 	hideIgnoredRecordings: boolean;
@@ -546,6 +551,7 @@ const DEFAULT_SETTINGS: PlaudImporterSettings = {
 	writePlaceholderForUnprocessed: true,
 	showTrashedRecordings: false,
 	hideProcessedRecordings: true,
+	hideUpdatesRecordings: false,
 	hideIgnoredRecordings: true,
 	ignoredRecordingIds: [],
 	autoUpdatePlaudTitle: false,
@@ -952,6 +958,7 @@ export default class PlaudImporterPlugin extends Plugin {
 				this.settings.writePlaceholderForUnprocessed,
 			showTrashedRecordings: this.settings.showTrashedRecordings,
 			hideProcessedRecordings: this.settings.hideProcessedRecordings,
+			hideUpdatesRecordings: this.settings.hideUpdatesRecordings,
 			hideIgnoredRecordings: this.settings.hideIgnoredRecordings,
 			// data.json stores plain strings; PlaudRecordingId is a compile-time
 			// brand over string. Re-tag each id at this boundary (a per-element
@@ -2341,6 +2348,9 @@ export default class PlaudImporterPlugin extends Plugin {
 		}
 		if (patch.hideProcessedRecordings !== undefined) {
 			this.settings.hideProcessedRecordings = patch.hideProcessedRecordings;
+		}
+		if (patch.hideUpdatesRecordings !== undefined) {
+			this.settings.hideUpdatesRecordings = patch.hideUpdatesRecordings;
 		}
 		if (patch.hideIgnoredRecordings !== undefined) {
 			this.settings.hideIgnoredRecordings = patch.hideIgnoredRecordings;
