@@ -221,4 +221,37 @@ describe('performNetRefresh', () => {
 			performNetRefresh({ currentToken: STORED_WT, baseUrl: 'https://api.plaud.ai', post }),
 		).resolves.toBeNull();
 	});
+
+	it('redacts a JWT-shaped string from a logged error body', async () => {
+		const jwt = 'aaaaaaaa.bbbbbbbb.cccccccc';
+		const { post } = recordingPost([{ status: 200, text: `oops ${jwt} boom` }]);
+		const logged: Array<{ body?: string }> = [];
+		const result = await performNetRefresh({
+			currentToken: STORED_WT,
+			baseUrl: 'https://api.plaud.ai',
+			post,
+			log: (_message, payload) => logged.push(payload as { body?: string }),
+		});
+		expect(result).toBeNull();
+		const bodies = logged
+			.map((p) => p?.body)
+			.filter((b): b is string => typeof b === 'string')
+			.join(' ');
+		expect(bodies).toContain('[redacted-token]');
+		expect(bodies).not.toContain(jwt);
+	});
+
+	it('never throws when the injected log sink throws', async () => {
+		const post: SessionPost = () => Promise.reject(new Error('down'));
+		await expect(
+			performNetRefresh({
+				currentToken: STORED_WT,
+				baseUrl: 'https://api.plaud.ai',
+				post,
+				log: () => {
+					throw new Error('logger boom');
+				},
+			}),
+		).resolves.toBeNull();
+	});
 });

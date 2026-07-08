@@ -77,9 +77,18 @@ export interface NetRefreshDeps {
 	readonly log?: (message: string, payload?: unknown) => void;
 }
 
-/** First 200 chars of a response body, for a failure diagnostic. */
+/**
+ * First 200 chars of a response body, for a failure diagnostic, with any
+ * JWT-shaped substring redacted first. A failing auth/refresh response should
+ * not carry a token, but redacting guarantees the debug logger's no-secrets
+ * contract holds even if one ever slips into an error body.
+ */
 function bodySnippet(text: string): string {
-	return text.length > 200 ? `${text.slice(0, 200)}…` : text;
+	const redacted = text.replace(
+		/[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g,
+		'[redacted-token]',
+	);
+	return redacted.length > 200 ? `${redacted.slice(0, 200)}…` : redacted;
 }
 
 /** A human-readable `message`/`msg` field off an envelope, when present. */
@@ -219,7 +228,15 @@ function baseHeaders(clientId: string): Record<string, string> {
 export async function performNetRefresh(
 	deps: NetRefreshDeps,
 ): Promise<NetRefreshResult | null> {
-	const log = deps.log ?? ((): void => {});
+	// Wrap the injected sink so a throwing logger can never break this function's
+	// "never throws" contract (it runs in the background refresh timer).
+	const log = (message: string, payload?: unknown): void => {
+		try {
+			deps.log?.(message, payload);
+		} catch {
+			// A logging failure must not propagate into the timer or the sync tick.
+		}
+	};
 	try {
 		const wid = extractWorkspaceId(deps.currentToken);
 		if (wid === null) {
