@@ -1,7 +1,9 @@
-// Direct, windowless session refresh (Release B, primary path).
+// Direct, windowless session refresh (Release B, the ONLY background path).
 //
-// Replaces the hidden-BrowserWindow re-capture with two API calls on the
-// persistent Plaud sign-in partition. Reverse-engineered from a full login HAR
+// Two API calls on the persistent Plaud sign-in partition. The hidden
+// BrowserWindow re-capture this replaced is gone: a background refresh never
+// opens a window (the hidden window's login page leaked web.plaud.ai popup
+// tabs into the default browser). Reverse-engineered from a full login HAR
 // on 2026-07-06 (see dev-docs/plaud-importer/2026-07-06-token-refresh-mechanism.md,
 // "WT-mint endpoint IDENTIFIED"). Both the user token (UT) and workspace token
 // (WT) live ~24h, so after a day both are stale and the refresh is two steps:
@@ -20,24 +22,29 @@
 //
 // FAIL-SAFE: this module only ever RETURNS a candidate token; it never writes
 // storage. The caller re-validates (typ WT, future exp) before replacing
-// anything, and on any null result falls back to the headless-window path. Every
-// step is guarded and the orchestrator never throws.
+// anything, and on any null result the background pauses and prompts the user
+// to reconnect. Every step is guarded and the orchestrator never throws.
 //
-// NOT YET HANDS-ON VALIDATED: exercised only by unit tests with a stubbed
-// transport. The live assumptions (partition retains the api.plaud.ai httpOnly
-// cookies across restarts; the mint call needs no x-device-id) are unproven
-// until Charles runs "Refresh session now" in his vault. A failure here is
-// benign: it returns null and the headless fallback runs.
+// Hands-on validated 2026-07-09: a manual "Refresh session now" on 0.28.0
+// completed this path live end to end (debug log: "net refresh succeeded via
+// the direct (windowless) path", next refresh scheduled ~24h out). A failure
+// here is benign: it returns null and the caller treats the refresh as failed.
 
 import { readJwtPayloadClaim } from './plaud-refresh';
 
 // The Plaud web app's sign-in partition. Mirrors PLAUD_PARTITION in
-// plaud-login.ts (kept local so this module has no import cycle with the login
-// window it falls back to).
+// plaud-login.ts (kept local so this module never imports the login-window
+// module).
 const PLAUD_PARTITION = 'persist:plaud-importer';
 
 const REFRESH_USER_TOKEN_PATH = '/auth/refresh-user-token';
 const WORKSPACE_TOKEN_PATH_PREFIX = '/user-app/auth/workspace/token/';
+
+// Bound each refresh POST so a stalled request cannot hang the refresh path
+// forever. The two calls each complete in a couple of seconds normally; 30s is
+// generous headroom. An abort rejects the post, performNetRefresh catches it
+// and returns null, and the refresh reports failure cleanly.
+const NET_REFRESH_TIMEOUT_MS = 30 * 1000;
 
 // Plaud's "success" status in a JSON envelope. Anything else is treated as a
 // failure (fall back), except the region-redirect status handled below.
@@ -207,7 +214,7 @@ export function parseWorkspaceTokenResponse(
 // server's parse-mode check agrees (see plaud-client-re.ts). x-device-id is
 // deliberately omitted: it lives in the partition's localStorage, out of reach
 // without a window, and the mint call authenticates by cookie. If the server
-// turns out to require it, this path fails and the headless fallback runs.
+// turns out to require it, this path fails and the refresh reports failure.
 function baseHeaders(clientId: string): Record<string, string> {
 	return {
 		accept: 'application/json, text/plain, */*',
@@ -221,8 +228,8 @@ function baseHeaders(clientId: string): Record<string, string> {
 }
 
 /**
- * Run the two-step direct refresh. Returns a candidate WT (never stores it), or
- * null on any failure so the caller falls back to the headless window. Never
+ * Run the two-step direct refresh. Returns a candidate WT (never stores it),
+ * or null on any failure so the caller can pause and prompt the user. Never
  * throws.
  */
 export async function performNetRefresh(
@@ -341,6 +348,7 @@ interface ElectronSessionLike {
 			body: string;
 			headers: Record<string, string>;
 			credentials?: 'include' | 'omit' | 'same-origin';
+			signal?: AbortSignal;
 		},
 	): Promise<ElectronSessionFetchResponse>;
 }
@@ -374,8 +382,8 @@ function requireElectron(): ElectronLike | null {
 /**
  * Build a session-bound POST over the sign-in partition using Electron's
  * `session.fetch` (Electron 28+, present on Obsidian 1.11.4's runtime). Returns
- * null when the remote/session/fetch surface is unavailable, so the caller
- * skips the direct path and uses the headless window instead.
+ * null when the remote/session/fetch surface is unavailable, in which case the
+ * silent refresh cannot run on this build.
  */
 export function buildPartitionPost(): SessionPost | null {
 	const session = requireElectron()?.remote?.session?.fromPartition(
@@ -390,11 +398,16 @@ export function buildPartitionPost(): SessionPost | null {
 		// the partition's httpOnly Plaud cookies, and fetch's default same-origin
 		// credentials mode would send none (the call has no document origin that
 		// matches api.plaud.ai), so the refresh would silently 401/return empty.
+		// The abort signal bounds the whole call (request AND body read): the
+		// caller holds refreshInFlight/reauthInFlight until this settles, so a
+		// stalled request with no timeout would wedge every future refresh and
+		// the manual Sign in until restart.
 		const res = await session.fetch(url, {
 			method: 'POST',
 			body,
 			headers: { ...headers },
 			credentials: 'include',
+			signal: AbortSignal.timeout(NET_REFRESH_TIMEOUT_MS),
 		});
 		const text = await res.text();
 		return { status: res.status, text };
