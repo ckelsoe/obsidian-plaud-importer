@@ -1474,7 +1474,7 @@ export default class PlaudImporterPlugin extends Plugin {
 		// headless writer. This is the #43 safe fallback; keep the override even
 		// when refactoring, or a background run could stall. NoteWriter's
 		// constructor also throws on 'prompt' without a callback, so a regression
-		// fails loud rather than hanging (see note-writer.test.ts).
+		// fails loud rather than hanging (see __tests__/note-writer.test.ts).
 		const makeWriter = (policy: "skip" | "overwrite"): NoteWriter =>
 			new NoteWriter(this.app.vault, {
 				...options,
