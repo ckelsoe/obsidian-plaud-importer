@@ -11,6 +11,7 @@ All notable changes to Plaud Importer will be documented in this file.
 ### Changed
 
 - **A background refresh never opens a sign-in window anymore, not even a hidden one.** It uses only the silent, windowless renewal. If that fails, the plugin pauses and shows the one-click Reconnect prompt instead of loading Plaud's site in the background; only clicking Sign in or Reconnect ever opens a window.
+- **A hung refresh request can no longer wedge the plugin.** Each renewal call is bounded by a 30-second timeout, so a stalled connection now counts as a failed refresh instead of silently blocking every later refresh and the Sign in button until Obsidian restarts.
 
 ## [0.28.0] - 2026-07-09
 

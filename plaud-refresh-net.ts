@@ -40,6 +40,12 @@ const PLAUD_PARTITION = 'persist:plaud-importer';
 const REFRESH_USER_TOKEN_PATH = '/auth/refresh-user-token';
 const WORKSPACE_TOKEN_PATH_PREFIX = '/user-app/auth/workspace/token/';
 
+// Bound each refresh POST so a stalled request cannot hang the refresh path
+// forever. The two calls each complete in a couple of seconds normally; 30s is
+// generous headroom. An abort rejects the post, performNetRefresh catches it
+// and returns null, and the refresh reports failure cleanly.
+const NET_REFRESH_TIMEOUT_MS = 30 * 1000;
+
 // Plaud's "success" status in a JSON envelope. Anything else is treated as a
 // failure (fall back), except the region-redirect status handled below.
 const STATUS_OK = 0;
@@ -342,6 +348,7 @@ interface ElectronSessionLike {
 			body: string;
 			headers: Record<string, string>;
 			credentials?: 'include' | 'omit' | 'same-origin';
+			signal?: AbortSignal;
 		},
 	): Promise<ElectronSessionFetchResponse>;
 }
@@ -391,11 +398,16 @@ export function buildPartitionPost(): SessionPost | null {
 		// the partition's httpOnly Plaud cookies, and fetch's default same-origin
 		// credentials mode would send none (the call has no document origin that
 		// matches api.plaud.ai), so the refresh would silently 401/return empty.
+		// The abort signal bounds the whole call (request AND body read): the
+		// caller holds refreshInFlight/reauthInFlight until this settles, so a
+		// stalled request with no timeout would wedge every future refresh and
+		// the manual Sign in until restart.
 		const res = await session.fetch(url, {
 			method: 'POST',
 			body,
 			headers: { ...headers },
 			credentials: 'include',
+			signal: AbortSignal.timeout(NET_REFRESH_TIMEOUT_MS),
 		});
 		const text = await res.text();
 		return { status: res.status, text };
