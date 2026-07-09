@@ -542,11 +542,13 @@ export class ReverseEngineeredPlaudClient implements PlaudClient {
 					});
 				}
 			}
-			// Loud-not-silent: a recording that HAS a summary but yields no
-			// resolvable metadata is the signature of a Plaud shape change.
-			// Name the unresolved fields so the drift is diagnosable from a
-			// debug log now, instead of surfacing weeks later as a "properties
-			// missing" bug report (issue #61).
+			// Loud-not-silent: on a recording that HAS a summary, one or more
+			// unresolved drift-signal fields is the signature of a Plaud shape
+			// change (the #61 drift moved several at once, but a future rename
+			// may move just one, so we log on any absence, not only total
+			// absence). Name the unresolved fields so the drift is diagnosable
+			// from a debug log now, instead of surfacing weeks later as a
+			// "properties missing" bug report (issue #61).
 			if (this.debugLogger?.enabled === true) {
 				const missing = DRIFT_SIGNAL_FIELDS.filter(
 					(field) => summaryMetadata[field] === undefined,
@@ -1798,8 +1800,9 @@ export type SummaryMetadata = Pick<
 	'headline' | 'category' | 'language' | 'template' | 'model' | 'summaryId'
 >;
 
-// Fields expected on every AI-generated summary. Their combined absence when
-// a summary IS present is the shape-drift signal the bundle fetch logs.
+// Fields expected on every AI-generated summary. When a summary IS present,
+// any one of these going unresolved is the shape-drift signal the bundle
+// fetch logs.
 // `language` is deliberately excluded: Plaud omits it for many recordings, so
 // it is resolved when present but never counted as "missing" (that would make
 // the drift log fire on normal recordings and drown out the real signal).
@@ -1818,10 +1821,14 @@ const DRIFT_SIGNAL_FIELDS: readonly (keyof SummaryMetadata)[] = [
 const MAX_RESOLVE_DEPTH = 8;
 
 /**
- * Recursively search `root` for the first property named `key` whose value
- * is a non-empty string, preferring a direct (shallower, earlier) match
- * over a deeper one. Depth-bounded and cycle-guarded. Returns the trimmed
- * string, or undefined when no such property exists.
+ * Search `root` for a property named `key` whose value is a non-empty string.
+ * Traversal is depth-first: at each node the node's own `key` is checked
+ * before descending, so a direct match beats that node's descendants — but
+ * because branches are visited in order, a deeper match in an earlier branch
+ * can be returned before a shallower match in a later branch. This is why
+ * callers that need precision pass `maxDepth: 0` (direct-only) and scope
+ * `root` to the narrowest relevant subtree. Depth-bounded and cycle-guarded.
+ * Returns the trimmed string, or undefined when no such property exists.
  */
 function findStringByKey(
 	root: unknown,

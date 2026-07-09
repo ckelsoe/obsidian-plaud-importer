@@ -125,6 +125,31 @@ describe('findSummaryMetadata (issue #61 — newer summary path)', () => {
 		expect(md.model).toBe('gpt-5.5');
 	});
 
+	it('resolves language from extra_data when Plaud includes it, alongside the other fields', () => {
+		const withLanguage = {
+			data: {
+				content_list: [
+					{
+						data_type: 'auto_sum_note',
+						extra: {
+							summ_type: 'meeting',
+							used_template: { template_name: 'Meeting Notes' },
+						},
+					},
+				],
+				extra_data: {
+					model: 'gpt-5.5',
+					language: 'en',
+					aiContentHeader: { headline: 'H', category: 'Meeting' },
+				},
+			},
+		};
+		const md = findSummaryMetadata(withLanguage, endpoint);
+		expect(md.language).toBe('en');
+		expect(md.template).toBe('Meeting Notes');
+		expect(md.model).toBe('gpt-5.5');
+	});
+
 	it('returns {} when the summary metadata subtrees are absent (older recording)', () => {
 		const bare = { data: { file_id: 'x', content_list: [] } };
 		expect(findSummaryMetadata(bare, endpoint)).toEqual({});
