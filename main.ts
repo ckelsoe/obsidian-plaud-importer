@@ -273,6 +273,16 @@ const NOTE_NAME_TEMPLATE_FOOTNOTE =
 const FORBIDDEN_CHAR_REPLACEMENT_DESC =
 	"Character that replaces a slash, colon, or other character a file name or folder cannot contain, for example one that appears in a recording title. Must be a single character; the default is a dash.";
 
+// Name and description for the duplicate-handling dropdown. Held in consts so
+// the declarative (1.13+) and imperative (1.12) settings paths show identical
+// text and cannot drift, and the sentence-case lint inspects one literal. The
+// wording scopes the setting to manual imports: background auto-sync runs
+// headless with skip-for-new / overwrite-for-changed and never prompts, so
+// 'Ask each time' has no dialog to answer during a sync tick (issue #43).
+const DUPLICATE_HANDLING_NAME = "Duplicate handling for manual imports";
+const DUPLICATE_HANDLING_DESC =
+	"Controls what happens when you run Import recent recordings and a note for the recording already exists. Skip keeps your copy, overwrite replaces it, and ask each time prompts you for each one. Automatic sync ignores this and never prompts.";
+
 // Description for the silent-refresh toggle (Release B). Held in a const so the
 // declarative (1.13+) and imperative (1.12) settings paths show identical text
 // and the sentence-case lint inspects one literal.
@@ -1457,6 +1467,14 @@ export default class PlaudImporterPlugin extends Plugin {
 		const fetchAudioUrl = selection.includeAudio
 			? (id: PlaudRecordingId) => client.getAudioTempUrl(id)
 			: undefined;
+		// policy is constrained to skip | overwrite (never 'prompt'): a background
+		// tick has no dialog, so 'Ask each time' would have nothing to answer it.
+		// options.onDuplicate (which may be 'prompt' from settings) is spread in but
+		// overridden here, so the user's manual-import setting can never reach the
+		// headless writer. This is the #43 safe fallback; keep the override even
+		// when refactoring, or a background run could stall. NoteWriter's
+		// constructor also throws on 'prompt' without a callback, so a regression
+		// fails loud rather than hanging (see note-writer.test.ts).
 		const makeWriter = (policy: "skip" | "overwrite"): NoteWriter =>
 			new NoteWriter(this.app.vault, {
 				...options,
@@ -2857,8 +2875,8 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 		);
 		this.addDropdownRow(
 			containerEl,
-			"Duplicate handling for manual imports",
-			"Controls what happens when you run Import recent recordings and a note for the recording already exists. Skip keeps your copy, overwrite replaces it, and ask each time prompts you for each one. Automatic sync ignores this and never prompts.",
+			DUPLICATE_HANDLING_NAME,
+			DUPLICATE_HANDLING_DESC,
 			"onDuplicate",
 			{ skip: "Skip", overwrite: "Overwrite", prompt: "Ask each time" },
 		);
@@ -3954,8 +3972,8 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 						},
 					},
 					{
-						name: "Duplicate handling for manual imports",
-						desc: "Controls what happens when you run Import recent recordings and a note for the recording already exists. Skip keeps your copy, overwrite replaces it, and ask each time prompts you for each one. Automatic sync ignores this and never prompts.",
+						name: DUPLICATE_HANDLING_NAME,
+						desc: DUPLICATE_HANDLING_DESC,
 						control: {
 							type: "dropdown",
 							key: "onDuplicate",
