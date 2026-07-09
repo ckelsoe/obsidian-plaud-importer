@@ -325,6 +325,7 @@ const FOLDER_INSERT_TOKEN: readonly [string, string] = ["Folder", "{{plaud-folde
 const CONTENT_INSERT_TOKENS: ReadonlyArray<readonly [string, string]> = [
 	["Duration", "{{duration}}"],
 	["Category", "{{category}}"],
+	["Industry", "{{industry}}"],
 	["Headline", "{{headline}}"],
 	["Language", "{{language}}"],
 	["Summary template", "{{template}}"],
@@ -343,6 +344,7 @@ const CUSTOM_FRONTMATTER_TOKENS: ReadonlyArray<readonly [string, string]> = [
 	["{{plaud-folder}}", "the recording's Plaud folder name"],
 	["{{duration}}", "the recording length, for example 30m"],
 	["{{category}}", "the summary's category (empty with no AI summary)"],
+	["{{industry}}", "the summary's industry or topic (empty with no AI summary)"],
 	["{{headline}}", "the summary's one-line headline"],
 	["{{YYYY}} {{MM}} {{DD}} {{Q}} {{WW}}", "the date set, same as the other fields"],
 ];

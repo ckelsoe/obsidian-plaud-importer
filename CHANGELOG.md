@@ -4,6 +4,16 @@ All notable changes to Plaud Importer will be documented in this file.
 
 ## [Unreleased]
 
+## [0.30.0] - 2026-07-09
+
+### Added
+
+- **New `plaud-industry` frontmatter property.** Plaud carries a topical/industry classification alongside each summary, separate from the summary category. When present it is now written as its own `plaud-industry` property instead of being folded into `plaud-category`, so the two never mix. It is left off for recordings where Plaud provides no industry value. A matching `{{industry}}` token is available in the extra-frontmatter value field.
+
+### Fixed
+
+- **The `plaud-category` property no longer duplicates `plaud-template`.** Plaud's current summary format stores the template (summary-type) name in the same field the plugin reads for the category, so both properties came out with the identical value, for example both showing "Deep Summary Transcript". The plugin now omits `plaud-category` when its value would only repeat `plaud-template`. If Plaud ever provides a category that genuinely differs from the template, it is written as before.
+
 ## [0.29.0] - 2026-07-09
 
 ### Fixed

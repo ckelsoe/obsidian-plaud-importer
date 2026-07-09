@@ -1791,13 +1791,21 @@ export function findAiKeywords(
 
 /**
  * The optional {@link Summary} fields Plaud carries as metadata around a
- * generated summary. Doubles as the checklist the bundle fetch uses to
- * detect shape drift: a summary present with every one of these unresolved
- * is the drift signal (issue #61).
+ * generated summary. The subset that must resolve on every AI summary is the
+ * shape-drift checklist, tracked separately in {@link DRIFT_SIGNAL_FIELDS};
+ * `language` and `industry` are deliberately excluded there because Plaud
+ * legitimately omits them, so their absence is never treated as drift (issue
+ * #61).
  */
 export type SummaryMetadata = Pick<
 	Summary,
-	'headline' | 'category' | 'language' | 'template' | 'model' | 'summaryId'
+	| 'headline'
+	| 'category'
+	| 'industry'
+	| 'language'
+	| 'template'
+	| 'model'
+	| 'summaryId'
 >;
 
 // Fields expected on every AI-generated summary. When a summary IS present,
@@ -1963,12 +1971,17 @@ export function findSummaryMetadata(
 	const model = resolveString(modelScope, ['model'], 0);
 	const headline = resolveString(headerScope, ['headline'], 0);
 	const category = resolveString(headerScope, ['category'], 0);
+	// `industry_category` is Plaud's real topical classification, kept separate
+	// from `category` (which now mirrors the template name). Same direct-only
+	// scope as `category` so it can't bleed into an unrelated nested key.
+	const industry = resolveString(headerScope, ['industry_category'], 0);
 	const summaryId = resolveString(idScope, ['summary_id'], 0);
 	const language = resolveString(modelScope, ['language'], 0);
 
 	return {
 		...(headline !== undefined && { headline }),
 		...(category !== undefined && { category }),
+		...(industry !== undefined && { industry }),
 		...(language !== undefined && { language }),
 		...(template !== undefined && { template }),
 		...(model !== undefined && { model }),
