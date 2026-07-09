@@ -1791,9 +1791,11 @@ export function findAiKeywords(
 
 /**
  * The optional {@link Summary} fields Plaud carries as metadata around a
- * generated summary. Doubles as the checklist the bundle fetch uses to
- * detect shape drift: a summary present with every one of these unresolved
- * is the drift signal (issue #61).
+ * generated summary. The subset that must resolve on every AI summary is the
+ * shape-drift checklist, tracked separately in {@link DRIFT_SIGNAL_FIELDS};
+ * `language` and `industry` are deliberately excluded there because Plaud
+ * legitimately omits them, so their absence is never treated as drift (issue
+ * #61).
  */
 export type SummaryMetadata = Pick<
 	Summary,
