@@ -1220,6 +1220,7 @@ export const RESERVED_FRONTMATTER_KEYS: ReadonlySet<string> = new Set([
 	'plaud-version-ms',
 	'plaud-headline',
 	'plaud-category',
+	'plaud-industry',
 	'plaud-language',
 	'plaud-template',
 	'plaud-model',
@@ -1245,6 +1246,7 @@ export interface CustomFrontmatterContext {
 	readonly folderName: string;
 	readonly durationSeconds: number;
 	readonly category: string;
+	readonly industry: string;
 	readonly headline: string;
 	readonly language: string;
 	readonly template: string;
@@ -1265,6 +1267,7 @@ export function customFrontmatterContext(
 			? Math.max(0, Math.floor(recording.durationSeconds))
 			: 0,
 		category: summary?.category ?? '',
+		industry: summary?.industry ?? '',
 		headline: summary?.headline ?? '',
 		language: summary?.language ?? '',
 		template: summary?.template ?? '',
@@ -1288,6 +1291,7 @@ export function expandCustomFrontmatterValue(
 	const content: Record<string, string> = {
 		duration: formatDurationHoursMinutes(ctx.durationSeconds),
 		category: ctx.category,
+		industry: ctx.industry,
 		headline: ctx.headline,
 		language: ctx.language,
 		template: ctx.template,
@@ -1328,6 +1332,7 @@ export const TEMPLATE_PREVIEW_CUSTOM_CONTEXT: CustomFrontmatterContext = {
 	folderName: TEMPLATE_PREVIEW_FOLDER,
 	durationSeconds: 1830,
 	category: 'Meeting',
+	industry: 'Technology',
 	headline: 'Weekly team sync recap',
 	language: 'en',
 	template: 'Meeting notes',
@@ -1445,9 +1450,20 @@ export function formatFrontmatter(
 	// Plaud shape that drops one of these fields. Add new known extras
 	// here without changing any other call site.
 	if (summary) {
+		// Plaud's `category` field mirrors the template/summary-type name in the
+		// current API shape (issue #61), so emitting both yields an identical
+		// duplicate. Suppress plaud-category when it exactly equals the template;
+		// a genuinely distinct category (or a future Plaud divergence) still comes
+		// through. Plaud's real topical classification lives in `industry` and is
+		// emitted separately as plaud-industry, never mixed into category.
+		const category =
+			summary.category !== undefined && summary.category === summary.template
+				? undefined
+				: summary.category;
 		const extras: ReadonlyArray<readonly [string, string | undefined]> = [
 			['plaud-headline', summary.headline],
-			['plaud-category', summary.category],
+			['plaud-category', category],
+			['plaud-industry', summary.industry],
 			['plaud-language', summary.language],
 			['plaud-template', summary.template],
 			['plaud-model', summary.model],

@@ -325,6 +325,7 @@ const FOLDER_INSERT_TOKEN: readonly [string, string] = ["Folder", "{{plaud-folde
 const CONTENT_INSERT_TOKENS: ReadonlyArray<readonly [string, string]> = [
 	["Duration", "{{duration}}"],
 	["Category", "{{category}}"],
+	["Industry", "{{industry}}"],
 	["Headline", "{{headline}}"],
 	["Language", "{{language}}"],
 	["Summary template", "{{template}}"],

@@ -71,6 +71,7 @@ describe('findSummaryMetadata (issue #61 — newer summary path)', () => {
 			model: 'gpt-5.5',
 			headline: 'Example headline for the recording',
 			category: 'Adaptive Summary',
+			industry: 'redacted-industry',
 			summaryId: '20260708183602-v2@redacted',
 		});
 	});
@@ -85,6 +86,45 @@ describe('findSummaryMetadata (issue #61 — newer summary path)', () => {
 		expect(findSummaryMetadata(DETAIL_2026_07_09, endpoint).category).toBe(
 			'Adaptive Summary',
 		);
+	});
+
+	it('resolves industry_category separately from category, even when category mirrors the template name', () => {
+		const distinct = {
+			data: {
+				content_list: [
+					{
+						data_type: 'auto_sum_note',
+						extra: { used_template: { template_name: 'Deep Summary Transcript' } },
+					},
+				],
+				extra_data: {
+					model: 'gpt-5.5',
+					aiContentHeader: {
+						category: 'Deep Summary Transcript',
+						industry_category: 'Healthcare',
+					},
+				},
+			},
+		};
+		const md = findSummaryMetadata(distinct, endpoint);
+		expect(md.template).toBe('Deep Summary Transcript');
+		expect(md.category).toBe('Deep Summary Transcript');
+		expect(md.industry).toBe('Healthcare');
+	});
+
+	it('omits industry when aiContentHeader has no industry_category', () => {
+		const noIndustry = {
+			data: {
+				content_list: [
+					{ data_type: 'auto_sum_note', extra: { summ_type: 'meeting' } },
+				],
+				extra_data: {
+					model: 'gpt-5.5',
+					aiContentHeader: { headline: 'H', category: 'Meeting' },
+				},
+			},
+		};
+		expect(findSummaryMetadata(noIndustry, endpoint).industry).toBeUndefined();
 	});
 
 	it('does not bleed category into a nested per-question category when the header lacks a direct one', () => {

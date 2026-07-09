@@ -1282,8 +1282,9 @@ describe('formatFrontmatter', () => {
 			makeSummary({
 				headline: 'Q2 Planning',
 				category: 'ai-meeting',
+				industry: 'Technology',
 				language: 'en',
-				template: 'ai-meeting',
+				template: 'Meeting Minutes',
 				model: 'azure-sweden-central-gpt-5',
 				noteId: 'note-abc',
 				summaryId: 'sum-xyz',
@@ -1293,15 +1294,58 @@ describe('formatFrontmatter', () => {
 		// yamlScalar leaves `Q2 Planning` unquoted because the pattern
 		// allows letters / digits / spaces. `azure-sweden-central-gpt-5`
 		// is also pattern-safe (hyphens allowed). `"3"` gets quoted only
-		// because it leads with a digit.
+		// because it leads with a digit. category differs from template here,
+		// so it is not deduped (see the dedup test below).
 		expect(fm).toContain('plaud-headline: Q2 Planning');
 		expect(fm).toContain('plaud-category: ai-meeting');
+		expect(fm).toContain('plaud-industry: Technology');
 		expect(fm).toContain('plaud-language: en');
-		expect(fm).toContain('plaud-template: ai-meeting');
+		expect(fm).toContain('plaud-template: Meeting Minutes');
 		expect(fm).toContain('plaud-model: azure-sweden-central-gpt-5');
 		expect(fm).toContain('plaud-note-id: note-abc');
 		expect(fm).toContain('plaud-summary-id: sum-xyz');
 		expect(fm).toContain('plaud-summary-version: "3"');
+	});
+
+	it('omits plaud-category when it duplicates plaud-template (issue #61)', () => {
+		const fm = formatFrontmatter(
+			makeRecording(),
+			[],
+			makeSummary({
+				category: 'Deep Summary Transcript',
+				template: 'Deep Summary Transcript',
+			}),
+		);
+		// Plaud's category field now mirrors the template name; the duplicate
+		// category line is suppressed while the template line stays.
+		expect(fm).not.toMatch(/plaud-category:/);
+		expect(fm).toContain('plaud-template: Deep Summary Transcript');
+	});
+
+	it('keeps plaud-category when it differs from plaud-template', () => {
+		const fm = formatFrontmatter(
+			makeRecording(),
+			[],
+			makeSummary({ category: 'Legal', template: 'Deep Summary Transcript' }),
+		);
+		expect(fm).toContain('plaud-category: Legal');
+		expect(fm).toContain('plaud-template: Deep Summary Transcript');
+	});
+
+	it('emits plaud-industry from the industry field, separate from category', () => {
+		const fm = formatFrontmatter(
+			makeRecording(),
+			[],
+			makeSummary({
+				category: 'Deep Summary Transcript',
+				industry: 'Healthcare',
+				template: 'Deep Summary Transcript',
+			}),
+		);
+		// category duplicates template and is dropped, but the real topical
+		// classification survives as its own property.
+		expect(fm).not.toMatch(/plaud-category:/);
+		expect(fm).toContain('plaud-industry: Healthcare');
 	});
 
 	it('emits partial extras and omits the rest', () => {

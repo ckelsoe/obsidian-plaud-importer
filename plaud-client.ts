@@ -273,6 +273,13 @@ export interface Summary {
 	 */
 	readonly headline?: string;
 	readonly category?: string;
+	/**
+	 * Plaud's `industry_category`: a topical/industry classification distinct
+	 * from `category` (which in the current Plaud shape mirrors the template
+	 * name). Surfaced as its own `plaud-industry` property rather than folded
+	 * into `category` so the two never mix. Best-effort like the rest here.
+	 */
+	readonly industry?: string;
 	readonly language?: string;
 	readonly template?: string;
 	readonly model?: string;
