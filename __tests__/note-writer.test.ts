@@ -1668,6 +1668,86 @@ describe('formatFrontmatter custom rows', () => {
 	});
 });
 
+// formatFrontmatter preserve-unknown passthrough (#58) ----------------------
+
+describe('formatFrontmatter preserve-unknown passthrough', () => {
+	// Positional args after customRows: existingValues (the note's current
+	// frontmatter, already serialized) then preserveUnknown.
+	const call = (
+		existing: ReadonlyMap<string, string> | undefined,
+		preserveUnknown: boolean,
+		customRows?: readonly CustomFrontmatterRow[],
+	): string =>
+		formatFrontmatter(
+			makeRecording(),
+			[],
+			null,
+			undefined,
+			undefined,
+			undefined,
+			customRows,
+			existing,
+			preserveUnknown,
+		);
+
+	it('keeps an undeclared foreign key on re-import when on', () => {
+		const fm = call(new Map([['project-status', 'shipped']]), true);
+		expect(fm).toMatch(/^project-status: shipped$/m);
+	});
+
+	it('drops the undeclared foreign key when off (old behavior)', () => {
+		const fm = call(new Map([['project-status', 'shipped']]), false);
+		expect(fm).not.toMatch(/^project-status:/m);
+	});
+
+	it('still refreshes a reserved plugin key even when on', () => {
+		// A stale reserved value in the existing note must not be carried through;
+		// reserved keys are the plugin's to regenerate.
+		const fm = call(new Map([['source', 'stale']]), true);
+		expect(fm).toMatch(/^source: plaud$/m);
+		expect(fm).not.toMatch(/^source: stale$/m);
+	});
+
+	it('lets a declared custom row control its key, not the passthrough', () => {
+		// status is a declared row with preserve off, so it regenerates from the
+		// template; the passthrough must not re-add the existing value on top.
+		const fm = call(new Map([['status', 'done']]), true, [
+			{ key: 'status', value: 'unprocessed', preserve: false },
+		]);
+		expect(fm).toMatch(/^status: unprocessed$/m);
+		expect(fm).not.toMatch(/^status: done$/m);
+	});
+
+	it('carries multiple foreign keys, appended after the built-in fields', () => {
+		const fm = call(
+			new Map([
+				['project-status', 'shipped'],
+				['owner', 'charles'],
+			]),
+			true,
+		);
+		expect(fm).toMatch(/^project-status: shipped$/m);
+		expect(fm).toMatch(/^owner: charles$/m);
+		expect(fm.indexOf('source: plaud')).toBeLessThan(
+			fm.indexOf('project-status:'),
+		);
+	});
+
+	it('is a no-op on first creation (no existing frontmatter) even when on', () => {
+		const fm = call(undefined, true);
+		expect(fm).toMatch(/^source: plaud$/m);
+		expect(fm).not.toMatch(/^project-status:/m);
+	});
+
+	it('never carries the plaud-placeholder marker onto real content', () => {
+		// plaud-placeholder is a reserved plugin marker on a stub. When real content
+		// supersedes the stub the flag must vanish, not be preserved as a foreign
+		// key. Regression guard for the RESERVED_FRONTMATTER_KEYS gap #58 surfaced.
+		const fm = call(new Map([['plaud-placeholder', 'true']]), true);
+		expect(fm).not.toMatch(/^plaud-placeholder:/m);
+	});
+});
+
 describe('renderCustomFrontmatterPreview', () => {
 	it('renders each row against the preview context', () => {
 		const lines = renderCustomFrontmatterPreview([

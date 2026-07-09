@@ -4,6 +4,14 @@ All notable changes to Plaud Importer will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **New setting "Preserve unknown frontmatter on re-import" (on by default).** When a re-import overwrites a note, any frontmatter property you added yourself, or that another tool wrote, is now kept instead of being dropped. Before this, a re-import rebuilt the whole frontmatter block from the plugin's own fields plus your declared extra-frontmatter rows, so a property that downstream automation wrote straight into the note was lost on the next overwrite. Reserved plugin fields still refresh, and you can still let the plugin manage a specific property by adding it as an extra-frontmatter row with preserve turned off. Turn the setting off to restore the old rebuild-from-scratch behavior.
+
+### Fixed
+
+- **A placeholder stub's `plaud-placeholder` marker no longer lingers after real content arrives.** The marker was missing from the plugin's reserved-key set; it is now reserved, so a later real import clears it as intended.
+
 ## [0.27.2] - 2026-07-08
 
 ### Fixed
