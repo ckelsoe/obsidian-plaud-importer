@@ -279,6 +279,12 @@ const FORBIDDEN_CHAR_REPLACEMENT_DESC =
 // wording scopes the setting to manual imports: background auto-sync runs
 // headless with skip-for-new / overwrite-for-changed and never prompts, so
 // 'Ask each time' has no dialog to answer during a sync tick (issue #43).
+// Description for the preserve-unknown-frontmatter toggle (#58). Held in a const
+// so the declarative (1.13+) and imperative (1.12) settings paths show identical
+// text and the sentence-case lint inspects one literal.
+const PRESERVE_UNKNOWN_FRONTMATTER_DESC =
+	"On by default. When a re-import overwrites a note, keep any frontmatter property you added yourself, or that another tool wrote, that the plugin does not manage. Leave this on so downstream automation and hand-added properties survive a re-import. To let the plugin manage and refresh a specific property instead, add it as an extra frontmatter row with preserve turned off.";
+
 const DUPLICATE_HANDLING_NAME = "Duplicate handling for manual imports";
 const DUPLICATE_HANDLING_DESC =
 	"Controls what happens when you run Import recent recordings and a note for the recording already exists. Skip keeps your copy, overwrite replaces it, and ask each time prompts you for each one. Automatic sync ignores this and never prompts.";
@@ -439,6 +445,13 @@ interface PlaudImporterSettings {
 	// row's value may use {{ }} tokens; preserve keeps the note's existing value on
 	// re-import. Empty (the default) writes no extra properties.
 	customFrontmatter: CustomFrontmatterRow[];
+	// When on, a re-import keeps any frontmatter property the user (or their
+	// downstream automation) added that the plugin does not manage and that is not
+	// a declared Extra frontmatter row, instead of dropping it on overwrite (#58).
+	// Default on: silently losing user-written properties is the worse failure. To
+	// let the plugin manage a specific property instead, declare it as an Extra
+	// frontmatter row with preserve off.
+	preserveUnknownFrontmatter: boolean;
 	// Single character that replaces a forbidden filename/folder character (the
 	// Windows-forbidden set, control codes, and brackets in a note name), and the
 	// path separators inside a {{title}} folder token. Default "-". Validated to a
@@ -536,6 +549,7 @@ const DEFAULT_SETTINGS: PlaudImporterSettings = {
 	customFrontmatter: [
 		{ key: "Recording Source", value: "Plaud Importer", preserve: true },
 	],
+	preserveUnknownFrontmatter: true,
 	forbiddenCharReplacement: "-",
 	onDuplicate: "prompt",
 	showRibbonIcon: true,
@@ -948,6 +962,7 @@ export default class PlaudImporterPlugin extends Plugin {
 			noteNameTemplate: this.settings.noteNameTemplate,
 			datetimeTemplate: this.settings.datetimeTemplate,
 			customFrontmatter: this.settings.customFrontmatter,
+			preserveUnknownFrontmatter: this.settings.preserveUnknownFrontmatter,
 			forbiddenCharReplacement: this.settings.forbiddenCharReplacement,
 			onDuplicate: this.settings.onDuplicate,
 			includeTranscript: this.settings.includeTranscript,
@@ -2866,6 +2881,12 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 				CUSTOM_FRONTMATTER_INTRO,
 			),
 		);
+		this.addToggleRow(
+			containerEl,
+			"Preserve unknown frontmatter on re-import",
+			PRESERVE_UNKNOWN_FRONTMATTER_DESC,
+			"preserveUnknownFrontmatter",
+		);
 		this.addTextRow(
 			containerEl,
 			"Forbidden character replacement",
@@ -3961,6 +3982,14 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 						searchable: false,
 						render: (setting: Setting) =>
 							this.renderCustomFrontmatterControl(setting),
+					},
+					{
+						name: "Preserve unknown frontmatter on re-import",
+						desc: PRESERVE_UNKNOWN_FRONTMATTER_DESC,
+						control: {
+							type: "toggle",
+							key: "preserveUnknownFrontmatter",
+						},
 					},
 					{
 						name: "Forbidden character replacement",

@@ -147,6 +147,14 @@ export interface NoteWriterOptions {
 	 */
 	readonly customFrontmatter?: readonly CustomFrontmatterRow[];
 	/**
+	 * When true, a re-import keeps any existing frontmatter key the user added by
+	 * hand (or via downstream automation) that is neither a reserved plugin key
+	 * nor a declared custom row, instead of dropping it (#58). Defaults to true at
+	 * the plugin layer; a headless caller omitting it gets the non-destructive
+	 * behavior. See `preserveUnknownFrontmatter` in FormatMarkdownOptions.
+	 */
+	readonly preserveUnknownFrontmatter?: boolean;
+	/**
 	 * Character that replaces a forbidden filename/folder character (the Windows
 	 * set plus control codes; brackets too in a note name). Defaults to '-'.
 	 * Applied to both the note name and each resolved subfolder segment, and to
@@ -1218,6 +1226,10 @@ export const RESERVED_FRONTMATTER_KEYS: ReadonlySet<string> = new Set([
 	'plaud-note-id',
 	'plaud-summary-id',
 	'plaud-summary-version',
+	// Marker on a placeholder stub (writePlaceholderNote). Reserved so the
+	// preserve-unknown passthrough (#58) never carries it onto real content when a
+	// later import supersedes the stub, and so a custom row cannot claim it.
+	'plaud-placeholder',
 ]);
 
 /**
@@ -1363,6 +1375,7 @@ export function formatFrontmatter(
 	datetimeTemplate?: string,
 	customRows?: readonly CustomFrontmatterRow[],
 	existingValues?: ReadonlyMap<string, string>,
+	preserveUnknown = false,
 ): string {
 	const duration = Number.isFinite(recording.durationSeconds)
 		? Math.max(0, Math.floor(recording.durationSeconds))
@@ -1478,6 +1491,23 @@ export function formatFrontmatter(
 				serialized = expanded.length > 0 ? yamlScalar(expanded) : '';
 			}
 			entries.set(key, serialized);
+		}
+	}
+
+	// Passthrough for foreign keys (#58). On a re-import the whole block is rebuilt
+	// from the plugin's own keys plus declared custom rows, so a key the user (or
+	// their downstream automation) added by hand and never declared would be
+	// dropped. When preserveUnknown is on, carry through any existing key that is
+	// neither a reserved plugin key (those always refresh) nor already emitted (a
+	// built-in or a declared row). Appended last, after first-seen plugin order,
+	// so foreign keys read naturally at the end. existingValues holds serialized
+	// YAML, so the stored value is emit-ready. Only fires on the overwrite path
+	// (existingValues present); on first creation there is nothing to preserve.
+	if (preserveUnknown && existingValues) {
+		for (const [key, value] of existingValues) {
+			if (!RESERVED_FRONTMATTER_KEYS.has(key) && !entries.has(key)) {
+				entries.set(key, value);
+			}
 		}
 	}
 
@@ -2142,6 +2172,15 @@ export interface FormatMarkdownOptions {
 	 * `extractFrontmatterValues`.
 	 */
 	readonly existingFrontmatter?: ReadonlyMap<string, string>;
+	/**
+	 * When true, a re-import carries through any existing frontmatter key that is
+	 * neither a reserved plugin key nor a declared custom row, instead of dropping
+	 * it (#58). Lets user- or automation-added keys survive an overwrite without
+	 * being enumerated in the Extra frontmatter setting. Defaults to false here;
+	 * the plugin passes the user's setting (which defaults on). Only has an effect
+	 * on the overwrite path, where `existingFrontmatter` is supplied.
+	 */
+	readonly preserveUnknownFrontmatter?: boolean;
 }
 
 export function formatMarkdown(
@@ -2175,6 +2214,7 @@ export function formatMarkdown(
 			options.datetimeTemplate,
 			options.customFrontmatter,
 			options.existingFrontmatter,
+			options.preserveUnknownFrontmatter,
 		),
 		'',
 		`# ${expandedTitle}`,
@@ -2425,6 +2465,7 @@ export class NoteWriter {
 	private readonly noteNameTemplate: string;
 	private readonly datetimeTemplate: string;
 	private readonly customFrontmatter: readonly CustomFrontmatterRow[];
+	private readonly preserveUnknownFrontmatter: boolean;
 	private readonly forbiddenCharReplacement: string;
 	private readonly existingPathForPlaudId?: (plaudId: string) => string | null;
 	private readonly migrateExistingNote?: (
@@ -2464,6 +2505,9 @@ export class NoteWriter {
 				: DEFAULT_NOTE_NAME_TEMPLATE;
 		this.datetimeTemplate = options.datetimeTemplate ?? '';
 		this.customFrontmatter = options.customFrontmatter ?? [];
+		// Default true: a headless caller (or hand-edited data.json) that omits this
+		// gets the non-destructive behavior, matching DEFAULT_SETTINGS.
+		this.preserveUnknownFrontmatter = options.preserveUnknownFrontmatter ?? true;
 		// Defense-in-depth: the settings layer validates this, but a headless caller
 		// or hand-edited data.json could pass anything, so fall back to '-' for an
 		// unusable value rather than sanitizing with a forbidden character.
@@ -2483,6 +2527,7 @@ export class NoteWriter {
 			noteNameTemplate: this.noteNameTemplate,
 			datetimeTemplate: this.datetimeTemplate,
 			customFrontmatter: this.customFrontmatter,
+			preserveUnknownFrontmatter: this.preserveUnknownFrontmatter,
 		};
 	}
 
