@@ -37,9 +37,6 @@ const PLAUD_LOGIN_URL = 'https://web.plaud.ai';
 // not have to sign in every time. Isolated from Obsidian's own web sessions.
 const PLAUD_PARTITION = 'persist:plaud-importer';
 const POLL_INTERVAL_MS = 1000;
-// Silent-refresh giveup. The app boot + auto-auth + first data call took ~30s in
-// practice; 90s gives comfortable headroom before falling back to interactive.
-const DEFAULT_HEADLESS_TIMEOUT_MS = 90 * 1000;
 // Match patterns for Plaud API hosts (covers regional hosts like api-euc1).
 const SESSION_FILTER = { urls: ['*://*.plaud.ai/*'] };
 // A JWT, optionally bearer-prefixed.
@@ -161,20 +158,6 @@ export interface PlaudLoginResult {
 
 export interface PlaudLoginOptions {
 	readonly debugLogger?: DebugLogger;
-	/**
-	 * Silent refresh mode: open the window hidden and expect no user interaction.
-	 * The persistent partition auto-authenticates and the web app mints a fresh
-	 * WT on load, which the same capture grabs. Paired with `timeoutMs` so a
-	 * session that DOES need interaction (e.g. a 30-day-expired login) times out
-	 * and resolves null instead of leaving an invisible window open forever.
-	 */
-	readonly headless?: boolean;
-	/**
-	 * When `headless`, give up and resolve null after this long if no token was
-	 * captured. Ignored for the visible flow (the user drives that). Defaults to
-	 * DEFAULT_HEADLESS_TIMEOUT_MS.
-	 */
-	readonly timeoutMs?: number;
 }
 
 interface ProbeResult {
@@ -228,10 +211,7 @@ interface BrowserWindowOptions {
 	height?: number;
 	title?: string;
 	autoHideMenuBar?: boolean;
-	// false opens the window hidden (silent-refresh mode). Omitted/true is the
-	// visible sign-in window.
-	show?: boolean;
-	webPreferences?: { partition?: string; backgroundThrottling?: boolean };
+	webPreferences?: { partition?: string };
 }
 interface BrowserWindowConstructor {
 	new (options: BrowserWindowOptions): BrowserWindowLike;
@@ -323,10 +303,6 @@ class PlaudLoginSession {
 	// arrives and the session settles.
 	private capturedRefresh: string | null = null;
 	private webRequestSession: SessionLike | null = null;
-	// Silent-refresh mode: window opens hidden and auto-gives-up after the timeout.
-	private readonly headless: boolean;
-	private readonly timeoutMs: number;
-	private timeoutHandle: number | null = null;
 
 	constructor(
 		options: PlaudLoginOptions,
@@ -334,8 +310,6 @@ class PlaudLoginSession {
 	) {
 		this.debugLogger = options.debugLogger ?? new NoopDebugLogger();
 		this.resolve = resolve;
-		this.headless = options.headless === true;
-		this.timeoutMs = options.timeoutMs ?? DEFAULT_HEADLESS_TIMEOUT_MS;
 	}
 
 	start(): void {
@@ -356,33 +330,14 @@ class PlaudLoginSession {
 				height: 760,
 				title: 'Plaud sign-in',
 				autoHideMenuBar: true,
-				// Silent refresh opens hidden: the persistent partition auto-
-				// authenticates and the web app mints a fresh WT on load with no
-				// user interaction, which the same capture grabs.
-				show: !this.headless,
 				webPreferences: {
 					partition: PLAUD_PARTITION,
-					// A hidden window is otherwise timer-throttled by Electron, which
-					// would stall the web app's auth/boot in the headless refresh.
-					backgroundThrottling: !this.headless,
 				},
 			});
 		} catch (err) {
 			this.note(`failed to open sign-in window: ${String(err)}`, 'error');
 			this.settle(null);
 			return;
-		}
-
-		// In headless mode a session that genuinely needs interaction (e.g. the
-		// 30-day login finally expired) would otherwise leave an invisible window
-		// open forever. Give up after the timeout and resolve null so the caller
-		// falls back to the interactive flow. No timer in the visible flow — the
-		// user drives that and closing the window resolves null.
-		if (this.headless && Number.isFinite(this.timeoutMs)) {
-			this.timeoutHandle = window.setTimeout(() => {
-				this.note('headless refresh timed out; no token captured');
-				this.settle(null);
-			}, this.timeoutMs);
 		}
 
 		// Deny every popup / new window the page requests, BEFORE loading it. The
@@ -567,15 +522,10 @@ class PlaudLoginSession {
 			return;
 		}
 		this.settled = true;
-		if (this.timeoutHandle !== null) {
-			window.clearTimeout(this.timeoutHandle);
-			this.timeoutHandle = null;
-		}
 		this.stopPolling();
 		this.teardownSessionCapture();
 		// Close the window on every settle path (success closes it too, via
-		// captureToken). Matters for the headless timeout: without this the hidden
-		// window would leak. Guarded/idempotent; a no-op once 'closed' has fired.
+		// captureToken). Guarded/idempotent; a no-op once 'closed' has fired.
 		this.closeWindow();
 		this.resolve(result);
 	}

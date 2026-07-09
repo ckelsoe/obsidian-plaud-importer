@@ -26,7 +26,12 @@ import {
 	isAccessToken,
 	openPlaudLogin,
 } from "./plaud-login";
-import { decodeJwtExpMs, isFreshAccessToken } from "./plaud-refresh";
+import {
+	computeRefreshDelay,
+	isFreshAccessToken,
+	isRefreshDue,
+	REFRESH_RETRY_BACKOFF_MS,
+} from "./plaud-refresh";
 import { buildPartitionPost, performNetRefresh } from "./plaud-refresh-net";
 import {
 	NoteWriter,
@@ -87,25 +92,6 @@ const CAPTURED_SECRET_ID = "plaud-importer-token";
 // SecretStorage, never data.json. Lowercase-alphanumeric-with-dashes so
 // setSecret accepts it.
 const CAPTURED_REFRESH_SECRET_ID = "plaud-importer-refresh-token";
-
-// Silent-refresh scheduling. Refresh this long before the access token's `exp`
-// so a slow round-trip still lands before expiry.
-const REFRESH_LEAD_MS = 5 * 60 * 1000;
-// Never schedule a refresh sooner than this, so a past-due or about-to-expire
-// token triggers one prompt refresh rather than a tight loop.
-const REFRESH_MIN_DELAY_MS = 30 * 1000;
-// When the stored token is opaque (no decodable `exp`), poll at this cadence as
-// a fallback so a session can still be kept alive.
-const REFRESH_OPAQUE_FALLBACK_MS = 60 * 60 * 1000;
-// Backoff after a failed refresh, indexed by (failure streak - 1) and clamped to
-// the last entry. Keeps a dead 30-day refresh token from hammering the endpoint
-// (Plaud counts refreshes per hour) while still retrying periodically.
-const REFRESH_RETRY_BACKOFF_MS = [
-	5 * 60 * 1000,
-	15 * 60 * 1000,
-	30 * 60 * 1000,
-	60 * 60 * 1000,
-];
 
 // Plaud web app, opened in the system browser for the browser-based sign-in
 // flow (where Google/Apple SSO work, unlike an embedded webview).
@@ -1744,21 +1730,21 @@ export default class PlaudImporterPlugin extends Plugin {
 	}
 
 	/**
-	 * Attempt one silent session refresh by re-capturing a fresh workspace token
-	 * from a HIDDEN sign-in window on the persistent Plaud partition. The web app
-	 * auto-authenticates from the stored session and mints a fresh WT on load,
-	 * which the same capture used at login grabs — no user interaction, no need to
-	 * replicate Plaud's UT->WT token derivation (the direct refresh endpoint only
-	 * returns a UT, not the WT the data API needs).
+	 * Attempt one silent session refresh via the direct, windowless path only
+	 * (POST /auth/refresh-user-token over the partition cookies, then the
+	 * workspace-token mint; see plaud-refresh-net.ts). A background refresh
+	 * NEVER opens a window: the old hidden-window fallback loaded the full
+	 * Plaud web app, whose login page leaked popup tabs into the default
+	 * browser. On failure the caller pauses and prompts the user; only a user
+	 * click ever opens the interactive sign-in window.
 	 *
-	 * FAIL-SAFE: the stored token is replaced only when a fresh WT (typ WT, future
-	 * exp) is captured. A timeout, a closed window, or an unusable token leaves
-	 * every stored value untouched and returns false, so the caller falls back to
-	 * today's behavior. Never throws.
+	 * FAIL-SAFE: the stored token is replaced only when the refresh yields a
+	 * fresh WT (typ WT, future exp). Any failure leaves every stored value
+	 * untouched and returns false. Never throws.
 	 *
-	 * Serialized against BOTH a concurrent silent refresh (`refreshInFlight`) and
-	 * a visible interactive sign-in (`reauthInFlight`): two windows on the same
-	 * partition would clobber each other's capture.
+	 * Serialized against BOTH a concurrent silent refresh (`refreshInFlight`)
+	 * and a visible interactive sign-in (`reauthInFlight`): a refresh landing
+	 * mid-sign-in would race the interactive capture's token write.
 	 */
 	private async tryRefreshSession(
 		reason: "scheduled" | "reactive" | "manual",
@@ -1767,45 +1753,12 @@ export default class PlaudImporterPlugin extends Plugin {
 			return false;
 		}
 		this.refreshInFlight = true;
-		// Also hold the interactive-sign-in gate: a manual "Sign in" opening a
-		// second window on this partition mid-refresh would clobber the capture.
+		// Also hold the interactive-sign-in gate: a manual "Sign in" storing its
+		// capture mid-refresh would clobber this path's token write (and vice
+		// versa).
 		this.reauthInFlight = true;
 		try {
-			// Primary: the direct, windowless refresh over the partition cookies
-			// (POST /auth/refresh-user-token then the workspace/token mint). Returns
-			// false when the session.fetch surface is unavailable or any step fails,
-			// so we fall through to the headless window below.
-			if (await this.tryNetRefresh(reason)) {
-				return true;
-			}
-			if (this.disposed) {
-				return false;
-			}
-			// Fallback: re-capture a fresh WT from a HIDDEN sign-in window, letting
-			// the web app mint it on load. Slower and heavier, but needs no knowledge
-			// of the credential and covers the case where the partition did not
-			// retain the httpOnly cookies the direct path relies on.
-			const result = await openPlaudLogin(this.app, {
-				debugLogger: this.debugLogger,
-				headless: true,
-			});
-			// The capture awaits a full app load; do not persist onto a torn-down
-			// plugin, and treat a timeout / closed window (null) as a benign failure.
-			if (this.disposed || result === null) {
-				if (result === null) {
-					this.logAutoSync(
-						`session refresh (${reason}) captured no token (timed out or session needs interaction)`,
-					);
-				}
-				return false;
-			}
-			return await this.applyRefreshedToken(
-				result.token,
-				result.refreshToken,
-				result.apiBaseUrl,
-				reason,
-				"window",
-			);
+			return await this.tryNetRefresh(reason);
 		} catch (err) {
 			// A refresh bug must log, not throw into the timer or the auto-sync tick.
 			console.error("Plaud importer: silent session refresh failed", err);
@@ -1817,20 +1770,20 @@ export default class PlaudImporterPlugin extends Plugin {
 	}
 
 	/**
-	 * Primary refresh: the direct, windowless path. Reads `wid`/`client_id` off
-	 * the stored token, runs the two-step refresh over the partition cookie jar,
-	 * and hands the candidate WT to the shared fail-safe. Returns false (never
-	 * throws) when the session.fetch surface is missing, no token is stored, or
-	 * any step fails, so `tryRefreshSession` falls back to the headless window.
+	 * The direct, windowless refresh. Reads `wid`/`client_id` off the stored
+	 * token, runs the two-step refresh over the partition cookie jar, and hands
+	 * the candidate WT to the shared fail-safe. Returns false (never throws)
+	 * when the session.fetch surface is missing, no token is stored, or any
+	 * step fails; the refresh is then simply a failure (no window fallback).
 	 */
 	private async tryNetRefresh(
 		reason: "scheduled" | "reactive" | "manual",
 	): Promise<boolean> {
 		const post = buildPartitionPost();
 		if (post === null) {
-			// No session.fetch on this runtime; the window path is the only option.
+			// No session.fetch on this runtime; silent refresh cannot run here.
 			this.logAutoSync(
-				"net refresh unavailable: no partition session.fetch transport (Electron remote/session/fetch missing); falling back to the window",
+				"net refresh unavailable: no partition session.fetch transport (Electron remote/session/fetch missing)",
 			);
 			return false;
 		}
@@ -1853,14 +1806,13 @@ export default class PlaudImporterPlugin extends Plugin {
 			result.refreshToken,
 			result.apiBaseUrl,
 			reason,
-			"direct",
 		);
 	}
 
 	/**
-	 * Shared fail-safe for both refresh paths. Replaces the stored secrets ONLY
-	 * when the candidate decodes as a fresh workspace token (typ WT, future exp);
-	 * a non-WT or already-expired value is rejected and nothing is written, so a
+	 * Fail-safe for the refresh path. Replaces the stored secrets ONLY when the
+	 * candidate decodes as a fresh workspace token (typ WT, future exp); a
+	 * non-WT or already-expired value is rejected and nothing is written, so a
 	 * failed refresh can never make things worse than the current stored token.
 	 */
 	private async applyRefreshedToken(
@@ -1868,14 +1820,13 @@ export default class PlaudImporterPlugin extends Plugin {
 		refreshToken: string | null,
 		apiBaseUrl: string | null,
 		reason: "scheduled" | "reactive" | "manual",
-		via: "direct" | "window",
 	): Promise<boolean> {
 		if (
 			!isAccessToken(candidate) ||
 			!isFreshAccessToken(candidate, Date.now())
 		) {
 			this.logAutoSync(
-				`session refresh (${reason}, ${via}) produced a token that is not a fresh WT; keeping existing`,
+				`session refresh (${reason}, direct) produced a token that is not a fresh WT; keeping existing`,
 			);
 			return false;
 		}
@@ -1900,7 +1851,7 @@ export default class PlaudImporterPlugin extends Plugin {
 			this.settings.apiBaseUrl = apiBaseUrl;
 		}
 		await this.saveSettings();
-		this.logAutoSync(`session refreshed (${reason}, ${via})`);
+		this.logAutoSync(`session refreshed (${reason}, direct)`);
 		return true;
 	}
 
@@ -1920,20 +1871,14 @@ export default class PlaudImporterPlugin extends Plugin {
 		// Nothing to refresh proactively until a token exists; a fresh sign-in
 		// calls this again to (re)schedule.
 		if (token === null) return;
-		let delay: number;
-		if (this.refreshFailureStreak > 0) {
-			const index = Math.min(
-				this.refreshFailureStreak - 1,
-				REFRESH_RETRY_BACKOFF_MS.length - 1,
-			);
-			delay = REFRESH_RETRY_BACKOFF_MS[index];
-		} else {
-			const expMs = decodeJwtExpMs(token);
-			delay =
-				expMs === null
-					? REFRESH_OPAQUE_FALLBACK_MS
-					: Math.max(REFRESH_MIN_DELAY_MS, expMs - REFRESH_LEAD_MS - Date.now());
-		}
+		// Backoff on a failure streak, expiry-driven otherwise, and always
+		// clamped under setTimeout's 32-bit ceiling (a long-lived token used to
+		// overflow the delay and fire immediately). See plaud-refresh.ts.
+		const delay = computeRefreshDelay(
+			token,
+			this.refreshFailureStreak,
+			Date.now(),
+		);
 		this.refreshTimeoutId = window.setTimeout(() => {
 			this.refreshTimeoutId = undefined;
 			void this.runScheduledRefresh();
@@ -1947,10 +1892,24 @@ export default class PlaudImporterPlugin extends Plugin {
 	/**
 	 * The proactive-timer callback: refresh, resume any auth-paused sync on
 	 * success, then reschedule (from the new token's expiry on success, or a
-	 * backoff on failure). Guarded so it never runs after unload or a disable.
+	 * backoff on failure). Skips the refresh entirely (and just re-arms) while
+	 * the stored token still has life beyond the lead window, so an early fire
+	 * never refreshes a token that does not need it. Guarded so it never runs
+	 * after unload or a disable.
 	 */
 	private async runScheduledRefresh(): Promise<void> {
 		if (this.disposed || !this.settings.keepSessionAlive) return;
+		// The timer can legitimately fire long before expiry: the schedule is
+		// clamped to REFRESH_MAX_DELAY_MS for long-lived tokens, and a backoff
+		// retry can outlive the failure that armed it (e.g. after a fresh
+		// sign-in). Refreshing a token that does not need it is what produced
+		// the spurious hourly refresh storm, so re-arm and wait instead.
+		const token = this.currentAccessToken();
+		if (token !== null && !isRefreshDue(token, Date.now())) {
+			this.refreshFailureStreak = 0;
+			this.reconcileTokenRefresh();
+			return;
+		}
 		const ok = await this.tryRefreshSession("scheduled");
 		if (this.disposed) return;
 		if (ok) {

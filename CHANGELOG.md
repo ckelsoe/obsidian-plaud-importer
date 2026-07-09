@@ -4,6 +4,14 @@ All notable changes to Plaud Importer will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The background session refresh no longer opens `web.plaud.ai` tabs in your default browser.** The refresh timer's delay is computed from the stored token's expiry, and for a long-lived token (an expiry 137 days out was observed) that delay overflowed the browser's 32-bit timer limit (about 24.8 days) and fired immediately instead of months later. The needless refresh then failed, retried on a backoff up to hourly, and every retry opened a hidden sign-in window whose login page leaked popup tabs into your default browser. The schedule is now capped safely below the timer limit, and a timer that wakes early re-arms without refreshing while the token still has plenty of life, so a valid token is never refreshed for no reason.
+
+### Changed
+
+- **A background refresh never opens a sign-in window anymore, not even a hidden one.** It uses only the silent, windowless renewal. If that fails, the plugin pauses and shows the one-click Reconnect prompt instead of loading Plaud's site in the background; only clicking Sign in or Reconnect ever opens a window.
+
 ## [0.28.0] - 2026-07-09
 
 ### Added
