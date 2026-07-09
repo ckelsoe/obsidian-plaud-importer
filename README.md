@@ -52,7 +52,7 @@ Plaud does not offer an official API yet, so this plugin works by using Plaud's 
 - **Lets you pick which to import** via checkboxes — single or multi-select.
 - **Per-recording artifact selection** — before a multi-import you can tick/untick transcript, summary, attachments, mindmap, and card independently.
 - **Writes one markdown note per recording** with:
-  - YAML frontmatter (Plaud ID, date, duration, speakers, tags, Plaud web URL) plus a layered set of optional fields surfaced from Plaud's flat GPT-5 schema (`plaud-headline`, `plaud-category`, `plaud-language`, `plaud-template`, `plaud-model`, `plaud-note-id`, `plaud-summary-id`, `plaud-summary-version`) — emitted only when present, never load-bearing.
+  - YAML frontmatter (Plaud ID, date, duration, speakers, tags, Plaud web URL) plus a layered set of optional fields surfaced from Plaud's flat GPT-5 schema (`plaud-headline`, `plaud-category`, `plaud-industry`, `plaud-language`, `plaud-template`, `plaud-model`, `plaud-note-id`, `plaud-summary-id`, `plaud-summary-version`) — emitted only when present, never load-bearing.
   - Plaud's AI summary
   - An `AI Suggestions` section pulled from Plaud's `ai_suggestion` field when the response includes one (separate from the main summary)
   - A `Template outputs` section that renders any extra AI templates you generated in Plaud (Key Points, Daily Journal, Meeting Summary, and so on), one foldable subsection per template, instead of dropping them as unreadable `.bin` attachments
