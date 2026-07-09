@@ -10,6 +10,7 @@ All notable changes to Plaud Importer will be documented in this file.
 
 ### Fixed
 
+- **The `plaud-model`, `plaud-template`, `plaud-headline`, `plaud-category`, and `plaud-summary-id` frontmatter fields are populated again.** After Plaud moved AI summaries onto a newer generation path, the plugin fetched only the summary text and dropped all of this metadata, so notes (and any MP3 you uploaded) came in with none of those properties. The plugin now reads the metadata from the same recording detail it already downloads, so the fields return. The template value now prefers Plaud's readable template name (for example "Adaptive Summary") over its internal code. If a future Plaud change relocates a field again, the import still succeeds without it and a debug log names the field that could not be found.
 - **A placeholder stub's `plaud-placeholder` marker no longer lingers after real content arrives.** The marker was missing from the plugin's reserved-key set; it is now reserved, so a later real import clears it as intended.
 
 ## [0.27.2] - 2026-07-08

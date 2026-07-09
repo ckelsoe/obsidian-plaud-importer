@@ -519,6 +519,48 @@ export class ReverseEngineeredPlaudClient implements PlaudClient {
 				});
 			}
 		}
+		// Summary metadata (template, model, headline, category, summary_id)
+		// lives in the detail envelope, scattered across the auto_sum_note
+		// entry's `extra` and `extra_data`. Pull it with a scoped, drift-
+		// resilient resolver (findSummaryMetadata) so a future relocation is a
+		// one-line key-list edit there rather than silent data loss — the exact
+		// failure mode of issue #61, where this metadata stopped appearing once
+		// Plaud moved summaries off the flat /ai/transsumm envelope onto the
+		// auto_sum_note path, which previously built a bare { id, text }.
+		// Best-effort: a throw here must never abort the bundle.
+		let summaryMetadata: SummaryMetadata = {};
+		if (newerSummaryMarkdown !== null) {
+			try {
+				summaryMetadata = findSummaryMetadata(rawDetail, detailEndpoint);
+			} catch (err) {
+				if (this.debugLogger?.enabled === true) {
+					this.debugLogger.log({
+						kind: 'parsed',
+						endpoint: detailEndpoint,
+						message: `summary-metadata extraction failed for ${id}; frontmatter extras omitted: ${describeUnknownError(err)}`,
+						payload: { summaryMetadataError: describeUnknownError(err) },
+					});
+				}
+			}
+			// Loud-not-silent: a recording that HAS a summary but yields no
+			// resolvable metadata is the signature of a Plaud shape change.
+			// Name the unresolved fields so the drift is diagnosable from a
+			// debug log now, instead of surfacing weeks later as a "properties
+			// missing" bug report (issue #61).
+			if (this.debugLogger?.enabled === true) {
+				const missing = DRIFT_SIGNAL_FIELDS.filter(
+					(field) => summaryMetadata[field] === undefined,
+				);
+				if (missing.length > 0) {
+					this.debugLogger.log({
+						kind: 'parsed',
+						endpoint: detailEndpoint,
+						message: `summary present but ${missing.length} known metadata field(s) unresolved for ${id} (possible Plaud shape drift): ${missing.join(', ')}`,
+						payload: { unresolvedSummaryMetadata: missing },
+					});
+				}
+			}
+		}
 		const aiKeywords = findAiKeywords(rawDetail, detailEndpoint);
 		const attachments = findAttachmentAssets(rawDetail, detailEndpoint);
 		const nestedAssetLinks = findNestedAssetLinks(rawDetail, detailEndpoint);
@@ -528,7 +570,9 @@ export class ReverseEngineeredPlaudClient implements PlaudClient {
 		];
 
 		const newerSummary: Summary | null =
-			newerSummaryMarkdown !== null ? { id, text: newerSummaryMarkdown } : null;
+			newerSummaryMarkdown !== null
+				? { id, text: newerSummaryMarkdown, ...summaryMetadata }
+				: null;
 
 		let polishedTranscript: Transcript | null = null;
 		// Prefer the polished transcript (real speaker names from Plaud's
@@ -1741,6 +1785,188 @@ export function findAiKeywords(
 		}
 	}
 	return out;
+}
+
+/**
+ * The optional {@link Summary} fields Plaud carries as metadata around a
+ * generated summary. Doubles as the checklist the bundle fetch uses to
+ * detect shape drift: a summary present with every one of these unresolved
+ * is the drift signal (issue #61).
+ */
+export type SummaryMetadata = Pick<
+	Summary,
+	'headline' | 'category' | 'language' | 'template' | 'model' | 'summaryId'
+>;
+
+// Fields expected on every AI-generated summary. Their combined absence when
+// a summary IS present is the shape-drift signal the bundle fetch logs.
+// `language` is deliberately excluded: Plaud omits it for many recordings, so
+// it is resolved when present but never counted as "missing" (that would make
+// the drift log fire on normal recordings and drown out the real signal).
+const DRIFT_SIGNAL_FIELDS: readonly (keyof SummaryMetadata)[] = [
+	'headline',
+	'category',
+	'template',
+	'model',
+	'summaryId',
+];
+
+// Depth cap for the scoped resolver. Plaud's detail envelope nests the
+// fields we want at most ~4 levels deep (content_list[] -> extra ->
+// used_template -> template_name); 8 leaves headroom for a reshuffle while
+// still guaranteeing a pathological or cyclic payload can never spin.
+const MAX_RESOLVE_DEPTH = 8;
+
+/**
+ * Recursively search `root` for the first property named `key` whose value
+ * is a non-empty string, preferring a direct (shallower, earlier) match
+ * over a deeper one. Depth-bounded and cycle-guarded. Returns the trimmed
+ * string, or undefined when no such property exists.
+ */
+function findStringByKey(
+	root: unknown,
+	key: string,
+	depth: number,
+	maxDepth: number,
+	seen: Set<object>,
+): string | undefined {
+	if (depth > maxDepth || root === null || typeof root !== 'object') {
+		return undefined;
+	}
+	if (seen.has(root)) {
+		return undefined;
+	}
+	seen.add(root);
+	if (!Array.isArray(root)) {
+		const direct = (root as Record<string, unknown>)[key];
+		if (typeof direct === 'string' && direct.trim().length > 0) {
+			return direct.trim();
+		}
+	}
+	for (const value of Object.values(root as Record<string, unknown>)) {
+		if (value !== null && typeof value === 'object') {
+			const hit = findStringByKey(value, key, depth + 1, maxDepth, seen);
+			if (hit !== undefined) {
+				return hit;
+			}
+		}
+	}
+	return undefined;
+}
+
+/**
+ * Scoped, drift-resilient field resolver. Tries each name in `keyNames` in
+ * order and returns the first non-empty string found within `root` down to
+ * `maxDepth` levels. Key-name order is the preference axis: every occurrence
+ * of keyNames[0] is checked before keyNames[1], so a caller can prefer a
+ * human-readable field (`template_name`) over a code (`summ_type`).
+ *
+ * `maxDepth` bounds how far the search descends. Pass 0 for a direct-only
+ * lookup — the right choice for a field documented to live directly on its
+ * scoped subtree (e.g. `aiContentHeader.category`), so the search can never
+ * bleed into an unrelated nested `category` (such as a per-question one).
+ * Use a deeper bound only when the value is legitimately nested (e.g.
+ * `used_template.template_name`).
+ */
+function resolveString(
+	root: unknown,
+	keyNames: readonly string[],
+	maxDepth = MAX_RESOLVE_DEPTH,
+): string | undefined {
+	for (const key of keyNames) {
+		const hit = findStringByKey(root, key, 0, maxDepth, new Set());
+		if (hit !== undefined) {
+			return hit;
+		}
+	}
+	return undefined;
+}
+
+/**
+ * Locate the `extra` object of the `auto_sum_note` entry in a detail
+ * response's `content_list`, or undefined when absent. This entry carries
+ * the summary's own `summ_type`, `summary_id`, and `used_template`.
+ */
+function findAutoSumNoteExtra(
+	data: Record<string, unknown>,
+): Record<string, unknown> | undefined {
+	const list = data.content_list;
+	if (!Array.isArray(list)) {
+		return undefined;
+	}
+	for (const item of list) {
+		if (
+			isRecord(item) &&
+			item.data_type === 'auto_sum_note' &&
+			isRecord(item.extra)
+		) {
+			return item.extra;
+		}
+	}
+	return undefined;
+}
+
+/**
+ * Extract summary metadata from a `/file/detail/{id}` response for the
+ * newer (`auto_sum_note`) summary path.
+ *
+ * The fields are scattered: `summ_type` / `used_template.template_name` /
+ * `summary_id` sit on the auto_sum_note entry's `extra`, while `model` and
+ * `aiContentHeader.headline` / `category` sit on `extra_data`. Rather than
+ * hardcode one exact path per field — the brittleness that produced issue
+ * #61 when Plaud moved this data off the flat `/ai/transsumm` envelope —
+ * each field is resolved by NAME within a scoped subtree, with an ordered
+ * list of accepted names. A future relocation within these subtrees needs
+ * no code change; a rename is a one-line key-list edit here.
+ *
+ * Scoped and bounded so a generic key never matches the wrong branch:
+ * `category` is resolved inside `aiContentHeader`, not the whole envelope
+ * (which also carries `industry_category`, `original_category`, and a
+ * per-question `category` on every recommended question).
+ *
+ * Best-effort: returns `{}` for any absent field, and throws only via
+ * {@link requireDataEnvelope} on a structurally invalid top-level response,
+ * which the caller isolates.
+ */
+export function findSummaryMetadata(
+	raw: unknown,
+	endpoint: string,
+): SummaryMetadata {
+	const data = requireDataEnvelope(raw, endpoint);
+	const extraData = isRecord(data.extra_data) ? data.extra_data : undefined;
+	const header =
+		extraData !== undefined && isRecord(extraData.aiContentHeader)
+			? extraData.aiContentHeader
+			: undefined;
+	const summaryExtra = findAutoSumNoteExtra(data);
+
+	// Narrowest scope first to avoid cross-branch bleed, widening to the
+	// whole envelope only as a last resort.
+	const templateScope = summaryExtra ?? extraData ?? data;
+	const idScope = summaryExtra ?? extraData ?? data;
+	const headerScope = header ?? extraData ?? data;
+	const modelScope = extraData ?? data;
+
+	// `template_name` is legitimately nested (under `used_template`), so it
+	// needs a deep search. Every other field is documented to sit directly on
+	// its scoped subtree, so resolve it direct-only (maxDepth 0) — this keeps a
+	// generic key like `category` from bleeding into a nested unrelated one
+	// (e.g. a per-question `category` under `recommend_questions`).
+	const template = resolveString(templateScope, ['template_name', 'summ_type']);
+	const model = resolveString(modelScope, ['model'], 0);
+	const headline = resolveString(headerScope, ['headline'], 0);
+	const category = resolveString(headerScope, ['category'], 0);
+	const summaryId = resolveString(idScope, ['summary_id'], 0);
+	const language = resolveString(modelScope, ['language'], 0);
+
+	return {
+		...(headline !== undefined && { headline }),
+		...(category !== undefined && { category }),
+		...(language !== undefined && { language }),
+		...(template !== undefined && { template }),
+		...(model !== undefined && { model }),
+		...(summaryId !== undefined && { summaryId }),
+	};
 }
 
 /**
