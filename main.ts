@@ -2102,6 +2102,16 @@ export default class PlaudImporterPlugin extends Plugin {
 	 * and pasteTokenFromClipboard so there is one capture path.
 	 */
 	private openBrowserReconnect(onReconnected?: () => unknown): void {
+		// One sign-in surface at a time, sharing the same gate as the embedded
+		// window and the silent refresh: two captures racing on the partition would
+		// clobber each other's token write. Held for the modal's whole lifetime and
+		// cleared when it closes; paste-success, cancel, and dismiss all route
+		// through the modal's onClose.
+		if (this.reauthInFlight) {
+			new Notice("Plaud sign-in is already open.");
+			return;
+		}
+		this.reauthInFlight = true;
 		new BrowserSignInModal(
 			this.app,
 			() => this.openPlaudInBrowser(),
@@ -2113,6 +2123,9 @@ export default class PlaudImporterPlugin extends Plugin {
 					if (onReconnected) await onReconnected();
 				}
 				return ok;
+			},
+			() => {
+				this.reauthInFlight = false;
 			},
 		).open();
 	}
@@ -2661,16 +2674,25 @@ export default class PlaudImporterPlugin extends Plugin {
 class BrowserSignInModal extends Modal {
 	private readonly onLaunch: () => void;
 	private readonly onPaste?: () => Promise<boolean>;
+	private readonly onCloseCb?: () => void;
 
 	// onPaste is optional. When omitted (the settings/import-modal "launch"
 	// button), opening the browser closes this modal and the user pastes from the
 	// separate paste control. When supplied (the SSO reconnect notice), the modal
 	// stays open after launching so the returning user can paste right here, and a
-	// successful paste closes it.
-	constructor(app: App, onLaunch: () => void, onPaste?: () => Promise<boolean>) {
+	// successful paste closes it. onCloseCb, when supplied, runs on every close
+	// path (paste success, cancel, dismiss) so a caller can release a single-flight
+	// guard it set before opening.
+	constructor(
+		app: App,
+		onLaunch: () => void,
+		onPaste?: () => Promise<boolean>,
+		onCloseCb?: () => void,
+	) {
 		super(app);
 		this.onLaunch = onLaunch;
 		this.onPaste = onPaste;
+		this.onCloseCb = onCloseCb;
 	}
 
 	onOpen(): void {
@@ -2733,6 +2755,7 @@ class BrowserSignInModal extends Modal {
 
 	onClose(): void {
 		this.contentEl.empty();
+		this.onCloseCb?.();
 	}
 }
 
