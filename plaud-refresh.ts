@@ -114,6 +114,34 @@ export function computeRefreshDelay(
 }
 
 /**
+ * True when the proactive refresh should stop re-arming: it has failed through
+ * the entire backoff ladder on an already-due token that has NO stored refresh
+ * token. A missing WRT is the SSO/paste signature (the embedded-window sign-in
+ * keeps a WRT, a browser/bookmarklet capture blanks it), and such a session has
+ * no partition cookies for the windowless refresh to authenticate with, so it
+ * can never self-heal unattended; retrying just hammers Plaud's rate-limited
+ * refresh endpoint. Recovery comes from the one-click Reconnect notice instead.
+ *
+ * A session WITH a stored WRT (an email/password sign-in) is left alone even on
+ * an exhausted streak: its failures may be transient (network/Plaud blip) and
+ * its partition session is still refreshable, so the existing backoff keeps
+ * retrying and recovers on its own. Kept pure so the give-up rule is
+ * unit-testable without the plugin runtime.
+ */
+export function shouldStopProactiveRefresh(
+	token: string,
+	failureStreak: number,
+	hasRefreshToken: boolean,
+	nowMs: number,
+): boolean {
+	return (
+		!hasRefreshToken &&
+		failureStreak >= REFRESH_RETRY_BACKOFF_MS.length &&
+		isRefreshDue(token, nowMs)
+	);
+}
+
+/**
  * Reads a string claim from the JWT payload, or null when the value is not a
  * decodable JWT or the claim is absent / not a string. Used by the direct
  * net-refresh path to pull `wid` (workspace id) and `client_id` off the stored

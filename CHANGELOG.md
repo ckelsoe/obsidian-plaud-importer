@@ -4,6 +4,15 @@ All notable changes to Plaud Importer will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Reconnecting a Google or Apple (SSO) account no longer sends you to a dead end.** When a Google or Apple session lapsed during background auto-sync, the pause notice's Reconnect button opened the email sign-in window, where Google and Apple logins do not work. Reconnect now detects an SSO account and reopens the browser bookmarklet sign-in that actually works for it, and pasting the fresh token resumes the paused sync. Email and password accounts keep using the sign-in window as before.
+- **A Google or Apple session that cannot be renewed silently stops retrying instead of hammering Plaud hourly.** Those accounts keep their renewable session in your browser, not the plugin, so the silent background refresh can never succeed for them. It used to keep retrying about hourly forever. It now stops after its short backoff and waits for you to reconnect (auto-sync still recovers on its next run and via the Reconnect notice), which also avoids Plaud's per-hour refresh limit. Email and password sessions keep retrying as before, since their failures may be temporary.
+
+### Changed
+
+- **Clearer explanation of why Google and Apple accounts reconnect about daily.** The sign-in help and README now state that Plaud keeps the renewable session in your own browser, out of the plugin's reach, so SSO accounts cannot be refreshed silently the way email and password accounts can.
+
 ## [0.30.0] - 2026-07-09
 
 ### Added

@@ -150,6 +150,8 @@ Why open a meeting in step 3: the bookmark watches for the request your token ri
 
 Your sign-in token lasts about a day. When imports stop working, repeat the "each time you connect" steps to get a fresh one.
 
+Email and password sign-ins refresh silently in the background, so they rarely need this. Google and Apple sign-ins cannot: Plaud keeps the renewable part of the session in your own browser, which the plugin cannot reach, so there is nothing for it to refresh silently. That is why SSO accounts reconnect about daily. When the session lapses during background auto-sync, the pause notice's **Reconnect** button reopens this browser sign-in for you, so you do not get sent to the email window where Google and Apple do not work.
+
 The token is stored in Obsidian's per-vault secret storage either way. It is **never written to `data.json`** and does not travel through Obsidian Sync. Switching vaults requires re-connecting.
 
 Regional accounts (EU and others) need no extra setup. If Plaud routes your account to a regional server, the plugin detects it on the first import and remembers it.
@@ -245,7 +247,7 @@ Optional background sync, **off by default**. When enabled, the plugin checks Pl
 
 It also re-imports recordings you changed in Plaud since importing them (an edited transcript, corrected speaker names, a regenerated summary), including older recordings you edited today. **A re-import overwrites that note and its downloaded artifacts with Plaud's current version, so any edits you made to a synced note are replaced.** Only recordings that actually changed are touched; unchanged notes are never modified. This tradeoff is called out in the settings.
 
-If your Plaud session expires, auto-sync pauses with a single notice and resumes automatically when you reconnect (Test connection, a manual import, re-entering your token, or toggling auto-sync off and on).
+If your Plaud session expires, auto-sync pauses with a single notice and resumes automatically when you reconnect (Test connection, a manual import, re-entering your token, or toggling auto-sync off and on). The notice's **Reconnect** button opens the sign-in that matches your account: the email window for password logins, or the browser bookmarklet flow for Google and Apple accounts.
 
 **Backfill for existing notes:** notes imported before this feature shipped do not carry the version marker auto-sync compares against, so their Plaud-side edits are not detected until the marker exists. Run the command **Plaud Importer: Backfill version markers for auto-sync** once after enabling auto-sync to make your existing library edit-detectable. It only adds a frontmatter marker and never rewrites note content.
 
