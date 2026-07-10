@@ -30,6 +30,7 @@ import {
 	computeRefreshDelay,
 	isFreshAccessToken,
 	isRefreshDue,
+	shouldStopProactiveRefresh,
 	REFRESH_RETRY_BACKOFF_MS,
 } from "./plaud-refresh";
 import { buildPartitionPost, performNetRefresh } from "./plaud-refresh-net";
@@ -101,7 +102,7 @@ const PLAUD_WEB_URL = "https://web.plaud.ai";
 // name Plaud/Google/Apple plainly: the sentence-case lint only inspects string
 // literals written directly at a setText/createEl call, not a referenced const.
 const SIGN_IN_NOTE =
-	"Plaud has no official API, so this plugin relies on their internal one. That makes sign-in fragile, and it may stop working when Plaud changes that internal API. We expect this whole process to get much simpler once Plaud releases an official API. There are two ways to sign in, depending on how you log in to Plaud. Use 'Sign in with email' if you log in with an email address and password. Use 'Sign in with Google or Apple' if you use single sign-on (SSO) through a Google or Apple account.";
+	"Plaud has no official API, so this plugin relies on their internal one. That makes sign-in fragile, and it may stop working when Plaud changes that internal API. We expect this whole process to get much simpler once Plaud releases an official API. There are two ways to sign in, depending on how you log in to Plaud. Use 'Sign in with email' if you log in with an email address and password. Use 'Sign in with Google or Apple' if you use single sign-on (SSO) through a Google or Apple account. Google and Apple accounts reconnect about once a day: Plaud keeps the renewable session in your own browser, not in the plugin, so the plugin cannot refresh it silently the way it can for an email and password sign-in. When it lapses the plugin shows a one-click Reconnect that reopens the browser sign-in.";
 
 // Bookmarklet for the browser sign-in flow. Run on a signed-in Plaud tab, it
 // hooks BOTH fetch and XMLHttpRequest (Plaud loads recordings via XHR, so a
@@ -1732,6 +1733,24 @@ export default class PlaudImporterPlugin extends Plugin {
 	}
 
 	/**
+	 * True when a refresh token (typ WRT) is stored. The embedded-window email
+	 * sign-in captures and keeps a WRT; a browser/bookmarklet (SSO) capture never
+	 * does and blanks it (see storeAccessToken). So WRT presence is a reliable
+	 * proxy for "this session came from the embedded window, whose partition holds
+	 * the cookies the windowless refresh needs." Used to route the Reconnect
+	 * surfaces to the sign-in method that can actually work for this account.
+	 */
+	private hasStoredRefreshToken(): boolean {
+		try {
+			const wrt = this.app.secretStorage.getSecret(CAPTURED_REFRESH_SECRET_ID);
+			return wrt !== null && wrt.trim().length > 0;
+		} catch (err) {
+			console.error("Plaud importer: failed to read refresh token", err);
+			return false;
+		}
+	}
+
+	/**
 	 * Attempt one silent session refresh via the direct, windowless path only
 	 * (POST /auth/refresh-user-token over the partition cookies, then the
 	 * workspace-token mint; see plaud-refresh-net.ts). A background refresh
@@ -1873,6 +1892,26 @@ export default class PlaudImporterPlugin extends Plugin {
 		// Nothing to refresh proactively until a token exists; a fresh sign-in
 		// calls this again to (re)schedule.
 		if (token === null) return;
+		// An SSO/paste session (no stored WRT) that has failed the whole backoff
+		// ladder on an already-due token cannot self-heal unattended: it has no
+		// partition cookies for the windowless refresh. Stop re-arming so we do
+		// not hammer Plaud's rate-limited refresh endpoint hourly forever; the
+		// Reconnect notice is the recovery path. An email session (WRT present) is
+		// left retrying, since its failures may be transient. A fresh sign-in
+		// resets the streak to 0 and reschedules normally.
+		if (
+			shouldStopProactiveRefresh(
+				token,
+				this.refreshFailureStreak,
+				this.hasStoredRefreshToken(),
+				Date.now(),
+			)
+		) {
+			this.logAutoSync(
+				"proactive refresh exhausted its backoff on an unrefreshable session; awaiting reconnect",
+			);
+			return;
+		}
 		// Backoff on a failure streak, expiry-driven otherwise, and always
 		// clamped under setTimeout's 32-bit ceiling (a long-lived token used to
 		// overflow the delay and fire immediately). See plaud-refresh.ts.
@@ -2017,7 +2056,17 @@ export default class PlaudImporterPlugin extends Plugin {
 	 * left with a hidden notice and no feedback. Returns whether a token was
 	 * captured, so a caller (e.g. a failed command) can retry itself on success.
 	 */
-	async reconnectFromNotice(): Promise<boolean> {
+	async reconnectFromNotice(onReconnected?: () => unknown): Promise<boolean> {
+		// A session with no stored WRT came from the browser/bookmarklet (SSO)
+		// flow: Google and Apple do not complete in the embedded window, so
+		// routing it there dead-ends. Open the browser + bookmarklet + paste flow
+		// instead. That flow finishes asynchronously when the user pastes, so this
+		// returns false now; the paste handler resumes any paused sync and runs
+		// onReconnected (e.g. a backfill retry) itself.
+		if (!this.hasStoredRefreshToken()) {
+			this.openBrowserReconnect(onReconnected);
+			return false;
+		}
 		try {
 			const ok = await this.reauthenticate();
 			// Plugin unloaded mid sign-in: skip side effects and messaging.
@@ -2025,6 +2074,7 @@ export default class PlaudImporterPlugin extends Plugin {
 			if (ok) {
 				new Notice("Plaud reconnected.");
 				this.resumeAutoSyncIfPaused();
+				if (onReconnected) await onReconnected();
 			} else if (!this.reauthInFlight) {
 				// A false with reauthInFlight still set means another sign-in
 				// window is already open (reauthenticate short-circuited and
@@ -2039,6 +2089,45 @@ export default class PlaudImporterPlugin extends Plugin {
 			}
 			return false;
 		}
+	}
+
+	/**
+	 * Guided browser sign-in for SSO (Google/Apple) reconnect. Opens the same
+	 * BrowserSignInModal the settings tab uses, but with an inline "Paste token"
+	 * action so the whole reconnect completes from the modal: it opens Plaud in
+	 * the system browser, the user runs the bookmarklet and copies the token, and
+	 * pasting stores it, resumes any paused sync, and runs the optional
+	 * onReconnected continuation (e.g. a backfill retry) so a browser reconnect
+	 * finishes the same follow-up the embedded flow does. Reuses openPlaudInBrowser
+	 * and pasteTokenFromClipboard so there is one capture path.
+	 */
+	private openBrowserReconnect(onReconnected?: () => unknown): void {
+		// One sign-in surface at a time, sharing the same gate as the embedded
+		// window and the silent refresh: two captures racing on the partition would
+		// clobber each other's token write. Held for the modal's whole lifetime and
+		// cleared when it closes; paste-success, cancel, and dismiss all route
+		// through the modal's onClose.
+		if (this.reauthInFlight) {
+			new Notice("Plaud sign-in is already open.");
+			return;
+		}
+		this.reauthInFlight = true;
+		new BrowserSignInModal(
+			this.app,
+			() => this.openPlaudInBrowser(),
+			async () => {
+				const ok = await this.pasteTokenFromClipboard();
+				if (ok && !this.disposed) {
+					new Notice("Plaud reconnected.");
+					this.resumeAutoSyncIfPaused();
+					if (onReconnected) await onReconnected();
+				}
+				return ok;
+			},
+			() => {
+				this.reauthInFlight = false;
+			},
+		).open();
 	}
 
 	/**
@@ -2141,10 +2230,12 @@ export default class PlaudImporterPlugin extends Plugin {
 				this.showActionNotice(
 					"Plaud importer: backfill needs a Plaud session.",
 					"Reconnect and retry",
-					async () => {
-						const ok = await this.reconnectFromNotice();
-						if (ok) await this.backfillVersionMarkers();
-					},
+					// Pass the retry as the post-reconnect continuation so it runs on
+					// BOTH the embedded (email) path and the async browser (SSO) path;
+					// the SSO path returns false immediately (paste completes later), so
+					// a caller that keyed the retry off the return value would skip it.
+					() =>
+						this.reconnectFromNotice(() => this.backfillVersionMarkers()),
 				);
 			} else {
 				new Notice(`Plaud importer: backfill failed: ${classification.message}`);
@@ -2582,10 +2673,26 @@ export default class PlaudImporterPlugin extends Plugin {
 // sentence-case lint, which only inspects literals.
 class BrowserSignInModal extends Modal {
 	private readonly onLaunch: () => void;
+	private readonly onPaste?: () => Promise<boolean>;
+	private readonly onCloseCb?: () => void;
 
-	constructor(app: App, onLaunch: () => void) {
+	// onPaste is optional. When omitted (the settings/import-modal "launch"
+	// button), opening the browser closes this modal and the user pastes from the
+	// separate paste control. When supplied (the SSO reconnect notice), the modal
+	// stays open after launching so the returning user can paste right here, and a
+	// successful paste closes it. onCloseCb, when supplied, runs on every close
+	// path (paste success, cancel, dismiss) so a caller can release a single-flight
+	// guard it set before opening.
+	constructor(
+		app: App,
+		onLaunch: () => void,
+		onPaste?: () => Promise<boolean>,
+		onCloseCb?: () => void,
+	) {
 		super(app);
 		this.onLaunch = onLaunch;
+		this.onPaste = onPaste;
+		this.onCloseCb = onCloseCb;
 	}
 
 	onOpen(): void {
@@ -2604,23 +2711,51 @@ class BrowserSignInModal extends Modal {
 			ol.createEl("li", { text: line });
 		}
 		const openLabel = "Open my browser now";
-		new Setting(contentEl)
-			.addButton((btn) =>
-				btn
-					.setButtonText(openLabel)
-					.setCta()
-					.onClick(() => {
-						this.onLaunch();
+		const row = new Setting(contentEl).addButton((btn) =>
+			btn
+				.setButtonText(openLabel)
+				.setCta()
+				.onClick(() => {
+					this.onLaunch();
+					// With no inline paste, launching is the last step here; close so
+					// the user is not left with a stale modal. With inline paste, keep
+					// the modal open so they can paste on their way back.
+					if (this.onPaste === undefined) {
 						this.close();
-					}),
-			)
-			.addButton((btn) =>
-				btn.setButtonText("Cancel").onClick(() => this.close()),
+					}
+				}),
+		);
+		if (this.onPaste !== undefined) {
+			const paste = this.onPaste;
+			row.addButton((btn) =>
+				btn.setButtonText("Paste token from clipboard").onClick(async () => {
+					// Guard the whole handler: pasteTokenFromClipboard swallows a
+					// clipboard read failure, but storing the token (secret storage,
+					// saveSettings) can still throw. Without this an async click
+					// rejection would surface unhandled and leave the modal open with
+					// no feedback.
+					try {
+						const ok = await paste();
+						if (ok) {
+							this.close();
+						}
+					} catch (err) {
+						console.error("Plaud importer: paste reconnect failed", err);
+						new Notice(
+							"Plaud: could not save that token. Try again, or use settings.",
+						);
+					}
+				}),
 			);
+		}
+		row.addButton((btn) =>
+			btn.setButtonText("Cancel").onClick(() => this.close()),
+		);
 	}
 
 	onClose(): void {
 		this.contentEl.empty();
+		this.onCloseCb?.();
 	}
 }
 

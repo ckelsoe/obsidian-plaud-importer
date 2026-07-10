@@ -4,6 +4,7 @@ import {
 	isFreshAccessToken,
 	isRefreshDue,
 	jwtTyp,
+	shouldStopProactiveRefresh,
 	REFRESH_LEAD_MS,
 	REFRESH_MAX_DELAY_MS,
 	REFRESH_MIN_DELAY_MS,
@@ -141,5 +142,43 @@ describe('isRefreshDue', () => {
 	it('is due for a token with no decodable exp (matches the hourly poll)', () => {
 		expect(isRefreshDue(NO_EXP_WT, NOW)).toBe(true);
 		expect(isRefreshDue('not-a-token', NOW)).toBe(true);
+	});
+});
+
+describe('shouldStopProactiveRefresh', () => {
+	const LEN = REFRESH_RETRY_BACKOFF_MS.length;
+	// An SSO/paste session has no stored WRT; an email session has one.
+	const NO_WRT = false;
+	const HAS_WRT = true;
+
+	it('keeps retrying while the streak is below the backoff ladder length', () => {
+		expect(shouldStopProactiveRefresh(EXPIRED_WT, 0, NO_WRT, NOW)).toBe(false);
+		expect(shouldStopProactiveRefresh(EXPIRED_WT, LEN - 1, NO_WRT, NOW)).toBe(false);
+	});
+
+	it('gives up on an exhausted, due SSO session (no stored WRT)', () => {
+		// The SSO case: no partition cookies to refresh from, so re-arming would
+		// just hammer the endpoint. Stop and wait for a manual reconnect.
+		expect(shouldStopProactiveRefresh(EXPIRED_WT, LEN, NO_WRT, NOW)).toBe(true);
+		expect(shouldStopProactiveRefresh(EXPIRED_WT, LEN + 5, NO_WRT, NOW)).toBe(true);
+	});
+
+	it('never gives up on a session with a stored WRT, even when exhausted and due', () => {
+		// An email/password session keeps its refreshable partition; an exhausted
+		// streak there may be a transient failure, so it must keep retrying and
+		// recover on its own rather than be abandoned.
+		expect(shouldStopProactiveRefresh(EXPIRED_WT, LEN, HAS_WRT, NOW)).toBe(false);
+		expect(shouldStopProactiveRefresh(EXPIRED_WT, LEN + 5, HAS_WRT, NOW)).toBe(false);
+	});
+
+	it('never abandons a token that still has ample life, even at a high streak', () => {
+		// Defensive: a successful sign-in resets the streak to 0, so this pairing
+		// is not expected in practice, but the predicate must not give up on a
+		// fresh token if it ever occurs.
+		expect(shouldStopProactiveRefresh(FRESH_WT, LEN + 5, NO_WRT, NOW)).toBe(false);
+	});
+
+	it('treats an opaque token as due, so a persistently failing SSO one also gives up', () => {
+		expect(shouldStopProactiveRefresh(NO_EXP_WT, LEN, NO_WRT, NOW)).toBe(true);
 	});
 });
