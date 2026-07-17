@@ -4,6 +4,8 @@ All notable changes to Plaud Importer will be documented in this file.
 
 ## [Unreleased]
 
+## [0.30.2] - 2026-07-17
+
 ### Fixed
 
 - **Email sign-in no longer also opens plaud.ai in your web browser.** The in-app sign-in window is meant to block the popups Plaud's web page fires while it loads, but the block was silently broken, so those popups escaped to your default browser as stray tabs. The block now actually holds: clicking Sign in with email opens only the in-app window. The Google and Apple sign-in flow still opens your browser, which is intentional.
