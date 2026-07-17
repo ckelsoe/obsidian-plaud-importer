@@ -346,10 +346,15 @@ class PlaudLoginSession {
 					? probe.token.trim()
 					: null;
 			const apiBaseUrl = normalizeApiDomain(probe?.domain);
+			// Only ever read the token off a Plaud origin. The window loads
+			// web.plaud.ai, but a login redirect could land it elsewhere; a generic
+			// localStorage `token` on some other origin must never be captured, even
+			// though the claim guard would usually reject it too.
+			const onPlaud = isPlaudOrigin(probe?.href);
 			// The capture guard is the gate: it accepts a live long-lived user
 			// token (client_id + future exp) and rejects the neighboring profile/ID
 			// JWT and any already-expired token still sitting in localStorage.
-			const usable = token !== null && isUsableUserToken(token);
+			const usable = token !== null && onPlaud && isUsableUserToken(token);
 			if (this.debugLogger.enabled) {
 				this.note('probe', 'note', { href: probe?.href, captured: usable });
 			}
@@ -486,6 +491,23 @@ class PlaudLoginSession {
 			this.debugLogger.log({ kind, message: `plaud-login: ${message}`, payload });
 		}
 	}
+}
+
+// True when the page URL is a Plaud origin (plaud.ai or a subdomain). Gates the
+// localStorage token read so a login redirect to a non-Plaud origin can never
+// have its `token` key captured.
+function isPlaudOrigin(href: string | null | undefined): boolean {
+	if (typeof href !== 'string' || href.length === 0) {
+		return false;
+	}
+	let parsed: URL;
+	try {
+		parsed = new URL(href);
+	} catch {
+		return false;
+	}
+	const host = parsed.hostname.toLowerCase().replace(/\.$/, '');
+	return host === 'plaud.ai' || host.endsWith('.plaud.ai');
 }
 
 // Normalize the regional host into an https origin, or null when missing or

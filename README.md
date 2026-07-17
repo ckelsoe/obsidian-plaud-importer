@@ -146,7 +146,7 @@ Use this if you log in to Plaud with **single sign-on (SSO) through a Google or 
 
 If no pop-up appears in step 3, make sure you are signed in to Plaud in that tab first, then click the bookmark again.
 
-**Starting over:** the **Clear sign-in** button signs you out and clears the stored token, so you can connect a different account or recover from a stuck state.
+**Starting over:** the **Clear sign-in** button clears the plugin's stored token and its own embedded sign-in session, so you can connect a different account or recover from a stuck state. It does not sign you out of Plaud in your normal web browser.
 
 Your sign-in token lasts about a year, so you rarely need to do this. When imports eventually stop working, repeat the "each time you connect" steps to get a fresh one. This is the same for email and password accounts and for Google and Apple accounts: both keep working for months between sign-ins. If a session lapses during background auto-sync, the pause notice's **Reconnect** button reopens the right sign-in for your account type, so an SSO account is not sent to the email window where Google and Apple logins do not work.
 

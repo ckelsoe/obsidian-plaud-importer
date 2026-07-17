@@ -13,8 +13,9 @@
 // rejects it with `-3900 "invalid auth header"`. So the guard validates the
 // decoded claims, never the key name.
 
-// A JWT, optionally bearer-prefixed.
-const JWT_RE = /eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/;
+// A single base64url segment. Anchored with one character class, so it is
+// linear-time: no polynomial/ReDoS backtracking on adversarial input.
+const B64URL_SEGMENT = /^[A-Za-z0-9_-]+$/;
 
 // JWT header `typ` of the paired REFRESH token. The data API rejects it with
 // `-3901 "token type does not match parse mode"` if it is ever sent as the data
@@ -36,14 +37,27 @@ function decodeSegment(seg: string): Record<string, unknown> | null {
 	}
 }
 
-/** Decodes the JWT payload, or null when the value is not a decodable JWT. */
-export function decodeJwtPayload(value: string): Record<string, unknown> | null {
-	const match = value.replace(/^bearer\s+/i, '').match(JWT_RE);
-	if (match === null) {
+// Splits a (possibly bearer-prefixed) token into its three base64url JWT
+// segments, or null when the value is not EXACTLY three non-empty base64url
+// segments. Parsing by an exact split rather than an unanchored search both
+// avoids the polynomial-regex class and refuses a `prefix.<jwt>.suffix` value
+// that a search would have accepted and then stored verbatim.
+function jwtSegments(value: string): [string, string, string] | null {
+	const token = value.replace(/^bearer\s+/i, '').trim();
+	const parts = token.split('.');
+	if (parts.length !== 3) {
 		return null;
 	}
-	const parts = match[0].split('.');
-	if (parts.length < 2) {
+	if (!parts.every((part) => B64URL_SEGMENT.test(part))) {
+		return null;
+	}
+	return [parts[0], parts[1], parts[2]];
+}
+
+/** Decodes the JWT payload, or null when the value is not a decodable JWT. */
+export function decodeJwtPayload(value: string): Record<string, unknown> | null {
+	const parts = jwtSegments(value);
+	if (parts === null) {
 		return null;
 	}
 	return decodeSegment(parts[1]);
@@ -51,11 +65,11 @@ export function decodeJwtPayload(value: string): Record<string, unknown> | null 
 
 /** Reads the JWT header `typ`, or null when the value is not a decodable JWT. */
 function jwtHeaderTyp(value: string): string | null {
-	const match = value.replace(/^bearer\s+/i, '').match(JWT_RE);
-	if (match === null) {
+	const parts = jwtSegments(value);
+	if (parts === null) {
 		return null;
 	}
-	const header = decodeSegment(match[0].split('.')[0]);
+	const header = decodeSegment(parts[0]);
 	return header !== null && typeof header.typ === 'string' ? header.typ : null;
 }
 

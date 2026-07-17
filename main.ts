@@ -124,7 +124,7 @@ const SIGN_IN_NOTE =
 // gesture is blocked by browsers. Kept as one line, no backslashes, so it
 // pastes as a valid bookmark URL.
 const SIGN_IN_BOOKMARKLET =
-	"javascript:(function(){try{var t=localStorage.getItem('token');if(!t){alert('No Plaud token found on this page. Make sure you are signed in to Plaud in this tab, then click the bookmark again.');return;}t=t.replace(/^bearer /i,'');prompt('Plaud token captured. Select all, copy, then paste it into the token field in Obsidian settings:',t);}catch(e){alert('Could not read the Plaud token: '+e);}})()";
+	"javascript:(function(){try{var h=location.hostname.toLowerCase();if(h!=='plaud.ai'&&h.slice(-9)!=='.plaud.ai'){alert('Open this on a Plaud tab (web.plaud.ai) after signing in, then click the bookmark.');return;}var t=localStorage.getItem('token');if(!t){alert('No Plaud token found on this page. Make sure you are signed in to Plaud in this tab, then click the bookmark again.');return;}t=t.replace(/^bearer /i,'');prompt('Plaud token captured. Select all, copy, then paste it into the token field in Obsidian settings:',t);}catch(e){alert('Could not read the Plaud token: '+e);}})()";
 
 // Standalone HTML page opened in the system browser for one-time bookmark
 // setup. It offers the sign-in bookmarklet as a draggable link so a
@@ -3161,7 +3161,7 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 		this.addToggleRow(
 			containerEl,
 			"Enable automatic sync",
-			"Off by default. Runs a background import on a schedule, unattended and never prompting. It uses your default import options: new recordings are imported, and a recording you changed in Plaud (edited speaker names, corrected transcript, or finished processing) is re-imported. IMPORTANT: a re-import OVERWRITES that note and its downloaded artifacts with Plaud's current version, so edits you made to a synced note or its attachment files are lost on the next change. Only recordings that actually changed are touched; unchanged notes are never modified. Desktop only, and the ~24 hour token means the background job pauses for reconnection roughly daily.",
+			"Off by default. Runs a background import on a schedule, unattended and never prompting. It uses your default import options: new recordings are imported, and a recording you changed in Plaud (edited speaker names, corrected transcript, or finished processing) is re-imported. IMPORTANT: a re-import OVERWRITES that note and its downloaded artifacts with Plaud's current version, so edits you made to a synced note or its attachment files are lost on the next change. Only recordings that actually changed are touched; unchanged notes are never modified. Desktop only. With the long-lived session token the background job runs for months between sign-ins, pausing for reconnection only when the token finally expires (about yearly).",
 			"autoSyncEnabled",
 		);
 		this.addDropdownRow(
@@ -4273,7 +4273,7 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 				items: [
 					{
 						name: "Enable automatic sync",
-						desc: "Off by default. Runs a background import on a schedule, unattended and never prompting. It uses your default import options: new recordings are imported, and a recording you changed in Plaud (edited speaker names, corrected transcript, or finished processing) is re-imported. IMPORTANT: a re-import OVERWRITES that note and its downloaded artifacts with Plaud's current version, so edits you made to a synced note or its attachment files are lost on the next change. Only recordings that actually changed are touched; unchanged notes are never modified. Desktop only, and the ~24 hour token means the background job pauses for reconnection roughly daily.",
+						desc: "Off by default. Runs a background import on a schedule, unattended and never prompting. It uses your default import options: new recordings are imported, and a recording you changed in Plaud (edited speaker names, corrected transcript, or finished processing) is re-imported. IMPORTANT: a re-import OVERWRITES that note and its downloaded artifacts with Plaud's current version, so edits you made to a synced note or its attachment files are lost on the next change. Only recordings that actually changed are touched; unchanged notes are never modified. Desktop only. With the long-lived session token the background job runs for months between sign-ins, pausing for reconnection only when the token finally expires (about yearly).",
 						control: { type: "toggle", key: "autoSyncEnabled" },
 					},
 					{

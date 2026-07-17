@@ -127,6 +127,15 @@ describe('isUsableUserToken (capture guard)', () => {
 		expect(isUsableUserToken('eyJ-only-one-segment', NOW_MS)).toBe(false);
 	});
 
+	it('rejects a valid JWT embedded in a longer string (exact three segments only)', () => {
+		// The parser splits on '.' and requires exactly three base64url segments,
+		// so a trailing suffix (or any non-base64url character) is rejected rather
+		// than having an inner JWT plucked out and stored.
+		expect(isUsableUserToken(`${LONG_LIVED_TOKEN} trailing`, NOW_MS)).toBe(false);
+		expect(isUsableUserToken(`prefix ${LONG_LIVED_TOKEN}`, NOW_MS)).toBe(false);
+		expect(isUsableUserToken(`${LONG_LIVED_TOKEN}.extra`, NOW_MS)).toBe(false);
+	});
+
 	it('defaults nowMs to the current time when omitted', () => {
 		// Build fixtures relative to the real clock so the assertion never drifts
 		// into failure at a fixed calendar date.
