@@ -190,6 +190,11 @@ interface SessionLike {
 }
 interface WebContentsLike {
 	executeJavaScript(code: string): Promise<unknown>;
+	// EventEmitter surface, forwarded synchronously to the real main-process
+	// webContents by the remote proxy. Used to strip the host's will-navigate
+	// listener from this plugin-owned window (see start()).
+	listenerCount?(eventName: string): number;
+	removeAllListeners?(eventName: string): unknown;
 	// Deny/allow popups and new windows the loaded page requests. Present on real
 	// Electron builds; guarded at the call site. We deny all: the sign-in only
 	// needs the main frame's own API call, never a popup, and the Plaud web app
@@ -346,11 +351,45 @@ class PlaudLoginSession {
 			return;
 		}
 
+		const contents = this.win.webContents;
+
+		// Obsidian 1.13+ attaches a main-process will-navigate listener to every
+		// top-level window. It cancels any navigation off Obsidian's own app://
+		// origin and reroutes the URL to shell.openExternal, so Plaud's own login
+		// redirect (web.plaud.ai -> /login) opened as a stray tab in the user's
+		// default browser. Strip that listener from THIS window only; the page
+		// then navigates in-window like a normal browser window. Safe to call on
+		// older Obsidian builds without the listener (count is simply 0). Remote
+		// method calls execute synchronously in the main process, and the
+		// listener is attached during the BrowserWindow constructor
+		// (web-contents-created), so this cannot race the attach. Verified live
+		// against Obsidian 1.13.2 on 2026-07-17: with the listener a page
+		// navigation logs "Opening URL:" in the main process and opens the
+		// default browser; with it removed the same navigation stays in-window.
+		try {
+			if (typeof contents.removeAllListeners !== 'function') {
+				throw new Error('webContents.removeAllListeners unavailable');
+			}
+			const before = contents.listenerCount?.('will-navigate') ?? null;
+			contents.removeAllListeners('will-navigate');
+			const after = contents.listenerCount?.('will-navigate') ?? null;
+			this.note('host navigation guard removed', 'note', { before, after });
+			if (after !== null && after !== 0) {
+				throw new Error(`removal incomplete, ${String(after)} listener(s) remain`);
+			}
+		} catch (err) {
+			this.note(`could not remove host navigation guard: ${String(err)}`, 'error');
+			// Fail closed: loading the page with the guard attached would spray
+			// sign-in URLs into the user's default browser. settle() closes the
+			// window.
+			this.settle(null);
+			return;
+		}
+
 		// Deny every popup / new window the page requests, BEFORE loading it. The
 		// Plaud web app fires window.open on load (feedback widget, analytics, an
-		// auth-redirect popup); Obsidian routes those to the system browser, which
-		// spawned stray tabs. We only need the main frame's own API call.
-		const contents = this.win.webContents;
+		// auth-redirect popup); without a deny handler the host routes those to
+		// the system browser. We only need the main frame's own API call.
 		if (typeof contents.setWindowOpenHandler === 'function') {
 			try {
 				// The deny must reach Electron SYNCHRONOUSLY in the main process. A
@@ -397,6 +436,14 @@ class PlaudLoginSession {
 				return;
 			}
 			const contents = this.win.webContents;
+			// Re-strip the host's navigation guard as defense in depth. Nothing
+			// re-attaches it on 1.13 (isSecured guard in the host), but a 1s no-op
+			// is cheap insurance against future host changes.
+			try {
+				contents.removeAllListeners?.('will-navigate');
+			} catch {
+				// Window mid-teardown; the 'closed' handler settles the session.
+			}
 			// Keep the in-page hook installed as a fallback to the session-level
 			// capture. Idempotent; a full navigation wipes the patched fetch.
 			try {
