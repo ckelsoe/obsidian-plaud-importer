@@ -219,6 +219,11 @@ interface BrowserWindowConstructor {
 interface ElectronRemoteLike {
 	session?: { fromPartition(partition: string): SessionLike };
 	BrowserWindow?: BrowserWindowConstructor;
+	// Wraps a constant so a main-process API sees it as a function whose return
+	// value is available SYNCHRONOUSLY. A plain renderer callback crosses the
+	// remote bridge asynchronously, so its return value never reaches the
+	// main-process caller.
+	createFunctionWithReturnValue?<T>(this: void, returnValue: T): () => T;
 }
 interface ElectronLike {
 	remote?: ElectronRemoteLike;
@@ -317,7 +322,8 @@ class PlaudLoginSession {
 		// authenticated request the web app makes is recorded automatically.
 		this.armSessionCapture();
 
-		const BrowserWindow = requireElectron()?.remote?.BrowserWindow;
+		const remote = requireElectron()?.remote;
+		const BrowserWindow = remote?.BrowserWindow;
 		if (BrowserWindow === undefined) {
 			this.note('BrowserWindow unavailable; sign-in window cannot open', 'error');
 			this.settle(null);
@@ -347,7 +353,21 @@ class PlaudLoginSession {
 		const contents = this.win.webContents;
 		if (typeof contents.setWindowOpenHandler === 'function') {
 			try {
-				contents.setWindowOpenHandler(() => ({ action: 'deny' }));
+				// The deny must reach Electron SYNCHRONOUSLY in the main process. A
+				// plain renderer callback crosses the remote bridge asynchronously,
+				// so its return value is lost and every popup escapes to the system
+				// browser (the stray-tab defect). createFunctionWithReturnValue
+				// serializes the constant deny into the main process; the plain
+				// callback remains only as a last resort on builds without it.
+				const makeSyncReturn = remote?.createFunctionWithReturnValue;
+				if (typeof makeSyncReturn === 'function') {
+					contents.setWindowOpenHandler(
+						makeSyncReturn({ action: 'deny' as const }),
+					);
+				} else {
+					this.note('createFunctionWithReturnValue unavailable; popup deny may not hold', 'error');
+					contents.setWindowOpenHandler(() => ({ action: 'deny' }));
+				}
 			} catch (err) {
 				this.note(`could not install window-open handler: ${String(err)}`, 'error');
 			}
