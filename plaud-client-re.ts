@@ -995,10 +995,21 @@ export class ReverseEngineeredPlaudClient implements PlaudClient {
 					message: `in-band error: status=${inBand.status} msg=${inBand.msg}`,
 				});
 			}
-			// Token-expiry codes route to the re-login remediation. -419
-			// "workspace token expired" is the observed expiry code; the
+			// Token-death codes route to the re-login remediation. -419
+			// "workspace token expired" is the observed WT-expiry code; the
 			// /expired/i guard also catches sibling codes worded the same way.
-			if (inBand.status === -419 || /expired/i.test(inBand.msg)) {
+			// -3900 "invalid auth header" is what a DEAD long-lived user token
+			// returns (HTTP 200, negative in-band status): on a previously good
+			// token it means the token died, which for our single stored
+			// credential is the ~yearly re-auth trigger, so route it to
+			// pause + Reconnect too. (-3901 "token type does not match parse mode"
+			// is a header/client mismatch, not token death; it stays an api-error
+			// below since the plugin derives app-platform from the token itself.)
+			if (
+				inBand.status === -419 ||
+				inBand.status === -3900 ||
+				/expired/i.test(inBand.msg)
+			) {
 				throw new PlaudAuthError(
 					'token_rejected',
 					`Plaud rejected the token on ${endpoint} (status ${inBand.status}: ${inBand.msg})`,

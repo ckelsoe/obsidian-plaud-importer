@@ -11,20 +11,24 @@
 // against the <webview> tag for exactly these input/lifecycle bugs. A real
 // BrowserWindow is the render path that consistently works.
 //
-// Capture strategy (two layers, both keyed on the live request, NOT storage):
-//  1. Primary: an Electron session `webRequest.onSendHeaders` listener on the
-//     window's partition records the Authorization header of Plaud's own API
-//     calls. No in-page injection, no timing race — the first authenticated
-//     request (the library load) is captured automatically.
-//  2. Fallback: an injected fetch/XHR hook records the same header from inside
-//     the page, read back by polling.
+// Capture strategy: read the long-lived user token from the sign-in window's
+// own `localStorage`. Plaud's web app persists it under the `token` key on
+// web.plaud.ai (the origin this window loads), with a ~300-day life, and sends
+// it as `Authorization: Bearer <token>` on every data call. We poll
+// `localStorage.getItem('token')` via `executeJavaScript` and accept a value
+// only once its decoded payload passes the capture guard (client_id + a still
+// future exp; see plaud-token.ts). That guard, not the key name, is what keeps
+// a neighboring profile/ID JWT (no `exp`) or a stale expired token from ever
+// being stored.
 //
-// Storage scraping is deliberately NOT used: Plaud stores no usable API token in
-// localStorage (it is derived at request time), so the only reliable source is
-// the Authorization header on a real request.
+// A session-level `webRequest.onSendHeaders` listener still records the paired
+// refresh token (typ WRT) so the (now inert for a long-lived token) silent
+// refresh path and the reconnect-routing heuristic keep working until that
+// subsystem is removed. It no longer sources the STORED credential.
 
 import { App, Platform } from 'obsidian';
 import { NoopDebugLogger, type DebugLogger } from './debug-logger';
+import { isUsableUserToken } from './plaud-token';
 
 // Load the same web client the data API expects. The token is platform-typed:
 // a token minted by app.plaud.ai is parsed in a different mode by /file/simple/web
@@ -84,67 +88,23 @@ export function isRefreshToken(value: string): boolean {
 	return jwtTyp(value) === REFRESH_TOKEN_TYP;
 }
 
-// Injected as a fallback when the session-level capture is unavailable.
-// Monkey-patches fetch and XMLHttpRequest to record the Authorization header
-// the page sends, exposing it as window.__pldAuth.
-const HOOK_JS = `(() => {
-	if (window.__pldAuthHook) { return 'already'; }
-	window.__pldAuthHook = true;
-	window.__pldAuth = null;
-	function typOf(v) {
-		try {
-			var jwt = v.replace(/^bearer\\s+/i, '').match(/eyJ[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+/);
-			if (!jwt) { return null; }
-			var seg = jwt[0].split('.')[0].replace(/-/g, '+').replace(/_/g, '/');
-			seg += '='.repeat((4 - seg.length % 4) % 4);
-			var header = JSON.parse(atob(seg));
-			return header && header.typ;
-		} catch (e) { return null; }
-	}
-	function remember(v) {
-		// Only the workspace ACCESS token (typ WT) works on the data API; the
-		// refresh token (WRT) appears first during login and must be ignored.
-		if (typeof v === 'string' && typOf(v) === 'WT') {
-			window.__pldAuth = v;
-		}
-	}
-	try {
-		var origFetch = window.fetch;
-		window.fetch = function (input, init) {
-			try {
-				var h = init && init.headers;
-				if (h) {
-					if (typeof Headers !== 'undefined' && h instanceof Headers) { remember(h.get('authorization')); }
-					else if (Array.isArray(h)) { for (var i = 0; i < h.length; i++) { if (h[i] && /^authorization$/i.test(h[i][0])) { remember(h[i][1]); } } }
-					else { remember(h.Authorization || h.authorization); }
-				}
-				if (input && input.headers && typeof input.headers.get === 'function') { remember(input.headers.get('authorization')); }
-			} catch (e) {}
-			return origFetch.apply(this, arguments);
-		};
-		var origSet = XMLHttpRequest.prototype.setRequestHeader;
-		XMLHttpRequest.prototype.setRequestHeader = function (k, v) {
-			try { if (/^authorization$/i.test(k)) { remember(v); } } catch (e) {}
-			return origSet.apply(this, arguments);
-		};
-	} catch (e) {}
-	return 'hooked';
-})()`;
-
-// Reads the fallback-captured header and the regional API host from the page.
+// Reads the long-lived user token and the regional API host from the page's
+// own localStorage. `getItem` returns the raw stored string (no JSON-quote
+// stripping needed), which the plugin then validates with the capture guard.
 const PROBE_JS = `(() => {
 	try {
-		var authHeader = (typeof window.__pldAuth === 'string' && window.__pldAuth) ? window.__pldAuth : null;
+		var token = null;
+		try { token = localStorage.getItem('token'); } catch (e) {}
 		var domain = null;
 		try { domain = localStorage.getItem('pld_plaud_user_api_domain'); } catch (e) {}
-		return JSON.stringify({ token: authHeader, domain: domain, href: location.href });
+		return JSON.stringify({ token: token, domain: domain, href: location.href });
 	} catch (e) {
 		return JSON.stringify({ error: String(e) });
 	}
 })()`;
 
 export interface PlaudLoginResult {
-	/** Authorization header value the web app sent (may carry a "bearer " prefix). */
+	/** The long-lived user token read from the window's localStorage. */
 	readonly token: string;
 	/** Regional API origin if discoverable, else null. */
 	readonly apiBaseUrl: string | null;
@@ -296,11 +256,9 @@ class PlaudLoginSession {
 	private win: BrowserWindowLike | null = null;
 	private pollHandle: number | null = null;
 	private settled = false;
-	// Authorization header captured by the session-level listener (primary path).
-	private capturedAuth: string | null = null;
 	// The paired refresh token (typ WRT) seen during login, kept for the silent
-	// refresh path. It flies before the WT, so it is set by the time the WT
-	// arrives and the session settles.
+	// refresh path and the reconnect-routing heuristic. It flies during login,
+	// so it is set by the time the localStorage token read settles the session.
 	private capturedRefresh: string | null = null;
 	private webRequestSession: SessionLike | null = null;
 
@@ -377,41 +335,25 @@ class PlaudLoginSession {
 				return;
 			}
 			const contents = this.win.webContents;
-			// Keep the in-page hook installed as a fallback to the session-level
-			// capture. Idempotent; a full navigation wipes the patched fetch.
-			try {
-				await contents.executeJavaScript(HOOK_JS);
-			} catch {
-				// Page mid-navigation or session capture is the primary path.
-			}
 			let probe: ProbeResult | null = null;
 			try {
 				probe = this.parseProbe(await contents.executeJavaScript(PROBE_JS));
 			} catch {
 				// Page mid-navigation; try again next tick.
 			}
-			// Prefer the session-captured header; fall back to the in-page hook.
 			const token =
-				this.capturedAuth ??
-				(typeof probe?.token === 'string' && probe.token.length > 0
-					? probe.token
-					: null);
+				typeof probe?.token === 'string' && probe.token.trim().length > 0
+					? probe.token.trim()
+					: null;
 			const apiBaseUrl = normalizeApiDomain(probe?.domain);
+			// The capture guard is the gate: it accepts a live long-lived user
+			// token (client_id + future exp) and rejects the neighboring profile/ID
+			// JWT and any already-expired token still sitting in localStorage.
+			const usable = token !== null && isUsableUserToken(token);
 			if (this.debugLogger.enabled) {
-				this.note('probe', 'note', {
-					href: probe?.href,
-					captured: token !== null,
-					via:
-						this.capturedAuth !== null
-							? 'session'
-							: probe?.token
-								? 'page-hook'
-								: 'none',
-				});
+				this.note('probe', 'note', { href: probe?.href, captured: usable });
 			}
-			// Defense in depth: both capture paths already filter to the access
-			// token, but re-check here so a refresh token can never be stored.
-			if (token !== null && isAccessToken(token) && !this.settled) {
+			if (usable && !this.settled) {
 				this.captureToken(token, apiBaseUrl);
 			}
 		};
@@ -420,13 +362,14 @@ class PlaudLoginSession {
 	}
 
 	private captureToken(token: string, apiBaseUrl: string | null): void {
-		const value = token.trim();
+		// Store the bare token; the web app persists it as `bearer eyJ…`, and the
+		// data client prepends its own scheme, so strip any leading `bearer `.
+		const value = token.trim().replace(/^bearer\s+/i, '');
 		if (value.length === 0) {
 			return;
 		}
 		this.note('token captured', 'note', {
 			apiBaseUrl,
-			via: this.capturedAuth !== null ? 'session' : 'page-hook',
 			refreshTokenCaptured: this.capturedRefresh !== null,
 		});
 		this.settle({
@@ -477,14 +420,11 @@ class PlaudLoginSession {
 				if (typeof auth !== 'string') {
 					return;
 				}
-				// Only the workspace ACCESS token (typ WT) works on the data API;
-				// storing the refresh token (WRT) here is what produced
-				// `-3901 "token type does not match parse mode"`. But we DO keep the
-				// WRT separately for the silent-refresh path (plaud-refresh.ts),
-				// where it is a candidate credential, not a data-API token.
-				if (isAccessToken(auth)) {
-					this.capturedAuth = auth;
-				} else if (isRefreshToken(auth)) {
+				// The STORED credential is now the long-lived user token read from
+				// localStorage (see the poll). Here we only keep the paired refresh
+				// token (typ WRT) for the silent-refresh path (inert for a
+				// long-lived token) and the reconnect-routing heuristic in main.ts.
+				if (isRefreshToken(auth)) {
 					this.capturedRefresh = auth;
 				}
 			});
