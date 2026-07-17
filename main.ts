@@ -1835,6 +1835,11 @@ export default class PlaudImporterPlugin extends Plugin {
 			this.logAutoSync("net refresh skipped: no stored access token");
 			return false;
 		}
+		// Snapshot the credential the refresh is renewing. applyRefreshedToken
+		// writes its result ONLY if this exact credential is still stored when the
+		// network round-trip returns, so a concurrent sign-out, paste, deep-link,
+		// or another refresh cannot be silently overwritten by this stale result.
+		const startingSecretId = this.settings.secretId;
 		const result = await performNetRefresh({
 			currentToken: token,
 			baseUrl: this.settings.apiBaseUrl,
@@ -1849,6 +1854,7 @@ export default class PlaudImporterPlugin extends Plugin {
 			result.refreshToken,
 			result.apiBaseUrl,
 			reason,
+			{ token, secretId: startingSecretId },
 		);
 	}
 
@@ -1857,12 +1863,22 @@ export default class PlaudImporterPlugin extends Plugin {
 	 * candidate decodes as a fresh workspace token (typ WT, future exp); a
 	 * non-WT or already-expired value is rejected and nothing is written, so a
 	 * failed refresh can never make things worse than the current stored token.
+	 *
+	 * `startedFrom` is the credential the refresh was renewing (captured before
+	 * the network round-trip). The write is applied only if that exact credential
+	 * is still stored, so a concurrent sign-out (token cleared), paste/deep-link
+	 * (long-lived or a different account's token), or another refresh cannot be
+	 * silently overwritten by this now-stale result. When the credential changed,
+	 * the current one is kept and the return reports whether the session is still
+	 * healthy (a usable token is stored), so the reactive caller does not pause a
+	 * session that a concurrent capture just made good.
 	 */
 	private async applyRefreshedToken(
 		candidate: string,
 		refreshToken: string | null,
 		apiBaseUrl: string | null,
 		reason: "scheduled" | "reactive" | "manual",
+		startedFrom: { token: string; secretId: string },
 	): Promise<boolean> {
 		if (
 			!isAccessToken(candidate) ||
@@ -1872,6 +1888,19 @@ export default class PlaudImporterPlugin extends Plugin {
 				`session refresh (${reason}, direct) produced a token that is not a fresh WT; keeping existing`,
 			);
 			return false;
+		}
+		// Optimistic-concurrency check at write time. The refresh does not hold a
+		// lock across its network round-trip, and the capture paths
+		// (storeAccessToken, clearSignIn) do not take the refresh gate, so the
+		// stored credential can change while a refresh is in flight. Only write if
+		// it is still exactly what this refresh started from.
+		const stored = this.currentAccessToken();
+		if (stored !== startedFrom.token || this.settings.secretId !== startedFrom.secretId) {
+			const healthy = stored !== null && isUsableUserToken(stored);
+			this.logAutoSync(
+				`session refresh (${reason}, direct) not applied: the stored credential changed mid-refresh; keeping the current one (healthy=${healthy})`,
+			);
+			return healthy;
 		}
 		const token = candidate.trim().replace(/^bearer\s+/i, "");
 		// Update the active secret in place (keeps a user's chosen secret slot),
