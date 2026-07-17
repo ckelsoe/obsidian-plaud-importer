@@ -4,6 +4,8 @@ All notable changes to Plaud Importer will be documented in this file.
 
 ## [Unreleased]
 
+## [0.30.3] - 2026-07-17
+
 ### Fixed
 
 - **Email sign-in truly no longer opens plaud.ai in your web browser.** The 0.30.2 fix hardened the popup blocker, but the real leak turned out to be different: Obsidian 1.13 (which auto-installed in late June) began rerouting every page navigation inside plugin windows to your default browser, so when Plaud's site redirected itself to its login page, that redirect landed in your browser as a stray tab. The sign-in window now keeps its navigation to itself. Verified end to end against Obsidian 1.13.2: the login redirect stays inside the in-app window and nothing opens externally. If the plugin ever cannot apply this protection, it refuses to open the sign-in window rather than leak sign-in URLs to your browser.
