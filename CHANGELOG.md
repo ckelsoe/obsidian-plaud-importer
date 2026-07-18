@@ -4,6 +4,8 @@ All notable changes to Plaud Importer will be documented in this file.
 
 ## [Unreleased]
 
+## [0.32.0] - 2026-07-18
+
 ### Removed
 
 - **The daily background session renewal machinery is gone.** Since 0.31.0 your sign-in captures Plaud's long-lived account token, which stays valid for months and needs no renewal, so the old 24-hour refresh subsystem (the background timers, the retry backoff, the "Refresh session now" command, and the "Keep the session alive automatically" setting) had nothing left to do and has been removed. When your session eventually lapses, the same one-click Reconnect prompt as before signs you back in. The "Test connection" button in settings remains the way to check session health.
