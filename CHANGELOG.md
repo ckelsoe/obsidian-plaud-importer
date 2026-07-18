@@ -4,6 +4,10 @@ All notable changes to Plaud Importer will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Sending the token back through the bookmarklet link now finishes the reconnect properly.** During a browser reconnect, returning your token via the bookmarklet's send-to-Obsidian link stored it but left the job half done: paused background sync stayed paused until its next check, any retried action never ran, and the reconnect window stayed open. The link now completes the reconnect exactly like the Paste token button: sync resumes immediately, the retried action runs, and the window closes on its own. A token sent by link outside of a reconnect also resumes paused sync now.
+
 ## [0.32.0] - 2026-07-18
 
 ### Removed

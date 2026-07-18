@@ -97,6 +97,15 @@ const PLAUD_WEB_URL = "https://web.plaud.ai";
 // Explanatory note shown under the "Sign in" heading. Held in a const so it can
 // name Plaud/Google/Apple plainly: the sentence-case lint only inspects string
 // literals written directly at a setText/createEl call, not a referenced const.
+// Deep-link result notices. Held in consts because the strings are shown from
+// two code paths (during a browser reconnect and standalone) and must stay
+// identical; built as variables so the sentence-case lint, which only inspects
+// literals at the call site, accepts the product name mid-sentence.
+const DEEP_LINK_SAVED_NOTICE =
+	"Plaud token received from your browser and saved.";
+const DEEP_LINK_BAD_TOKEN_NOTICE =
+	"Plaud sign-in link did not carry a usable token. In your browser, sign in to Plaud before clicking the bookmarklet, then try again.";
+
 const SIGN_IN_NOTE =
 	"Plaud has no official API, so this plugin relies on their internal one. That makes sign-in fragile, and it may stop working when Plaud changes that internal API. We expect this whole process to get much simpler once Plaud releases an official API. There are two ways to sign in, depending on how you log in to Plaud. Use 'Sign in with email' if you log in with an email address and password. Use 'Sign in with Google or Apple' if you use single sign-on (SSO) through a Google or Apple account. Either way your session now lasts about a year, so you rarely need to sign in again, and this is the same for both account types. When the session finally lapses the plugin shows a one-click Reconnect that reopens the sign-in matching your account.";
 
@@ -659,6 +668,19 @@ export default class PlaudImporterPlugin extends Plugin {
 	// entry point (settings, the auth-pause notice, the backfill retry), so
 	// stacked stale notices cannot launch clobbering capture sessions.
 	private reauthInFlight = false;
+	// The browser-reconnect flow currently awaiting a token, if any. A token can
+	// come back through the modal's paste button OR the obsidian:// deep link;
+	// deliveryInFlight serializes those channels per flow (the second one
+	// no-ops instead of starting a concurrent token store), and completion is
+	// keyed to this exact object so a delivery that outlives a cancelled flow
+	// can never complete a newer one. Null when no browser reconnect is open;
+	// cleared by the modal's onClose on every path (completion, cancel,
+	// dismiss) and by onunload.
+	private browserReconnect: {
+		modal: Modal;
+		onReconnected?: () => unknown;
+		deliveryInFlight: boolean;
+	} | null = null;
 	// DEPRECATED one-time #52 repair: guards against a double-invoke running two
 	// bulk vault scans at once. REMOVE with the repair command.
 	private repairInFlight = false;
@@ -848,6 +870,21 @@ export default class PlaudImporterPlugin extends Plugin {
 		if (this.autoSyncFirstRunTimeoutId !== undefined) {
 			window.clearTimeout(this.autoSyncFirstRunTimeoutId);
 			this.autoSyncFirstRunTimeoutId = undefined;
+		}
+		// Close any waiting browser-reconnect modal. Plain Modal instances are
+		// not plugin-owned components, so Obsidian does not close them on
+		// unload; a stale one would stay interactive and write tokens and
+		// settings through this dead instance. Clear the state first so the
+		// modal's onClose callback (and any in-flight delivery) sees the flow
+		// as gone.
+		if (this.browserReconnect !== null) {
+			const staleModal = this.browserReconnect.modal;
+			this.browserReconnect = null;
+			try {
+				staleModal.close();
+			} catch (err) {
+				console.error("Plaud importer: failed to close reconnect modal", err);
+			}
 		}
 		// Hide any sticky action notice (e.g. an auth-pause "Reconnect") so its
 		// click handler cannot open sign-in or save settings after unload.
@@ -1779,39 +1816,109 @@ export default class PlaudImporterPlugin extends Plugin {
 	 * Guided browser sign-in for SSO (Google/Apple) reconnect. Opens the same
 	 * BrowserSignInModal the settings tab uses, but with an inline "Paste token"
 	 * action so the whole reconnect completes from the modal: it opens Plaud in
-	 * the system browser, the user runs the bookmarklet and copies the token, and
-	 * pasting stores it, resumes any paused sync, and runs the optional
-	 * onReconnected continuation (e.g. a backfill retry) so a browser reconnect
-	 * finishes the same follow-up the embedded flow does. Reuses openPlaudInBrowser
-	 * and pasteTokenFromClipboard so there is one capture path.
+	 * the system browser, the user runs the bookmarklet, and the token comes
+	 * back through the paste button OR the bookmarklet's obsidian:// deep link;
+	 * either channel stores it and runs completeBrowserReconnect (resume paused
+	 * sync, close the modal, the optional onReconnected continuation such as a
+	 * backfill retry), so a browser reconnect finishes the same follow-up the
+	 * embedded flow does. Reuses openPlaudInBrowser and pasteTokenFromClipboard
+	 * so there is one capture path.
 	 */
 	private openBrowserReconnect(onReconnected?: () => unknown): void {
 		// One sign-in surface at a time, sharing the same gate as the embedded
 		// window: two captures racing on the partition would clobber each
 		// other's token write. Held for the modal's whole lifetime and
-		// cleared when it closes; paste-success, cancel, and dismiss all route
-		// through the modal's onClose.
+		// cleared when it closes; paste-success, deep-link success, cancel, and
+		// dismiss all route through the modal's onClose.
 		if (this.reauthInFlight) {
 			new Notice("Plaud sign-in is already open.");
 			return;
 		}
 		this.reauthInFlight = true;
-		new BrowserSignInModal(
+		// Obsidian's Modal.close() runs onClose on EVERY call, and this modal
+		// can legitimately be closed twice (completion closes it, then the
+		// paste click handler's own close-on-success backstop fires after the
+		// awaited continuation returns). Only the FIRST close may release the
+		// single-flight gate: by the time a stale second close fires, a newer
+		// sign-in may own it.
+		let closeHandled = false;
+		const modal = new BrowserSignInModal(
 			this.app,
 			() => this.openPlaudInBrowser(),
 			async () => {
-				const ok = await this.pasteTokenFromClipboard();
-				if (ok && !this.disposed) {
-					new Notice("Plaud reconnected.");
-					this.resumeAutoSyncIfPaused();
-					if (onReconnected) await onReconnected();
+				// Deliver only for the flow this modal belongs to, one delivery
+				// at a time: if the deep link is mid-store for the same flow,
+				// this paste no-ops and lets that delivery finish.
+				const flow = this.browserReconnect;
+				if (flow === null || flow.modal !== modal || flow.deliveryInFlight) {
+					return false;
 				}
-				return ok;
+				flow.deliveryInFlight = true;
+				try {
+					const ok = await this.pasteTokenFromClipboard();
+					if (ok) {
+						const done = await this.completeBrowserReconnect(flow);
+						// The flow was cancelled while the store ran; the token
+						// is saved anyway, so a paused sync should still resume.
+						if (!done && !this.disposed) {
+							this.resumeAutoSyncIfPaused();
+						}
+					}
+					return ok;
+				} finally {
+					flow.deliveryInFlight = false;
+				}
 			},
 			() => {
+				if (closeHandled) {
+					return;
+				}
+				closeHandled = true;
 				this.reauthInFlight = false;
+				if (this.browserReconnect?.modal === modal) {
+					this.browserReconnect = null;
+				}
 			},
-		).open();
+		);
+		this.browserReconnect = { modal, onReconnected, deliveryInFlight: false };
+		modal.open();
+	}
+
+	/**
+	 * Follow-through for a browser reconnect whose token has just been stored,
+	 * regardless of which channel delivered it (the modal's paste button or the
+	 * obsidian:// deep link the bookmarklet fires): announce, resume any paused
+	 * sync, close the modal (which releases the single-flight gate via its
+	 * onClose), and run the optional onReconnected continuation. Runs at most
+	 * once per flow: it claims the pending state first, and only for the exact
+	 * flow the delivery started against, so a paste and a deep link landing
+	 * together follow through once and a delivery that outlives a cancelled
+	 * flow can never complete a newer one. Returns whether it ran.
+	 */
+	private async completeBrowserReconnect(
+		flow: NonNullable<PlaudImporterPlugin["browserReconnect"]>,
+	): Promise<boolean> {
+		if (this.disposed || this.browserReconnect !== flow) {
+			return false;
+		}
+		this.browserReconnect = null;
+		new Notice("Plaud reconnected.");
+		this.resumeAutoSyncIfPaused();
+		flow.modal.close();
+		if (flow.onReconnected) {
+			try {
+				await flow.onReconnected();
+			} catch (err) {
+				// The reconnect itself succeeded; only the follow-up (e.g. a
+				// backfill retry) failed. Say so instead of letting the rejection
+				// surface as an unhandled error with no context.
+				console.error("Plaud importer: post-reconnect follow-up failed", err);
+				new Notice(
+					"Plaud reconnected, but the retried action failed. Run it again manually.",
+				);
+			}
+		}
+		return true;
 	}
 
 	/**
@@ -2331,12 +2438,49 @@ export default class PlaudImporterPlugin extends Plugin {
 			new Notice("Plaud sign-in link contained no token.");
 			return;
 		}
+		// A deep link is one of the browser-reconnect return channels: when that
+		// flow is waiting, deliver against it (serialized with the paste button
+		// via deliveryInFlight) and run its full follow-through: resume, close
+		// the modal, continuation, with its "Plaud reconnected." notice
+		// (issue #75). The flow is snapshotted BEFORE the async store so a slow
+		// store can never complete a different, newer flow.
+		const flow = this.browserReconnect;
+		if (flow !== null) {
+			if (flow.deliveryInFlight) {
+				// The paste button is mid-store for this flow; let it finish.
+				return;
+			}
+			flow.deliveryInFlight = true;
+			try {
+				const ok = await this.storeAccessToken(raw);
+				if (ok) {
+					const done = await this.completeBrowserReconnect(flow);
+					if (done) {
+						return;
+					}
+					// The flow was cancelled while the store ran; the token is
+					// saved anyway, so fall through to the plain-path handling.
+				} else {
+					new Notice(DEEP_LINK_BAD_TOKEN_NOTICE);
+					return;
+				}
+			} finally {
+				flow.deliveryInFlight = false;
+			}
+			if (this.disposed) {
+				return;
+			}
+			this.resumeAutoSyncIfPaused();
+			new Notice(DEEP_LINK_SAVED_NOTICE);
+			return;
+		}
 		const ok = await this.storeAccessToken(raw);
-		new Notice(
-			ok
-				? "Plaud token received from your browser and saved."
-				: "Plaud sign-in link did not carry a usable token. In your browser, sign in to Plaud before clicking the bookmarklet, then try again.",
-		);
+		if (ok) {
+			// Outside the reconnect flow a fresh token still means the session
+			// is back; a paused auto-sync should not wait for its next trigger.
+			this.resumeAutoSyncIfPaused();
+		}
+		new Notice(ok ? DEEP_LINK_SAVED_NOTICE : DEEP_LINK_BAD_TOKEN_NOTICE);
 	}
 }
 
