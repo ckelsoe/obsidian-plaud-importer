@@ -91,12 +91,18 @@ export function isRefreshToken(value: string): boolean {
 // Reads the long-lived user token and the regional API host from the page's
 // own localStorage. `getItem` returns the raw stored string (no JSON-quote
 // stripping needed), which the plugin then validates with the capture guard.
+// The in-page hostname gate means a non-Plaud page's localStorage is never
+// even read; the plugin-side isPlaudOrigin check on the returned href stays
+// as the authoritative gate (defense in depth, both keyed on the same page).
 const PROBE_JS = `(() => {
 	try {
 		var token = null;
-		try { token = localStorage.getItem('token'); } catch (e) {}
 		var domain = null;
-		try { domain = localStorage.getItem('pld_plaud_user_api_domain'); } catch (e) {}
+		var h = String(location.hostname || '').toLowerCase().replace(/\\.$/, '');
+		if (h === 'plaud.ai' || (h.length > 9 && h.slice(-9) === '.plaud.ai')) {
+			try { token = localStorage.getItem('token'); } catch (e) {}
+			try { domain = localStorage.getItem('pld_plaud_user_api_domain'); } catch (e) {}
+		}
 		return JSON.stringify({ token: token, domain: domain, href: location.href });
 	} catch (e) {
 		return JSON.stringify({ error: String(e) });

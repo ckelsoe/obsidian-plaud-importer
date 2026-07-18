@@ -290,7 +290,7 @@ const DUPLICATE_HANDLING_DESC =
 // declarative (1.13+) and imperative (1.12) settings paths show identical text
 // and the sentence-case lint inspects one literal.
 const KEEP_SESSION_ALIVE_DESC =
-	"On by default. Renews your Plaud session in the background before its access token expires (about every 24 hours), so automatic sync and manual imports keep working without a daily reconnect. It only ever replaces the stored token after a renewal succeeds, so turning this off, or a failed renewal, simply falls back to the reconnect prompt. Use the 'Refresh session now' command to renew immediately, which also confirms the whole path works.";
+	"On by default. Kept for older short-lived sessions: it renews such a session in the background before its roughly 24-hour token expires. Sessions captured by the current sign-in use Plaud's long-lived account token (good for months), which needs no renewal, so this setting does nothing for them. Renewal only ever replaces the stored token after it succeeds, so turning this off, or a failed renewal, simply falls back to the reconnect prompt. Use the 'Refresh session now' command to check session health at any time.";
 
 // [label, template] preset buttons. All dashes, so every preset is filename-safe.
 // ISO/US/EU cover the common date orders; putting the date after {{title}} (the
@@ -521,9 +521,10 @@ interface PlaudImporterSettings {
 	autoSyncEnabled: boolean;
 	// Minutes between auto-sync ticks. Coerced to [15, 1440]; default 60.
 	autoSyncIntervalMinutes: number;
-	// Silent session refresh (Release B). When on, the plugin renews the Plaud
-	// session in the background before the ~24h access token expires, so
-	// auto-sync and imports keep working without a daily reconnect. ON by default
+	// Silent session refresh (Release B). Only meaningful for legacy short-lived
+	// (~24h WT) sessions: it renews them in the background before expiry. The
+	// current sign-in stores the long-lived user token, for which refresh is
+	// neutralized (running it would reinstate daily expiry). ON by default
 	// because it is fail-safe: the stored token is only ever replaced after a
 	// refresh succeeds; a failure falls back to the reconnect prompt.
 	keepSessionAlive: boolean;
