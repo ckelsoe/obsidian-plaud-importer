@@ -99,7 +99,8 @@ const PROBE_JS = `(() => {
 		var token = null;
 		var domain = null;
 		var h = String(location.hostname || '').toLowerCase().replace(/\\.$/, '');
-		if (h === 'plaud.ai' || (h.length > 9 && h.slice(-9) === '.plaud.ai')) {
+		var httpsOk = location.protocol === 'https:';
+		if (httpsOk && (h === 'plaud.ai' || (h.length > 9 && h.slice(-9) === '.plaud.ai'))) {
 			try { token = localStorage.getItem('token'); } catch (e) {}
 			try { domain = localStorage.getItem('pld_plaud_user_api_domain'); } catch (e) {}
 		}
@@ -569,7 +570,7 @@ class PlaudLoginSession {
 // True when the page URL is a Plaud origin (plaud.ai or a subdomain). Gates the
 // localStorage token read so a login redirect to a non-Plaud origin can never
 // have its `token` key captured.
-function isPlaudOrigin(href: string | null | undefined): boolean {
+export function isPlaudOrigin(href: string | null | undefined): boolean {
 	if (typeof href !== 'string' || href.length === 0) {
 		return false;
 	}
@@ -577,6 +578,12 @@ function isPlaudOrigin(href: string | null | undefined): boolean {
 	try {
 		parsed = new URL(href);
 	} catch {
+		return false;
+	}
+	// HTTPS only: an http page (even on a plaud.ai host) is MITM-able and the
+	// capture guard validates claims, not a signature, so a plain-http page
+	// must never be a token source.
+	if (parsed.protocol !== 'https:') {
 		return false;
 	}
 	const host = parsed.hostname.toLowerCase().replace(/\.$/, '');
