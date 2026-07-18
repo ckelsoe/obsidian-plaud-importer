@@ -174,7 +174,7 @@ export function selectAutoSyncCandidates(
 
 /**
  * In-memory auto-sync run state. `paused` short-circuits ticks after an auth
- * failure (a rejected/expired 24h token) until the user re-auths;
+ * failure (a rejected or expired session token) until the user re-auths;
  * `consecutiveTransientFailures` is available for optional backoff.
  */
 export interface AutoSyncState {
