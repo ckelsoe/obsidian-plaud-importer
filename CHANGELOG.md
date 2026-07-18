@@ -9,6 +9,18 @@ All notable changes to Plaud Importer will be documented in this file.
 - **Your Plaud session now lasts about a year instead of pausing every day.** Sign-in captures Plaud's long-lived account token (read directly from Plaud's web app after you sign in) instead of the short-lived 24-hour token the plugin used to grab. Because the long-lived token stays valid for roughly 300 days, automatic sync and imports keep working for months between sign-ins, and this applies to Google and Apple (SSO) accounts too, not just email and password. When the token finally expires (or you sign out of Plaud elsewhere), the plugin shows the same one-click Reconnect prompt as before, now expected about once a year rather than daily.
 - **The daily background session renewal no longer runs on these sessions.** The long-lived token does not expire in 24 hours, so there is nothing to renew. Running the old renewal would only replace it with a short-lived token and bring back the daily pause, so it is now switched off whenever a long-lived token is stored. "Refresh session now" simply confirms the session is healthy in that case.
 
+## [0.30.3] - 2026-07-17
+
+### Fixed
+
+- **Email sign-in truly no longer opens plaud.ai in your web browser.** The 0.30.2 fix hardened the popup blocker, but the real leak turned out to be different: Obsidian 1.13 (which auto-installed in late June) began rerouting every page navigation inside plugin windows to your default browser, so when Plaud's site redirected itself to its login page, that redirect landed in your browser as a stray tab. The sign-in window now keeps its navigation to itself. Verified end to end against Obsidian 1.13.2: the login redirect stays inside the in-app window and nothing opens externally. If the plugin ever cannot apply this protection, it refuses to open the sign-in window rather than leak sign-in URLs to your browser.
+
+## [0.30.2] - 2026-07-17
+
+### Fixed
+
+- **Email sign-in no longer also opens plaud.ai in your web browser.** The in-app sign-in window is meant to block the popups Plaud's web page fires while it loads, but the block was silently broken, so those popups escaped to your default browser as stray tabs. The block now actually holds: clicking Sign in with email opens only the in-app window. The Google and Apple sign-in flow still opens your browser, which is intentional.
+
 ## [0.30.1] - 2026-07-10
 
 ### Fixed
