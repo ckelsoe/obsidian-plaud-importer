@@ -834,6 +834,21 @@ describe('listRecordings in-band error envelopes', () => {
 		expect((err as PlaudAuthError).reason).toBe('token_rejected');
 	});
 
+	it('maps -3900 "invalid auth header" (a dead token) to a PlaudAuthError (token_rejected)', async () => {
+		// A dead long-lived user token returns HTTP 200 with status -3900. The
+		// message carries no "expired" wording, so the numeric code is what routes
+		// it to the re-auth (pause + Reconnect) path rather than a generic api-error.
+		const { fetcher } = captureFetcher(
+			ok({ status: -3900, msg: 'invalid auth header' }),
+		);
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+
+		const err = await client.listRecordings().catch((e: unknown) => e);
+		expect(err).toBeInstanceOf(PlaudAuthError);
+		expect(err).not.toBeInstanceOf(PlaudParseError);
+		expect((err as PlaudAuthError).reason).toBe('token_rejected');
+	});
+
 	it('maps -3901 "token type does not match parse mode" to a non-parse in-band PlaudApiError', async () => {
 		const { fetcher } = captureFetcher(
 			ok({ status: -3901, msg: 'token type does not match parse mode' }),

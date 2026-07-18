@@ -137,20 +137,18 @@ Use this if you log in to Plaud with **single sign-on (SSO) through a Google or 
 2. That page shows a button labeled **Plaud → Obsidian**. **Drag that button up onto your browser's bookmarks bar.** If you do not see a bookmarks bar, press **Ctrl+Shift+B** (Windows/Linux) or **Cmd+Shift+B** (Mac) to show it, then drag the button onto it.
 3. The bookmark is now saved. You will not need to repeat this step.
 
-**Each time you connect (about once a day, when the token expires):**
+**Each time you connect (about once a year, when the token finally expires):**
 
 1. Back in the plugin settings, click **Launch sign-in to capture token**. A short reminder pops up; read it and click **Open my browser now**. Plaud opens in your browser.
 2. Sign in to Plaud with Google or Apple if you are not already signed in.
-3. When your recordings are showing, **click the Plaud → Obsidian bookmark** you saved, then **open any meeting**. A small pop-up box appears with your token in it. Select the token and copy it (Ctrl+C or Cmd+C).
+3. **Click the Plaud → Obsidian bookmark** you saved. A small pop-up box appears with your token in it. Select the token and copy it (Ctrl+C or Cmd+C).
 4. Switch back to Obsidian and click **Paste token from clipboard**. The **Plaud token** status changes to **"connected."**
 
-Why open a meeting in step 3: the bookmark watches for the request your token rides on, and opening a meeting is what triggers that request. If no pop-up appears, make sure you clicked the bookmark first, then open a meeting.
+If no pop-up appears in step 3, make sure you are signed in to Plaud in that tab first, then click the bookmark again.
 
-**Starting over:** the **Clear sign-in** button signs you out and clears the stored token, so you can connect a different account or recover from a stuck state.
+**Starting over:** the **Clear sign-in** button clears the plugin's stored token and its own embedded sign-in session, so you can connect a different account or recover from a stuck state. It does not sign you out of Plaud in your normal web browser.
 
-Your sign-in token lasts about a day. When imports stop working, repeat the "each time you connect" steps to get a fresh one.
-
-Email and password sign-ins refresh silently in the background, so they rarely need this. Google and Apple sign-ins cannot: Plaud keeps the renewable part of the session in your own browser, which the plugin cannot reach, so there is nothing for it to refresh silently. That is why SSO accounts reconnect about daily. When the session lapses during background auto-sync, the pause notice's **Reconnect** button reopens this browser sign-in for you, so you do not get sent to the email window where Google and Apple do not work.
+Your sign-in token lasts about a year, so you rarely need to do this. When imports eventually stop working, repeat the "each time you connect" steps to get a fresh one. This is the same for email and password accounts and for Google and Apple accounts: both keep working for months between sign-ins. If a session lapses during background auto-sync, the pause notice's **Reconnect** button reopens the right sign-in for your account type, so an SSO account is not sent to the email window where Google and Apple logins do not work.
 
 The token is stored in Obsidian's per-vault secret storage either way. It is **never written to `data.json`** and does not travel through Obsidian Sync. Switching vaults requires re-connecting.
 

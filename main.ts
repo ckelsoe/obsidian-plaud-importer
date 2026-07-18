@@ -26,10 +26,12 @@ import {
 	isAccessToken,
 	openPlaudLogin,
 } from "./plaud-login";
+import { isUsableUserToken } from "./plaud-token";
 import {
 	computeRefreshDelay,
 	isFreshAccessToken,
 	isRefreshDue,
+	jwtTyp,
 	shouldStopProactiveRefresh,
 	REFRESH_RETRY_BACKOFF_MS,
 } from "./plaud-refresh";
@@ -88,6 +90,12 @@ import {
 // Re-running sign-in overwrites it, mirroring "replace my token".
 const CAPTURED_SECRET_ID = "plaud-importer-token";
 
+// JWT header `typ` of the 24h workspace token. The silent refresh mints one of
+// these, so it must never run against a stored long-lived user token (a
+// different `typ`): a refresh would overwrite the ~300-day credential with a
+// 24h WT and silently reinstate daily expiry. The refresh paths gate on this.
+const WORKSPACE_TOKEN_TYP = "WT";
+
 // Stable SecretStorage id for the rotating refresh token (typ WRT) captured at
 // sign-in and rotated on each silent refresh. A credential, so it lives in
 // SecretStorage, never data.json. Lowercase-alphanumeric-with-dashes so
@@ -102,18 +110,21 @@ const PLAUD_WEB_URL = "https://web.plaud.ai";
 // name Plaud/Google/Apple plainly: the sentence-case lint only inspects string
 // literals written directly at a setText/createEl call, not a referenced const.
 const SIGN_IN_NOTE =
-	"Plaud has no official API, so this plugin relies on their internal one. That makes sign-in fragile, and it may stop working when Plaud changes that internal API. We expect this whole process to get much simpler once Plaud releases an official API. There are two ways to sign in, depending on how you log in to Plaud. Use 'Sign in with email' if you log in with an email address and password. Use 'Sign in with Google or Apple' if you use single sign-on (SSO) through a Google or Apple account. Google and Apple accounts reconnect about once a day: Plaud keeps the renewable session in your own browser, not in the plugin, so the plugin cannot refresh it silently the way it can for an email and password sign-in. When it lapses the plugin shows a one-click Reconnect that reopens the browser sign-in.";
+	"Plaud has no official API, so this plugin relies on their internal one. That makes sign-in fragile, and it may stop working when Plaud changes that internal API. We expect this whole process to get much simpler once Plaud releases an official API. There are two ways to sign in, depending on how you log in to Plaud. Use 'Sign in with email' if you log in with an email address and password. Use 'Sign in with Google or Apple' if you use single sign-on (SSO) through a Google or Apple account. Either way your session now lasts about a year, so you rarely need to sign in again, and this is the same for both account types. When the session finally lapses the plugin shows a one-click Reconnect that reopens the sign-in matching your account.";
 
 // Bookmarklet for the browser sign-in flow. Run on a signed-in Plaud tab, it
-// hooks BOTH fetch and XMLHttpRequest (Plaud loads recordings via XHR, so a
-// fetch-only hook misses them), waits for a request carrying the workspace
-// access token (typ WT, not the refresh token WRT the data API rejects), and
-// shows it in a prompt() the user copies and pastes into the plugin. A copy
-// dialog is used rather than an obsidian:// redirect because launching a custom
-// protocol from a network callback (no user gesture) is blocked by browsers.
-// Kept as one line, no backslashes, so it pastes as a valid bookmark URL.
+// reads the long-lived user token straight out of the web app's localStorage
+// (`token` key) and shows it in a prompt() the user copies and pastes into the
+// plugin. No request sniffing: the token is already in localStorage once the
+// user is signed in, so there is nothing to arm or wait for. The plugin
+// validates the pasted value (capture guard: payload must carry exp and
+// client_id), so this only needs to surface the raw stored string with any
+// leading `bearer ` prefix stripped. A copy dialog is used rather than an
+// obsidian:// redirect because launching a custom protocol without a user
+// gesture is blocked by browsers. Kept as one line, no backslashes, so it
+// pastes as a valid bookmark URL.
 const SIGN_IN_BOOKMARKLET =
-	"javascript:(function(){function typ(v){try{if(!/eyJ/.test(v))return null;var s=v.replace(/^bearer /i,'').split('.')[0].replace(/-/g,'+').replace(/_/g,'/');while(s.length%4)s+='=';return JSON.parse(atob(s)).typ;}catch(e){return null;}}var done=false;function got(a){if(done||typeof a!=='string')return;if(typ(a)==='WT'){done=true;prompt('Plaud token captured. Select all, copy, then paste it into the token field in Obsidian settings:',a.replace(/^bearer /i,''));}}var of=window.fetch;window.fetch=function(i,n){try{var h=n&&n.headers;if(h){got(h.authorization||h.Authorization||(h.get&&h.get('authorization')));}}catch(e){}return of.apply(this,arguments);};var os=XMLHttpRequest.prototype.setRequestHeader;XMLHttpRequest.prototype.setRequestHeader=function(k,v){try{if(/^authorization$/i.test(k))got(v);}catch(e){}return os.apply(this,arguments);};alert('Token capture armed. Now open any recording in Plaud.');})()";
+	"javascript:(function(){try{var h=location.hostname.toLowerCase();if(h!=='plaud.ai'&&h.slice(-9)!=='.plaud.ai'){alert('Open this on a Plaud tab (web.plaud.ai) after signing in, then click the bookmark.');return;}var t=localStorage.getItem('token');if(!t){alert('No Plaud token found on this page. Make sure you are signed in to Plaud in this tab, then click the bookmark again.');return;}t=t.replace(/^bearer /i,'');prompt('Plaud token captured. Select all, copy, then paste it into the token field in Obsidian settings:',t);}catch(e){alert('Could not read the Plaud token: '+e);}})()";
 
 // Standalone HTML page opened in the system browser for one-time bookmark
 // setup. It offers the sign-in bookmarklet as a draggable link so a
@@ -140,8 +151,7 @@ function bookmarkSetupHtml(): string {
 		"<hr><p>After it is saved, each time you need to connect:</p>",
 		"<ol>",
 		"<li>Sign in to Plaud in this browser.</li>",
-		"<li>Click the bookmark you just added.</li>",
-		"<li>Open any recording. A box shows your token. Copy it.</li>",
+		"<li>Click the bookmark you just added. A box shows your token. Copy it.</li>",
 		"<li>Go back to Obsidian and click the paste button.</li>",
 		"</ol>",
 		"</body></html>",
@@ -280,7 +290,7 @@ const DUPLICATE_HANDLING_DESC =
 // declarative (1.13+) and imperative (1.12) settings paths show identical text
 // and the sentence-case lint inspects one literal.
 const KEEP_SESSION_ALIVE_DESC =
-	"On by default. Renews your Plaud session in the background before its access token expires (about every 24 hours), so automatic sync and manual imports keep working without a daily reconnect. It only ever replaces the stored token after a renewal succeeds, so turning this off, or a failed renewal, simply falls back to the reconnect prompt. Use the 'Refresh session now' command to renew immediately, which also confirms the whole path works.";
+	"On by default. Kept for older short-lived sessions: it renews such a session in the background before its roughly 24-hour token expires. Sessions captured by the current sign-in use Plaud's long-lived account token (good for months), which needs no renewal, so this setting does nothing for them. Renewal only ever replaces the stored token after it succeeds, so turning this off, or a failed renewal, simply falls back to the reconnect prompt. Use the 'Refresh session now' command to check session health at any time.";
 
 // [label, template] preset buttons. All dashes, so every preset is filename-safe.
 // ISO/US/EU cover the common date orders; putting the date after {{title}} (the
@@ -511,9 +521,10 @@ interface PlaudImporterSettings {
 	autoSyncEnabled: boolean;
 	// Minutes between auto-sync ticks. Coerced to [15, 1440]; default 60.
 	autoSyncIntervalMinutes: number;
-	// Silent session refresh (Release B). When on, the plugin renews the Plaud
-	// session in the background before the ~24h access token expires, so
-	// auto-sync and imports keep working without a daily reconnect. ON by default
+	// Silent session refresh (Release B). Only meaningful for legacy short-lived
+	// (~24h WT) sessions: it renews them in the background before expiry. The
+	// current sign-in stores the long-lived user token, for which refresh is
+	// neutralized (running it would reinstate daily expiry). ON by default
 	// because it is fail-safe: the stored token is only ever replaced after a
 	// refresh succeeds; a failure falls back to the reconnect prompt.
 	keepSessionAlive: boolean;
@@ -1773,6 +1784,18 @@ export default class PlaudImporterPlugin extends Plugin {
 		if (this.disposed || this.refreshInFlight || this.reauthInFlight) {
 			return false;
 		}
+		// Neutralized for the long-lived user token. A refresh mints a 24h WT and
+		// applyRefreshedToken would write it back, replacing the ~300-day token and
+		// silently reinstating daily expiry. Only a stored WT is refreshable, so a
+		// non-WT stored token skips the refresh (scheduled, reactive, and manual all
+		// funnel through here). The stored token stays untouched.
+		const active = this.currentAccessToken();
+		if (active !== null && jwtTyp(active) !== WORKSPACE_TOKEN_TYP) {
+			this.logAutoSync(
+				`session refresh skipped (${reason}): stored token is a long-lived user token, which needs no refresh`,
+			);
+			return false;
+		}
 		this.refreshInFlight = true;
 		// Also hold the interactive-sign-in gate: a manual "Sign in" storing its
 		// capture mid-refresh would clobber this path's token write (and vice
@@ -1813,6 +1836,11 @@ export default class PlaudImporterPlugin extends Plugin {
 			this.logAutoSync("net refresh skipped: no stored access token");
 			return false;
 		}
+		// Snapshot the credential the refresh is renewing. applyRefreshedToken
+		// writes its result ONLY if this exact credential is still stored when the
+		// network round-trip returns, so a concurrent sign-out, paste, deep-link,
+		// or another refresh cannot be silently overwritten by this stale result.
+		const startingSecretId = this.settings.secretId;
 		const result = await performNetRefresh({
 			currentToken: token,
 			baseUrl: this.settings.apiBaseUrl,
@@ -1827,6 +1855,7 @@ export default class PlaudImporterPlugin extends Plugin {
 			result.refreshToken,
 			result.apiBaseUrl,
 			reason,
+			{ token, secretId: startingSecretId },
 		);
 	}
 
@@ -1835,12 +1864,22 @@ export default class PlaudImporterPlugin extends Plugin {
 	 * candidate decodes as a fresh workspace token (typ WT, future exp); a
 	 * non-WT or already-expired value is rejected and nothing is written, so a
 	 * failed refresh can never make things worse than the current stored token.
+	 *
+	 * `startedFrom` is the credential the refresh was renewing (captured before
+	 * the network round-trip). The write is applied only if that exact credential
+	 * is still stored, so a concurrent sign-out (token cleared), paste/deep-link
+	 * (long-lived or a different account's token), or another refresh cannot be
+	 * silently overwritten by this now-stale result. When the credential changed,
+	 * the current one is kept and the return reports whether the session is still
+	 * healthy (a usable token is stored), so the reactive caller does not pause a
+	 * session that a concurrent capture just made good.
 	 */
 	private async applyRefreshedToken(
 		candidate: string,
 		refreshToken: string | null,
 		apiBaseUrl: string | null,
 		reason: "scheduled" | "reactive" | "manual",
+		startedFrom: { token: string; secretId: string },
 	): Promise<boolean> {
 		if (
 			!isAccessToken(candidate) ||
@@ -1850,6 +1889,19 @@ export default class PlaudImporterPlugin extends Plugin {
 				`session refresh (${reason}, direct) produced a token that is not a fresh WT; keeping existing`,
 			);
 			return false;
+		}
+		// Optimistic-concurrency check at write time. The refresh does not hold a
+		// lock across its network round-trip, and the capture paths
+		// (storeAccessToken, clearSignIn) do not take the refresh gate, so the
+		// stored credential can change while a refresh is in flight. Only write if
+		// it is still exactly what this refresh started from.
+		const stored = this.currentAccessToken();
+		if (stored !== startedFrom.token || this.settings.secretId !== startedFrom.secretId) {
+			const healthy = stored !== null && isUsableUserToken(stored);
+			this.logAutoSync(
+				`session refresh (${reason}, direct) not applied: the stored credential changed mid-refresh; keeping the current one (healthy=${healthy})`,
+			);
+			return healthy;
 		}
 		const token = candidate.trim().replace(/^bearer\s+/i, "");
 		// Update the active secret in place (keeps a user's chosen secret slot),
@@ -1892,6 +1944,16 @@ export default class PlaudImporterPlugin extends Plugin {
 		// Nothing to refresh proactively until a token exists; a fresh sign-in
 		// calls this again to (re)schedule.
 		if (token === null) return;
+		// A long-lived user token (typ != WT) has a ~300-day life and needs no
+		// proactive refresh; scheduling one would only risk clobbering it with a
+		// 24h WT. Do not arm the timer. tryRefreshSession also self-guards, so an
+		// already-armed timer that fires is a no-op too.
+		if (jwtTyp(token) !== WORKSPACE_TOKEN_TYP) {
+			this.logAutoSync(
+				"proactive refresh not scheduled: stored token is a long-lived user token",
+			);
+			return;
+		}
 		// An SSO/paste session (no stored WRT) that has failed the whole backoff
 		// ladder on an already-due token cannot self-heal unattended: it has no
 		// partition cookies for the windowless refresh. Stop re-arming so we do
@@ -1974,6 +2036,20 @@ export default class PlaudImporterPlugin extends Plugin {
 	private async refreshSessionCommand(): Promise<void> {
 		if (!this.client) {
 			new Notice("Plaud importer: still starting up. Try again in a moment.");
+			return;
+		}
+		// A long-lived user token (typ != WT) needs no refresh and cannot be
+		// refreshed (a refresh would clobber it with a 24h WT). Report its state
+		// directly instead of running the WT refresh path, which would return false
+		// and misfire the "could not refresh, sign in again" failure notice. A
+		// still-live token is healthy; an expired one routes to reconnect.
+		const active = this.currentAccessToken();
+		if (active !== null && jwtTyp(active) !== WORKSPACE_TOKEN_TYP) {
+			new Notice(
+				isUsableUserToken(active)
+					? "Plaud importer: your session uses a long-lived token and does not need refreshing. It stays valid for months."
+					: "Plaud importer: your Plaud session has expired. Sign in again from settings to reconnect.",
+			);
 			return;
 		}
 		new Notice("Plaud importer: refreshing your session…");
@@ -2565,7 +2641,7 @@ export default class PlaudImporterPlugin extends Plugin {
 		const ok = await this.storeAccessToken(text);
 		if (!ok) {
 			new Notice(
-				"The clipboard did not hold a valid access token. That usually means the wrong request was copied. Copy the token from the popup the bookmarklet shows, which only fires on the right one.",
+				"The clipboard did not hold a valid token. Make sure you are signed in, then click the bookmarklet and copy the token it shows.",
 			);
 		}
 		return ok;
@@ -2620,15 +2696,16 @@ export default class PlaudImporterPlugin extends Plugin {
 		}
 	}
 
-	// Validates a raw token value (a typ WT access token, optionally bearer-
+	// Validates a raw token value (the long-lived user token, optionally bearer-
 	// prefixed) and, if valid, stores it in the captured-token secret and links
-	// it. Overwrites the same secret each time, so refreshing a token never
+	// it. Overwrites the same secret each time, so replacing a token never
 	// requires creating or deleting a secret. Returns false without changing
-	// anything when the value is not a usable access token. Shared by the
-	// browser deep-link handler and the clipboard-paste button.
+	// anything when the value fails the capture guard (payload must carry a
+	// client_id and a still-future exp). Shared by the browser deep-link handler
+	// and the clipboard-paste button.
 	async storeAccessToken(rawToken: string): Promise<boolean> {
 		const token = rawToken.trim().replace(/^bearer\s+/i, "");
-		if (token.length === 0 || !isAccessToken(token)) {
+		if (token.length === 0 || !isUsableUserToken(token)) {
 			return false;
 		}
 		this.app.secretStorage.setSecret(CAPTURED_SECRET_ID, token);
@@ -2661,7 +2738,7 @@ export default class PlaudImporterPlugin extends Plugin {
 		new Notice(
 			ok
 				? "Plaud token received from your browser and saved."
-				: "Plaud sign-in link did not carry a usable access token. In your browser, open a recording before clicking the bookmarklet, then try again.",
+				: "Plaud sign-in link did not carry a usable token. In your browser, sign in to Plaud before clicking the bookmarklet, then try again.",
 		);
 	}
 }
@@ -2703,8 +2780,7 @@ class BrowserSignInModal extends Modal {
 		const ol = contentEl.createEl("ol");
 		const lines = [
 			"Sign in to Plaud if you are not already. Google, Apple, and password all work in a real browser.",
-			"Click the 'Plaud → Obsidian' bookmark on your bookmarks bar (the one you saved in step 1).",
-			"Click any meeting. A small box pops up showing your token.",
+			"Click the 'Plaud → Obsidian' bookmark on your bookmarks bar (the one you saved in step 1). A small box pops up showing your token.",
 			"Copy the token, switch back to Obsidian, and click 'Paste token from clipboard'.",
 		];
 		for (const line of lines) {
@@ -3115,7 +3191,7 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 		this.addToggleRow(
 			containerEl,
 			"Enable automatic sync",
-			"Off by default. Runs a background import on a schedule, unattended and never prompting. It uses your default import options: new recordings are imported, and a recording you changed in Plaud (edited speaker names, corrected transcript, or finished processing) is re-imported. IMPORTANT: a re-import OVERWRITES that note and its downloaded artifacts with Plaud's current version, so edits you made to a synced note or its attachment files are lost on the next change. Only recordings that actually changed are touched; unchanged notes are never modified. Desktop only, and the ~24 hour token means the background job pauses for reconnection roughly daily.",
+			"Off by default. Runs a background import on a schedule, unattended and never prompting. It uses your default import options: new recordings are imported, and a recording you changed in Plaud (edited speaker names, corrected transcript, or finished processing) is re-imported. IMPORTANT: a re-import OVERWRITES that note and its downloaded artifacts with Plaud's current version, so edits you made to a synced note or its attachment files are lost on the next change. Only recordings that actually changed are touched; unchanged notes are never modified. Desktop only. With the long-lived session token the background job runs for months between sign-ins, pausing for reconnection only when the token finally expires (about yearly).",
 			"autoSyncEnabled",
 		);
 		this.addDropdownRow(
@@ -3256,7 +3332,7 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 		const stepLines = [
 			"First time only: click 'Set up bookmark'. A web page opens. Drag the big button onto your browser's bookmarks bar (the strip near the top of the window).",
 			"Click 'Launch sign-in to capture token'. A short reminder pops up, then your browser opens.",
-			"In the browser: sign in to Plaud if needed, click the bookmark you saved, then click any meeting. A small box shows your token. Copy it.",
+			"In the browser: sign in to Plaud if needed, then click the bookmark you saved. A small box shows your token. Copy it.",
 			"Come back to Obsidian and click 'Paste token from clipboard'. Done! If the token stops working later, do steps 2 to 4 again.",
 		];
 		for (const line of stepLines) {
@@ -4227,7 +4303,7 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 				items: [
 					{
 						name: "Enable automatic sync",
-						desc: "Off by default. Runs a background import on a schedule, unattended and never prompting. It uses your default import options: new recordings are imported, and a recording you changed in Plaud (edited speaker names, corrected transcript, or finished processing) is re-imported. IMPORTANT: a re-import OVERWRITES that note and its downloaded artifacts with Plaud's current version, so edits you made to a synced note or its attachment files are lost on the next change. Only recordings that actually changed are touched; unchanged notes are never modified. Desktop only, and the ~24 hour token means the background job pauses for reconnection roughly daily.",
+						desc: "Off by default. Runs a background import on a schedule, unattended and never prompting. It uses your default import options: new recordings are imported, and a recording you changed in Plaud (edited speaker names, corrected transcript, or finished processing) is re-imported. IMPORTANT: a re-import OVERWRITES that note and its downloaded artifacts with Plaud's current version, so edits you made to a synced note or its attachment files are lost on the next change. Only recordings that actually changed are touched; unchanged notes are never modified. Desktop only. With the long-lived session token the background job runs for months between sign-ins, pausing for reconnection only when the token finally expires (about yearly).",
 						control: { type: "toggle", key: "autoSyncEnabled" },
 					},
 					{
