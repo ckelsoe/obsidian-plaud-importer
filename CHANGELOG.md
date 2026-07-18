@@ -4,6 +4,8 @@ All notable changes to Plaud Importer will be documented in this file.
 
 ## [Unreleased]
 
+## [0.31.0] - 2026-07-18
+
 ### Changed
 
 - **Your Plaud session now lasts about a year instead of pausing every day.** Sign-in captures Plaud's long-lived account token (read directly from Plaud's web app after you sign in) instead of the short-lived 24-hour token the plugin used to grab. Because the long-lived token stays valid for roughly 300 days, automatic sync and imports keep working for months between sign-ins, and this applies to Google and Apple (SSO) accounts too, not just email and password. When the token finally expires (or you sign out of Plaud elsewhere), the plugin shows the same one-click Reconnect prompt as before, now expected about once a year rather than daily.
