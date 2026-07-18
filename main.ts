@@ -680,6 +680,10 @@ export default class PlaudImporterPlugin extends Plugin {
 		modal: Modal;
 		onReconnected?: () => unknown;
 		deliveryInFlight: boolean;
+		// Idempotent gate release, shared with the modal's onClose. Exposed on
+		// the flow so completion and onunload can restore the single-flight
+		// state even when Modal.close() itself throws.
+		release: () => void;
 	} | null = null;
 	// DEPRECATED one-time #52 repair: guards against a double-invoke running two
 	// bulk vault scans at once. REMOVE with the repair command.
@@ -878,13 +882,14 @@ export default class PlaudImporterPlugin extends Plugin {
 		// modal's onClose callback (and any in-flight delivery) sees the flow
 		// as gone.
 		if (this.browserReconnect !== null) {
-			const staleModal = this.browserReconnect.modal;
+			const staleFlow = this.browserReconnect;
 			this.browserReconnect = null;
 			try {
-				staleModal.close();
+				staleFlow.modal.close();
 			} catch (err) {
 				console.error("Plaud importer: failed to close reconnect modal", err);
 			}
+			staleFlow.release();
 		}
 		// Hide any sticky action notice (e.g. an auth-pause "Reconnect") so its
 		// click handler cannot open sign-in or save settings after unload.
@@ -1842,6 +1847,16 @@ export default class PlaudImporterPlugin extends Plugin {
 		// single-flight gate: by the time a stale second close fires, a newer
 		// sign-in may own it.
 		let closeHandled = false;
+		const releaseGate = (): void => {
+			if (closeHandled) {
+				return;
+			}
+			closeHandled = true;
+			this.reauthInFlight = false;
+			if (this.browserReconnect?.modal === modal) {
+				this.browserReconnect = null;
+			}
+		};
 		const modal = new BrowserSignInModal(
 			this.app,
 			() => this.openPlaudInBrowser(),
@@ -1855,7 +1870,13 @@ export default class PlaudImporterPlugin extends Plugin {
 				}
 				flow.deliveryInFlight = true;
 				try {
-					const ok = await this.pasteTokenFromClipboard();
+					// The guard re-checks after the (possibly slow) clipboard
+					// read: if this flow was cancelled meanwhile and a newer
+					// sign-in stored its own token, the stale paste must not
+					// overwrite it.
+					const ok = await this.pasteTokenFromClipboard(
+						() => !this.disposed && this.browserReconnect === flow,
+					);
 					if (ok) {
 						const done = await this.completeBrowserReconnect(flow);
 						// The flow was cancelled while the store ran; the token
@@ -1869,19 +1890,22 @@ export default class PlaudImporterPlugin extends Plugin {
 					flow.deliveryInFlight = false;
 				}
 			},
-			() => {
-				if (closeHandled) {
-					return;
-				}
-				closeHandled = true;
-				this.reauthInFlight = false;
-				if (this.browserReconnect?.modal === modal) {
-					this.browserReconnect = null;
-				}
-			},
+			releaseGate,
 		);
-		this.browserReconnect = { modal, onReconnected, deliveryInFlight: false };
-		modal.open();
+		this.browserReconnect = {
+			modal,
+			onReconnected,
+			deliveryInFlight: false,
+			release: releaseGate,
+		};
+		try {
+			modal.open();
+		} catch (err) {
+			// A modal that failed to open can never fire onClose; restore the
+			// single-flight state here or every later sign-in would be refused.
+			console.error("Plaud importer: reconnect modal failed to open", err);
+			releaseGate();
+		}
 	}
 
 	/**
@@ -1904,7 +1928,15 @@ export default class PlaudImporterPlugin extends Plugin {
 		this.browserReconnect = null;
 		new Notice("Plaud reconnected.");
 		this.resumeAutoSyncIfPaused();
-		flow.modal.close();
+		try {
+			flow.modal.close();
+		} catch (err) {
+			console.error("Plaud importer: failed to close reconnect modal", err);
+		}
+		// close() normally releases the gate via the modal's onClose; if close
+		// threw before onClose ran, release explicitly (idempotent) so the
+		// continuation below never runs with the gate wedged.
+		flow.release();
 		if (flow.onReconnected) {
 			try {
 				await flow.onReconnected();
@@ -2336,7 +2368,14 @@ export default class PlaudImporterPlugin extends Plugin {
 	// showing the same guidance Notices the settings paste button uses. Returns
 	// true on success. Shared by the settings tab and the modal's SSO expander;
 	// the success Notice is left to each caller.
-	async pasteTokenFromClipboard(): Promise<boolean> {
+	async pasteTokenFromClipboard(
+		// Re-checked AFTER the (possibly slow) clipboard read, right before the
+		// store: a caller whose context can go stale mid-read (the reconnect
+		// modal, which may be cancelled while a newer sign-in stores its own
+		// token) passes a guard so a stale paste can never overwrite the newer
+		// credential. Callers with no such window keep the default.
+		canStore: () => boolean = () => true,
+	): Promise<boolean> {
 		let text = "";
 		try {
 			text = await navigator.clipboard.readText();
@@ -2345,6 +2384,9 @@ export default class PlaudImporterPlugin extends Plugin {
 			new Notice(
 				"Could not read the clipboard. Copy the token from the browser popup, then try again.",
 			);
+			return false;
+		}
+		if (!canStore()) {
 			return false;
 		}
 		const ok = await this.storeAccessToken(text);
