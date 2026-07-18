@@ -3,7 +3,6 @@ import {
 	isUsableUserToken,
 	readTokenClientId,
 } from '../plaud-token';
-import { jwtTyp } from '../plaud-refresh';
 
 // Build a minimal unsigned JWT from a header and payload object. The helpers
 // only read unverified claims, so an unsigned token with a dummy signature
@@ -177,19 +176,5 @@ describe('decodeJwtPayload', () => {
 
 	it('returns null for a value that is not a decodable JWT', () => {
 		expect(decodeJwtPayload('nope')).toBeNull();
-	});
-});
-
-// The refresh-neutralization predicate: main.ts gates every refresh path on
-// jwtTyp(token) === 'WT'. A long-lived user token must read as non-'WT' (so
-// refresh never runs and never clobbers it with a 24h WT), while a real
-// workspace token still reads as 'WT'.
-describe('refresh neutralization predicate (jwtTyp)', () => {
-	it('reads the long-lived user token as a non-WT typ', () => {
-		expect(jwtTyp(LONG_LIVED_TOKEN)).not.toBe('WT');
-	});
-
-	it('reads the workspace token as WT', () => {
-		expect(jwtTyp(WORKSPACE_TOKEN)).toBe('WT');
 	});
 });

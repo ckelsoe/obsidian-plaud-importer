@@ -133,7 +133,7 @@ export interface ImportRunDeps {
  *   - 'aborted': `observer.shouldAbort()` was truthy (modal closed mid-run).
  *   - 'cancelled': the user cancelled a per-file duplicate prompt.
  *   - 'auth-failed': a re-authable auth failure happened mid-batch, i.e. one
- *     where `categoryAllowsReauth` is true (a rejected/expired ~24h token, or
+ *     where `categoryAllowsReauth` is true (a rejected/expired session token, or
  *     a token that went missing). The loop stops on the FIRST such failure
  *     instead of failing every remaining recording with the same error; the
  *     modal offers inline re-auth + resume on this stop.
@@ -427,7 +427,7 @@ export async function runImport(deps: ImportRunDeps): Promise<ImportRunOutcome> 
 			);
 			const classification = classifyError(err);
 
-			// A rejected token mid-batch (an expired or revoked ~24h session) is
+			// A rejected token mid-batch (an expired or revoked session) is
 			// a batch-level terminal condition, not a per-recording failure:
 			// continuing the loop would fail every remaining recording with the
 			// same auth error and still report stop:'completed'. Stop on the

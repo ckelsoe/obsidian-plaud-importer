@@ -103,9 +103,8 @@ export function readTokenClientId(value: string): string | null {
  * a real re-auth writes a fresh token. `nowMs` is injectable for tests.
  *
  * A paired REFRESH token (typ `WRT`) is rejected outright: it also carries a
- * future `exp` and a `client_id`, but the data API `-3901`s it, and storing it
- * as the credential would also fool the refresh-neutralization guard (which
- * treats any non-`WT` token as a long-lived user token).
+ * future `exp` and a `client_id`, but the data API `-3901`s it, so storing it
+ * as the credential would strand the session on an unusable token.
  *
  * Validate the claims, never the key name.
  */

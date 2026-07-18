@@ -2166,7 +2166,7 @@ export class ImportModal extends Modal {
 	}
 
 	/**
-	 * The token was rejected mid-batch (an expired/revoked ~24h session). Show
+	 * The token was rejected mid-batch (an expired or revoked session). Show
 	 * how much completed and surface A1's inline re-auth (the Sign-in CTA and the
 	 * SSO expander). A successful sign-in does NOT auto-resume; it advances to
 	 * renderResumeReady so the user explicitly chooses to resume the unprocessed

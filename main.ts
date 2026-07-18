@@ -23,19 +23,9 @@ import { ImportModal, classifyError } from "./import-modal";
 import { BufferedDebugLogger } from "./debug-logger";
 import {
 	clearPlaudLoginSession,
-	isAccessToken,
 	openPlaudLogin,
 } from "./plaud-login";
 import { isUsableUserToken } from "./plaud-token";
-import {
-	computeRefreshDelay,
-	isFreshAccessToken,
-	isRefreshDue,
-	jwtTyp,
-	shouldStopProactiveRefresh,
-	REFRESH_RETRY_BACKOFF_MS,
-} from "./plaud-refresh";
-import { buildPartitionPost, performNetRefresh } from "./plaud-refresh-net";
 import {
 	NoteWriter,
 	DEFAULT_NOTE_NAME_TEMPLATE,
@@ -85,22 +75,20 @@ import {
 	INITIAL_AUTO_SYNC_STATE,
 	type AutoSyncState,
 } from "./auto-sync";
+import {
+	preferWindowForReconnect,
+	type SignInMethod,
+} from "./reconnect-routing";
 
 // Stable SecretStorage id for a token captured by the in-app sign-in flow.
 // Re-running sign-in overwrites it, mirroring "replace my token".
 const CAPTURED_SECRET_ID = "plaud-importer-token";
 
-// JWT header `typ` of the 24h workspace token. The silent refresh mints one of
-// these, so it must never run against a stored long-lived user token (a
-// different `typ`): a refresh would overwrite the ~300-day credential with a
-// 24h WT and silently reinstate daily expiry. The refresh paths gate on this.
-const WORKSPACE_TOKEN_TYP = "WT";
-
-// Stable SecretStorage id for the rotating refresh token (typ WRT) captured at
-// sign-in and rotated on each silent refresh. A credential, so it lives in
-// SecretStorage, never data.json. Lowercase-alphanumeric-with-dashes so
-// setSecret accepts it.
-const CAPTURED_REFRESH_SECRET_ID = "plaud-importer-refresh-token";
+// Legacy secret id for the paired refresh token (typ WRT) that pre-0.32.0
+// email sign-ins stored. The refresh subsystem is gone; the secret is only
+// ever blanked (sign-out, fresh captures) and read once as the migration
+// signal for routing Reconnect (a stored WRT means an email-window session).
+const LEGACY_REFRESH_SECRET_ID = "plaud-importer-refresh-token";
 
 // Plaud web app, opened in the system browser for the browser-based sign-in
 // flow (where Google/Apple SSO work, unlike an embedded webview).
@@ -285,12 +273,6 @@ const PRESERVE_UNKNOWN_FRONTMATTER_DESC =
 const DUPLICATE_HANDLING_NAME = "Duplicate handling for manual imports";
 const DUPLICATE_HANDLING_DESC =
 	"Controls what happens when you run Import recent recordings and a note for the recording already exists. Skip keeps your copy, overwrite replaces it, and ask each time prompts you for each one. Automatic sync ignores this and never prompts.";
-
-// Description for the silent-refresh toggle (Release B). Held in a const so the
-// declarative (1.13+) and imperative (1.12) settings paths show identical text
-// and the sentence-case lint inspects one literal.
-const KEEP_SESSION_ALIVE_DESC =
-	"On by default. Kept for older short-lived sessions: it renews such a session in the background before its roughly 24-hour token expires. Sessions captured by the current sign-in use Plaud's long-lived account token (good for months), which needs no renewal, so this setting does nothing for them. Renewal only ever replaces the stored token after it succeeds, so turning this off, or a failed renewal, simply falls back to the reconnect prompt. Use the 'Refresh session now' command to check session health at any time.";
 
 // [label, template] preset buttons. All dashes, so every preset is filename-safe.
 // ISO/US/EU cover the common date orders; putting the date after {{title}} (the
@@ -516,18 +498,18 @@ interface PlaudImporterSettings {
 	// Auto-sync (issue #5): a background timer that imports new recordings and
 	// re-imports (overwrites) changed ones on an interval, using the saved
 	// default import options. OFF by default: the connection is reverse-
-	// engineered, the ~24h token forces periodic re-auth, and a detected change
-	// OVERWRITES the note and its artifacts (Plaud wins over local edits).
+	// engineered, an expired session pauses it until a re-auth, and a detected
+	// change OVERWRITES the note and its artifacts (Plaud wins over local
+	// edits).
 	autoSyncEnabled: boolean;
 	// Minutes between auto-sync ticks. Coerced to [15, 1440]; default 60.
 	autoSyncIntervalMinutes: number;
-	// Silent session refresh (Release B). Only meaningful for legacy short-lived
-	// (~24h WT) sessions: it renews them in the background before expiry. The
-	// current sign-in stores the long-lived user token, for which refresh is
-	// neutralized (running it would reinstate daily expiry). ON by default
-	// because it is fail-safe: the stored token is only ever replaced after a
-	// refresh succeeds; a failure falls back to the reconnect prompt.
-	keepSessionAlive: boolean;
+	// How the current session was captured: the embedded email window or the
+	// browser/bookmarklet flow. Routes Reconnect to the sign-in method that can
+	// work for the account (Google/Apple cannot complete in the embedded
+	// window). Empty for sessions from before 0.32.0; those fall back to the
+	// legacy stored-WRT heuristic in reconnectPrefersWindow.
+	signInMethod: SignInMethod;
 	// Schema version for one-time settings migrations. Absent (pre-0.21.0) reads
 	// as 0. Version 1 rewrote the subfolder/note-name date templates from the old
 	// bespoke lowercase tokens to real Moment tokens (issue #30). Bumped only when
@@ -581,7 +563,7 @@ const DEFAULT_SETTINGS: PlaudImporterSettings = {
 	autoUpdatePlaudTitle: false,
 	autoSyncEnabled: false,
 	autoSyncIntervalMinutes: 60,
-	keepSessionAlive: true,
+	signInMethod: "",
 	settingsVersion: 1,
 };
 
@@ -662,15 +644,6 @@ export default class PlaudImporterPlugin extends Plugin {
 	private autoSyncIntervalId: number | undefined;
 	private autoSyncFirstRunTimeoutId: number | undefined;
 	private autoSyncState: AutoSyncState = INITIAL_AUTO_SYNC_STATE;
-	// Silent session refresh (Release B). The proactive timer fires ~5 min before
-	// the access token expires; onunload and reconcileTokenRefresh clear it.
-	private refreshTimeoutId: number | undefined;
-	// Re-entrancy guard so a scheduled, reactive, and manual refresh can never
-	// overlap and clobber each other's token write.
-	private refreshInFlight = false;
-	// Consecutive proactive-refresh failures, used only to back off the retry
-	// cadence. Reset to 0 on any success or a fresh interactive sign-in.
-	private refreshFailureStreak = 0;
 	// Single-flight coordination between the manual modal and background ticks.
 	// Two independent flags rather than one shared boolean, so the modal's
 	// open/close never clobbers a tick's in-flight state and vice versa. An
@@ -729,18 +702,6 @@ export default class PlaudImporterPlugin extends Plugin {
 			name: "Backfill version markers for auto-sync",
 			callback: () => {
 				void this.backfillVersionMarkers();
-			},
-		});
-
-		// Force one silent session refresh immediately and report the result. The
-		// validation gate for Release B: it works regardless of whether the current
-		// token is fresh, so the whole refresh path can be proven in seconds instead
-		// of waiting ~24h for a natural expiry. Also a user-facing fallback.
-		this.addCommand({
-			id: "refresh-session-now",
-			name: "Refresh session now",
-			callback: () => {
-				void this.refreshSessionCommand();
 			},
 		});
 
@@ -869,11 +830,6 @@ export default class PlaudImporterPlugin extends Plugin {
 			// The client exists now, so a scheduled tick can run. Starts the
 			// timer only when auto-sync is enabled; deferred first run is inside.
 			this.reconcileAutoSync();
-			// Schedule the silent session refresh from the stored token's expiry.
-			// Independent of auto-sync: keeping the session alive also serves
-			// manual imports. A past-due token refreshes promptly (delay clamps to
-			// the minimum), so reopening Obsidian after the token expired recovers.
-			this.reconcileTokenRefresh();
 		});
 	}
 
@@ -892,12 +848,6 @@ export default class PlaudImporterPlugin extends Plugin {
 		if (this.autoSyncFirstRunTimeoutId !== undefined) {
 			window.clearTimeout(this.autoSyncFirstRunTimeoutId);
 			this.autoSyncFirstRunTimeoutId = undefined;
-		}
-		// Clear the silent-refresh timer. An in-flight refresh checks `disposed`
-		// after its await before writing, so no token is persisted post-unload.
-		if (this.refreshTimeoutId !== undefined) {
-			window.clearTimeout(this.refreshTimeoutId);
-			this.refreshTimeoutId = undefined;
 		}
 		// Hide any sticky action notice (e.g. an auth-pause "Reconnect") so its
 		// click handler cannot open sign-in or save settings after unload.
@@ -1617,26 +1567,6 @@ export default class PlaudImporterPlugin extends Plugin {
 		} catch (err) {
 			const classification = classifyError(err);
 			const outcome = tickOutcomeForCategory(classification.category);
-			// Reactive silent refresh: an expired/rejected token may be recoverable
-			// without user action. Try one refresh before pausing. Only for
-			// token-rejected (an expired session), not not-configured (nothing to
-			// refresh from). A success clears the failure and schedules a soon retry.
-			if (
-				outcome === "auth" &&
-				classification.category === "token-rejected" &&
-				this.settings.keepSessionAlive &&
-				!this.disposed
-			) {
-				const refreshed = await this.tryRefreshSession("reactive");
-				if (refreshed && !this.disposed) {
-					this.refreshFailureStreak = 0;
-					this.autoSyncState = nextAutoSyncState(this.autoSyncState, "ok");
-					this.reconcileTokenRefresh();
-					this.scheduleFollowUpTick();
-					this.logAutoSync("tick auth failure recovered via silent refresh");
-					return;
-				}
-			}
 			this.autoSyncState = nextAutoSyncState(this.autoSyncState, outcome);
 			if (outcome === "auth") {
 				// The auth outcome covers both a rejected/expired token and a
@@ -1706,8 +1636,8 @@ export default class PlaudImporterPlugin extends Plugin {
 	/**
 	 * Schedule one soon-ish auto-sync tick (~1s), reusing the first-run timeout
 	 * slot so reconcileAutoSync() and onunload() clear it. No-op when auto-sync is
-	 * disabled. Shared by the re-auth resume and the reactive-refresh recovery so
-	 * an untracked setTimeout can never fire after disable/reschedule/unload.
+	 * disabled. Routed through one place so an untracked setTimeout can never
+	 * fire after disable/reschedule/unload.
 	 */
 	private scheduleFollowUpTick(): void {
 		if (!this.settings.autoSyncEnabled) return;
@@ -1720,353 +1650,31 @@ export default class PlaudImporterPlugin extends Plugin {
 		}, 1000);
 	}
 
-	// ---- Silent session refresh (Release B) -----------------------------
+	// ---- Reconnect routing and legacy credential cleanup ----------------
 
 	/**
-	 * Blank any stored refresh token. Called whenever the access token is
-	 * replaced WITHOUT a matching fresh refresh token, so a later silent refresh
-	 * cannot use a previous session's WRT to authenticate as, and overwrite the
-	 * new token with, the wrong account.
+	 * Blank the legacy stored refresh token (pre-0.32.0 sessions). Called on
+	 * every fresh capture and on sign-out so the legacy WRT can never masquerade
+	 * as the routing signal for a newer session.
 	 */
 	private clearStoredRefreshToken(): void {
 		try {
-			this.app.secretStorage.setSecret(CAPTURED_REFRESH_SECRET_ID, "");
+			this.app.secretStorage.setSecret(LEGACY_REFRESH_SECRET_ID, "");
 		} catch (err) {
 			console.error("Plaud importer: failed to blank refresh token", err);
 		}
 	}
 
-	/** The currently-active access token (trimmed), or null when none is stored. */
-	private currentAccessToken(): string | null {
-		if (this.settings.secretId.length === 0) return null;
-		const token = this.app.secretStorage.getSecret(this.settings.secretId);
-		return token !== null && token.trim().length > 0 ? token.trim() : null;
-	}
-
 	/**
-	 * True when a refresh token (typ WRT) is stored. The embedded-window email
-	 * sign-in captures and keeps a WRT; a browser/bookmarklet (SSO) capture never
-	 * does and blanks it (see storeAccessToken). So WRT presence is a reliable
-	 * proxy for "this session came from the embedded window, whose partition holds
-	 * the cookies the windowless refresh needs." Used to route the Reconnect
-	 * surfaces to the sign-in method that can actually work for this account.
+	 * Routes Reconnect to the sign-in surface that can re-auth this account.
+	 * The decision logic lives in reconnect-routing.ts (pure, unit-tested);
+	 * this wrapper only supplies the settings value and the legacy-secret
+	 * reader.
 	 */
-	private hasStoredRefreshToken(): boolean {
-		try {
-			const wrt = this.app.secretStorage.getSecret(CAPTURED_REFRESH_SECRET_ID);
-			return wrt !== null && wrt.trim().length > 0;
-		} catch (err) {
-			console.error("Plaud importer: failed to read refresh token", err);
-			return false;
-		}
-	}
-
-	/**
-	 * Attempt one silent session refresh via the direct, windowless path only
-	 * (POST /auth/refresh-user-token over the partition cookies, then the
-	 * workspace-token mint; see plaud-refresh-net.ts). A background refresh
-	 * NEVER opens a window: the old hidden-window fallback loaded the full
-	 * Plaud web app, whose login page leaked popup tabs into the default
-	 * browser. On failure the caller pauses and prompts the user; only a user
-	 * click ever opens the interactive sign-in window.
-	 *
-	 * FAIL-SAFE: the stored token is replaced only when the refresh yields a
-	 * fresh WT (typ WT, future exp). Any failure leaves every stored value
-	 * untouched and returns false. Never throws.
-	 *
-	 * Serialized against BOTH a concurrent silent refresh (`refreshInFlight`)
-	 * and a visible interactive sign-in (`reauthInFlight`): a refresh landing
-	 * mid-sign-in would race the interactive capture's token write.
-	 */
-	private async tryRefreshSession(
-		reason: "scheduled" | "reactive" | "manual",
-	): Promise<boolean> {
-		if (this.disposed || this.refreshInFlight || this.reauthInFlight) {
-			return false;
-		}
-		// Neutralized for the long-lived user token. A refresh mints a 24h WT and
-		// applyRefreshedToken would write it back, replacing the ~300-day token and
-		// silently reinstating daily expiry. Only a stored WT is refreshable, so a
-		// non-WT stored token skips the refresh (scheduled, reactive, and manual all
-		// funnel through here). The stored token stays untouched.
-		const active = this.currentAccessToken();
-		if (active !== null && jwtTyp(active) !== WORKSPACE_TOKEN_TYP) {
-			this.logAutoSync(
-				`session refresh skipped (${reason}): stored token is a long-lived user token, which needs no refresh`,
-			);
-			return false;
-		}
-		this.refreshInFlight = true;
-		// Also hold the interactive-sign-in gate: a manual "Sign in" storing its
-		// capture mid-refresh would clobber this path's token write (and vice
-		// versa).
-		this.reauthInFlight = true;
-		try {
-			return await this.tryNetRefresh(reason);
-		} catch (err) {
-			// A refresh bug must log, not throw into the timer or the auto-sync tick.
-			console.error("Plaud importer: silent session refresh failed", err);
-			return false;
-		} finally {
-			this.refreshInFlight = false;
-			this.reauthInFlight = false;
-		}
-	}
-
-	/**
-	 * The direct, windowless refresh. Reads `wid`/`client_id` off the stored
-	 * token, runs the two-step refresh over the partition cookie jar, and hands
-	 * the candidate WT to the shared fail-safe. Returns false (never throws)
-	 * when the session.fetch surface is missing, no token is stored, or any
-	 * step fails; the refresh is then simply a failure (no window fallback).
-	 */
-	private async tryNetRefresh(
-		reason: "scheduled" | "reactive" | "manual",
-	): Promise<boolean> {
-		const post = buildPartitionPost();
-		if (post === null) {
-			// No session.fetch on this runtime; silent refresh cannot run here.
-			this.logAutoSync(
-				"net refresh unavailable: no partition session.fetch transport (Electron remote/session/fetch missing)",
-			);
-			return false;
-		}
-		const token = this.currentAccessToken();
-		if (token === null) {
-			this.logAutoSync("net refresh skipped: no stored access token");
-			return false;
-		}
-		// Snapshot the credential the refresh is renewing. applyRefreshedToken
-		// writes its result ONLY if this exact credential is still stored when the
-		// network round-trip returns, so a concurrent sign-out, paste, deep-link,
-		// or another refresh cannot be silently overwritten by this stale result.
-		const startingSecretId = this.settings.secretId;
-		const result = await performNetRefresh({
-			currentToken: token,
-			baseUrl: this.settings.apiBaseUrl,
-			post,
-			log: (message, payload) => this.logAutoSync(message, payload),
-		});
-		if (this.disposed || result === null) {
-			return false;
-		}
-		return this.applyRefreshedToken(
-			result.token,
-			result.refreshToken,
-			result.apiBaseUrl,
-			reason,
-			{ token, secretId: startingSecretId },
+	private reconnectPrefersWindow(): boolean {
+		return preferWindowForReconnect(this.settings.signInMethod, () =>
+			this.app.secretStorage.getSecret(LEGACY_REFRESH_SECRET_ID),
 		);
-	}
-
-	/**
-	 * Fail-safe for the refresh path. Replaces the stored secrets ONLY when the
-	 * candidate decodes as a fresh workspace token (typ WT, future exp); a
-	 * non-WT or already-expired value is rejected and nothing is written, so a
-	 * failed refresh can never make things worse than the current stored token.
-	 *
-	 * `startedFrom` is the credential the refresh was renewing (captured before
-	 * the network round-trip). The write is applied only if that exact credential
-	 * is still stored, so a concurrent sign-out (token cleared), paste/deep-link
-	 * (long-lived or a different account's token), or another refresh cannot be
-	 * silently overwritten by this now-stale result. When the credential changed,
-	 * the current one is kept and the return reports whether the session is still
-	 * healthy (a usable token is stored), so the reactive caller does not pause a
-	 * session that a concurrent capture just made good.
-	 */
-	private async applyRefreshedToken(
-		candidate: string,
-		refreshToken: string | null,
-		apiBaseUrl: string | null,
-		reason: "scheduled" | "reactive" | "manual",
-		startedFrom: { token: string; secretId: string },
-	): Promise<boolean> {
-		if (
-			!isAccessToken(candidate) ||
-			!isFreshAccessToken(candidate, Date.now())
-		) {
-			this.logAutoSync(
-				`session refresh (${reason}, direct) produced a token that is not a fresh WT; keeping existing`,
-			);
-			return false;
-		}
-		// Optimistic-concurrency check at write time. The refresh does not hold a
-		// lock across its network round-trip, and the capture paths
-		// (storeAccessToken, clearSignIn) do not take the refresh gate, so the
-		// stored credential can change while a refresh is in flight. Only write if
-		// it is still exactly what this refresh started from.
-		const stored = this.currentAccessToken();
-		if (stored !== startedFrom.token || this.settings.secretId !== startedFrom.secretId) {
-			const healthy = stored !== null && isUsableUserToken(stored);
-			this.logAutoSync(
-				`session refresh (${reason}, direct) not applied: the stored credential changed mid-refresh; keeping the current one (healthy=${healthy})`,
-			);
-			return healthy;
-		}
-		const token = candidate.trim().replace(/^bearer\s+/i, "");
-		// Update the active secret in place (keeps a user's chosen secret slot),
-		// falling back to the captured-token slot when none is linked yet.
-		const targetSecretId =
-			this.settings.secretId.length > 0
-				? this.settings.secretId
-				: CAPTURED_SECRET_ID;
-		this.app.secretStorage.setSecret(targetSecretId, token);
-		this.settings.secretId = targetSecretId;
-		// Keep the paired refresh token if this refresh produced one; otherwise
-		// leave the stored one so a future attempt can still use it.
-		if (refreshToken !== null && refreshToken.trim().length > 0) {
-			this.app.secretStorage.setSecret(
-				CAPTURED_REFRESH_SECRET_ID,
-				refreshToken.trim().replace(/^bearer\s+/i, ""),
-			);
-		}
-		if (apiBaseUrl !== null) {
-			this.settings.apiBaseUrl = apiBaseUrl;
-		}
-		await this.saveSettings();
-		this.logAutoSync(`session refreshed (${reason}, direct)`);
-		return true;
-	}
-
-	/**
-	 * Start, stop, or reschedule the proactive session-refresh timer to match
-	 * settings and the stored token's expiry. Idempotent: clears the existing
-	 * timer first. No-op (and cleared) when the feature is off or no token is
-	 * stored. Called from onLayoutReady, the toggle, and after any token change.
-	 */
-	reconcileTokenRefresh(): void {
-		if (this.refreshTimeoutId !== undefined) {
-			window.clearTimeout(this.refreshTimeoutId);
-			this.refreshTimeoutId = undefined;
-		}
-		if (this.disposed || !this.settings.keepSessionAlive) return;
-		const token = this.currentAccessToken();
-		// Nothing to refresh proactively until a token exists; a fresh sign-in
-		// calls this again to (re)schedule.
-		if (token === null) return;
-		// A long-lived user token (typ != WT) has a ~300-day life and needs no
-		// proactive refresh; scheduling one would only risk clobbering it with a
-		// 24h WT. Do not arm the timer. tryRefreshSession also self-guards, so an
-		// already-armed timer that fires is a no-op too.
-		if (jwtTyp(token) !== WORKSPACE_TOKEN_TYP) {
-			this.logAutoSync(
-				"proactive refresh not scheduled: stored token is a long-lived user token",
-			);
-			return;
-		}
-		// An SSO/paste session (no stored WRT) that has failed the whole backoff
-		// ladder on an already-due token cannot self-heal unattended: it has no
-		// partition cookies for the windowless refresh. Stop re-arming so we do
-		// not hammer Plaud's rate-limited refresh endpoint hourly forever; the
-		// Reconnect notice is the recovery path. An email session (WRT present) is
-		// left retrying, since its failures may be transient. A fresh sign-in
-		// resets the streak to 0 and reschedules normally.
-		if (
-			shouldStopProactiveRefresh(
-				token,
-				this.refreshFailureStreak,
-				this.hasStoredRefreshToken(),
-				Date.now(),
-			)
-		) {
-			this.logAutoSync(
-				"proactive refresh exhausted its backoff on an unrefreshable session; awaiting reconnect",
-			);
-			return;
-		}
-		// Backoff on a failure streak, expiry-driven otherwise, and always
-		// clamped under setTimeout's 32-bit ceiling (a long-lived token used to
-		// overflow the delay and fire immediately). See plaud-refresh.ts.
-		const delay = computeRefreshDelay(
-			token,
-			this.refreshFailureStreak,
-			Date.now(),
-		);
-		this.refreshTimeoutId = window.setTimeout(() => {
-			this.refreshTimeoutId = undefined;
-			void this.runScheduledRefresh();
-		}, delay);
-		this.logAutoSync("session refresh scheduled", {
-			delayMs: delay,
-			failureStreak: this.refreshFailureStreak,
-		});
-	}
-
-	/**
-	 * The proactive-timer callback: refresh, resume any auth-paused sync on
-	 * success, then reschedule (from the new token's expiry on success, or a
-	 * backoff on failure). Skips the refresh entirely (and just re-arms) while
-	 * the stored token still has life beyond the lead window, so an early fire
-	 * never refreshes a token that does not need it. Guarded so it never runs
-	 * after unload or a disable.
-	 */
-	private async runScheduledRefresh(): Promise<void> {
-		if (this.disposed || !this.settings.keepSessionAlive) return;
-		// The timer can legitimately fire long before expiry: the schedule is
-		// clamped to REFRESH_MAX_DELAY_MS for long-lived tokens, and a backoff
-		// retry can outlive the failure that armed it (e.g. after a fresh
-		// sign-in). Refreshing a token that does not need it is what produced
-		// the spurious hourly refresh storm, so re-arm and wait instead.
-		const token = this.currentAccessToken();
-		if (token !== null && !isRefreshDue(token, Date.now())) {
-			this.refreshFailureStreak = 0;
-			this.reconcileTokenRefresh();
-			return;
-		}
-		const ok = await this.tryRefreshSession("scheduled");
-		if (this.disposed) return;
-		if (ok) {
-			this.refreshFailureStreak = 0;
-			this.resumeAutoSyncIfPaused();
-		} else {
-			this.refreshFailureStreak = Math.min(
-				this.refreshFailureStreak + 1,
-				REFRESH_RETRY_BACKOFF_MS.length,
-			);
-		}
-		this.reconcileTokenRefresh();
-	}
-
-	/**
-	 * Manual "Refresh session now" command. Forces one refresh and reports the
-	 * outcome. On success, resumes any paused sync and reschedules from the new
-	 * expiry. On failure, tells the user to sign in again if imports fail — the
-	 * stored token is never cleared by a failed refresh.
-	 */
-	private async refreshSessionCommand(): Promise<void> {
-		if (!this.client) {
-			new Notice("Plaud importer: still starting up. Try again in a moment.");
-			return;
-		}
-		// A long-lived user token (typ != WT) needs no refresh and cannot be
-		// refreshed (a refresh would clobber it with a 24h WT). Report its state
-		// directly instead of running the WT refresh path, which would return false
-		// and misfire the "could not refresh, sign in again" failure notice. A
-		// still-live token is healthy; an expired one routes to reconnect.
-		const active = this.currentAccessToken();
-		if (active !== null && jwtTyp(active) !== WORKSPACE_TOKEN_TYP) {
-			new Notice(
-				isUsableUserToken(active)
-					? "Plaud importer: your session uses a long-lived token and does not need refreshing. It stays valid for months."
-					: "Plaud importer: your Plaud session has expired. Sign in again from settings to reconnect.",
-			);
-			return;
-		}
-		new Notice("Plaud importer: refreshing your session…");
-		const ok = await this.tryRefreshSession("manual");
-		if (this.disposed) return;
-		if (ok) {
-			this.refreshFailureStreak = 0;
-			this.resumeAutoSyncIfPaused();
-			this.reconcileTokenRefresh();
-			new Notice(
-				"Plaud importer: session refreshed. Background sync and imports can keep running.",
-			);
-		} else {
-			new Notice(
-				"Plaud importer: could not refresh the session automatically. If imports start failing, sign in again from settings.",
-			);
-		}
 	}
 
 	/**
@@ -2133,13 +1741,13 @@ export default class PlaudImporterPlugin extends Plugin {
 	 * captured, so a caller (e.g. a failed command) can retry itself on success.
 	 */
 	async reconnectFromNotice(onReconnected?: () => unknown): Promise<boolean> {
-		// A session with no stored WRT came from the browser/bookmarklet (SSO)
-		// flow: Google and Apple do not complete in the embedded window, so
-		// routing it there dead-ends. Open the browser + bookmarklet + paste flow
-		// instead. That flow finishes asynchronously when the user pastes, so this
-		// returns false now; the paste handler resumes any paused sync and runs
+		// A browser/bookmarklet (SSO) session cannot re-auth in the embedded
+		// window (Google and Apple do not complete there), so routing it there
+		// dead-ends. Open the browser + bookmarklet + paste flow instead. That
+		// flow finishes asynchronously when the user pastes, so this returns
+		// false now; the paste handler resumes any paused sync and runs
 		// onReconnected (e.g. a backfill retry) itself.
-		if (!this.hasStoredRefreshToken()) {
+		if (!this.reconnectPrefersWindow()) {
 			this.openBrowserReconnect(onReconnected);
 			return false;
 		}
@@ -2179,8 +1787,8 @@ export default class PlaudImporterPlugin extends Plugin {
 	 */
 	private openBrowserReconnect(onReconnected?: () => unknown): void {
 		// One sign-in surface at a time, sharing the same gate as the embedded
-		// window and the silent refresh: two captures racing on the partition would
-		// clobber each other's token write. Held for the modal's whole lifetime and
+		// window: two captures racing on the partition would clobber each
+		// other's token write. Held for the modal's whole lifetime and
 		// cleared when it closes; paste-success, cancel, and dismiss all route
 		// through the modal's onClose.
 		if (this.reauthInFlight) {
@@ -2451,7 +2059,13 @@ export default class PlaudImporterPlugin extends Plugin {
 			typeof rawVersion === "number" && Number.isFinite(rawVersion)
 				? rawVersion
 				: 0;
-		this.settings = Object.assign({}, DEFAULT_SETTINGS, stored ?? {});
+		// 0.32.0 removed the keepSessionAlive setting with the refresh
+		// subsystem. Object.assign copies unknown stored keys through, so drop
+		// the stale key here or it rides along in data.json forever.
+		const merged: PlaudImporterSettings & { keepSessionAlive?: unknown } =
+			Object.assign({}, DEFAULT_SETTINGS, stored ?? {});
+		delete merged.keepSessionAlive;
+		this.settings = merged;
 		// Repair a blank stored output folder back to the default. The
 		// declarative control can persist an empty string; consumers expect a
 		// non-empty folder name.
@@ -2543,11 +2157,11 @@ export default class PlaudImporterPlugin extends Plugin {
 		// Wipe the stored token value(s). Obsidian's SecretStorage exposes no
 		// delete call (only set/get/list), so the secret entry itself cannot be
 		// removed; blanking the value is the most thorough removal available. The
-		// refresh token is blanked too so a cleared session cannot silently refresh.
+		// legacy refresh token is blanked too so no credential outlives sign-out.
 		for (const id of new Set([
 			this.settings.secretId,
 			CAPTURED_SECRET_ID,
-			CAPTURED_REFRESH_SECRET_ID,
+			LEGACY_REFRESH_SECRET_ID,
 		])) {
 			if (id.length > 0) {
 				try {
@@ -2558,10 +2172,10 @@ export default class PlaudImporterPlugin extends Plugin {
 			}
 		}
 		this.settings.secretId = "";
+		// A cleared plugin has no session, so there is no sign-in method to route
+		// a Reconnect from until the next capture records one.
+		this.settings.signInMethod = "";
 		await this.saveSettings();
-		// No token remains, so cancel any pending proactive refresh.
-		this.refreshFailureStreak = 0;
-		this.reconcileTokenRefresh();
 		return { sessionCleared };
 	}
 
@@ -2597,26 +2211,14 @@ export default class PlaudImporterPlugin extends Plugin {
 			}
 			this.app.secretStorage.setSecret(CAPTURED_SECRET_ID, result.token);
 			this.settings.secretId = CAPTURED_SECRET_ID;
-			// Keep the paired refresh token (typ WRT) for the silent-refresh path.
-			// It flies during login; store it stripped of any bearer prefix. When
-			// this sign-in did not capture a WRT, blank any stale one so a silent
-			// refresh cannot resurrect the previous session with a mismatched token.
-			if (result.refreshToken !== null && result.refreshToken.trim().length > 0) {
-				this.app.secretStorage.setSecret(
-					CAPTURED_REFRESH_SECRET_ID,
-					result.refreshToken.trim().replace(/^bearer\s+/i, ""),
-				);
-			} else {
-				this.clearStoredRefreshToken();
-			}
+			// Record how this session was captured so Reconnect reopens the same
+			// surface, and blank any legacy WRT so it cannot shadow that signal.
+			this.settings.signInMethod = "window";
+			this.clearStoredRefreshToken();
 			if (result.apiBaseUrl !== null) {
 				this.settings.apiBaseUrl = result.apiBaseUrl;
 			}
 			await this.saveSettings();
-			// A fresh sign-in clears any prior refresh-failure backoff and
-			// reschedules the proactive refresh from the new token's expiry.
-			this.refreshFailureStreak = 0;
-			this.reconcileTokenRefresh();
 			return true;
 		} finally {
 			this.reauthInFlight = false;
@@ -2710,17 +2312,12 @@ export default class PlaudImporterPlugin extends Plugin {
 		}
 		this.app.secretStorage.setSecret(CAPTURED_SECRET_ID, token);
 		this.settings.secretId = CAPTURED_SECRET_ID;
-		// A pasted/deep-linked token carries no refresh token (only the WT), so
-		// blank any stale WRT from a previous session; a silent refresh must not
-		// resurrect that session and overwrite this token with the wrong account's.
-		// The refresh then relies on the partition cookies until the next in-app
-		// sign-in captures a fresh WRT.
+		// A pasted/deep-linked token came through the browser flow. Record that
+		// so Reconnect routes there, and blank any legacy WRT from a previous
+		// session so it cannot shadow the recorded method.
+		this.settings.signInMethod = "browser";
 		this.clearStoredRefreshToken();
 		await this.saveSettings();
-		// A newly pasted token clears any refresh backoff and reschedules the
-		// proactive refresh from its expiry.
-		this.refreshFailureStreak = 0;
-		this.reconcileTokenRefresh();
 		return true;
 	}
 
@@ -3209,12 +2806,6 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 				"1440": "Once a day",
 			},
 		);
-		this.addToggleRow(
-			containerEl,
-			"Keep the session alive automatically",
-			KEEP_SESSION_ALIVE_DESC,
-			"keepSessionAlive",
-		);
 
 		new Setting(containerEl).setName("Transcript rendering").setHeading();
 		this.addToggleRow(
@@ -3275,6 +2866,15 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 					.setValue(this.plugin.settings.secretId)
 					.onChange(async (id) => {
 						this.plugin.settings.secretId = id;
+						// A manually linked secret has unknown provenance, so the
+						// recorded sign-in method no longer describes the active
+						// credential; clear it and let Reconnect fall back to the
+						// legacy heuristic. Re-linking the plugin-captured secret
+						// keeps its recorded method, which still describes that
+						// token.
+						if (id !== CAPTURED_SECRET_ID) {
+							this.plugin.settings.signInMethod = "";
+						}
 						await this.plugin.saveSettings();
 						// A freshly stored token is a resume trigger for a paused
 						// auto-sync.
@@ -4323,11 +3923,6 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 							},
 						},
 					},
-					{
-						name: "Keep the session alive automatically",
-						desc: KEEP_SESSION_ALIVE_DESC,
-						control: { type: "toggle", key: "keepSessionAlive" },
-					},
 				],
 			},
 			{
@@ -4496,11 +4091,6 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 			if (key === "autoSyncEnabled" && this.plugin.settings.autoSyncEnabled) {
 				this.plugin.resumeAutoSyncIfPaused();
 			}
-		} else if (key === "keepSessionAlive") {
-			// Start or stop the proactive refresh timer to match the toggle. When
-			// turned on with a token already past its refresh point, this schedules
-			// a prompt refresh (the delay clamps to the minimum).
-			this.plugin.reconcileTokenRefresh();
 		} else if (key === "debug") {
 			// Update the live logger's enabled flag in place so the change takes
 			// effect on the next API call without reinstantiating the client.

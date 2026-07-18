@@ -20,11 +20,6 @@
 // future exp; see plaud-token.ts). That guard, not the key name, is what keeps
 // a neighboring profile/ID JWT (no `exp`) or a stale expired token from ever
 // being stored.
-//
-// A session-level `webRequest.onSendHeaders` listener still records the paired
-// refresh token (typ WRT) so the (now inert for a long-lived token) silent
-// refresh path and the reconnect-routing heuristic keep working until that
-// subsystem is removed. It no longer sources the STORED credential.
 
 import { App, Platform } from 'obsidian';
 import { NoopDebugLogger, type DebugLogger } from './debug-logger';
@@ -41,52 +36,7 @@ const PLAUD_LOGIN_URL = 'https://web.plaud.ai';
 // not have to sign in every time. Isolated from Obsidian's own web sessions.
 const PLAUD_PARTITION = 'persist:plaud-importer';
 const POLL_INTERVAL_MS = 1000;
-// Match patterns for Plaud API hosts (covers regional hosts like api-euc1).
-const SESSION_FILTER = { urls: ['*://*.plaud.ai/*'] };
-// A JWT, optionally bearer-prefixed.
-const JWT_RE = /eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/;
 
-// Plaud's data API tags tokens by type in the JWT header `typ`. The workspace
-// ACCESS token used for /file/* data calls is `WT`; the paired REFRESH token is
-// `WRT`. During login the web app sends the refresh token (WRT) in an
-// Authorization header before the access token (WT), so a "grab the first
-// Authorization header" capture stores the WRT and the data API then rejects it
-// with `status: -3901 "token type does not match parse mode"`. Only accept the
-// access token. Verified against a live web.plaud.ai session on 2026-06-18.
-const ACCESS_TOKEN_TYP = 'WT';
-// The paired REFRESH token type. The web app sends the WRT in an Authorization
-// header during login before the WT; we now keep it (in addition to the WT) so
-// the silent-refresh path can send it as a bearer if that is the credential the
-// refresh endpoint wants. See plaud-refresh.ts.
-const REFRESH_TOKEN_TYP = 'WRT';
-
-// Reads the JWT header `typ` from a (possibly bearer-prefixed) token, or null
-// when the value is not a decodable JWT.
-function jwtTyp(value: string): string | null {
-	const match = value.replace(/^bearer\s+/i, '').match(JWT_RE);
-	if (match === null) {
-		return null;
-	}
-	const seg = match[0].split('.')[0].replace(/-/g, '+').replace(/_/g, '/');
-	const padded = seg + '='.repeat((4 - (seg.length % 4)) % 4);
-	try {
-		// atob is always present in Obsidian's Electron renderer (and Node 18+);
-		// avoid the Node `Buffer` global, which is untyped in the marketplace
-		// scan's type-checked lint and trips the no-unsafe-* rules.
-		const header = JSON.parse(atob(padded)) as Record<string, unknown>;
-		return typeof header.typ === 'string' ? header.typ : null;
-	} catch {
-		return null;
-	}
-}
-
-export function isAccessToken(value: string): boolean {
-	return jwtTyp(value) === ACCESS_TOKEN_TYP;
-}
-
-export function isRefreshToken(value: string): boolean {
-	return jwtTyp(value) === REFRESH_TOKEN_TYP;
-}
 
 // Reads the long-lived user token and the regional API host from the page's
 // own localStorage. `getItem` returns the raw stored string (no JSON-quote
@@ -115,12 +65,6 @@ export interface PlaudLoginResult {
 	readonly token: string;
 	/** Regional API origin if discoverable, else null. */
 	readonly apiBaseUrl: string | null;
-	/**
-	 * The paired refresh token (typ WRT) if it flew by during login, else null.
-	 * Kept for the silent-refresh path (plaud-refresh.ts); the WT is what the
-	 * data API uses. May carry a "bearer " prefix.
-	 */
-	readonly refreshToken: string | null;
 }
 
 export interface PlaudLoginOptions {
@@ -137,17 +81,7 @@ interface ProbeResult {
 // Minimal Electron surface accessed at runtime via window.require('electron').
 // Methods may be absent on builds that disable the remote module, so all access
 // is guarded.
-interface WebRequestDetails {
-	requestHeaders?: Record<string, string>;
-}
-interface WebRequestLike {
-	onSendHeaders(
-		filter: { urls: string[] },
-		listener: ((details: WebRequestDetails) => void) | null,
-	): void;
-}
 interface SessionLike {
-	webRequest?: WebRequestLike;
 	// Electron Session storage controls. Present on real builds; guarded at the
 	// call site because they may be absent where the remote module is disabled.
 	clearStorageData?(): Promise<void>;
@@ -164,7 +98,7 @@ interface WebContentsLike {
 	removeAllListeners?(eventName: string): unknown;
 	// Deny/allow popups and new windows the loaded page requests. Present on real
 	// Electron builds; guarded at the call site. We deny all: the sign-in only
-	// needs the main frame's own API call, never a popup, and the Plaud web app
+	// needs the main frame itself, never a popup, and the Plaud web app
 	// otherwise spawns feedback/analytics popups that Obsidian routes to the
 	// system browser.
 	setWindowOpenHandler?(
@@ -254,8 +188,9 @@ export async function clearPlaudLoginSession(): Promise<boolean> {
 
 /**
  * Open the Plaud sign-in window. Resolves with the captured token (and region)
- * once the web app makes an authenticated request, or null if the user closes
- * the window first or the BrowserWindow API is unavailable on this build.
+ * once the signed-in page's localStorage holds a usable long-lived token, or
+ * null if the user closes the window first or the BrowserWindow API is
+ * unavailable on this build.
  */
 export function openPlaudLogin(
 	app: App,
@@ -273,11 +208,6 @@ class PlaudLoginSession {
 	private win: BrowserWindowLike | null = null;
 	private pollHandle: number | null = null;
 	private settled = false;
-	// The paired refresh token (typ WRT) seen during login, kept for the silent
-	// refresh path and the reconnect-routing heuristic. It flies during login,
-	// so it is set by the time the localStorage token read settles the session.
-	private capturedRefresh: string | null = null;
-	private webRequestSession: SessionLike | null = null;
 
 	constructor(
 		options: PlaudLoginOptions,
@@ -288,9 +218,8 @@ class PlaudLoginSession {
 	}
 
 	start(): void {
-		// Arm the session-level capture BEFORE the window loads, so the first
-		// authenticated request the web app makes is recorded automatically.
-		this.armSessionCapture();
+		// Present the window as plain desktop Chrome before it loads.
+		this.applySessionUserAgent();
 
 		const remote = requireElectron()?.remote;
 		const BrowserWindow = remote?.BrowserWindow;
@@ -354,7 +283,7 @@ class PlaudLoginSession {
 		// Deny every popup / new window the page requests, BEFORE loading it. The
 		// Plaud web app fires window.open on load (feedback widget, analytics, an
 		// auth-redirect popup); without a deny handler the host routes those to
-		// the system browser. We only need the main frame's own API call.
+		// the system browser. We only need the main frame itself.
 		if (typeof contents.setWindowOpenHandler === 'function') {
 			try {
 				// The deny must reach Electron SYNCHRONOUSLY in the main process. A
@@ -447,15 +376,8 @@ class PlaudLoginSession {
 		if (value.length === 0) {
 			return;
 		}
-		this.note('token captured', 'note', {
-			apiBaseUrl,
-			refreshTokenCaptured: this.capturedRefresh !== null,
-		});
-		this.settle({
-			token: value,
-			apiBaseUrl,
-			refreshToken: this.capturedRefresh,
-		});
+		this.note('token captured', 'note', { apiBaseUrl });
+		this.settle({ token: value, apiBaseUrl });
 		this.closeWindow();
 	}
 
@@ -472,7 +394,7 @@ class PlaudLoginSession {
 		}
 	}
 
-	private armSessionCapture(): void {
+	private applySessionUserAgent(): void {
 		const session = requireElectron()?.remote?.session?.fromPartition(
 			PLAUD_PARTITION,
 		);
@@ -487,42 +409,6 @@ class PlaudLoginSession {
 				this.note(`set user-agent failed: ${String(err)}`, 'error');
 			}
 		}
-		if (typeof session.webRequest?.onSendHeaders !== 'function') {
-			this.note('session header capture unavailable; no WRT will be recorded');
-			return;
-		}
-		this.webRequestSession = session;
-		try {
-			session.webRequest.onSendHeaders(SESSION_FILTER, (details) => {
-				const headers = details.requestHeaders ?? {};
-				const auth = headers.Authorization ?? headers.authorization;
-				if (typeof auth !== 'string') {
-					return;
-				}
-				// The STORED credential is now the long-lived user token read from
-				// localStorage (see the poll). Here we only keep the paired refresh
-				// token (typ WRT) for the silent-refresh path (inert for a
-				// long-lived token) and the reconnect-routing heuristic in main.ts.
-				if (isRefreshToken(auth)) {
-					this.capturedRefresh = auth;
-				}
-			});
-			this.note('session header capture armed');
-		} catch (err) {
-			this.note(`session capture setup failed: ${String(err)}`, 'error');
-			this.webRequestSession = null;
-		}
-	}
-
-	private teardownSessionCapture(): void {
-		if (this.webRequestSession?.webRequest !== undefined) {
-			try {
-				this.webRequestSession.webRequest.onSendHeaders(SESSION_FILTER, null);
-			} catch {
-				// Best effort; nothing actionable if teardown fails.
-			}
-		}
-		this.webRequestSession = null;
 	}
 
 	private parseProbe(raw: unknown): ProbeResult | null {
@@ -542,7 +428,6 @@ class PlaudLoginSession {
 		}
 		this.settled = true;
 		this.stopPolling();
-		this.teardownSessionCapture();
 		// Close the window on every settle path (success closes it too, via
 		// captureToken). Guarded/idempotent; a no-op once 'closed' has fired.
 		this.closeWindow();
