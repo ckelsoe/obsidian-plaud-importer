@@ -3120,16 +3120,26 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 			const value = this.plugin.readStoredTokenValue();
 			const stored = value.length > 0;
 			const life = stored ? readTokenLifetime(value) : null;
+			// A linked secret that does not decode to a JWT with a numeric exp
+			// (garbage, or the neighboring profile JWT) must not read as
+			// connected either: the picker links arbitrary ids, so this state
+			// is reachable.
+			const unreadable = stored && life === null;
 			const expired = life !== null && life.remainingMs <= 0;
 			const desc = describeTokenLifetime(life);
 			statusEl.setText(
 				!stored
 					? "Status: not connected yet."
-					: expired
-						? `Status: session ${desc.charAt(0).toLowerCase()}${desc.slice(1)}.`
-						: `Status: connected. ${desc}.`,
+					: unreadable
+						? "Status: the linked secret is not a readable Plaud token. Sign in again to replace it."
+						: expired
+							? `Status: session ${desc.charAt(0).toLowerCase()}${desc.slice(1)}.`
+							: `Status: connected. ${desc}.`,
 			);
-			statusEl.toggleClass("plaud-importer-signin-ok", stored && !expired);
+			statusEl.toggleClass(
+				"plaud-importer-signin-ok",
+				stored && !expired && !unreadable,
+			);
 		};
 		this.signinRefresh = refreshStatus;
 		setting.addComponent((el) => {
