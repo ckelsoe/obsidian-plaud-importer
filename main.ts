@@ -25,7 +25,13 @@ import {
 	clearPlaudLoginSession,
 	openPlaudLogin,
 } from "./plaud-login";
-import { isUsableUserToken } from "./plaud-token";
+import {
+	describeTokenLifetime,
+	formatSessionStatus,
+	isUsableUserToken,
+	readTokenLifetime,
+	SHORT_LIFETIME_HOURS,
+} from "./plaud-token";
 import {
 	NoteWriter,
 	DEFAULT_NOTE_NAME_TEMPLATE,
@@ -107,7 +113,16 @@ const DEEP_LINK_BAD_TOKEN_NOTICE =
 	"Plaud sign-in link did not carry a usable token. In your browser, sign in to Plaud before clicking the bookmarklet, then try again.";
 
 const SIGN_IN_NOTE =
-	"Plaud has no official API, so this plugin relies on their internal one. That makes sign-in fragile, and it may stop working when Plaud changes that internal API. We expect this whole process to get much simpler once Plaud releases an official API. There are two ways to sign in, depending on how you log in to Plaud. Use 'Sign in with email' if you log in with an email address and password. Use 'Sign in with Google or Apple' if you use single sign-on (SSO) through a Google or Apple account. Either way your session now lasts about a year, so you rarely need to sign in again, and this is the same for both account types. When the session finally lapses the plugin shows a one-click Reconnect that reopens the sign-in matching your account.";
+	"Plaud has no official API, so this plugin relies on their internal one. That makes sign-in fragile, and it may stop working when Plaud changes that internal API. We expect this whole process to get much simpler once Plaud releases an official API. There are two ways to sign in, depending on how you log in to Plaud. Use 'Sign in with email' if you log in with an email address and password. Use 'Sign in with Google or Apple' if you use single sign-on (SSO) through a Google or Apple account. How long a session lasts is set by Plaud and varies by account: most accounts get a long session (months to about a year), but some get as little as 24 hours. The status line under Plaud token shows yours. When the session lapses the plugin shows a one-click Reconnect that reopens the sign-in matching your account.";
+
+// Automatic-sync toggle description. ONE constant consumed by both settings
+// paths (the 1.13+ declarative definitions and the 1.12 imperative display()
+// fallback) so the two can never drift; before this hoist they shipped as two
+// byte-identical 731-character literals. Wording (issue #78): session length
+// is set by Plaud and varies by account, so this promises no specific
+// lifetime.
+const AUTO_SYNC_DESC =
+	"Off by default. Runs a background import on a schedule, unattended and never prompting. It uses your default import options: new recordings are imported, and a recording you changed in Plaud (edited speaker names, corrected transcript, or finished processing) is re-imported. IMPORTANT: a re-import OVERWRITES that note and its downloaded artifacts with Plaud's current version, so edits you made to a synced note or its attachment files are lost on the next change. Only recordings that actually changed are touched; unchanged notes are never modified. Desktop only. The background sync runs between sign-ins for as long as your Plaud session lasts (set by Plaud and shown in the status line under Plaud token), pausing for a one-click reconnection when the session expires.";
 
 // Bookmarklet for the browser sign-in flow. Run on a signed-in Plaud tab, it
 // reads the long-lived user token straight out of the web app's localStorage
@@ -767,6 +782,18 @@ export default class PlaudImporterPlugin extends Plugin {
 			},
 		});
 
+		this.addCommand({
+			id: "debug-copy-session-status",
+			name: "Debug: copy session status to clipboard",
+			callback: () => {
+				void copyToClipboard(this.formatSessionStatus(), () => {
+					new Notice(
+						"Session status copied. It contains no token value and is safe to paste into a public issue.",
+					);
+				});
+			},
+		});
+
 		// DEPRECATED ONE-TIME MIGRATION (issue #52) — REMOVE IN A FUTURE VERSION.
 		// The import-time fix only repoints card embeds on (re)import; notes
 		// imported before it keep the broken inline embed. This user-invoked
@@ -903,6 +930,49 @@ export default class PlaudImporterPlugin extends Plugin {
 		this.ribbonIconId = null;
 	}
 
+	// Reads the linked secret's raw stored value, or "" when none is linked.
+	// Shared by the settings status line, Test connection, and the
+	// session-status command, so they always describe the same credential.
+	readStoredTokenValue(): string {
+		const id = this.settings.secretId;
+		return id.length > 0 ? (this.app.secretStorage.getSecret(id) ?? "") : "";
+	}
+
+	// Thin wrapper over the pure formatSessionStatus in plaud-token.ts (where
+	// its never-leak contract is pinned by tests): supplies the live plugin
+	// version, settings, and stored secret value.
+	private formatSessionStatus(): string {
+		return formatSessionStatus({
+			pluginVersion: this.manifest.version,
+			apiBaseUrl: this.settings.apiBaseUrl,
+			signInMethod: this.settings.signInMethod,
+			tokenValue: this.readStoredTokenValue(),
+		});
+	}
+
+	// One-time capture heads-up (issue #78): some accounts get a short (24h)
+	// session under the same localStorage key the long-lived token uses.
+	// Saying so at capture time makes the rejection ~24h later a predictable
+	// event instead of a surprise. Advisory only: lifetime never gates a
+	// capture, and an unreadable or iat-less token stays silent rather than
+	// guessing.
+	private noteShortLifetimeOnCapture(token: string): void {
+		const life = readTokenLifetime(token);
+		if (life === null || life.lifetimeHours === null) {
+			return;
+		}
+		if (life.lifetimeHours > SHORT_LIFETIME_HOURS) {
+			return;
+		}
+		const hours = Math.max(1, Math.round(life.lifetimeHours));
+		new Notice(
+			`Plaud issued this sign-in a session of about ${hours} hour${
+				hours === 1 ? "" : "s"
+			}, not the long session most accounts get. The plugin will ask you to sign in again when it expires.`,
+			12000,
+		);
+	}
+
 	/**
 	 * Make one lightweight authenticated call so the user can confirm their
 	 * stored token actually reaches Plaud, without running a full import. Maps
@@ -923,12 +993,21 @@ export default class PlaudImporterPlugin extends Plugin {
 			const recordings = await client.listRecordings({ limit: 1 });
 			// A working token is a valid resume trigger for a paused auto-sync.
 			this.resumeAutoSyncIfPaused();
+			// Append the measured session status (issue #78): this button is
+			// what users press when imports start failing, so it should say
+			// how long the session was issued for and when it runs out.
+			const value = this.readStoredTokenValue();
+			const lifeSentence =
+				value.length > 0
+					? ` ${describeTokenLifetime(readTokenLifetime(value))}.`
+					: "";
 			return {
 				ok: true,
 				message:
-					recordings.length > 0
+					(recordings.length > 0
 						? "Connected to Plaud. Your token works and recordings are reachable."
-						: "Connected to Plaud. Your token works (no recordings found yet).",
+						: "Connected to Plaud. Your token works (no recordings found yet).") +
+					lifeSentence,
 			};
 		} catch (err) {
 			return { ok: false, message: classifyError(err).message };
@@ -2358,6 +2437,7 @@ export default class PlaudImporterPlugin extends Plugin {
 				this.settings.apiBaseUrl = result.apiBaseUrl;
 			}
 			await this.saveSettings();
+			this.noteShortLifetimeOnCapture(result.token);
 			return true;
 		} finally {
 			this.reauthInFlight = false;
@@ -2467,6 +2547,7 @@ export default class PlaudImporterPlugin extends Plugin {
 		this.settings.signInMethod = "browser";
 		this.clearStoredRefreshToken();
 		await this.saveSettings();
+		this.noteShortLifetimeOnCapture(token);
 		return true;
 	}
 
@@ -2974,7 +3055,7 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 		this.addToggleRow(
 			containerEl,
 			"Enable automatic sync",
-			"Off by default. Runs a background import on a schedule, unattended and never prompting. It uses your default import options: new recordings are imported, and a recording you changed in Plaud (edited speaker names, corrected transcript, or finished processing) is re-imported. IMPORTANT: a re-import OVERWRITES that note and its downloaded artifacts with Plaud's current version, so edits you made to a synced note or its attachment files are lost on the next change. Only recordings that actually changed are touched; unchanged notes are never modified. Desktop only. With the long-lived session token the background job runs for months between sign-ins, pausing for reconnection only when the token finally expires (about yearly).",
+			AUTO_SYNC_DESC,
 			"autoSyncEnabled",
 		);
 		this.addDropdownRow(
@@ -3030,16 +3111,35 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 			cls: "plaud-importer-signin-status",
 		});
 		const refreshStatus = (): void => {
-			const id = this.plugin.settings.secretId;
-			const stored =
-				id.length > 0 &&
-				(this.app.secretStorage.getSecret(id) ?? "").length > 0;
+			// Decode on demand from the currently linked secret rather than
+			// caching a measurement: the picker below links arbitrary secret
+			// ids with zero validation, so a cached number could describe the
+			// wrong credential. Reports the measured lifetime (issue #78)
+			// instead of just "a token is stored". A stored-but-expired token
+			// must not read as "connected" or keep the ok styling.
+			const value = this.plugin.readStoredTokenValue();
+			const stored = value.length > 0;
+			const life = stored ? readTokenLifetime(value) : null;
+			// A linked secret that does not decode to a JWT with a numeric exp
+			// (garbage, or the neighboring profile JWT) must not read as
+			// connected either: the picker links arbitrary ids, so this state
+			// is reachable.
+			const unreadable = stored && life === null;
+			const expired = life !== null && life.remainingMs <= 0;
+			const desc = describeTokenLifetime(life);
 			statusEl.setText(
-				stored
-					? "Status: connected. A token is stored."
-					: "Status: not connected yet.",
+				!stored
+					? "Status: not connected yet."
+					: unreadable
+						? "Status: the linked secret is not a readable Plaud token. Sign in again to replace it."
+						: expired
+							? `Status: session ${desc.charAt(0).toLowerCase()}${desc.slice(1)}.`
+							: `Status: connected. ${desc}.`,
 			);
-			statusEl.toggleClass("plaud-importer-signin-ok", stored);
+			statusEl.toggleClass(
+				"plaud-importer-signin-ok",
+				stored && !expired && !unreadable,
+			);
 		};
 		this.signinRefresh = refreshStatus;
 		setting.addComponent((el) => {
@@ -4089,7 +4189,7 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 				items: [
 					{
 						name: "Enable automatic sync",
-						desc: "Off by default. Runs a background import on a schedule, unattended and never prompting. It uses your default import options: new recordings are imported, and a recording you changed in Plaud (edited speaker names, corrected transcript, or finished processing) is re-imported. IMPORTANT: a re-import OVERWRITES that note and its downloaded artifacts with Plaud's current version, so edits you made to a synced note or its attachment files are lost on the next change. Only recordings that actually changed are touched; unchanged notes are never modified. Desktop only. With the long-lived session token the background job runs for months between sign-ins, pausing for reconnection only when the token finally expires (about yearly).",
+						desc: AUTO_SYNC_DESC,
 						control: { type: "toggle", key: "autoSyncEnabled" },
 					},
 					{

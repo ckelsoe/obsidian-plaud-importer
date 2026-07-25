@@ -1157,10 +1157,11 @@ function readTokenClientId(token: string): string | null {
 }
 
 // Decodes ONLY the non-identifying diagnostic claims from a Plaud bearer token,
-// for debug logging. Surfaces `client_id`/`typ`/`ver` (never `sub`/`wid`/`jti`
-// or the token string) so a debug log can reveal a token-type / parse-mode
-// mismatch without leaking identity.
-const TOKEN_DIAG_CLAIMS = ['typ', 'alg', 'client_id', 'ver', 'wtype', 'auth_method', 'exp'];
+// for debug logging. Surfaces `client_id`/`typ`/`ver`/`exp`/`iat`/`region`
+// (never `sub`/`wid`/`jti` or the token string) so a debug log can reveal a
+// token-type / parse-mode mismatch, or a short issued lifetime (issue #78),
+// without leaking identity.
+const TOKEN_DIAG_CLAIMS = ['typ', 'alg', 'client_id', 'ver', 'wtype', 'auth_method', 'exp', 'iat', 'region'];
 function decodeTokenDiagnostics(token: string): Record<string, unknown> {
 	const parts = token.split('.');
 	if (parts.length < 2) {

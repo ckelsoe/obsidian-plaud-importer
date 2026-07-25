@@ -4,11 +4,15 @@
 // unit-testable module and survives the refresh-subsystem removal. It backs the
 // long-lived-user-token capture guard used by every sign-in path.
 //
-// Plaud's web app keeps the ~300-day user token in `localStorage` under the
-// `token` key on web.plaud.ai. That token's payload carries `exp` and
-// `client_id` (plus `sub, aud, iat, region`), unlike the 24h workspace token
-// (`typ: WT`, `wid` claim) the plugin used to scrape off request headers. A
-// neighboring localStorage key is a profile/ID JWT whose payload is only
+// Plaud's web app keeps the user token in `localStorage` under the `token`
+// key on web.plaud.ai. On the US accounts observed so far that token is
+// long-lived (~300 days), but the lifetime is NOT guaranteed per account or
+// region: issue #78 reported a 24-hour token under the same key on an APSE1
+// account. So measure `exp - iat` (readTokenLifetime below); never assume a
+// lifetime that was not observed. The payload carries `exp` and `client_id`
+// (plus `sub, aud, iat, region`), unlike the 24h workspace token (`typ: WT`,
+// `wid` claim) the plugin used to scrape off request headers. A neighboring
+// localStorage key is a profile/ID JWT whose payload is only
 // `{email, id, name}` with no `exp`; it decodes cleanly but the data API
 // rejects it with `-3900 "invalid auth header"`. So the guard validates the
 // decoded claims, never the key name.
@@ -43,7 +47,11 @@ function decodeSegment(seg: string): Record<string, unknown> | null {
 // avoids the polynomial-regex class and refuses a `prefix.<jwt>.suffix` value
 // that a search would have accepted and then stored verbatim.
 function jwtSegments(value: string): [string, string, string] | null {
-	const token = value.replace(/^bearer\s+/i, '').trim();
+	// Trim BEFORE stripping the prefix, matching the trim-first normalization
+	// in plaud-login.ts, main.ts storeAccessToken, and plaud-client-re.ts: a
+	// manually linked secret can carry leading whitespace ahead of "bearer",
+	// and the API accepts that value, so the helpers here must read it too.
+	const token = value.trim().replace(/^bearer\s+/i, '').trim();
 	const parts = token.split('.');
 	if (parts.length !== 3) {
 		return null;
@@ -63,13 +71,18 @@ export function decodeJwtPayload(value: string): Record<string, unknown> | null 
 	return decodeSegment(parts[1]);
 }
 
-/** Reads the JWT header `typ`, or null when the value is not a decodable JWT. */
-function jwtHeaderTyp(value: string): string | null {
+/** Decodes the JWT header, or null when the value is not a decodable JWT. */
+export function decodeJwtHeader(value: string): Record<string, unknown> | null {
 	const parts = jwtSegments(value);
 	if (parts === null) {
 		return null;
 	}
-	const header = decodeSegment(parts[0]);
+	return decodeSegment(parts[0]);
+}
+
+/** Reads the JWT header `typ`, or null when the value is not a decodable JWT. */
+function jwtHeaderTyp(value: string): string | null {
+	const header = decodeJwtHeader(value);
 	return header !== null && typeof header.typ === 'string' ? header.typ : null;
 }
 
@@ -86,6 +99,66 @@ export function readTokenClientId(value: string): string | null {
 	}
 	const raw = payload.client_id;
 	return typeof raw === 'string' && raw.length > 0 ? raw : null;
+}
+
+/**
+ * Advisory threshold, in hours: a measured issued lifetime at or below this is
+ * "short". The 24h tokens issue #78 reported fall under it; every long-lived
+ * token observed so far (~137 to ~300 days) is far above it. Advisory only:
+ * lifetime informs status text and a capture-time heads-up, never a gate.
+ */
+export const SHORT_LIFETIME_HOURS = 72;
+
+/** Measured lifetime facts about a stored token. All *Ms fields are epoch ms. */
+export interface TokenLifetime {
+	/** `exp` converted to ms. */
+	expMs: number;
+	/** `iat` converted to ms, or null when the token carries no `iat` claim. */
+	issuedAtMs: number | null;
+	/** Issued lifetime in hours (`exp - iat`), or null when `iat` is absent. */
+	lifetimeHours: number | null;
+	/** Time until expiry relative to `nowMs`; negative when already expired. */
+	remainingMs: number;
+	/** JWT header `typ`, or null when the header carries none. */
+	typ: string | null;
+	/** True when the payload carries a string `wid` (workspace) claim. */
+	hasWid: boolean;
+}
+
+/**
+ * Measures a token's lifetime from its own claims, or returns null when the
+ * value is not a JWT with a numeric `exp`. `lifetimeHours` is null when `iat`
+ * is absent or non-numeric: report "unknown", never guess a lifetime that was
+ * not observed (issue #78: lifetime varies by account, and the observed
+ * workspace tokens carry no `iat` at all). Pure and side-effect free; `nowMs`
+ * is injectable for tests.
+ */
+export function readTokenLifetime(
+	value: string,
+	nowMs: number = Date.now(),
+): TokenLifetime | null {
+	const payload = decodeJwtPayload(value);
+	if (payload === null) {
+		return null;
+	}
+	const exp = payload.exp;
+	if (typeof exp !== 'number' || !Number.isFinite(exp)) {
+		return null;
+	}
+	const iat = payload.iat;
+	const issuedAtMs =
+		typeof iat === 'number' && Number.isFinite(iat) ? iat * 1000 : null;
+	// `exp`/`iat` are Unix timestamps in SECONDS; all returned fields are ms.
+	const expMs = exp * 1000;
+	return {
+		expMs,
+		issuedAtMs,
+		lifetimeHours:
+			issuedAtMs === null ? null : (expMs - issuedAtMs) / 3_600_000,
+		remainingMs: expMs - nowMs,
+		typ: jwtHeaderTyp(value),
+		hasWid: typeof payload.wid === 'string',
+	};
 }
 
 /**
@@ -126,4 +199,111 @@ export function isUsableUserToken(value: string, nowMs: number = Date.now()): bo
 	}
 	// `exp` is a Unix timestamp in SECONDS; compare in milliseconds.
 	return exp * 1000 > nowMs;
+}
+
+/**
+ * Renders a measured lifetime as a capitalized status fragment, e.g.
+ * "About 18 hours left (issued for 24 hours)" or "Expires 15 Jan 2027 (issued
+ * for about 300 days)". Reports "unknown" rather than guessing when the value
+ * is unreadable, carries no `iat`, or measures nonsense (`iat` at or past
+ * `exp`). Lives here rather than in main.ts so the wording contract is pinned
+ * by unit tests.
+ */
+export function describeTokenLifetime(life: TokenLifetime | null): string {
+	if (life === null) {
+		return 'Expiry unknown (the stored value is not a readable Plaud token)';
+	}
+	const expiryDate = new Date(life.expMs).toLocaleDateString(undefined, {
+		year: 'numeric',
+		month: 'short',
+		day: 'numeric',
+	});
+	let issued: string;
+	if (life.lifetimeHours === null || life.lifetimeHours <= 0) {
+		issued = 'issued lifetime unknown';
+	} else if (life.lifetimeHours <= SHORT_LIFETIME_HOURS) {
+		const hours = Math.max(1, Math.round(life.lifetimeHours));
+		issued = `issued for ${hours} hour${hours === 1 ? '' : 's'}`;
+	} else {
+		issued = `issued for about ${Math.round(life.lifetimeHours / 24)} days`;
+	}
+	if (life.remainingMs <= 0) {
+		return `Expired ${expiryDate} (${issued})`;
+	}
+	const remainingHours = life.remainingMs / 3_600_000;
+	if (remainingHours < 48) {
+		const rounded = Math.max(1, Math.round(remainingHours));
+		return `About ${rounded} hour${rounded === 1 ? '' : 's'} left (${issued})`;
+	}
+	return `Expires ${expiryDate} (${issued})`;
+}
+
+/** Inputs for formatSessionStatus; `tokenValue` is '' when none is stored. */
+export interface SessionStatusInput {
+	pluginVersion: string;
+	apiBaseUrl: string;
+	signInMethod: string;
+	tokenValue: string;
+}
+
+/**
+ * Builds the privacy-safe session-status block behind the "Debug: copy
+ * session status to clipboard" command (issue #78). Emits the plugin version,
+ * API base URL, recorded sign-in method, and a redacted token projection:
+ * header `typ`/`alg`, payload claim NAMES, the values of the non-identifying
+ * claims (`client_id`, `region`, `auth_method`, `exp`, `iat`), the computed
+ * lifetime, and a derived `hasWid` boolean. NEVER `sub`, `wid`, `jti`,
+ * `email`, or the token value, so the output is safe to paste into a public
+ * issue. Kept pure so the never-leak contract is pinned by tests, not only by
+ * review.
+ */
+export function formatSessionStatus(input: SessionStatusInput): string {
+	const lines: string[] = [
+		`plugin: ${input.pluginVersion}`,
+		`apiBaseUrl: ${input.apiBaseUrl}`,
+		`signInMethod: ${input.signInMethod === '' ? '(not recorded)' : input.signInMethod}`,
+	];
+	const value = input.tokenValue;
+	if (value.length === 0) {
+		lines.push('token: none stored');
+		return lines.join('\n');
+	}
+	const payload = decodeJwtPayload(value);
+	if (payload === null) {
+		lines.push('token: stored, but not a readable Plaud token');
+		return lines.join('\n');
+	}
+	const claimText = (claim: unknown): string =>
+		typeof claim === 'string' || typeof claim === 'number'
+			? String(claim)
+			: '(none)';
+	const header = decodeJwtHeader(value);
+	lines.push(
+		`token.header.typ: ${claimText(header?.typ)}`,
+		`token.header.alg: ${claimText(header?.alg)}`,
+		`token.claimNames: ${Object.keys(payload).sort().join(', ')}`,
+	);
+	const life = readTokenLifetime(value);
+	if (life === null) {
+		// A decodable JWT without a numeric exp is a realistic mis-link (the
+		// neighboring profile JWT). The claim names above identify it; say why
+		// there is no lifetime to report.
+		lines.push('token: has no numeric exp claim (not a Plaud session token)');
+		return lines.join('\n');
+	}
+	lines.push(
+		`token.client_id: ${claimText(payload.client_id)}`,
+		`token.region: ${claimText(payload.region)}`,
+		`token.auth_method: ${claimText(payload.auth_method)}`,
+		`token.exp: ${claimText(payload.exp)}`,
+		`token.iat: ${claimText(payload.iat)}`,
+		`token.lifetimeHours: ${
+			life.lifetimeHours === null
+				? '(no iat claim)'
+				: String(Math.round(life.lifetimeHours * 100) / 100)
+		}`,
+		`token.hasWid: ${String(life.hasWid)}`,
+		`token.status: ${describeTokenLifetime(life)}`,
+	);
+	return lines.join('\n');
 }

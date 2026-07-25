@@ -51,7 +51,7 @@ The plugin is provided free of charge, "AS IS", without warranty of any kind, as
 
 ## Information you choose to share
 
-If you open a GitHub issue, discussion, or pull request, anything you paste there becomes **public**. The opt-in debug log may contain transcript text, speaker names, and recording metadata (auth headers are redacted automatically, but other content is not). The maintainer does not request sensitive content and is not responsible for information you choose to post. Review and redact your debug logs, screenshots, and generated notes before submitting them. **Never paste your Plaud token into a public issue.** To report a security vulnerability privately instead, see [SECURITY.md](./SECURITY.md).
+If you open a GitHub issue, discussion, or pull request, anything you paste there becomes **public**. The opt-in debug log may contain transcript text, speaker names, and recording metadata (auth headers are redacted automatically, but other content is not). The maintainer does not request sensitive content and is not responsible for information you choose to post. Review and redact your debug logs, screenshots, and generated notes before submitting them. **Never paste your Plaud token into a public issue.** If a maintainer asks for session details, use the **Debug: copy session status to clipboard** command instead: its output contains no token value and no identity claims, and is designed to be safe to paste into a public issue. To report a security vulnerability privately instead, see [SECURITY.md](./SECURITY.md).
 
 ## Changes to this policy
 

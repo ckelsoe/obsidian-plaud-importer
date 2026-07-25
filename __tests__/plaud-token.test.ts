@@ -1,7 +1,12 @@
 import {
+	decodeJwtHeader,
 	decodeJwtPayload,
+	describeTokenLifetime,
+	formatSessionStatus,
 	isUsableUserToken,
 	readTokenClientId,
+	readTokenLifetime,
+	SHORT_LIFETIME_HOURS,
 } from '../plaud-token';
 
 // Build a minimal unsigned JWT from a header and payload object. The helpers
@@ -176,5 +181,237 @@ describe('decodeJwtPayload', () => {
 
 	it('returns null for a value that is not a decodable JWT', () => {
 		expect(decodeJwtPayload('nope')).toBeNull();
+	});
+});
+
+describe('decodeJwtHeader', () => {
+	it('decodes the header of a valid token', () => {
+		const header = decodeJwtHeader(WORKSPACE_TOKEN);
+		expect(header?.typ).toBe('WT');
+		expect(header?.alg).toBe('HS256');
+	});
+
+	it('returns null for a value that is not a decodable JWT', () => {
+		expect(decodeJwtHeader('nope')).toBeNull();
+	});
+});
+
+// Issue #78: session lifetime varies by account (24h observed on APSE1, ~300
+// days on US), so the plugin measures exp - iat instead of assuming. These
+// tests pin the measurement contract: report null rather than guess when iat
+// is absent, and never treat lifetime as a gate (the capture-guard pins for
+// that live in the isUsableUserToken describe above: the workspace-token
+// acceptance and the defaults-nowMs 24h-remaining case).
+// A live token issued for exactly 24 hours, captured ~2.8h into its life,
+// matching the issue #78 report shape. Module-scoped: the lifetime,
+// description, and session-status suites all use it.
+const IAT_24H = 1_779_990_000;
+const SHORT_TOKEN = makeJwt(
+	{ alg: 'HS256', typ: 'JWT' },
+	{
+		sub: 'user-123',
+		exp: IAT_24H + 86_400,
+		iat: IAT_24H,
+		client_id: 'web',
+		region: 'aws:ap-southeast-1',
+	},
+);
+
+describe('readTokenLifetime', () => {
+	it('measures a 24-hour issued lifetime', () => {
+		const life = readTokenLifetime(SHORT_TOKEN, NOW_MS);
+		expect(life).not.toBeNull();
+		expect(life?.lifetimeHours).toBe(24);
+		expect(life?.issuedAtMs).toBe(IAT_24H * 1000);
+		expect(life?.expMs).toBe((IAT_24H + 86_400) * 1000);
+		expect(life?.remainingMs).toBe((IAT_24H + 86_400) * 1000 - NOW_MS);
+		expect(life?.typ).toBe('JWT');
+		expect(life?.hasWid).toBe(false);
+	});
+
+	it('measures the long-lived token at its true value', () => {
+		const life = readTokenLifetime(LONG_LIVED_TOKEN, NOW_MS);
+		expect(life?.lifetimeHours).toBeCloseTo(
+			(FUTURE_EXP - 1_774_000_000) / 3600,
+		);
+		expect(life?.remainingMs).toBe(FUTURE_EXP * 1000 - NOW_MS);
+		expect(life?.typ).toBe('JWT');
+		expect(life?.hasWid).toBe(false);
+	});
+
+	it('reports a null lifetime for the workspace token (no iat), with typ and wid', () => {
+		const life = readTokenLifetime(WORKSPACE_TOKEN, NOW_MS);
+		expect(life).not.toBeNull();
+		expect(life?.lifetimeHours).toBeNull();
+		expect(life?.issuedAtMs).toBeNull();
+		expect(life?.expMs).toBe(FUTURE_EXP * 1000);
+		expect(life?.typ).toBe('WT');
+		expect(life?.hasWid).toBe(true);
+	});
+
+	it('reports a negative remainingMs for an expired token', () => {
+		const life = readTokenLifetime(EXPIRED_TOKEN, NOW_MS);
+		expect(life).not.toBeNull();
+		expect(life?.remainingMs).toBeLessThan(0);
+	});
+
+	it('returns null for a token without a numeric exp', () => {
+		expect(readTokenLifetime(PROFILE_JWT, NOW_MS)).toBeNull();
+		const badExp = makeJwt(
+			{ alg: 'HS256', typ: 'JWT' },
+			{ exp: 'soon', iat: IAT_24H, client_id: 'web' },
+		);
+		expect(readTokenLifetime(badExp, NOW_MS)).toBeNull();
+	});
+
+	it('returns null for a non-JWT value', () => {
+		expect(readTokenLifetime('not-a-jwt', NOW_MS)).toBeNull();
+		expect(readTokenLifetime('', NOW_MS)).toBeNull();
+	});
+
+	it('reports a null lifetime when iat is present but not numeric', () => {
+		const badIat = makeJwt(
+			{ alg: 'HS256', typ: 'JWT' },
+			{ exp: FUTURE_EXP, iat: 'yesterday', client_id: 'web' },
+		);
+		const life = readTokenLifetime(badIat, NOW_MS);
+		expect(life).not.toBeNull();
+		expect(life?.lifetimeHours).toBeNull();
+		expect(life?.issuedAtMs).toBeNull();
+	});
+
+	it('reads a bearer-prefixed value (the localStorage form)', () => {
+		const life = readTokenLifetime(`bearer ${SHORT_TOKEN}`, NOW_MS);
+		expect(life?.lifetimeHours).toBe(24);
+	});
+
+	it('reads a value with whitespace before the bearer prefix (manually linked secret)', () => {
+		// Regression for the trim-before-strip hardening: the API accepts this
+		// form (the client trims first), so the helpers must read it too.
+		const value = `  bearer ${SHORT_TOKEN}`;
+		expect(readTokenLifetime(value, NOW_MS)?.lifetimeHours).toBe(24);
+		expect(isUsableUserToken(value, NOW_MS)).toBe(true);
+	});
+
+	it('defaults nowMs to the current time when omitted', () => {
+		const nowSec = Math.floor(Date.now() / 1000);
+		const live = makeJwt(
+			{ alg: 'HS256', typ: 'JWT' },
+			{ exp: nowSec + 86_400, iat: nowSec, client_id: 'web' },
+		);
+		const life = readTokenLifetime(live);
+		expect(life?.remainingMs).toBeGreaterThan(0);
+	});
+
+	it('classifies 24h as short and the long-lived token as not short', () => {
+		// Pins the threshold ordering the capture-time heads-up depends on.
+		const short = readTokenLifetime(SHORT_TOKEN, NOW_MS);
+		const long = readTokenLifetime(LONG_LIVED_TOKEN, NOW_MS);
+		expect(short?.lifetimeHours ?? Infinity).toBeLessThanOrEqual(
+			SHORT_LIFETIME_HOURS,
+		);
+		expect(long?.lifetimeHours ?? 0).toBeGreaterThan(SHORT_LIFETIME_HOURS);
+	});
+});
+
+// Date strings from toLocaleDateString vary with the host locale, so these
+// assertions match shapes, never exact dates.
+describe('describeTokenLifetime', () => {
+	it('describes a live short token by hours left and issued hours', () => {
+		const desc = describeTokenLifetime(readTokenLifetime(SHORT_TOKEN, NOW_MS));
+		expect(desc).toMatch(/^About \d+ hours? left \(issued for 24 hours\)$/);
+	});
+
+	it('describes a long-lived token by expiry date and issued days', () => {
+		const desc = describeTokenLifetime(
+			readTokenLifetime(LONG_LIVED_TOKEN, NOW_MS),
+		);
+		expect(desc).toMatch(/^Expires .+ \(issued for about \d+ days\)$/);
+	});
+
+	it('describes an expired token as expired, with an unknown issued life', () => {
+		const desc = describeTokenLifetime(
+			readTokenLifetime(EXPIRED_TOKEN, NOW_MS),
+		);
+		expect(desc).toMatch(/^Expired .+ \(issued lifetime unknown\)$/);
+	});
+
+	it('reports unknown for an unreadable value', () => {
+		expect(describeTokenLifetime(null)).toBe(
+			'Expiry unknown (the stored value is not a readable Plaud token)',
+		);
+	});
+
+	it('uses the singular for a one-hour issued lifetime', () => {
+		const iat = 1_779_999_000;
+		const oneHour = makeJwt(
+			{ alg: 'HS256', typ: 'JWT' },
+			{ exp: iat + 3_600, iat, client_id: 'web' },
+		);
+		expect(
+			describeTokenLifetime(readTokenLifetime(oneHour, NOW_MS)),
+		).toContain('issued for 1 hour)');
+	});
+
+	it('treats a nonsense negative lifetime (iat past exp) as unknown', () => {
+		const bad = makeJwt(
+			{ alg: 'HS256', typ: 'JWT' },
+			{ exp: FUTURE_EXP, iat: FUTURE_EXP + 999_999, client_id: 'web' },
+		);
+		expect(
+			describeTokenLifetime(readTokenLifetime(bad, NOW_MS)),
+		).toContain('issued lifetime unknown');
+	});
+});
+
+// Pins the never-leak contract of the session-status block (issue #78): claim
+// NAMES and the allowlisted claim values may appear; the token value and the
+// identity claim values (sub, wid, email, id, name) must never appear.
+describe('formatSessionStatus', () => {
+	const base = {
+		pluginVersion: '0.33.0',
+		apiBaseUrl: 'https://api.plaud.ai',
+		signInMethod: 'browser',
+	};
+
+	it('reports the measured lifetime and hasWid without leaking identity', () => {
+		const out = formatSessionStatus({ ...base, tokenValue: SHORT_TOKEN });
+		expect(out).toContain('plugin: 0.33.0');
+		expect(out).toContain('signInMethod: browser');
+		expect(out).toContain('token.lifetimeHours: 24');
+		expect(out).toContain('token.hasWid: false');
+		expect(out).toContain('token.region: aws:ap-southeast-1');
+		expect(out).not.toContain(SHORT_TOKEN);
+		expect(out).not.toContain('user-123');
+	});
+
+	it('surfaces a workspace token by typ and hasWid, never the wid value', () => {
+		const out = formatSessionStatus({ ...base, tokenValue: WORKSPACE_TOKEN });
+		expect(out).toContain('token.header.typ: WT');
+		expect(out).toContain('token.hasWid: true');
+		expect(out).toContain('token.lifetimeHours: (no iat claim)');
+		expect(out).not.toContain('ws-1');
+		expect(out).not.toContain(WORKSPACE_TOKEN);
+		expect(out).not.toContain('user-123');
+	});
+
+	it('identifies a mis-linked profile JWT by claim names, never values', () => {
+		const out = formatSessionStatus({ ...base, tokenValue: PROFILE_JWT });
+		expect(out).toContain('token.claimNames: email, id, name');
+		expect(out).toContain('no numeric exp claim');
+		expect(out).not.toContain('a@b.com');
+		expect(out).not.toContain(PROFILE_JWT);
+	});
+
+	it('reports a missing or unreadable token plainly', () => {
+		expect(formatSessionStatus({ ...base, tokenValue: '' })).toContain(
+			'token: none stored',
+		);
+		expect(formatSessionStatus({ ...base, tokenValue: 'garbage' })).toContain(
+			'token: stored, but not a readable Plaud token',
+		);
+		expect(
+			formatSessionStatus({ ...base, signInMethod: '', tokenValue: '' }),
+		).toContain('signInMethod: (not recorded)');
 	});
 });
