@@ -4,6 +4,16 @@ All notable changes to Plaud Importer will be documented in this file.
 
 ## [Unreleased]
 
+## [0.34.0] - 2026-07-25
+
+### Added
+
+- **The plugin now warns you before your session expires.** A sticky notice with a one-click Reconnect action appears ahead of expiry: 2 hours ahead for short sessions (the 24-hour tokens some accounts get, issue #78) and 7 days ahead for long ones. The warning fires once per sign-in, works whether or not automatic sync is enabled, and reschedules itself whenever the stored credential changes.
+
+### Changed
+
+- **Auth-error screens now lead with the sign-in that works for your account.** For browser/bookmarklet (Google and Apple) accounts, the import dialog's sign-in section opens with the browser flow expanded and primary, instead of pushing the embedded email window that those accounts cannot complete. The "Plaud rejected your token" message no longer points at re-entering the token in settings, which was the wrong remedy for browser-flow accounts.
+
 ## [0.33.0] - 2026-07-25
 
 ### Changed

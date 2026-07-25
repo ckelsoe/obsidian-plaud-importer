@@ -891,9 +891,18 @@ export class ImportModal extends Modal {
 		if (!reauthAvailable) {
 			return false;
 		}
+		// For a browser/bookmarklet (SSO) account the embedded email window
+		// dead-ends (issue #78), so its button is demoted and mod-cta moves to
+		// the browser sign-in inside the expander, which also opens expanded.
+		// Demote ONLY when that expander will actually render (onReauthSso
+		// wired), so no caller combination can leave the screen with zero
+		// primary action.
+		const prefersSso =
+			this.noteWriterOptions.prefersSsoReauth === true &&
+			this.noteWriterOptions.onReauthSso !== undefined;
 		const signInButton = buttonRow.createEl('button', {
 			text: SIGN_IN_LABEL,
-			cls: 'mod-cta',
+			...(prefersSso ? {} : { cls: 'mod-cta' }),
 		});
 		signInButton.addEventListener('click', () => {
 			void this.handleReauth(signInButton, onSuccess);
@@ -913,6 +922,15 @@ export class ImportModal extends Modal {
 		onSuccess: () => Promise<void>,
 	): void {
 		const details = parent.createEl('details');
+		// When the recorded sign-in method says the browser flow is the one
+		// that works for this account (issue #78), the disclosure is not an
+		// "other" path at all: open it and put the primary styling on its
+		// browser sign-in button. appendSignInCta demotes the email CTA in
+		// the same condition, so exactly one primary action shows.
+		const prefersSso = this.noteWriterOptions.prefersSsoReauth === true;
+		if (prefersSso) {
+			details.open = true;
+		}
 		details.createEl('summary', { text: OTHER_SIGNIN_LABEL });
 		const row = details.createDiv({ cls: 'plaud-importer-buttons' });
 
@@ -921,6 +939,7 @@ export class ImportModal extends Modal {
 
 		const browserButton = row.createEl('button', {
 			text: BROWSER_SIGNIN_LABEL,
+			...(prefersSso ? { cls: 'mod-cta' } : {}),
 		});
 		browserButton.addEventListener('click', () => sso.signIn());
 

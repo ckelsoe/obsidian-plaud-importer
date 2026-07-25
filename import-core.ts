@@ -39,6 +39,15 @@ import type { DebugLogger } from './debug-logger';
  * surface, not inside `NoteWriterOptions`.
  */
 export interface ImportModalOptions extends NoteWriterOptions {
+	/**
+	 * When true, the auth-error surfaces treat the browser/bookmarklet flow
+	 * as the primary re-auth: the SSO disclosure opens expanded with mod-cta
+	 * on its browser sign-in button, and the embedded email window's button
+	 * is demoted. Set from the recorded sign-in method (issue #78): Google
+	 * and Apple accounts dead-end in the embedded window, and at a 24-hour
+	 * session cadence that screen appears daily.
+	 */
+	readonly prefersSsoReauth?: boolean;
 	readonly foldTranscript?: boolean;
 	/** Which tag sources land in `tags:` frontmatter. Defaults to 'plaud'. */
 	readonly tagMode?: TagMode;
@@ -196,8 +205,15 @@ export function categoryAllowsReauth(category: ErrorCategory): boolean {
 
 const NOT_CONFIGURED_MESSAGE =
 	'No Plaud token configured. Open Settings → Community Plugins → Plaud Importer to paste your token, then run this command again.';
+// Rendered on three surfaces: the import dialog's auth-error screen (sign-in
+// buttons right below it), the auto-sync pause notice (a Reconnect action
+// beside it), and the settings Test connection result (the sign-in controls
+// sit above it). So the remedy names the action generically rather than
+// pointing at a button label or a settings path only one surface has
+// (issue #78: the old "re-enter it in settings" text was wrong for
+// browser-flow users, whose remedy is re-running the bookmarklet flow).
 const TOKEN_REJECTED_MESSAGE =
-	'Plaud rejected your token. It may be expired or revoked. Open Settings → Community Plugins → Plaud Importer and re-enter it.';
+	'Plaud rejected your token. It may be expired or revoked. Sign in again for your account type to start a fresh session.';
 export function classifyError(err: unknown): ErrorClassification {
 	// NoteWriterError classification must come first — it is not a
 	// PlaudApiError subclass, and different messages map to different
