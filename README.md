@@ -137,7 +137,7 @@ Use this if you log in to Plaud with **single sign-on (SSO) through a Google or 
 2. That page shows a button labeled **Plaud → Obsidian**. **Drag that button up onto your browser's bookmarks bar.** If you do not see a bookmarks bar, press **Ctrl+Shift+B** (Windows/Linux) or **Cmd+Shift+B** (Mac) to show it, then drag the button onto it.
 3. The bookmark is now saved. You will not need to repeat this step.
 
-**Each time you connect (about once a year, when the token finally expires):**
+**Each time you connect (whenever your session expires):**
 
 1. Back in the plugin settings, click **Launch sign-in to capture token**. A short reminder pops up; read it and click **Open my browser now**. Plaud opens in your browser.
 2. Sign in to Plaud with Google or Apple if you are not already signed in.
@@ -148,7 +148,7 @@ If no pop-up appears in step 3, make sure you are signed in to Plaud in that tab
 
 **Starting over:** the **Clear sign-in** button clears the plugin's stored token and its own embedded sign-in session, so you can connect a different account or recover from a stuck state. It does not sign you out of Plaud in your normal web browser.
 
-Your sign-in token lasts about a year, so you rarely need to do this. When imports eventually stop working, repeat the "each time you connect" steps to get a fresh one. This is the same for email and password accounts and for Google and Apple accounts: both keep working for months between sign-ins. If a session lapses during background auto-sync, the pause notice's **Reconnect** button reopens the right sign-in for your account type, so an SSO account is not sent to the email window where Google and Apple logins do not work.
+How long a sign-in lasts is set by Plaud and varies by account: most accounts get a long session (months to about a year), but some get as little as 24 hours. The plugin settings show your session's actual expiry in the status line under **Plaud token**, and when the plugin can tell your session is short, it says so at sign-in. When imports stop working, repeat the "each time you connect" steps to get a fresh one. This is the same for email and password accounts and for Google and Apple accounts. If a session lapses during background auto-sync, the pause notice's **Reconnect** button reopens the right sign-in for your account type, so an SSO account is not sent to the email window where Google and Apple logins do not work.
 
 The token is stored in Obsidian's per-vault secret storage either way. It is **never written to `data.json`** and does not travel through Obsidian Sync. Switching vaults requires re-connecting.
 

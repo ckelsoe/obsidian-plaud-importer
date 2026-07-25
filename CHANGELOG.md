@@ -4,6 +4,16 @@ All notable changes to Plaud Importer will be documented in this file.
 
 ## [Unreleased]
 
+## [0.33.0] - 2026-07-25
+
+### Changed
+
+- **The plugin now measures your session's real lifetime instead of promising a year.** Issue #78 showed that Plaud sets session length per account: the long-lived (~300 day) token is real and confirmed on US accounts, but at least one APSE1 account gets a 24-hour token under the same key. The settings status line now shows your actual expiry and issued lifetime (for example "About 18 hours left (issued for 24 hours)"), Test connection reports the same, and signing in with a short-lived session shows a one-time heads-up so the later expiry is not a surprise. All "about a year" wording in the app and README is corrected: session length is set by Plaud and varies by account.
+
+### Added
+
+- **New command: "Debug: copy session status to clipboard".** Copies a privacy-safe block (plugin version, API region, sign-in method, and a redacted token summary containing no token value and no identity claims) designed to be pasted directly into a GitHub issue. Reporting a session problem like #78 becomes a paste instead of hand-decoding JWTs.
+
 ## [0.32.1] - 2026-07-18
 
 ### Fixed

@@ -11,10 +11,13 @@
 // against the <webview> tag for exactly these input/lifecycle bugs. A real
 // BrowserWindow is the render path that consistently works.
 //
-// Capture strategy: read the long-lived user token from the sign-in window's
-// own `localStorage`. Plaud's web app persists it under the `token` key on
-// web.plaud.ai (the origin this window loads), with a ~300-day life, and sends
-// it as `Authorization: Bearer <token>` on every data call. We poll
+// Capture strategy: read the user token from the sign-in window's own
+// `localStorage`. Plaud's web app persists it under the `token` key on
+// web.plaud.ai (the origin this window loads) and sends it as
+// `Authorization: Bearer <token>` on every data call. Its lifetime varies by
+// account: ~300 days observed on US accounts, 24 hours reported on an APSE1
+// account (issue #78), so the capture notes the measured lifetime and never
+// assumes one. We poll
 // `localStorage.getItem('token')` via `executeJavaScript` and accept a value
 // only once its decoded payload passes the capture guard (client_id + a still
 // future exp; see plaud-token.ts). That guard, not the key name, is what keeps
@@ -23,7 +26,7 @@
 
 import { App, Platform } from 'obsidian';
 import { NoopDebugLogger, type DebugLogger } from './debug-logger';
-import { isUsableUserToken } from './plaud-token';
+import { isUsableUserToken, readTokenLifetime } from './plaud-token';
 
 // Load the same web client the data API expects. The token is platform-typed:
 // a token minted by app.plaud.ai is parsed in a different mode by /file/simple/web
@@ -376,7 +379,14 @@ class PlaudLoginSession {
 		if (value.length === 0) {
 			return;
 		}
-		this.note('token captured', 'note', { apiBaseUrl });
+		// Measure, never assume, the issued lifetime (issue #78: some accounts
+		// get a 24h token under the same key). Advisory: never blocks capture.
+		const life = readTokenLifetime(value);
+		this.note('token captured', 'note', {
+			apiBaseUrl,
+			lifetimeHours: life?.lifetimeHours ?? null,
+			typ: life?.typ ?? null,
+		});
 		this.settle({ token: value, apiBaseUrl });
 		this.closeWindow();
 	}
