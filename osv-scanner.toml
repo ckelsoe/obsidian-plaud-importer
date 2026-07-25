@@ -1,0 +1,7 @@
+# OSV-Scanner suppressions. Every entry must document why the advisory is
+# accepted and what would let us drop it. Revisit whenever the dependency tree
+# changes (a new lockfile may remove the transitive path entirely).
+
+[[IgnoredVulns]]
+id = "GHSA-mh99-v99m-4gvg"
+reason = "brace-expansion unbounded-expansion DoS (vulnerable <= 5.0.7, first patched in 5.0.8, with no backport on the 1.x or 2.x lines). Reaches this repo only through DEV tooling: eslint's minimatch 3.x pulls a 1.x brace-expansion, and jest / typescript-eslint / glob pull 2.x and 5.x lines via newer minimatch. It is never in the shipped main.js (esbuild bundles runtime deps only; npm ls --omit=dev shows brace-expansion absent from the production tree) and only expands our own lint/test glob patterns, not attacker-controlled input. No non-breaking fix exists: forcing brace-expansion 5.0.8 everywhere breaks eslint's minimatch 3.x, which does require('brace-expansion') expecting a function and gets 5.x's object export (TypeError: expand is not a function). Drop this entry once eslint ships a minimatch that consumes fixed brace-expansion, or the 1.x/2.x path leaves the tree. To check: run npm ls brace-expansion and if no instance is <= 5.0.7, remove this entry."
