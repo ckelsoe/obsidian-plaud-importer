@@ -13,6 +13,7 @@ import {
 	isCredentialRejection,
 	MAX_CANDIDATE_LENGTH,
 	MAX_DEEP_LINK_URL_LENGTH,
+	MAX_WALK_DEPTH,
 	parseClipboardTokens,
 	parseTokenCandidates,
 	selectWorkingCandidate,
@@ -199,6 +200,113 @@ describe('collectTokenCandidates', () => {
 	it('skips oversized values without decoding them', () => {
 		const huge = `${USER_TOKEN}${'A'.repeat(MAX_CANDIDATE_LENGTH)}`;
 		expect(collectTokenCandidates(entries({ blob: huge }), NOW_MS)).toEqual([]);
+	});
+});
+
+// Reproduces the localStorage of a real Apple-SSO account, read first-party on
+// 2026-07-26 (the shape that made 0.35.0 capture nothing). There is NO `token`
+// key. The only live credential is a workspace token nested two levels inside
+// the `workspaceList` JSON string, beside a 30-day WRT that the API answers
+// -3901 to, with a profile JWT elsewhere. Both neighbours were probed live:
+// workspaceToken returned in-band status 0, refreshToken returned -3901.
+const APPLE_SSO_STORAGE: Record<string, string> = {
+	'pld_abc:unlimitedYearPriceValue': '119.99',
+	pld_pweblang: '"en-US"',
+	pld_loginMethod: '"apple"',
+	pld_userId: '56d20710fed5011bad1b30c885498dbf',
+	'pld_abc:frillSsoToken': PROFILE_JWT,
+	pld_desktop_version: '1.2.3',
+	'pld_abc:workspaceList': JSON.stringify([
+		{
+			workspaceId: 'ws_clF1vOqcHS',
+			name: 'Personal',
+			role: 'owner',
+			workspaceToken: WORKSPACE_TOKEN,
+			refreshToken: REFRESH_TOKEN,
+		},
+	]),
+	gbFeaturesCache: '{"features":{"a":{"defaultValue":false}}}',
+};
+
+describe('the Apple-SSO account shape (issue #78, 0.35.0 regression)', () => {
+	it('finds the workspace token nested inside workspaceList', () => {
+		expect(collectTokenCandidates(entries(APPLE_SSO_STORAGE), NOW_MS)).toEqual([
+			WORKSPACE_TOKEN,
+		]);
+	});
+
+	it('never offers the 30-day refresh token sitting beside it', () => {
+		// Probed live: this value answers -3901 "token type does not match parse
+		// mode". It has a longer life than the credential, so any exp-based
+		// ranking would have picked exactly the wrong one.
+		const found = collectTokenCandidates(entries(APPLE_SSO_STORAGE), NOW_MS);
+		expect(found).not.toContain(REFRESH_TOKEN);
+	});
+
+	it('never offers the profile JWT holding email, id, and name', () => {
+		expect(collectTokenCandidates(entries(APPLE_SSO_STORAGE), NOW_MS)).not.toContain(
+			PROFILE_JWT,
+		);
+	});
+
+	it('delivers that token through the deep link', () => {
+		const url = buildTokenDeepLink(
+			collectTokenCandidates(entries(APPLE_SSO_STORAGE), NOW_MS),
+		);
+		expect(parseTokenCandidates(
+			Object.fromEntries(new URLSearchParams(url.slice(url.indexOf('?') + 1))),
+		)).toEqual([WORKSPACE_TOKEN]);
+	});
+});
+
+describe('nested extraction bounds', () => {
+	it('walks arrays, objects, and JSON-inside-JSON', () => {
+		const nested = JSON.stringify({ a: [{ b: JSON.stringify({ c: USER_TOKEN }) }] });
+		expect(collectTokenCandidates([{ key: 'pld_k', value: nested }], NOW_MS)).toEqual([
+			USER_TOKEN,
+		]);
+	});
+
+	it('stops descending past the depth cap', () => {
+		let deep: unknown = USER_TOKEN;
+		for (let i = 0; i < MAX_WALK_DEPTH + 3; i += 1) deep = [deep];
+		expect(
+			collectTokenCandidates([{ key: 'pld_k', value: JSON.stringify(deep) }], NOW_MS),
+		).toEqual([]);
+	});
+
+	it('does NOT descend into a third-party SDK cache', () => {
+		// A feature-flag or analytics SDK sharing this storage may cache its own
+		// JWT. Descending into it would make that credential a candidate, and
+		// probing SENDS every candidate to Plaud as a bearer token. Handing
+		// another service's credential to Plaud is not an acceptable cost.
+		const foreign = JSON.stringify({ auth: { jwt: USER_TOKEN } });
+		expect(
+			collectTokenCandidates(
+				[
+					{ key: 'ph_phc_abc_posthog', value: foreign },
+					{ key: 'gbFeaturesCache', value: foreign },
+				],
+				NOW_MS,
+			),
+		).toEqual([]);
+	});
+
+	it('still reads a bare top-level token under a non-Plaud key', () => {
+		// Narrowing where we DESCEND must not narrow what we accept at the top
+		// level, or a future key that drops the prefix stops working.
+		expect(
+			collectTokenCandidates([{ key: 'somethingElse', value: USER_TOKEN }], NOW_MS),
+		).toEqual([USER_TOKEN]);
+	});
+
+	it('leaves non-JSON values alone instead of scanning them for substrings', () => {
+		// The -3900 lesson: only complete parsed string values are candidates,
+		// never a substring cut out of arbitrary text.
+		const smuggled = `noise ${USER_TOKEN} noise`;
+		expect(collectTokenCandidates([{ key: 'pld_k', value: smuggled }], NOW_MS)).toEqual(
+			[],
+		);
 	});
 });
 
@@ -624,13 +732,37 @@ describe('SIGN_IN_BOOKMARKLET', () => {
 		expect(runBookmarklet(map).href).toBe(buildTokenDeepLink(expected));
 	});
 
-	it('alerts and sends nothing when no value is a live token', () => {
+	it('never dead-ends: a miss offers a diagnostic instead of only an alert', () => {
+		// 0.35.0 alerted and returned here, leaving the user with nothing at all
+		// - strictly worse than the pre-deep-link bookmarklet, which at least
+		// showed something to paste. A miss must now always hand back something
+		// actionable.
 		const run = runBookmarklet({ userInfo: PROFILE_JWT, stale: EXPIRED_TOKEN });
 		expect(run.href).toBeNull();
-		expect(run.alerts).toHaveLength(1);
-		// The profile JWT carries {email,id,name}; it must not be offered for
-		// pasting into a public issue.
-		expect(run.prompts).toEqual([]);
+		expect(run.alerts).toEqual([]);
+		expect(run.prompts).toHaveLength(1);
+		const payload = run.prompts[0].value;
+		expect(payload.startsWith('plaud-capture-miss')).toBe(true);
+		// Shapes only. The profile JWT carries {email,id,name} and the diagnostic
+		// is something users paste into public issues, so no token segment and no
+		// claim VALUE may appear in it.
+		expect(payload).not.toContain(PROFILE_JWT.split('.')[1]);
+		expect(payload).not.toContain(EXPIRED_TOKEN.split('.')[1]);
+		expect(payload).toContain('keys=2');
+	});
+
+	it('never copies an untrusted JWT typ into the shareable diagnostic', () => {
+		// `typ` is attacker/vendor-controlled text from a decoded header, and the
+		// diagnostic is something the user is explicitly told is safe to send on.
+		// Only the known categories may appear.
+		const weird = makeJwt(
+			{ alg: 'HS256', typ: 'secret-internal-tenant-42' },
+			{ sub: 'u1', client_id: 'web' },
+		);
+		const run = runBookmarklet({ pld_odd: weird });
+		const payload = run.prompts[0].value;
+		expect(payload).not.toContain('tenant-42');
+		expect(payload).toContain('other');
 	});
 
 	it('offers the whole deep link to copy when the page keeps focus', () => {
@@ -654,7 +786,7 @@ describe('SIGN_IN_BOOKMARKLET', () => {
 		expect(runBookmarklet(map).href).not.toBeNull();
 		const later = runBookmarklet(map, { nowMs: (FUTURE_EXP + 1) * 1000 });
 		expect(later.href).toBeNull();
-		expect(later.alerts).toHaveLength(1);
+		expect(later.prompts[0].value.startsWith('plaud-capture-miss')).toBe(true);
 	});
 
 	it('stays silent when the deep link took focus away', () => {
