@@ -5,7 +5,9 @@
 // 1. SIGN_IN_BOOKMARKLET, the JavaScript the user runs on a signed-in Plaud
 //    tab. It collects every localStorage VALUE that decodes as a live Plaud
 //    session JWT and hands the list to Obsidian over the
-//    `obsidian://plaud-importer-token` deep link.
+//    `obsidian://plaud-importer-token` deep link. It navigates with
+//    location.replace, not location.href: the URL carries session tokens, and
+//    replace cannot leave one behind in browser history.
 // 2. The Obsidian-side parser (parseTokenCandidates) and selector
 //    (selectWorkingCandidate) that decide which of those candidates is the
 //    credential Plaud actually accepts.
@@ -246,6 +248,16 @@ export function parseClipboardTokens(text: string): string[] {
  * Everything else (network failure, 429, 5xx, a parse error) is a failure to
  * ASK the question. Those must abort the loop rather than convict every
  * candidate, or an offline click would report the user's session as revoked.
+ *
+ * The inBandStatus branch is deliberately not narrowed to a code allowlist.
+ * Plaud does use in-band negatives for non-auth conditions elsewhere (-12 on
+ * the transcription endpoints), but the probe only ever calls
+ * /file/simple/web, a plain authenticated list where the token IS the variable,
+ * and the two known token-death codes are already raised as PlaudAuthError
+ * before reaching here. An allowlist would misread an auth rejection code we
+ * have not catalogued as "Plaud unreachable" and, for a single candidate,
+ * store a token already known to be dead. Failing toward "try the next
+ * candidate" is the safer default for this one call.
  */
 export function isCredentialRejection(err: unknown): boolean {
 	if (err instanceof PlaudAuthError) {
@@ -330,7 +342,34 @@ export async function selectWorkingCandidate(
 //
 // Kept as one line with NO backslashes, so it pastes as a valid bookmark URL,
 // and every limit is written as a literal because the bookmarklet cannot
-// import the constants above. bookmarkSetupHtml escapes `&`, `<`, and `>`
-// before embedding this in an href.
+// import the constants above. bookmarkSetupHtml escapes it before embedding it
+// in an href.
+//
+// The `javascript:` scheme is held in its own const and concatenated, so the
+// one place that strips it (the parity test, which executes the body) can
+// reuse the same value instead of re-spelling the scheme.
+export const BOOKMARKLET_SCHEME = "javascript:";
+
+/**
+ * Escapes the bookmarklet for embedding as an HTML attribute VALUE on the
+ * setup page's draggable link.
+ *
+ * Escaping only `&` is not enough: the bookmarklet is dense with quotes and
+ * comparison operators, and an unescaped quote could close the attribute
+ * early. Both quote forms are escaped so the value is inert regardless of
+ * which delimiter the surrounding markup uses. `&` MUST be replaced first, or
+ * the later replacements' own entities would be double-encoded and the dragged
+ * bookmark would receive mangled source.
+ */
+export function escapeHtmlAttribute(value: string): string {
+	return value
+		.replace(/&/g, '&amp;')
+		.replace(/</g, '&lt;')
+		.replace(/>/g, '&gt;')
+		.replace(/"/g, '&quot;')
+		.replace(/'/g, '&#39;');
+}
+
 export const SIGN_IN_BOOKMARKLET =
-	"javascript:(function(){try{var h=location.hostname.toLowerCase();if(h!=='plaud.ai'&&h.slice(-9)!=='.plaud.ai'){alert('Open this on a Plaud tab (web.plaud.ai) after signing in, then click the bookmark.');return;}var seg=/^[A-Za-z0-9_-]+$/;var dec=function(s){try{var b=s.replace(/-/g,'+').replace(/_/g,'/');return JSON.parse(atob(b+'='.repeat((4-b.length%4)%4)));}catch(e){return null;}};var now=Date.now();var pick=function(v){if(typeof v!=='string'||v.length>4096)return null;var t=v.trim().replace(/^bearer +/i,'').trim();var p=t.split('.');if(p.length!==3||!seg.test(p[0])||!seg.test(p[1])||!seg.test(p[2]))return null;var hd=dec(p[0]);var pl=dec(p[1]);if(hd===null||pl===null||hd.typ==='WRT')return null;if(typeof pl.client_id!=='string'||pl.client_id.length===0)return null;if(typeof pl.exp!=='number'||!(pl.exp*1000>now))return null;return t;};var a=[];var add=function(v){var t=pick(v);if(t!==null&&a.indexOf(t)<0&&a.length<5)a.push(t);};add(localStorage.getItem('token'));for(var i=0;i<localStorage.length;i++){var k=localStorage.key(i);if(k!==null&&k!=='token')add(localStorage.getItem(k));}if(a.length===0){alert('No usable Plaud sign-in token found on this page. Sign in to Plaud in this tab, then click the bookmark again.');return;}var b='obsidian://plaud-importer-token?tokens=';var u=b+encodeURIComponent(JSON.stringify(a));while(a.length>1&&u.length>1900){a.pop();u=b+encodeURIComponent(JSON.stringify(a));}location.href=u;setTimeout(function(){if(document.hasFocus())prompt('Obsidian should have opened and saved your Plaud sign-in. If nothing happened, copy this whole line, then click Paste token from clipboard in the plugin settings:',u);},1500);}catch(e){alert('Could not read the Plaud token: '+e);}})()";
+	BOOKMARKLET_SCHEME +
+	"(function(){try{var h=location.hostname.toLowerCase();if(h!=='plaud.ai'&&h.slice(-9)!=='.plaud.ai'){alert('Open this on a Plaud tab (web.plaud.ai) after signing in, then click the bookmark.');return;}var seg=/^[A-Za-z0-9_-]+$/;var dec=function(s){try{var b=s.replace(/-/g,'+').replace(/_/g,'/');return JSON.parse(atob(b+'='.repeat((4-b.length%4)%4)));}catch(e){return null;}};var now=Date.now();var pick=function(v){if(typeof v!=='string'||v.length>4096)return null;var t=v.trim().replace(/^bearer +/i,'').trim();var p=t.split('.');if(p.length!==3||!seg.test(p[0])||!seg.test(p[1])||!seg.test(p[2]))return null;var hd=dec(p[0]);var pl=dec(p[1]);if(hd===null||pl===null||hd.typ==='WRT')return null;if(typeof pl.client_id!=='string'||pl.client_id.length===0)return null;if(typeof pl.exp!=='number'||!(pl.exp*1000>now))return null;return t;};var a=[];var add=function(v){var t=pick(v);if(t!==null&&a.indexOf(t)<0&&a.length<5)a.push(t);};add(localStorage.getItem('token'));for(var i=0;i<localStorage.length;i++){var k=localStorage.key(i);if(k!==null&&k!=='token')add(localStorage.getItem(k));}if(a.length===0){alert('No usable Plaud sign-in token found on this page. Sign in to Plaud in this tab, then click the bookmark again.');return;}var b='obsidian://plaud-importer-token?tokens=';var u=b+encodeURIComponent(JSON.stringify(a));while(a.length>1&&u.length>1900){a.pop();u=b+encodeURIComponent(JSON.stringify(a));}location.replace(u);setTimeout(function(){if(document.hasFocus())prompt('Obsidian should have opened and saved your Plaud sign-in. If nothing happened, copy this whole line, then click Paste token from clipboard in the plugin settings:',u);},1500);}catch(e){alert('Could not read the Plaud token: '+e);}})()";

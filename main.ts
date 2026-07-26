@@ -34,6 +34,7 @@ import {
 } from "./plaud-token";
 import { sessionExpiryDecision } from "./session-expiry";
 import {
+	escapeHtmlAttribute,
 	parseClipboardTokens,
 	parseTokenCandidates,
 	selectWorkingCandidate,
@@ -153,13 +154,15 @@ const AUTO_SYNC_DESC =
 // Standalone HTML page opened in the system browser for one-time bookmark
 // setup. It offers the sign-in bookmarklet (token-candidates.ts) as a
 // draggable link so a non-technical user can drag it onto their bookmarks bar
-// instead of pasting a javascript: URL into a new bookmark by hand. `&`, `<`,
-// and `>` in the href are escaped so the bookmarklet's `&&` and its comparison
-// operators survive as a valid HTML attribute.
+// instead of pasting a javascript: URL into a new bookmark by hand.
+//
+// The href is escaped as a full HTML attribute value (escapeHtmlAttribute,
+// where the ordering rule and the round-trip are pinned by tests), not just
+// for `&`: the bookmarklet carries `&&`, comparison operators, and quotes, and
+// escaping the quote characters is what keeps the value from being able to
+// close the attribute at all.
 function bookmarkSetupHtml(): string {
-	const href = SIGN_IN_BOOKMARKLET.replace(/&/g, "&amp;")
-		.replace(/</g, "&lt;")
-		.replace(/>/g, "&gt;");
+	const href = escapeHtmlAttribute(SIGN_IN_BOOKMARKLET);
 	return [
 		"<!doctype html>",
 		'<html lang="en"><head><meta charset="utf-8">',

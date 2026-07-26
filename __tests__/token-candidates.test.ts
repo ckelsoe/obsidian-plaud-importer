@@ -6,8 +6,10 @@ import {
 	PlaudParseError,
 } from '../plaud-client-re';
 import {
+	BOOKMARKLET_SCHEME,
 	buildTokenDeepLink,
 	collectTokenCandidates,
+	escapeHtmlAttribute,
 	isCredentialRejection,
 	MAX_CANDIDATE_LENGTH,
 	MAX_DEEP_LINK_URL_LENGTH,
@@ -510,7 +512,11 @@ describe('SIGN_IN_BOOKMARKLET', () => {
 		};
 		const location = {
 			hostname: options.hostname ?? 'web.plaud.ai',
-			set href(value: string) {
+			// replace(), not an href setter: the shipped bookmarklet must not
+			// push a token-bearing URL into browser history. A stub with no
+			// href setter also means a regression back to `location.href = u`
+			// silently sets a dead property and fails these tests.
+			replace: (value: string): void => {
 				run.href = value;
 			},
 		};
@@ -529,7 +535,7 @@ describe('SIGN_IN_BOOKMARKLET', () => {
 		// `Date` is stubbed to the same fixed clock the reference helpers are
 		// given: the fixtures expire in 2027, and reading the wall clock here
 		// would turn every live-token assertion into a time bomb.
-		runInNewContext(SIGN_IN_BOOKMARKLET.replace(/^javascript:/, ''), {
+		runInNewContext(SIGN_IN_BOOKMARKLET.slice(BOOKMARKLET_SCHEME.length), {
 			location,
 			localStorage,
 			document: doc,
@@ -543,10 +549,33 @@ describe('SIGN_IN_BOOKMARKLET', () => {
 		return run;
 	}
 
+	it('survives HTML-attribute escaping intact, entity for entity', () => {
+		// The setup page embeds the bookmarklet in an href, so a browser will
+		// entity-decode it back before the user's bookmark ever runs it. Decode
+		// in the reverse order (&amp; LAST) and the original must come back
+		// byte for byte, or the dragged bookmark is subtly corrupt.
+		const escaped = escapeHtmlAttribute(SIGN_IN_BOOKMARKLET);
+		const decoded = escaped
+			.replace(/&#39;/g, "'")
+			.replace(/&quot;/g, '"')
+			.replace(/&gt;/g, '>')
+			.replace(/&lt;/g, '<')
+			.replace(/&amp;/g, '&');
+		expect(decoded).toBe(SIGN_IN_BOOKMARKLET);
+	});
+
+	it('cannot break out of the attribute it is embedded in', () => {
+		const escaped = escapeHtmlAttribute(SIGN_IN_BOOKMARKLET);
+		expect(escaped).not.toContain('"');
+		expect(escaped).not.toContain("'");
+		expect(escaped).not.toContain('<');
+		expect(escaped).not.toContain('>');
+	});
+
 	it('is a single line with no backslashes, so it pastes as a bookmark URL', () => {
 		expect(SIGN_IN_BOOKMARKLET).not.toContain('\n');
 		expect(SIGN_IN_BOOKMARKLET).not.toContain('\\');
-		expect(SIGN_IN_BOOKMARKLET.startsWith('javascript:')).toBe(true);
+		expect(SIGN_IN_BOOKMARKLET.startsWith(BOOKMARKLET_SCHEME)).toBe(true);
 	});
 
 	it('refuses to run off a Plaud origin', () => {

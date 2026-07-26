@@ -1,6 +1,6 @@
 # Privacy Policy
 
-_Last updated: 2026-05-15_
+_Last updated: 2026-07-26_
 
 This policy explains what the **Plaud Importer** Obsidian plugin ("the plugin") does and does not do with your data. It applies to the plugin as distributed through GitHub releases and BRAT.
 
