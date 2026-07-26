@@ -32,6 +32,7 @@ import {
 	readTokenLifetime,
 	SHORT_LIFETIME_HOURS,
 } from "./plaud-token";
+import { sessionExpiryDecision } from "./session-expiry";
 import {
 	NoteWriter,
 	DEFAULT_NOTE_NAME_TEMPLATE,
@@ -534,6 +535,12 @@ interface PlaudImporterSettings {
 	// window). Empty for sessions from before 0.32.0; those fall back to the
 	// legacy stored-WRT heuristic in reconnectPrefersWindow.
 	signInMethod: SignInMethod;
+	// One-shot stamp for the pre-expiry session warning (issue #78): the exact
+	// exp (epoch ms) the user was already warned about, so a restart inside
+	// the warn window does not re-nag. 0 = never warned. Additive key:
+	// pre-0.34.0 settings read the default via the load-time spread, no
+	// migration needed.
+	sessionWarnedForExpMs: number;
 	// Schema version for one-time settings migrations. Absent (pre-0.21.0) reads
 	// as 0. Version 1 rewrote the subfolder/note-name date templates from the old
 	// bespoke lowercase tokens to real Moment tokens (issue #30). Bumped only when
@@ -588,6 +595,7 @@ const DEFAULT_SETTINGS: PlaudImporterSettings = {
 	autoSyncEnabled: false,
 	autoSyncIntervalMinutes: 60,
 	signInMethod: "",
+	sessionWarnedForExpMs: 0,
 	settingsVersion: 1,
 };
 
@@ -668,6 +676,15 @@ export default class PlaudImporterPlugin extends Plugin {
 	private autoSyncIntervalId: number | undefined;
 	private autoSyncFirstRunTimeoutId: number | undefined;
 	private autoSyncState: AutoSyncState = INITIAL_AUTO_SYNC_STATE;
+	// Pre-expiry session warning timer (issue #78). A real scheduled timeout,
+	// deliberately NOT an auto-sync tick hook: auto-sync defaults off and its
+	// cadence misses short warn windows. Armed by
+	// reconcileSessionExpiryWarning(); cleared there and in onunload.
+	private sessionExpiryTimeoutId: number | undefined;
+	// The currently visible pre-expiry notice, if any, so a credential change
+	// can dismiss it instead of leaving a sticky warning that describes the
+	// OLD session. Also lives in actionNotices for the onunload sweep.
+	private sessionExpiryNotice: Notice | null = null;
 	// Single-flight coordination between the manual modal and background ticks.
 	// Two independent flags rather than one shared boolean, so the modal's
 	// open/close never clobbers a tick's in-flight state and vice versa. An
@@ -883,6 +900,9 @@ export default class PlaudImporterPlugin extends Plugin {
 			// The client exists now, so a scheduled tick can run. Starts the
 			// timer only when auto-sync is enabled; deferred first run is inside.
 			this.reconcileAutoSync();
+			// Arm the pre-expiry session warning for the stored credential
+			// (issue #78). Runs regardless of auto-sync state.
+			this.reconcileSessionExpiryWarning();
 		});
 	}
 
@@ -901,6 +921,11 @@ export default class PlaudImporterPlugin extends Plugin {
 		if (this.autoSyncFirstRunTimeoutId !== undefined) {
 			window.clearTimeout(this.autoSyncFirstRunTimeoutId);
 			this.autoSyncFirstRunTimeoutId = undefined;
+		}
+		// Clear the pre-expiry session warning timer for the same reason.
+		if (this.sessionExpiryTimeoutId !== undefined) {
+			window.clearTimeout(this.sessionExpiryTimeoutId);
+			this.sessionExpiryTimeoutId = undefined;
 		}
 		// Close any waiting browser-reconnect modal. Plain Modal instances are
 		// not plugin-owned components, so Obsidian does not close them on
@@ -924,6 +949,7 @@ export default class PlaudImporterPlugin extends Plugin {
 			notice.hide();
 		}
 		this.actionNotices.clear();
+		this.sessionExpiryNotice = null;
 		// Obsidian auto-detaches ribbon icons on unload; clear our
 		// state so a subsequent onload starts from a known baseline.
 		this.ribbonIconEl = null;
@@ -948,6 +974,95 @@ export default class PlaudImporterPlugin extends Plugin {
 			signInMethod: this.settings.signInMethod,
 			tokenValue: this.readStoredTokenValue(),
 		});
+	}
+
+	// ---- Pre-expiry session warning (issue #78, 0.34.0) ------------------
+
+	// Re-evaluates the session-expiry warning: clears any armed timer, then
+	// either warns now (once per credential, keyed on the exact expMs) or
+	// arms a clamped timeout to re-evaluate at expiry-minus-lead. Called from
+	// onLayoutReady and EVERY credential mutation (storeAccessToken,
+	// reauthenticate, clearSignIn, the settings secret picker), so the timer
+	// can never describe a stale credential. Mirrors the timer-id clearing
+	// discipline of reconcileAutoSync.
+	reconcileSessionExpiryWarning(): void {
+		if (this.sessionExpiryTimeoutId !== undefined) {
+			window.clearTimeout(this.sessionExpiryTimeoutId);
+			this.sessionExpiryTimeoutId = undefined;
+		}
+		// A still-visible warning describes the credential as it was when it
+		// fired; every reconcile is a potential credential change, so dismiss
+		// it and let the decision below re-derive. Hiding an already-hidden
+		// notice is a no-op.
+		if (this.sessionExpiryNotice !== null) {
+			this.sessionExpiryNotice.hide();
+			this.actionNotices.delete(this.sessionExpiryNotice);
+			this.sessionExpiryNotice = null;
+		}
+		if (this.disposed) return;
+		const value = this.readStoredTokenValue();
+		const life = value.length > 0 ? readTokenLifetime(value) : null;
+		const decision = sessionExpiryDecision(
+			Date.now(),
+			life,
+			this.settings.sessionWarnedForExpMs,
+		);
+		if (decision.action === "scheduled" && decision.armDelayMs !== null) {
+			this.sessionExpiryTimeoutId = window.setTimeout(() => {
+				this.sessionExpiryTimeoutId = undefined;
+				this.reconcileSessionExpiryWarning();
+			}, decision.armDelayMs);
+			return;
+		}
+		if (decision.action !== "warn" || decision.expMs === null) {
+			return;
+		}
+		// Stamp BEFORE showing, so a notice path that throws cannot re-nag on
+		// every reconcile. The stamp is keyed to this exact expMs; a fresh
+		// credential carries a different exp and warns again.
+		this.settings.sessionWarnedForExpMs = decision.expMs;
+		void this.saveSettings();
+		// Above ~2 days speak in days ("about 7 days"), below in hours: the
+		// long (7-day) lead would otherwise read as "about 168 hours".
+		const hoursLeft = Math.max(
+			1,
+			Math.round((decision.expMs - Date.now()) / 3_600_000),
+		);
+		const timeLeft =
+			hoursLeft > 48
+				? `${Math.round(hoursLeft / 24)} days`
+				: `${hoursLeft} hour${hoursLeft === 1 ? "" : "s"}`;
+		this.sessionExpiryNotice = this.showActionNotice(
+			decision.expired
+				? "Your Plaud session has expired. Reconnect to keep imports and auto-sync running."
+				: `Your Plaud session expires in about ${timeLeft}. Reconnect now to avoid an interruption.`,
+			"Reconnect",
+			() => this.reconnectFreshFromExpiryNotice(),
+		);
+	}
+
+	// Reconnect action for the pre-expiry notice specifically. For a
+	// window-flow account the embedded window's persistent session can still
+	// hold the SAME near-expiry token, and openPlaudLogin captures any usable
+	// token instantly: without clearing the login session first, "Reconnect"
+	// would close immediately, report success, and change nothing. Clearing
+	// only the login partition is non-destructive: the stored secret is
+	// untouched, so closing the window without signing in loses nothing.
+	// Skipped while a sign-in window is already open (the single-flight guard
+	// in reauthenticate would refuse anyway; clearing under a live window
+	// would break it).
+	private async reconnectFreshFromExpiryNotice(): Promise<void> {
+		if (this.reconnectPrefersWindow() && !this.reauthInFlight) {
+			try {
+				await clearPlaudLoginSession();
+			} catch (err) {
+				console.error(
+					"Plaud importer: failed to clear login session before reconnect",
+					err,
+				);
+			}
+		}
+		await this.reconnectFromNotice();
 	}
 
 	// One-time capture heads-up (issue #78): some accounts get a short (24h)
@@ -1809,7 +1924,7 @@ export default class PlaudImporterPlugin extends Plugin {
 		message: string,
 		actionLabel: string,
 		onAction: () => unknown,
-	): void {
+	): Notice {
 		const frag = createFragment();
 		frag.createSpan({ text: `${message} ` });
 		// role/tabindex + key handling so keyboard and screen-reader users can
@@ -1852,6 +1967,10 @@ export default class PlaudImporterPlugin extends Plugin {
 				activate();
 			}
 		});
+		// Returned so a caller can dismiss its own notice when it goes stale
+		// (the pre-expiry warning does, on credential change). Most callers
+		// ignore it.
+		return notice;
 	}
 
 	/**
@@ -2221,6 +2340,10 @@ export default class PlaudImporterPlugin extends Plugin {
 			// settings tab take effect on the next click without reinstantiation.
 			new ImportModal(this.app, this.client, {
 				...this.buildImportRuntimeOptions(),
+				// Single-source the routing decision with reconnectFromNotice
+				// (issue #78): a browser/bookmarklet (SSO) session must not be
+				// pushed at the embedded email window on auth-error screens.
+				prefersSsoReauth: !this.reconnectPrefersWindow(),
 				// After a successful in-modal re-auth, clear any auth pause so
 				// background sync resumes without waiting for the settings tab.
 				onReauth: async () => {
@@ -2391,9 +2514,12 @@ export default class PlaudImporterPlugin extends Plugin {
 		}
 		this.settings.secretId = "";
 		// A cleared plugin has no session, so there is no sign-in method to route
-		// a Reconnect from until the next capture records one.
+		// a Reconnect from until the next capture records one. The warn stamp
+		// resets too: the next credential deserves its own warning.
 		this.settings.signInMethod = "";
+		this.settings.sessionWarnedForExpMs = 0;
 		await this.saveSettings();
+		this.reconcileSessionExpiryWarning();
 		return { sessionCleared };
 	}
 
@@ -2438,6 +2564,7 @@ export default class PlaudImporterPlugin extends Plugin {
 			}
 			await this.saveSettings();
 			this.noteShortLifetimeOnCapture(result.token);
+			this.reconcileSessionExpiryWarning();
 			return true;
 		} finally {
 			this.reauthInFlight = false;
@@ -2548,6 +2675,7 @@ export default class PlaudImporterPlugin extends Plugin {
 		this.clearStoredRefreshToken();
 		await this.saveSettings();
 		this.noteShortLifetimeOnCapture(token);
+		this.reconcileSessionExpiryWarning();
 		return true;
 	}
 
@@ -3165,6 +3293,9 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 						// A freshly stored token is a resume trigger for a paused
 						// auto-sync.
 						this.plugin.resumeAutoSyncIfPaused();
+						// The linked credential changed, so the expiry warning
+						// must re-derive (fifth mutation channel, issue #78).
+						this.plugin.reconcileSessionExpiryWarning();
 						refreshStatus();
 					});
 			this.tokenRefresh = () => {
