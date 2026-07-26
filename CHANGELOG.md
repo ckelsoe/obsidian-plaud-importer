@@ -4,6 +4,16 @@ All notable changes to Plaud Importer will be documented in this file.
 
 ## [Unreleased]
 
+## [0.35.0] - 2026-07-26
+
+### Changed
+
+- **Reconnecting through the browser is now one click, and it works on accounts where it used to capture nothing.** The Plaud → Obsidian bookmark sends your token straight to Obsidian over an `obsidian://` link instead of showing a box for you to copy and paste, and it no longer reads a single fixed storage key. It collects every value in the Plaud web app's own storage that decodes as a live session token, and the plugin tries each one against Plaud and keeps the first that actually works. Issue #78 turned up two account shapes this fixes: one where the usual key holds a 24-hour token, and one (reported by rogerfsh) where that key is missing entirely, the only live credential sits under a workspace-specific key, and the long-lived token that does exist has been revoked server-side. Selection is by what Plaud accepts, never by which token claims to live longest, because the revoked one claims the longest life.
+
+  **You must replace your bookmark.** Open the plugin settings, click **Set up bookmark**, and drag the new **Plaud → Obsidian (v2)** button over your old one. The old bookmark keeps working the old way (copy and paste) but cannot do any of the above.
+
+  If Obsidian does not open when you click the bookmark, it falls back to a copy-and-paste box as before, and **Paste token from clipboard** still works. The fallback now hands over the same set of candidates rather than just the first one, so pasting picks the working sign-in exactly like the link does. If Plaud cannot be reached while several candidates are in play, nothing is saved rather than guessing wrong; with a single one it is saved unverified, as before.
+
 ## [0.34.0] - 2026-07-25
 
 ### Added

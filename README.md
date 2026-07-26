@@ -134,17 +134,22 @@ Use this if you log in to Plaud with **single sign-on (SSO) through a Google or 
 **One-time setup (do this once):**
 
 1. In the plugin settings under **Sign in**, find **Sign in with Google or Apple** and click **Set up bookmark**. A small page opens in your default web browser.
-2. That page shows a button labeled **Plaud → Obsidian**. **Drag that button up onto your browser's bookmarks bar.** If you do not see a bookmarks bar, press **Ctrl+Shift+B** (Windows/Linux) or **Cmd+Shift+B** (Mac) to show it, then drag the button onto it.
+2. That page shows a button labeled **Plaud → Obsidian (v2)**. **Drag that button up onto your browser's bookmarks bar.** If you do not see a bookmarks bar, press **Ctrl+Shift+B** (Windows/Linux) or **Cmd+Shift+B** (Mac) to show it, then drag the button onto it.
 3. The bookmark is now saved. You will not need to repeat this step.
+
+> **Coming from an earlier version?** Re-do this one-time setup and replace your old **Plaud → Obsidian** bookmark. The new one sends the token to Obsidian for you instead of asking you to copy and paste it, and it finds the token on accounts where the old one found nothing.
 
 **Each time you connect (whenever your session expires):**
 
 1. Back in the plugin settings, click **Launch sign-in to capture token**. A short reminder pops up; read it and click **Open my browser now**. Plaud opens in your browser.
 2. Sign in to Plaud with Google or Apple if you are not already signed in.
-3. **Click the Plaud → Obsidian bookmark** you saved. A small pop-up box appears with your token in it. Select the token and copy it (Ctrl+C or Cmd+C).
-4. Switch back to Obsidian and click **Paste token from clipboard**. The **Plaud token** status changes to **"connected."**
+3. **Click the Plaud → Obsidian bookmark** you saved. Your browser asks whether to open Obsidian; allow it. Obsidian saves the token and the **Plaud token** status changes to **"connected."**
 
-If no pop-up appears in step 3, make sure you are signed in to Plaud in that tab first, then click the bookmark again.
+If your browser holds more than one saved Plaud sign-in, the plugin tries them against Plaud and keeps the one that actually works, so you do not have to know which is which.
+
+**If Obsidian does not open in step 3**, the bookmark falls back to showing a line of text in a pop-up box. Select the whole line, copy it (Ctrl+C or Cmd+C), switch back to Obsidian, and click **Paste token from clipboard**. That line carries the same sign-ins the bookmark would have sent, so the plugin still picks the one that works.
+
+If nothing at all happens when you click the bookmark, make sure you are signed in to Plaud in that tab first, then click the bookmark again.
 
 **Starting over:** the **Clear sign-in** button clears the plugin's stored token and its own embedded sign-in session, so you can connect a different account or recover from a stuck state. It does not sign you out of Plaud in your normal web browser.
 
@@ -319,9 +324,9 @@ I am actively monitoring Plaud's developer announcements and [waitlist](https://
 Plaud Importer is desktop-only, runs on your device, and has no telemetry or maintainer server — it talks only to Plaud, and only when you ask it to. Obsidian's plugin scan discloses a few capabilities. Here is exactly what each is and why it exists:
 
 - **Network access to Plaud.** The plugin calls Plaud's web API (`api.plaud.ai`, or your regional host) to list and fetch your recordings, summaries, transcripts, and attachments, and downloads attachment files from the CDN hosts Plaud's responses point at. It contacts no other third party, and only when you trigger an import, scroll to load more recordings, or download attachments. The one write it can make to Plaud is updating a recording's **title**, and only when you enable the optional title write-back and confirm or opt into automatic updates (see [Renaming recordings](#renaming-recordings)); with that setting off, every call to Plaud is read-only.
-- **Sign-in window.** When you click **Sign in**, the plugin opens Plaud's own website (`web.plaud.ai`) in a separate window so you can log in normally. For Google or Apple logins, you sign in through your normal web browser instead and hand the token back with a bookmarklet. Either way, your password is entered into Plaud's page and is never seen by the plugin; it reads only the session token your logged-in session already sends to Plaud, and stores it via `SecretStorage`. The sign-in runs in a private session isolated from Obsidian's other web views.
+- **Sign-in window.** When you click **Sign in**, the plugin opens Plaud's own website (`web.plaud.ai`) in a separate window so you can log in normally. For Google or Apple logins, you sign in through your normal web browser instead and hand the token back with a bookmarklet. Either way, your password is entered into Plaud's page and is never seen by the plugin; it reads only the session tokens your logged-in session already holds, checks them against Plaud to find the one that works, and stores that one via `SecretStorage`. The sign-in runs in a private session isolated from Obsidian's other web views.
 - **Vault file enumeration.** To show the "Imported" badge and avoid duplicate imports, the plugin lists your vault's note paths and reads the frontmatter of notes **inside your output folder** to find ones it previously created (tagged with a `plaud-id`). It does not read the contents of unrelated notes.
-- **Clipboard, write only.** The only clipboard use is the Copy buttons (copy debug log, copy an error or failure list for a bug report). It writes to your clipboard and never reads it, so it cannot see anything you copied elsewhere.
+- **Clipboard.** The plugin writes to your clipboard for the Copy buttons (copy debug log, copy an error or failure list for a bug report). It reads your clipboard in exactly one place: when you click **Paste token from clipboard** during sign-in. That read happens only on that click, is used only to look for a Plaud sign-in token, and is never stored or sent anywhere if it is not one. Nothing reads your clipboard in the background.
 - **Secret storage.** Your Plaud token is stored via Obsidian's `SecretStorage` (per-vault, not synced); `data.json` holds only a reference id, never the token.
 
 All vault writes go through Obsidian's `Vault` API (`Vault.create`, `Vault.process`) with no direct filesystem access, and nothing here sends your data anywhere except Plaud.
