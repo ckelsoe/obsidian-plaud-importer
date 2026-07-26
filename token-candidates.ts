@@ -230,8 +230,19 @@ export function collectTokenCandidates(
 	return out;
 }
 
-function tokenDeepLinkUrl(candidates: readonly string[]): string {
-	return `${TOKEN_DEEP_LINK_BASE}?tokens=${encodeURIComponent(
+function tokenDeepLinkUrl(
+	candidates: readonly string[],
+	vaultName: string,
+): string {
+	// `vault=` is what makes the link land in the vault running this plugin
+	// rather than in whichever Obsidian window happens to be focused. Encoded
+	// the same way the bookmarklet encodes it so the two produce byte-identical
+	// URLs, which the parity test asserts.
+	// Matches what the bookmarklet computes at runtime, so the reference
+	// implementation and the shipped copy produce byte-identical URLs.
+	const vault =
+		vaultName.length > 0 ? `vault=${encodeURIComponent(vaultName)}&` : '';
+	return `${TOKEN_DEEP_LINK_BASE}?${vault}tokens=${encodeURIComponent(
 		JSON.stringify(candidates),
 	)}`;
 }
@@ -242,12 +253,15 @@ function tokenDeepLinkUrl(candidates: readonly string[]): string {
  * least one: a single oversized candidate is still worth attempting, and the
  * bookmarklet's copy/paste fallback covers it if the shell truncates the URL.
  */
-export function buildTokenDeepLink(candidates: readonly string[]): string {
+export function buildTokenDeepLink(
+	candidates: readonly string[],
+	vaultName = '',
+): string {
 	let list = candidates.slice(0, MAX_COLLECTED_CANDIDATES);
-	let url = tokenDeepLinkUrl(list);
+	let url = tokenDeepLinkUrl(list, vaultName);
 	while (list.length > 1 && url.length > MAX_DEEP_LINK_URL_LENGTH) {
 		list = list.slice(0, list.length - 1);
-		url = tokenDeepLinkUrl(list);
+		url = tokenDeepLinkUrl(list, vaultName);
 	}
 	return url;
 }
@@ -462,6 +476,47 @@ export function escapeHtmlAttribute(value: string): string {
 		.replace(/'/g, '&#39;');
 }
 
-export const SIGN_IN_BOOKMARKLET =
+/** Placeholder the vault name is substituted into. */
+const VAULT_PLACEHOLDER = '__VAULT__';
+
+/**
+ * Builds the bookmarklet for ONE vault.
+ *
+ * The vault name is baked in because Obsidian delivers an `obsidian://` URI to
+ * the FOCUSED window and looks the action up in that window's handler map. A
+ * user with several vaults open (the normal case) would otherwise get
+ * "Unrecognized URI action" whenever the focused vault is not the one running
+ * this plugin. Verified 2026-07-26 with four vaults open: without `vault=` the
+ * link stayed in the focused vault and failed; with it, the target vault came
+ * to the front and handled it.
+ *
+ * The name is embedded as a list of UTF-16 char codes and rebuilt at runtime,
+ * NOT as a percent-encoded string literal. A `javascript:` URL is
+ * percent-decoded by the browser BEFORE it is evaluated, so a baked-in `%27`
+ * would arrive as a real apostrophe and end the JS string early, and `%26` /
+ * `%23` would arrive as `&` / `#` and cut the Obsidian URI short. Digits and
+ * commas survive that decoding pass untouched, cannot appear inside a quote,
+ * and need no backslashes, so this is inert under both layers. Percent-encoding
+ * for the URL then happens at runtime, inside the browser, where it cannot be
+ * decoded again.
+ *
+ * Known limitation: two registered vaults with the same folder name in
+ * different parents produce the same `vault=` value, and Obsidian picks one.
+ * The unique alternative is the vault id, which is not on the public API, and
+ * the marketplace scan rejects non-public API use. Such a user still has the
+ * copy/paste fallback.
+ */
+export function buildSignInBookmarklet(vaultName: string): string {
+	const codes: number[] = [];
+	for (let i = 0; i < vaultName.length; i += 1) {
+		codes.push(vaultName.charCodeAt(i));
+	}
+	return SIGN_IN_BOOKMARKLET_TEMPLATE.replace(
+		VAULT_PLACEHOLDER,
+		codes.join(','),
+	);
+}
+
+const SIGN_IN_BOOKMARKLET_TEMPLATE =
 	BOOKMARKLET_SCHEME +
-	"(function(){try{var h=location.hostname.toLowerCase();if(h!=='plaud.ai'&&h.slice(-9)!=='.plaud.ai'){alert('Open this on a Plaud tab (web.plaud.ai) after signing in, then click the bookmark.');return;}var seg=/^[A-Za-z0-9_-]+$/;var dec=function(s){try{var b=s.replace(/-/g,'+').replace(/_/g,'/');return JSON.parse(atob(b+'='.repeat((4-b.length%4)%4)));}catch(e){return null;}};var now=Date.now();var d=[];var ty=function(t){return t==='WT'||t==='WRT'||t==='JWT'?t:'other';};var pick=function(v){if(typeof v!=='string'||v.length>4096)return null;var t=v.trim().replace(/^bearer +/i,'').trim();var p=t.split('.');if(p.length!==3||!seg.test(p[0])||!seg.test(p[1])||!seg.test(p[2]))return null;var hd=dec(p[0]);var pl=dec(p[1]);if(hd===null||pl===null)return null;if(d.length<12)d.push(ty(hd.typ)+'/'+(typeof pl.client_id)+'/'+(typeof pl.exp==='number'?Math.round((pl.exp*1000-now)/3600000)+'h':'noexp'));if(hd.typ==='WRT')return null;if(typeof pl.client_id!=='string'||pl.client_id.length===0)return null;if(typeof pl.exp!=='number'||!(pl.exp*1000>now))return null;return t;};var a=[];var add=function(v){var t=pick(v);if(t!==null&&a.indexOf(t)<0&&a.length<5)a.push(t);};var n=4000;var W=function(x,y){if(y>6||n<=0||a.length>=5)return;n=n-1;if(typeof x==='string'){add(x);var s=x.trim();if(s.length<=262144&&(s.charAt(0)==='{'||s.charAt(0)==='[')){try{W(JSON.parse(s),y+1);}catch(e){}}return;}if(x!==null&&typeof x==='object'){for(var q in x){if(Object.prototype.hasOwnProperty.call(x,q))W(x[q],y+1);}}};var P=function(k){return k==='token'||k==='tokenstr'||k.slice(0,4)==='pld_';};W(localStorage.getItem('token'),0);for(var i=0;i<localStorage.length;i++){var k=localStorage.key(i);if(k===null||k==='token')continue;if(P(k))W(localStorage.getItem(k),0);else add(localStorage.getItem(k));}if(a.length===0){prompt('No usable Plaud sign-in found on this page. Make sure you are signed in to Plaud in this tab, then click the bookmark again. If you ARE signed in and this keeps happening, copy this line and send it to the plugin maintainer. It carries no token and no personal details:','plaud-capture-miss keys='+localStorage.length+' jwts='+d.length+' '+d.join(' '));return;}var b='obsidian://plaud-importer-token?tokens=';var u=b+encodeURIComponent(JSON.stringify(a));while(a.length>1&&u.length>1900){a.pop();u=b+encodeURIComponent(JSON.stringify(a));}location.replace(u);setTimeout(function(){if(document.hasFocus())prompt('Obsidian should have opened and saved your Plaud sign-in. If nothing happened, copy this whole line, then click Paste token from clipboard in the plugin settings:',u);},1500);}catch(e){alert('Could not read the Plaud token: '+e);}})()";
+	"(function(){try{var h=location.hostname.toLowerCase();if(h!=='plaud.ai'&&h.slice(-9)!=='.plaud.ai'){alert('Open this on a Plaud tab (web.plaud.ai) after signing in, then click the bookmark.');return;}var V=encodeURIComponent(String.fromCharCode(__VAULT__));var seg=/^[A-Za-z0-9_-]+$/;var dec=function(s){try{var b=s.replace(/-/g,'+').replace(/_/g,'/');return JSON.parse(atob(b+'='.repeat((4-b.length%4)%4)));}catch(e){return null;}};var now=Date.now();var d=[];var ty=function(t){return t==='WT'||t==='WRT'||t==='JWT'?t:'other';};var pick=function(v){if(typeof v!=='string'||v.length>4096)return null;var t=v.trim().replace(/^bearer +/i,'').trim();var p=t.split('.');if(p.length!==3||!seg.test(p[0])||!seg.test(p[1])||!seg.test(p[2]))return null;var hd=dec(p[0]);var pl=dec(p[1]);if(hd===null||pl===null)return null;if(d.length<12)d.push(ty(hd.typ)+'/'+(typeof pl.client_id)+'/'+(typeof pl.exp==='number'?Math.round((pl.exp*1000-now)/3600000)+'h':'noexp'));if(hd.typ==='WRT')return null;if(typeof pl.client_id!=='string'||pl.client_id.length===0)return null;if(typeof pl.exp!=='number'||!(pl.exp*1000>now))return null;return t;};var a=[];var add=function(v){var t=pick(v);if(t!==null&&a.indexOf(t)<0&&a.length<5)a.push(t);};var n=4000;var W=function(x,y){if(y>6||n<=0||a.length>=5)return;n=n-1;if(typeof x==='string'){add(x);var s=x.trim();if(s.length<=262144&&(s.charAt(0)==='{'||s.charAt(0)==='[')){try{W(JSON.parse(s),y+1);}catch(e){}}return;}if(x!==null&&typeof x==='object'){for(var q in x){if(Object.prototype.hasOwnProperty.call(x,q))W(x[q],y+1);}}};var P=function(k){return k==='token'||k==='tokenstr'||k.slice(0,4)==='pld_';};W(localStorage.getItem('token'),0);for(var i=0;i<localStorage.length;i++){var k=localStorage.key(i);if(k===null||k==='token')continue;if(P(k))W(localStorage.getItem(k),0);else add(localStorage.getItem(k));}if(a.length===0){prompt('No usable Plaud sign-in found on this page. Make sure you are signed in to Plaud in this tab, then click the bookmark again. If you ARE signed in and this keeps happening, copy this line and send it to the plugin maintainer. It carries no token and no personal details:','plaud-capture-miss keys='+localStorage.length+' jwts='+d.length+' '+d.join(' '));return;}var b='obsidian://plaud-importer-token?vault='+V+'&tokens=';var u=b+encodeURIComponent(JSON.stringify(a));while(a.length>1&&u.length>1900){a.pop();u=b+encodeURIComponent(JSON.stringify(a));}location.replace(u);setTimeout(function(){if(document.hasFocus())prompt('Obsidian should have opened and saved your Plaud sign-in. If nothing happened, copy this whole line, then click Paste token from clipboard in the plugin settings:',u);},1500);}catch(e){alert('Could not read the Plaud token: '+e);}})()";

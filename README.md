@@ -137,6 +137,8 @@ Use this if you log in to Plaud with **single sign-on (SSO) through a Google or 
 2. That page shows a button labeled **Plaud → Obsidian (v2)**. **Drag that button up onto your browser's bookmarks bar.** If you do not see a bookmarks bar, press **Ctrl+Shift+B** (Windows/Linux) or **Cmd+Shift+B** (Mac) to show it, then drag the button onto it.
 3. The bookmark is now saved. You will not need to repeat this step.
 
+> **If you use more than one vault:** the bookmark is built for the vault you set it up in, and the setup page names it. Obsidian delivers this kind of link to the vault it is addressed to, so it works even when another vault window has focus. To use the plugin in a second vault, run **Set up bookmark** there too and keep one bookmark per vault.
+
 > **Coming from an earlier version?** Re-do this one-time setup and replace your old **Plaud → Obsidian** bookmark. The new one sends the token to Obsidian for you instead of asking you to copy and paste it, and it finds the token on accounts where the old one found nothing.
 
 **Each time you connect (whenever your session expires):**
