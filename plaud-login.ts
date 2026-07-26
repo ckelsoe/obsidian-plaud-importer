@@ -68,7 +68,11 @@ export const PROBE_JS = `(() => {
 			// stopped writing a plain 'token' key: the live credential is nested
 			// inside the workspaceList JSON, so a top-level-only read finds nothing
 			// and the window never settles. Descend ONLY into Plaud's own key
-			// namespace so an unrelated SDK's cached JWT can never be captured.
+			// namespace. Keys outside it are skipped ENTIRELY, not merely not
+			// descended into: every candidate is later sent to Plaud as a bearer
+			// token during probing, so collecting another service's JWT would
+			// hand Plaud that credential. A third-party SDK storing a bare JWT at
+			// top level is exactly that case.
 			// Only JWT-SHAPED values count toward the cap. Without this, ordinary
 			// string settings sharing the pld_ namespace fill the list before the
 			// walk reaches the credential nested in workspaceList, and the window
@@ -141,7 +145,8 @@ export const PROBE_JS = `(() => {
 			for (var i = 0; i < localStorage.length; i++) {
 				var k = localStorage.key(i);
 				if (k === null || k === 'token') { continue; }
-				try { if (scoped(k)) { walk(localStorage.getItem(k), 0); } else { add(localStorage.getItem(k)); } } catch (e) {}
+				if (!scoped(k)) { continue; }
+				try { walk(localStorage.getItem(k), 0); } catch (e) {}
 			}
 			try { domain = localStorage.getItem('pld_plaud_user_api_domain'); } catch (e) {}
 		}

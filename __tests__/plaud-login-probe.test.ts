@@ -167,12 +167,16 @@ describe('PROBE_JS against the current Plaud web app', () => {
 		expect(usableFrom(runProbe(noisy))).toEqual([WORKSPACE_TOKEN]);
 	});
 
-	it('does not descend into a third-party SDK cache', () => {
+	it('ignores third-party JWTs, wrapped in JSON or bare at top level', () => {
 		// Candidates are probed against Plaud, so collecting another service's
-		// JWT would send that credential to Plaud.
+		// JWT would hand Plaud that credential. The earlier version of this test
+		// only covered the JSON-wrapped case and so passed for the wrong reason:
+		// a bare top-level foreign token was still being collected.
 		const foreign = {
 			...CURRENT_WEB_APP,
 			ph_phc_abc_posthog: JSON.stringify({ auth: { jwt: LONG_LIVED_TOKEN } }),
+			'sb-access-token': LONG_LIVED_TOKEN,
+			ph_token: OTHER_WORKSPACE_TOKEN,
 		};
 		expect(usableFrom(runProbe(foreign))).toEqual([WORKSPACE_TOKEN]);
 	});
