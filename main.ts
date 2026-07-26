@@ -34,6 +34,12 @@ import {
 } from "./plaud-token";
 import { sessionExpiryDecision } from "./session-expiry";
 import {
+	parseClipboardTokens,
+	parseTokenCandidates,
+	selectWorkingCandidate,
+	SIGN_IN_BOOKMARKLET,
+} from "./token-candidates";
+import {
 	NoteWriter,
 	DEFAULT_NOTE_NAME_TEMPLATE,
 	isValidNoteNameTemplate,
@@ -112,6 +118,25 @@ const DEEP_LINK_SAVED_NOTICE =
 	"Plaud token received from your browser and saved.";
 const DEEP_LINK_BAD_TOKEN_NOTICE =
 	"Plaud sign-in link did not carry a usable token. In your browser, sign in to Plaud before clicking the bookmarklet, then try again.";
+// Every candidate the browser sent was rejected by Plaud itself, so the
+// browser session is signed out or revoked rather than the link being wrong
+// (issue #78: rogerfsh's 300-day token still decodes cleanly but is revoked).
+const DEEP_LINK_ALL_REJECTED_NOTICE =
+	"Plaud rejected every sign-in token from your browser, so that session looks signed out or revoked. Sign in to Plaud in your browser again, then click the bookmark.";
+// One candidate, and Plaud could not be reached to check it. Storing it
+// unverified matches the pre-0.35.0 behavior and keeps an offline reconnect
+// working; the user finds out from the next import if it was already dead.
+const DEEP_LINK_UNVERIFIED_NOTICE =
+	"Plaud token received from your browser and saved, but Plaud could not be reached to check it. Run Test connection once you are back online.";
+// Shown while several candidates are probed. A const like its siblings so the
+// sentence-case lint, which only inspects literals at the call site, accepts
+// the product name mid-sentence.
+const DEEP_LINK_PROBING_NOTICE = "Checking which Plaud sign-in still works…";
+// Several candidates and no way to ask which one works. Picking blind would
+// store the wrong credential (a revoked long-lived token outranks a live short
+// one on every claim we can read), so store nothing and let the user retry.
+const DEEP_LINK_UNREACHABLE_NOTICE =
+	"Could not reach Plaud to check which sign-in token to use, so nothing was saved. Check your connection, then click the bookmark again.";
 
 const SIGN_IN_NOTE =
 	"Plaud has no official API, so this plugin relies on their internal one. That makes sign-in fragile, and it may stop working when Plaud changes that internal API. We expect this whole process to get much simpler once Plaud releases an official API. There are two ways to sign in, depending on how you log in to Plaud. Use 'Sign in with email' if you log in with an email address and password. Use 'Sign in with Google or Apple' if you use single sign-on (SSO) through a Google or Apple account. How long a session lasts is set by Plaud and varies by account: most accounts get a long session (months to about a year), but some get as little as 24 hours. The status line under Plaud token shows yours. When the session lapses the plugin shows a one-click Reconnect that reopens the sign-in matching your account.";
@@ -125,27 +150,16 @@ const SIGN_IN_NOTE =
 const AUTO_SYNC_DESC =
 	"Off by default. Runs a background import on a schedule, unattended and never prompting. It uses your default import options: new recordings are imported, and a recording you changed in Plaud (edited speaker names, corrected transcript, or finished processing) is re-imported. IMPORTANT: a re-import OVERWRITES that note and its downloaded artifacts with Plaud's current version, so edits you made to a synced note or its attachment files are lost on the next change. Only recordings that actually changed are touched; unchanged notes are never modified. Desktop only. The background sync runs between sign-ins for as long as your Plaud session lasts (set by Plaud and shown in the status line under Plaud token), pausing for a one-click reconnection when the session expires.";
 
-// Bookmarklet for the browser sign-in flow. Run on a signed-in Plaud tab, it
-// reads the long-lived user token straight out of the web app's localStorage
-// (`token` key) and shows it in a prompt() the user copies and pastes into the
-// plugin. No request sniffing: the token is already in localStorage once the
-// user is signed in, so there is nothing to arm or wait for. The plugin
-// validates the pasted value (capture guard: payload must carry exp and
-// client_id), so this only needs to surface the raw stored string with any
-// leading `bearer ` prefix stripped. A copy dialog is used rather than an
-// obsidian:// redirect because launching a custom protocol without a user
-// gesture is blocked by browsers. Kept as one line, no backslashes, so it
-// pastes as a valid bookmark URL.
-const SIGN_IN_BOOKMARKLET =
-	"javascript:(function(){try{var h=location.hostname.toLowerCase();if(h!=='plaud.ai'&&h.slice(-9)!=='.plaud.ai'){alert('Open this on a Plaud tab (web.plaud.ai) after signing in, then click the bookmark.');return;}var t=localStorage.getItem('token');if(!t){alert('No Plaud token found on this page. Make sure you are signed in to Plaud in this tab, then click the bookmark again.');return;}t=t.replace(/^bearer /i,'');prompt('Plaud token captured. Select all, copy, then paste it into the token field in Obsidian settings:',t);}catch(e){alert('Could not read the Plaud token: '+e);}})()";
-
 // Standalone HTML page opened in the system browser for one-time bookmark
-// setup. It offers the sign-in bookmarklet as a draggable link so a
-// non-technical user can drag it onto their bookmarks bar instead of pasting a
-// javascript: URL into a new bookmark by hand. `&` in the href is escaped so
-// the bookmarklet's `&&`/`||` survive as a valid HTML attribute.
+// setup. It offers the sign-in bookmarklet (token-candidates.ts) as a
+// draggable link so a non-technical user can drag it onto their bookmarks bar
+// instead of pasting a javascript: URL into a new bookmark by hand. `&`, `<`,
+// and `>` in the href are escaped so the bookmarklet's `&&` and its comparison
+// operators survive as a valid HTML attribute.
 function bookmarkSetupHtml(): string {
-	const href = SIGN_IN_BOOKMARKLET.replace(/&/g, "&amp;");
+	const href = SIGN_IN_BOOKMARKLET.replace(/&/g, "&amp;")
+		.replace(/</g, "&lt;")
+		.replace(/>/g, "&gt;");
 	return [
 		"<!doctype html>",
 		'<html lang="en"><head><meta charset="utf-8">',
@@ -159,14 +173,15 @@ function bookmarkSetupHtml(): string {
 		"</style></head><body>",
 		"<h1>Plaud Importer: one-time setup</h1>",
 		"<p><strong>Drag this button up onto your browser's bookmarks bar:</strong></p>",
-		'<p><a class="bm" href="' + href + '">Plaud → Obsidian</a></p>',
+		'<p><a class="bm" href="' + href + '">Plaud → Obsidian (v2)</a></p>',
 		'<p class="note">Bookmarks bar hidden? Press Ctrl+Shift+B (Cmd+Shift+B on Mac) to show it, then drag the button onto it.</p>',
+		'<p class="note">Already have an older Plaud → Obsidian bookmark? Replace it with this one. The new bookmark sends the token to Obsidian for you instead of asking you to copy and paste it.</p>',
 		"<hr><p>After it is saved, each time you need to connect:</p>",
 		"<ol>",
 		"<li>Sign in to Plaud in this browser.</li>",
-		"<li>Click the bookmark you just added. A box shows your token. Copy it.</li>",
-		"<li>Go back to Obsidian and click the paste button.</li>",
+		"<li>Click the bookmark you just added. Obsidian opens and saves your token.</li>",
 		"</ol>",
+		'<p class="note">If Obsidian does not open, the bookmark falls back to showing a line of text in a box. Copy the whole line, switch to Obsidian, and click the paste button in the plugin settings.</p>',
 		"</body></html>",
 	].join("");
 }
@@ -700,6 +715,13 @@ export default class PlaudImporterPlugin extends Plugin {
 	// entry point (settings, the auth-pause notice, the backfill retry), so
 	// stacked stale notices cannot launch clobbering capture sessions.
 	private reauthInFlight = false;
+	// Redraws the open settings tab's sign-in status and secret picker. Set by
+	// the tab's display() (the pre-1.13 imperative path; 1.13+ renders
+	// declaratively and re-reads on its own) and cleared by its hide(), so it
+	// is null whenever no tab is mounted. Lets a credential stored from OUTSIDE
+	// the tab — a bookmarklet deep link arriving while settings sits open —
+	// update what the user is looking at.
+	settingsRefresh: (() => void) | null = null;
 	// The browser-reconnect flow currently awaiting a token, if any. A token can
 	// come back through the modal's paste button OR the obsidian:// deep link;
 	// deliveryInFlight serializes those channels per flow (the second one
@@ -743,10 +765,18 @@ export default class PlaudImporterPlugin extends Plugin {
 
 		this.addSettingTab(new PlaudImporterSettingsTab(this.app, this));
 
-		// Receive a token handed back from the user's external browser (the
-		// browser sign-in flow) via obsidian://plaud-importer-token?token=…
+		// Receive tokens handed back from the user's external browser (the
+		// browser sign-in flow) via obsidian://plaud-importer-token?tokens=…
+		// The handler now makes network calls to pick the working candidate, so
+		// its rejection is caught here: an unhandled one would leave the user
+		// with a clicked bookmark and no feedback at all.
 		this.registerObsidianProtocolHandler("plaud-importer-token", (params) => {
-			void this.handleTokenDeepLink(params);
+			void this.handleTokenDeepLink(params).catch((err: unknown) => {
+				console.error("Plaud importer: token deep link failed", err);
+				new Notice(
+					"Plaud: could not save the token from your browser. Try again, or paste it in settings.",
+				);
+			});
 		});
 
 		this.addCommand({
@@ -2063,7 +2093,16 @@ export default class PlaudImporterPlugin extends Plugin {
 				// at a time: if the deep link is mid-store for the same flow,
 				// this paste no-ops and lets that delivery finish.
 				const flow = this.browserReconnect;
-				if (flow === null || flow.modal !== modal || flow.deliveryInFlight) {
+				if (flow === null || flow.modal !== modal) {
+					return false;
+				}
+				if (flow.deliveryInFlight) {
+					// Since 0.35.0 a deep-link delivery probes candidates against
+					// Plaud, so this window is seconds rather than milliseconds.
+					// Say so: a silent no-op reads as a broken button.
+					new Notice(
+						"Plaud sign-in from your browser is already being saved. Give it a moment.",
+					);
 					return false;
 				}
 				flow.deliveryInFlight = true;
@@ -2589,20 +2628,32 @@ export default class PlaudImporterPlugin extends Plugin {
 		} catch (err) {
 			console.error("Plaud importer: clipboard read failed", err);
 			new Notice(
-				"Could not read the clipboard. Copy the token from the browser popup, then try again.",
+				"Could not read the clipboard. Copy the line the bookmark showed in your browser, then try again.",
 			);
 			return false;
 		}
 		if (!canStore()) {
 			return false;
 		}
-		const ok = await this.storeAccessToken(text);
-		if (!ok) {
+		// The bookmarklet's fallback offers the whole deep link, so a paste can
+		// carry several candidates and gets the same probe-and-select treatment
+		// the deep link does. A bare token still works and, when it is the only
+		// candidate, still stores even if Plaud cannot be reached, so this path
+		// keeps the behavior it had before 0.35.0.
+		const candidates = parseClipboardTokens(text);
+		if (candidates.length === 0) {
 			new Notice(
-				"The clipboard did not hold a valid token. Make sure you are signed in, then click the bookmarklet and copy the token it shows.",
+				"The clipboard did not hold a valid token. Make sure you are signed in, then click the bookmarklet and copy what it shows.",
 			);
+			return false;
 		}
-		return ok;
+		// The same guard again, because the probe between here and the store is
+		// a second, longer chance for this paste to go stale.
+		const result = await this.storeFirstWorkingCandidate(candidates, canStore);
+		if (!result.stored && result.message.length > 0) {
+			new Notice(result.message);
+		}
+		return result.stored;
 	}
 
 	// Opens the Plaud web app in the system browser for the browser-based
@@ -2676,16 +2727,133 @@ export default class PlaudImporterPlugin extends Plugin {
 		await this.saveSettings();
 		this.noteShortLifetimeOnCapture(token);
 		this.reconcileSessionExpiryWarning();
+		// A deep link can land while the settings tab is open, which is exactly
+		// what the one-click bookmark encourages: launch sign-in from settings,
+		// click the bookmark, come back. Redraw the status line and secret
+		// picker so the tab does not keep saying "not connected yet". Read at
+		// call time, so a tab closed during the await above is simply null.
+		// Guarded because a redraw failure must not fail a good capture.
+		try {
+			this.settingsRefresh?.();
+		} catch (err) {
+			console.error("Plaud importer: settings refresh failed", err);
+		}
 		return true;
 	}
 
-	// Handles obsidian://plaud-importer-token?token=… deep links from the
-	// browser sign-in bookmarklet.
+	// Probes candidate tokens against Plaud and stores the first one Plaud
+	// accepts (issue #78, 0.35.0). Each probe runs on a THROWAWAY client built
+	// around a closure returning that one candidate: the real client reads
+	// secretStorage, and nothing may be written to storage before it is
+	// validated. The probe is a real API call because Plaud answers auth
+	// failures with HTTP 200 and a negative in-band status, so only the
+	// client's in-band handling can tell acceptance from rejection.
+	//
+	// Returns the Notice text to show, plus whether a token was stored.
+	private async storeFirstWorkingCandidate(
+		candidates: readonly string[],
+		// Re-checked immediately before the store, never only before the probe.
+		// Probing is several round-trips, so it reopens the exact window PR #76
+		// closed: a delivery whose flow was cancelled while it ran must not
+		// overwrite a newer sign-in's token. Callers with no such window keep
+		// the default.
+		canStore: () => boolean = () => true,
+	): Promise<{ stored: boolean; message: string }> {
+		// The region redirect a probe may follow is captured locally instead of
+		// being persisted by the client's own callback: an unvalidated
+		// candidate must not rewrite the configured API host. It is applied
+		// below only for the candidate that is actually stored. Held on an
+		// object so the value written inside the probe closure is read back
+		// correctly after the await.
+		const detected: { baseUrl: string | null } = { baseUrl: null };
+		// Probing several candidates is several round-trips, and the user has
+		// just switched from the browser to Obsidian expecting something to
+		// happen. Say what is happening rather than sitting silent. Given a
+		// finite duration as well as an explicit hide, so an unload mid-probe
+		// cannot strand it.
+		const progress =
+			candidates.length > 1
+				? new Notice(DEEP_LINK_PROBING_NOTICE, 15000)
+				: null;
+		let selection;
+		try {
+			selection = await selectWorkingCandidate(
+				candidates,
+				async (candidate) => {
+					detected.baseUrl = null;
+					const probe = new ReverseEngineeredPlaudClient(
+						() => candidate,
+						obsidianFetcher,
+						{
+							debugLogger: this.debugLogger,
+							baseUrl: this.settings.apiBaseUrl,
+							onBaseUrlChanged: (url) => {
+								detected.baseUrl = url;
+							},
+						},
+					);
+					await probe.listRecordings({ limit: 1 });
+				},
+			);
+		} finally {
+			progress?.hide();
+		}
+		// An empty message means "say nothing": the plugin unloaded, or a newer
+		// sign-in owns the credential and this delivery is stale.
+		if (this.disposed || !canStore()) {
+			return { stored: false, message: "" };
+		}
+		if (selection.outcome === "none-usable") {
+			return { stored: false, message: DEEP_LINK_BAD_TOKEN_NOTICE };
+		}
+		if (selection.outcome === "all-rejected") {
+			return { stored: false, message: DEEP_LINK_ALL_REJECTED_NOTICE };
+		}
+		if (selection.outcome === "unreachable") {
+			// With several candidates the whole point is choosing between them,
+			// and no claim distinguishes a revoked token from a live one, so a
+			// blind pick would store the wrong credential. With exactly one
+			// there is nothing to choose: store it unverified, which is what
+			// every release before 0.35.0 did, so an offline reconnect still
+			// works.
+			if (selection.usable.length !== 1) {
+				return { stored: false, message: DEEP_LINK_UNREACHABLE_NOTICE };
+			}
+			const stored = await this.storeAccessToken(selection.usable[0]);
+			return {
+				stored,
+				message: stored
+					? DEEP_LINK_UNVERIFIED_NOTICE
+					: DEEP_LINK_BAD_TOKEN_NOTICE,
+			};
+		}
+		// Selected. A 'selected' outcome always carries a token; fail closed
+		// rather than assert it.
+		const token = selection.token;
+		if (token === null) {
+			return { stored: false, message: DEEP_LINK_BAD_TOKEN_NOTICE };
+		}
+		// Persist the regional host this candidate was proven against before
+		// the store, so it rides along in storeAccessToken's save.
+		if (detected.baseUrl !== null) {
+			this.settings.apiBaseUrl = detected.baseUrl;
+		}
+		const stored = await this.storeAccessToken(token);
+		return {
+			stored,
+			message: stored ? DEEP_LINK_SAVED_NOTICE : DEEP_LINK_BAD_TOKEN_NOTICE,
+		};
+	}
+
+	// Handles obsidian://plaud-importer-token deep links from the browser
+	// sign-in bookmarklet. Reads the 0.35.0 `tokens` candidate list and the
+	// legacy single `token` parameter, so a bookmark the user has not re-added
+	// keeps working.
 	private async handleTokenDeepLink(
 		params: ObsidianProtocolData,
 	): Promise<void> {
-		const raw = typeof params.token === "string" ? params.token : "";
-		if (raw.trim().length === 0) {
+		const candidates = parseTokenCandidates(params);
+		if (candidates.length === 0) {
 			new Notice("Plaud sign-in link contained no token.");
 			return;
 		}
@@ -2702,9 +2870,22 @@ export default class PlaudImporterPlugin extends Plugin {
 				return;
 			}
 			flow.deliveryInFlight = true;
+			let result = { stored: false, message: "" };
 			try {
-				const ok = await this.storeAccessToken(raw);
-				if (ok) {
+				// Probing is several round-trips, so this delivery can outlive
+				// its own flow. Refuse the store only when a DIFFERENT flow has
+				// taken ownership meanwhile: that is the ABA case where a stale
+				// delivery would clobber a newer sign-in's token. A flow that
+				// was merely cancelled (nothing owns sign-in now) still stores,
+				// which is the behavior every release before 0.35.0 had: the
+				// user did just sign in, and the fall-through below reports it.
+				result = await this.storeFirstWorkingCandidate(
+					candidates,
+					() =>
+						this.browserReconnect === null ||
+						this.browserReconnect === flow,
+				);
+				if (result.stored) {
 					const done = await this.completeBrowserReconnect(flow);
 					if (done) {
 						return;
@@ -2712,7 +2893,9 @@ export default class PlaudImporterPlugin extends Plugin {
 					// The flow was cancelled while the store ran; the token is
 					// saved anyway, so fall through to the plain-path handling.
 				} else {
-					new Notice(DEEP_LINK_BAD_TOKEN_NOTICE);
+					if (result.message.length > 0) {
+						new Notice(result.message);
+					}
 					return;
 				}
 			} finally {
@@ -2722,16 +2905,19 @@ export default class PlaudImporterPlugin extends Plugin {
 				return;
 			}
 			this.resumeAutoSyncIfPaused();
-			new Notice(DEEP_LINK_SAVED_NOTICE);
+			new Notice(result.message);
 			return;
 		}
-		const ok = await this.storeAccessToken(raw);
-		if (ok) {
+		const result = await this.storeFirstWorkingCandidate(candidates);
+		if (result.stored) {
 			// Outside the reconnect flow a fresh token still means the session
 			// is back; a paused auto-sync should not wait for its next trigger.
 			this.resumeAutoSyncIfPaused();
 		}
-		new Notice(ok ? DEEP_LINK_SAVED_NOTICE : DEEP_LINK_BAD_TOKEN_NOTICE);
+		// An empty message means the plugin unloaded mid-probe; say nothing.
+		if (result.message.length > 0) {
+			new Notice(result.message);
+		}
 	}
 }
 
@@ -2772,8 +2958,8 @@ class BrowserSignInModal extends Modal {
 		const ol = contentEl.createEl("ol");
 		const lines = [
 			"Sign in to Plaud if you are not already. Google, Apple, and password all work in a real browser.",
-			"Click the 'Plaud → Obsidian' bookmark on your bookmarks bar (the one you saved in step 1). A small box pops up showing your token.",
-			"Copy the token, switch back to Obsidian, and click 'Paste token from clipboard'.",
+			"Click the 'Plaud → Obsidian' bookmark on your bookmarks bar (the one you saved during setup). Your browser asks to open Obsidian; allow it, and the token is saved for you.",
+			"If Obsidian does not open, the bookmark shows a line of text in a box instead. Copy the whole line, come back here, and click 'Paste token from clipboard'.",
 		];
 		for (const line of lines) {
 			ol.createEl("li", { text: line });
@@ -2951,6 +3137,18 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 	constructor(app: App, plugin: PlaudImporterPlugin) {
 		super(app, plugin);
 		this.plugin = plugin;
+	}
+
+	// Obsidian calls this when the settings pane closes. Drop the redraw hook
+	// and the row closures with it: they capture DOM that is about to be
+	// discarded, so a later capture must not try to paint through them.
+	hide(): void {
+		if (this.plugin.settingsRefresh !== null) {
+			this.plugin.settingsRefresh = null;
+		}
+		this.signinRefresh = null;
+		this.tokenRefresh = null;
+		super.hide();
 	}
 
 	// Imperative settings tab for Obsidian < 1.13.0. Obsidian 1.13.0+ renders
@@ -3270,6 +3468,14 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 			);
 		};
 		this.signinRefresh = refreshStatus;
+		// Publish the pair to the plugin so a capture that happens outside this
+		// tab (a deep link landing while settings is open) can redraw it. Both
+		// halves are optional-called, so this is safe before the token row has
+		// rendered. Cleared in hide().
+		this.plugin.settingsRefresh = () => {
+			this.signinRefresh?.();
+			this.tokenRefresh?.();
+		};
 		setting.addComponent((el) => {
 			// Rebuild the picker so it re-reads the secret list and reflects the
 			// currently linked secretId. Recreating (rather than setValue) is
@@ -3347,10 +3553,10 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 		// "Plaud" plainly; the sentence-case lint only inspects string literals
 		// written directly at a createEl/setText call, not array contents.
 		const stepLines = [
-			"First time only: click 'Set up bookmark'. A web page opens. Drag the big button onto your browser's bookmarks bar (the strip near the top of the window).",
+			"First time only: click 'Set up bookmark'. A web page opens. Drag the big button onto your browser's bookmarks bar (the strip near the top of the window). If you already have an older Plaud → Obsidian bookmark, replace it with this one.",
 			"Click 'Launch sign-in to capture token'. A short reminder pops up, then your browser opens.",
-			"In the browser: sign in to Plaud if needed, then click the bookmark you saved. A small box shows your token. Copy it.",
-			"Come back to Obsidian and click 'Paste token from clipboard'. Done! If the token stops working later, do steps 2 to 4 again.",
+			"In the browser: sign in to Plaud if needed, then click the bookmark you saved. Your browser asks to open Obsidian; allow it, and the token is saved for you. Done! If the token stops working later, do steps 2 and 3 again.",
+			"Only if Obsidian did not open: the bookmark shows a line of text in a box instead. Copy the whole line, come back to Obsidian, and click 'Paste token from clipboard'.",
 		];
 		for (const line of stepLines) {
 			steps.createEl("li", { text: line });

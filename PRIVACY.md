@@ -29,6 +29,7 @@ All processing happens locally, in the Obsidian (Electron) process on your devic
 - **Imported content** is stored as files inside your vault, on your device, under the output folder you choose. You own and control these files.
 - **Plugin settings** are stored by Obsidian in your vault's local `data.json` file.
 - **Your Plaud token** is stored via Obsidian's `SecretStorage` API (per-vault, held by your operating system's secret store, not carried by Obsidian Sync). It is never written to `data.json`, never logged, and never transmitted anywhere except to Plaud.AI as an authentication header.
+- **Choosing which token to store.** When you sign in through the browser bookmark, it reads the candidate sign-in tokens the Plaud web app has stored in your own browser and hands them to the plugin. The plugin tests each one against Plaud's API and keeps only the first that works; the rest are discarded and never stored. Candidates come from the Plaud web app's own storage on your device and go nowhere except to Plaud.AI.
 
 ## Network use
 
