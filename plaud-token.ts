@@ -86,6 +86,27 @@ function jwtHeaderTyp(value: string): string | null {
 	return header !== null && typeof header.typ === 'string' ? header.typ : null;
 }
 
+/** Header `typ` of Plaud's v2 workspace token, the credential the data API takes. */
+export const WORKSPACE_TOKEN_TYP = 'WT';
+
+/**
+ * True when the value is a workspace token (header `typ: WT`).
+ *
+ * NOT a capture gate, and must never become one: isUsableUserToken stays
+ * deliberately permissive about `typ` because WT acceptance is what keeps v2
+ * accounts working, and a long-lived pre-v2 token (`typ: JWT`, no `wid`) is
+ * still a perfectly good credential where one exists.
+ *
+ * This exists for the silent refresh, which is WT-specific in both directions.
+ * The mint returns a 24 hour WT, so running it against a long-lived token would
+ * REPLACE a credential measured at 137 to 300 days with a 24 hour one whose
+ * cookie renewal itself ends after about 30 days. That is a downgrade dressed
+ * as a renewal. The refresh therefore both schedules and stores only for WT.
+ */
+export function isWorkspaceToken(value: string): boolean {
+	return jwtHeaderTyp(value) === WORKSPACE_TOKEN_TYP;
+}
+
 /**
  * Reads the JWT payload `client_id` claim, or null when the value is not a
  * decodable JWT or the claim is absent / not a non-empty string. The data API
