@@ -4,6 +4,11 @@ All notable changes to Plaud Importer will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The sign-in window no longer gets stuck when your browser storage holds several old sign-in values.** It gathers a handful of possible credentials and tries each against Plaud, but it was counting anything that merely looked like a credential toward that handful. Expired leftovers and the companion value Plaud stores beside your real session could use up every slot before it reached the one that works, leaving the window open forever after a successful login. It now ignores values it can already tell are unusable, so the slots go to real candidates. This also means one less rejected call to Plaud each time you sign in.
+- **A failed sign-in no longer leaves the plugin pointed at the wrong Plaud region.** If the window discovered your account was on a different regional server and the sign-in then failed to save, the plugin kept the new server address next to your old credential, which could send a working token to a server that would reject it. The address is now saved only together with a credential that was actually stored.
+
 ## [0.35.3] - 2026-07-26
 
 ### Fixed

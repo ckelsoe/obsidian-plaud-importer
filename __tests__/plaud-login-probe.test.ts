@@ -2,6 +2,7 @@ import { runInNewContext } from 'vm';
 
 import { PROBE_JS } from '../plaud-login';
 import { isUsableUserToken } from '../plaud-token';
+import { MAX_COLLECTED_CANDIDATES, collectTokenCandidates } from '../token-candidates';
 
 // Executes the SHIPPED probe string against fixtures, the same way the
 // bookmarklet parity tests do. The probe cannot import the shared collector (it
@@ -89,6 +90,10 @@ function runProbe(
 				Object.prototype.hasOwnProperty.call(map, k) ? map[k] : null,
 		},
 		JSON,
+		// The probe applies the claim guard in-page now, so the sandbox has to
+		// offer the same primitives the real sign-in window does.
+		atob,
+		Date,
 	};
 	return JSON.parse(runInNewContext(PROBE_JS, sandbox) as string) as ProbeOut;
 }
@@ -129,6 +134,79 @@ describe('PROBE_JS on a multi-workspace account', () => {
 	it('quotes around the stored id do not defeat the match', () => {
 		const quoted = { ...MULTI, 'pld_abc:currentWorkspaceId': '"ws_clF1vOqcHS"' };
 		expect(usableFrom(runProbe(quoted))[0]).toBe(WORKSPACE_TOKEN);
+	});
+});
+
+// The probe caps how many candidates it collects, and so does the shared
+// collector it is a twin of. Those two caps disagreeing is not cosmetic: every
+// collected candidate is later sent to Plaud as a bearer token during probing,
+// and section 2.5 measured a server-side ceiling of 10 sign-in calls per hour.
+// A probe that collects more than the reference spends that budget on values
+// the reference already decided were surplus. 0.35.3 shipped the twin capped at
+// 8 against a reference of 5. Constant drift between a hand-written twin and
+// its reference is the exact bug class that shipped 0.35.0 capturing nothing,
+// so the cap is pinned by execution here rather than by review.
+describe('PROBE_JS candidate cap', () => {
+	/** More distinct, individually valid workspace tokens than either cap. */
+	const OVERSIZED: Record<string, string> = {};
+	for (let i = 0; i < MAX_COLLECTED_CANDIDATES + 4; i++) {
+		OVERSIZED[`pld_abc:slot${i}`] = makeJwt(
+			{ alg: 'HS256', typ: 'WT' },
+			{
+				sub: 'u1',
+				exp: FUTURE_EXP,
+				iat: FUTURE_EXP - 24 * 3600,
+				client_id: 'web',
+				wid: `ws-${i}`,
+			},
+		);
+	}
+
+	it('stops at MAX_COLLECTED_CANDIDATES, not a literal of its own', () => {
+		expect(runProbe(OVERSIZED).tokens).toHaveLength(MAX_COLLECTED_CANDIDATES);
+	});
+
+	it('collects exactly as many as the reference collector does', () => {
+		const reference = collectTokenCandidates(
+			Object.entries(OVERSIZED).map(([key, value]) => ({ key, value })),
+		);
+		expect(runProbe(OVERSIZED).tokens).toHaveLength(reference.length);
+	});
+
+	it('agrees with the plugin guard on a non-finite exp', () => {
+		// JSON.parse turns an exp of 1e400 into Infinity, which passes a bare
+		// "is it in the future" test but fails isUsableUserToken's
+		// Number.isFinite. Counting it would spend a cap slot on a value the
+		// plugin was always going to discard, which is the same starvation the
+		// cap parity above exists to prevent.
+		// Written as raw JSON, not a numeric literal: the value only exists as
+		// Infinity once JSON.parse has read it, which is exactly how it would
+		// arrive off a hostile or corrupt localStorage entry.
+		const infinite = `${b64url({ alg: 'HS256', typ: 'WT' })}.${Buffer.from(
+			'{"sub":"u1","client_id":"web","exp":1e400}',
+		)
+			.toString('base64')
+			.replace(/\+/g, '-')
+			.replace(/\//g, '_')
+			.replace(/=+$/, '')}.sig`;
+		expect(isUsableUserToken(infinite)).toBe(false);
+		expect(runProbe({ 'pld_abc:odd': infinite }).tokens).toHaveLength(0);
+	});
+
+	it('does not let unusable JWTs burn the cap ahead of the credential', () => {
+		// The cap counts what the plugin would ACCEPT, not what merely looks
+		// like a JWT. A shape-only cap regresses here: these decoys are all
+		// JWT-shaped and sort ahead of workspaceList, so they would fill the
+		// list and startPolling (which applies isUsableUserToken only AFTER the
+		// probe returns) would see nothing usable and poll forever.
+		const decoyed: Record<string, string> = {};
+		for (let i = 0; i < MAX_COLLECTED_CANDIDATES + 3; i++) {
+			decoyed[`pld_abc:decoy${i}`] = [REFRESH_TOKEN, PROFILE_JWT, EXPIRED_TOKEN][i % 3];
+		}
+		decoyed['pld_abc:workspaceList'] = JSON.stringify([
+			{ workspaceId: 'ws_clF1vOqcHS', workspaceToken: WORKSPACE_TOKEN },
+		]);
+		expect(usableFrom(runProbe(decoyed))).toContain(WORKSPACE_TOKEN);
 	});
 });
 

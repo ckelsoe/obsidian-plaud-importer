@@ -2607,21 +2607,24 @@ export default class PlaudImporterPlugin extends Plugin {
 			// probe-and-select the deep link uses, so exactly one place decides
 			// which credential is real. "window" is preserved as the recorded
 			// sign-in method so Reconnect still reopens this surface.
-			// Apply the discovered region only if a credential is actually stored.
-			// Otherwise a failed sign-in leaves a new host in memory beside the
-			// OLD linked credential, and the next settings save would persist
-			// that pairing, sending the old token to the wrong region.
-			const previousApiBaseUrl = this.settings.apiBaseUrl;
-			if (result.apiBaseUrl !== null) {
-				this.settings.apiBaseUrl = result.apiBaseUrl;
-			}
+			// The region the window discovered is HANDED DOWN, never written to
+			// settings first. Writing it up front is what created the defect
+			// this closes: a sign-in that then failed to store left the new host
+			// in memory beside the OLD linked credential, and the next unrelated
+			// settings save would persist that pairing and send the old token to
+			// the wrong region. Unwinding it afterwards is worse, not better -
+			// capture paths are not serialized, so a rollback here can undo a
+			// deep-link or paste capture that completed while this one was
+			// probing. Passing it down means the host lands in settings only
+			// alongside a credential that actually stored, so there is no window
+			// to unwind and nothing to race.
 			const outcome = await this.storeFirstWorkingCandidate(
 				result.tokens,
 				() => !this.disposed,
 				"window",
+				result.apiBaseUrl ?? undefined,
 			);
 			if (!outcome.stored) {
-				this.settings.apiBaseUrl = previousApiBaseUrl;
 				if (outcome.message.length > 0) {
 					new Notice(outcome.message);
 				}
@@ -2741,6 +2744,13 @@ export default class PlaudImporterPlugin extends Plugin {
 		// so the embedded window must record "window" even though it now shares
 		// the browser path's probe-and-select machinery.
 		signInMethod: SignInMethod = "browser",
+		// The API origin this credential belongs to, when the capture surface
+		// discovered one. Applied HERE, in the same mutation batch as the token,
+		// rather than by the caller beforehand: a host written ahead of the
+		// store outlives a store that then fails, leaving the new region paired
+		// with the old credential. A token and the region it is valid for move
+		// together or not at all.
+		apiBaseUrl?: string,
 	): Promise<boolean> {
 		const token = rawToken.trim().replace(/^bearer\s+/i, "");
 		if (token.length === 0 || !isUsableUserToken(token)) {
@@ -2752,7 +2762,18 @@ export default class PlaudImporterPlugin extends Plugin {
 		// so Reconnect routes there, and blank any legacy WRT from a previous
 		// session so it cannot shadow the recorded method.
 		this.settings.signInMethod = signInMethod;
+		if (apiBaseUrl !== undefined) {
+			this.settings.apiBaseUrl = apiBaseUrl;
+		}
 		this.clearStoredRefreshToken();
+		// KNOWN GAP, pre-dates this method's current shape and deliberately not
+		// patched here: if saveSettings rejects (read-only vault, disk full),
+		// the secret above is already durably written while settings.json still
+		// names the old region and method. Rolling that back looks obvious and
+		// is not: capture surfaces are not serialized, so an unwind can wipe a
+		// deep-link or paste capture that completed meanwhile, and the failure
+		// is currently reported to callers as a bad token rather than as a save
+		// failure. See dev-docs/plaud-importer for the writeup.
 		await this.saveSettings();
 		this.noteShortLifetimeOnCapture(token);
 		this.reconcileSessionExpiryWarning();
@@ -2788,13 +2809,19 @@ export default class PlaudImporterPlugin extends Plugin {
 		// the default.
 		canStore: () => boolean = () => true,
 		signInMethod: SignInMethod = "browser",
+		// Region the capture surface already discovered, when it found one. Used
+		// to aim the probes and handed on to the store; deliberately NOT written
+		// to settings on the way in, so a capture that never stores leaves the
+		// configured host untouched.
+		discoveredBaseUrl?: string,
 	): Promise<{ stored: boolean; message: string }> {
+		const probeBaseUrl = discoveredBaseUrl ?? this.settings.apiBaseUrl;
 		// The region redirect a probe may follow is captured locally instead of
 		// being persisted by the client's own callback: an unvalidated
-		// candidate must not rewrite the configured API host. It is applied
-		// below only for the candidate that is actually stored. Held on an
-		// object so the value written inside the probe closure is read back
-		// correctly after the await.
+		// candidate must not rewrite the configured API host. It is handed to
+		// the store below only for the candidate that is actually stored. Held
+		// on an object so the value written inside the probe closure is read
+		// back correctly after the await.
 		const detected: { baseUrl: string | null } = { baseUrl: null };
 		// Probing several candidates is several round-trips, and the user has
 		// just switched from the browser to Obsidian expecting something to
@@ -2816,7 +2843,7 @@ export default class PlaudImporterPlugin extends Plugin {
 						obsidianFetcher,
 						{
 							debugLogger: this.debugLogger,
-							baseUrl: this.settings.apiBaseUrl,
+							baseUrl: probeBaseUrl,
 							onBaseUrlChanged: (url) => {
 								detected.baseUrl = url;
 							},
@@ -2849,7 +2876,13 @@ export default class PlaudImporterPlugin extends Plugin {
 			if (selection.usable.length !== 1) {
 				return { stored: false, message: DEEP_LINK_UNREACHABLE_NOTICE };
 			}
-			const stored = await this.storeAccessToken(selection.usable[0], signInMethod);
+			// Unreachable means nothing was proven, so no redirect was observed
+			// either; the surface's own discovered region is the best available.
+			const stored = await this.storeAccessToken(
+				selection.usable[0],
+				signInMethod,
+				discoveredBaseUrl,
+			);
 			return {
 				stored,
 				message: stored
@@ -2863,12 +2896,14 @@ export default class PlaudImporterPlugin extends Plugin {
 		if (token === null) {
 			return { stored: false, message: DEEP_LINK_BAD_TOKEN_NOTICE };
 		}
-		// Persist the regional host this candidate was proven against before
-		// the store, so it rides along in storeAccessToken's save.
-		if (detected.baseUrl !== null) {
-			this.settings.apiBaseUrl = detected.baseUrl;
-		}
-		const stored = await this.storeAccessToken(token, signInMethod);
+		// Hand the store the regional host this candidate was actually proven
+		// against, so the token and its region are written in one batch. A
+		// redirect followed during probing outranks the surface's own guess.
+		const stored = await this.storeAccessToken(
+			token,
+			signInMethod,
+			detected.baseUrl ?? discoveredBaseUrl,
+		);
 		return {
 			stored,
 			message: stored ? DEEP_LINK_SAVED_NOTICE : DEEP_LINK_BAD_TOKEN_NOTICE,

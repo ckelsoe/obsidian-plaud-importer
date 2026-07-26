@@ -12,21 +12,29 @@
 // BrowserWindow is the render path that consistently works.
 //
 // Capture strategy: read the user token from the sign-in window's own
-// `localStorage`. Plaud's web app persists it under the `token` key on
-// web.plaud.ai (the origin this window loads) and sends it as
-// `Authorization: Bearer <token>` on every data call. Its lifetime varies by
-// account: ~300 days observed on US accounts, 24 hours reported on an APSE1
-// account (issue #78), so the capture notes the measured lifetime and never
-// assumes one. We poll
-// `localStorage.getItem('token')` via `executeJavaScript` and accept a value
-// only once its decoded payload passes the capture guard (client_id + a still
-// future exp; see plaud-token.ts). That guard, not the key name, is what keeps
-// a neighboring profile/ID JWT (no `exp`) or a stale expired token from ever
-// being stored.
+// `localStorage` on web.plaud.ai (the origin this window loads); the web app
+// sends it as `Authorization: Bearer <token>` on every data call. Its lifetime
+// varies by account: ~300 days observed on US accounts, 24 hours reported on an
+// APSE1 account (issue #78), so the capture notes the measured lifetime and
+// never assumes one.
+//
+// There is no single key to read. Plaud's v2 scheme stopped writing a plain
+// `token` and nests the live credential inside a larger JSON blob
+// (`workspaceList`), beside a refresh token the data API rejects, so the probe
+// walks Plaud's own key namespace and returns a LIST of candidates each poll.
+// The capture guard (header typ not WRT, a client_id, a finite future exp; see
+// plaud-token.ts) decides what counts, not the key name: it is what keeps a
+// neighboring profile/ID JWT or a stale expired token from being collected.
+// That guard runs in BOTH places, in-page inside the probe and again plugin-side
+// in startPolling. The plugin-side pass is authoritative; the in-page copy is
+// what makes the probe's candidate cap mean the same thing the shared
+// collector's does. Which surviving candidate is actually stored is settled by
+// probing them against the API, in the caller.
 
 import { App, Platform } from 'obsidian';
 import { NoopDebugLogger, type DebugLogger } from './debug-logger';
 import { isUsableUserToken, readTokenLifetime } from './plaud-token';
+import { MAX_COLLECTED_CANDIDATES } from './token-candidates';
 
 // Load the same web client the data API expects. The token is platform-typed:
 // a token minted by app.plaud.ai is parsed in a different mode by /file/simple/web
@@ -73,21 +81,49 @@ export const PROBE_JS = `(() => {
 			// token during probing, so collecting another service's JWT would
 			// hand Plaud that credential. A third-party SDK storing a bare JWT at
 			// top level is exactly that case.
-			// Only JWT-SHAPED values count toward the cap. Without this, ordinary
-			// string settings sharing the pld_ namespace fill the list before the
-			// walk reaches the credential nested in workspaceList, and the window
-			// never settles. Shape only here; the claim guard runs plugin-side.
+			// Only values that pass the SAME claim guard the plugin applies count
+			// toward the cap. Without this, ordinary string settings sharing the
+			// pld_ namespace fill the list before the walk reaches the credential
+			// nested in workspaceList, and the window never settles.
+			//
+			// Shape alone is not enough to count. A shape-only cap counts values
+			// the guard will throw away seconds later (the WRT parked beside the
+			// credential, the profile JWT, any expired leftover), so a handful of
+			// those ahead of workspaceList starves the real token and the window
+			// polls forever. The guard runs plugin-side regardless
+			// (startPolling filters with isUsableUserToken, and that stays the
+			// authoritative gate); duplicating it here is what makes "a candidate"
+			// mean the same thing it means in collectTokenCandidates, so the two
+			// can share one cap honestly. Mirrors the bookmarklet's own pick().
 			var seg = /^[A-Za-z0-9_-]+$/;
+			var dec = function (s) {
+				try {
+					var b = s.replace(/-/g, '+').replace(/_/g, '/');
+					return JSON.parse(atob(b + '='.repeat((4 - (b.length % 4)) % 4)));
+				} catch (e) { return null; }
+			};
 			var add = function (v) {
 				if (typeof v !== 'string' || v.length > 4096) { return; }
 				var t = v.trim().replace(/^bearer +/i, '').trim();
 				var p = t.split('.');
 				if (p.length !== 3 || !seg.test(p[0]) || !seg.test(p[1]) || !seg.test(p[2])) { return; }
-				if (tokens.indexOf(t) < 0 && tokens.length < 8) { tokens.push(t); }
+				var hd = dec(p[0]);
+				var pl = dec(p[1]);
+				if (hd === null || pl === null) { return; }
+				if (hd.typ === 'WRT') { return; }
+				if (typeof pl.client_id !== 'string' || pl.client_id.length === 0) { return; }
+				// isFinite matters, not just the > comparison: a payload can encode
+				// exp as 1e400, which JSON.parse yields as Infinity. That passes a
+				// bare future-dated test but isUsableUserToken rejects it
+				// (Number.isFinite), so without this the value would consume a
+				// cap slot the plugin was always going to discard.
+				if (typeof pl.exp !== 'number' || !isFinite(pl.exp)) { return; }
+				if (!(pl.exp * 1000 > Date.now())) { return; }
+				if (tokens.indexOf(t) < 0 && tokens.length < ${MAX_COLLECTED_CANDIDATES}) { tokens.push(t); }
 			};
 			var budget = 4000;
 			var walk = function (x, depth) {
-				if (depth > 6 || budget <= 0 || tokens.length >= 8) { return; }
+				if (depth > 6 || budget <= 0 || tokens.length >= ${MAX_COLLECTED_CANDIDATES}) { return; }
 				budget = budget - 1;
 				if (typeof x === 'string') {
 					add(x);
