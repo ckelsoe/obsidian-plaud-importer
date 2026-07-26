@@ -66,6 +66,16 @@ export const MAX_DEEP_LINK_CANDIDATES = 8;
 export const MAX_CANDIDATE_LENGTH = 4096;
 
 /**
+ * Bounds on the JSON walk. A container (the whole `workspaceList` blob) is far
+ * bigger than any single credential, so it gets its own, larger ceiling, while
+ * depth and a total node budget keep a hostile or merely huge cache from
+ * turning a bookmark click into a long pause.
+ */
+export const MAX_CONTAINER_LENGTH = 262144;
+export const MAX_WALK_DEPTH = 6;
+export const MAX_WALK_NODES = 4000;
+
+/**
  * Deep-link URL budget. Windows hands a custom-protocol URL to the shell,
  * where the classic `INTERNET_MAX_URL_LENGTH` limit is 2083 characters, and
  * the #78 reporters are on Windows. Candidates are dropped from the END of the
@@ -77,6 +87,32 @@ export const MAX_DEEP_LINK_URL_LENGTH = 1900;
 /** Ceiling on the raw `tokens` parameter before it is even JSON-parsed. */
 const MAX_DEEP_LINK_PAYLOAD_LENGTH =
 	MAX_CANDIDATE_LENGTH * MAX_DEEP_LINK_CANDIDATES + 64;
+
+/**
+ * True for keys in Plaud's own localStorage namespace, the only entries the
+ * collector will descend INTO.
+ *
+ * Nesting is what makes the SSO shapes capturable, but descending into every
+ * JSON value would sweep up unrelated services' credentials: an analytics or
+ * feature-flag SDK caching its own JWT (`ph_phc_…_posthog`, `gbFeaturesCache`
+ * both sit in this same storage) would become a "candidate" and then get SENT
+ * TO PLAUD as a bearer token during probing. Handing another service's
+ * credential to Plaud is not an acceptable cost for capturing ours.
+ *
+ * Scoping by key here is safe and is NOT the mistake that produced -3900: that
+ * was building a token OUT of a key name. This only narrows WHERE to look, and
+ * every candidate is still a complete, parsed string value. Keys outside the
+ * namespace keep their pre-0.35.1 treatment, their top-level value considered
+ * on its own, so a future Plaud key that drops the prefix still works if it
+ * holds a bare token.
+ */
+function canDescendInto(key: string): boolean {
+	return (
+		key === PRIMARY_TOKEN_KEY ||
+		key === 'tokenstr' ||
+		key.startsWith('pld_')
+	);
+}
 
 /** One localStorage entry, in the browser's own iteration order. */
 export interface StoredEntry {
@@ -114,26 +150,82 @@ export function collectTokenCandidates(
 		...entries.filter((entry) => entry.key !== PRIMARY_TOKEN_KEY),
 	];
 	const out: string[] = [];
+	const consider = (value: string): void => {
+		if (out.length >= MAX_COLLECTED_CANDIDATES) {
+			return;
+		}
+		if (value.length > MAX_CANDIDATE_LENGTH) {
+			return;
+		}
+		const token = normalizeCandidate(value);
+		// isUsableUserToken is the same guard every capture path applies: three
+		// base64url segments, header `typ` not WRT, a non-empty `client_id`,
+		// and a still-future numeric `exp`. It accepts a workspace token
+		// (`typ: WT`) - confirmed 2026-07-26 to be the ONLY live credential on
+		// an Apple-SSO account, probing in-band `status: 0` - and rejects both
+		// the neighboring profile JWT (no `exp`) and the 30-day WRT parked
+		// beside it, which answers `-3901`.
+		if (token === null || !isUsableUserToken(token, nowMs)) {
+			return;
+		}
+		if (out.includes(token)) {
+			return;
+		}
+		out.push(token);
+	};
+	// Walk into JSON structures, do not just read top-level values. On the
+	// account shapes that made 0.35.0 useless there is no bare token anywhere:
+	// the live credential is nested at `workspaceList[0].workspaceToken`, two
+	// levels inside a JSON string. Recursing is still EXACT parsing - whole
+	// string values from a real parse, never a regex swept over arbitrary text -
+	// so the rule that produced -3900 (matching key names / grabbing substrings
+	// that swallow adjacent characters) still holds.
+	let budget = MAX_WALK_NODES;
+	const walk = (node: unknown, depth: number): void => {
+		if (depth > MAX_WALK_DEPTH || budget <= 0 || out.length >= MAX_COLLECTED_CANDIDATES) {
+			return;
+		}
+		budget -= 1;
+		if (typeof node === 'string') {
+			consider(node);
+			const trimmed = node.trim();
+			// Only strings that actually look like a JSON container are parsed,
+			// so this costs one charCode check on the overwhelming majority of
+			// entries (themes, flags, counters).
+			if (
+				trimmed.length <= MAX_CONTAINER_LENGTH &&
+				(trimmed.startsWith('{') || trimmed.startsWith('['))
+			) {
+				try {
+					walk(JSON.parse(trimmed), depth + 1);
+				} catch {
+					// Not JSON after all. The value was already considered above.
+				}
+			}
+			return;
+		}
+		if (Array.isArray(node)) {
+			for (const item of node) {
+				walk(item, depth + 1);
+			}
+			return;
+		}
+		if (node !== null && typeof node === 'object') {
+			for (const value of Object.values(node)) {
+				walk(value, depth + 1);
+			}
+		}
+	};
 	for (const entry of ordered) {
 		if (out.length >= MAX_COLLECTED_CANDIDATES) {
 			break;
 		}
-		if (entry.value.length > MAX_CANDIDATE_LENGTH) {
-			continue;
+		if (canDescendInto(entry.key)) {
+			walk(entry.value, 0);
+		} else {
+			// Outside Plaud's namespace, look at the value itself and no deeper.
+			consider(entry.value);
 		}
-		const token = normalizeCandidate(entry.value);
-		// isUsableUserToken is the same guard every capture path applies: three
-		// base64url segments, header `typ` not WRT, a non-empty `client_id`,
-		// and a still-future numeric `exp`. It accepts a workspace token
-		// (`typ: WT`), which on rogerfsh-shaped accounts is the ONLY live
-		// credential, and rejects the neighboring profile JWT (no `exp`).
-		if (token === null || !isUsableUserToken(token, nowMs)) {
-			continue;
-		}
-		if (out.includes(token)) {
-			continue;
-		}
-		out.push(token);
 	}
 	return out;
 }
@@ -372,4 +464,4 @@ export function escapeHtmlAttribute(value: string): string {
 
 export const SIGN_IN_BOOKMARKLET =
 	BOOKMARKLET_SCHEME +
-	"(function(){try{var h=location.hostname.toLowerCase();if(h!=='plaud.ai'&&h.slice(-9)!=='.plaud.ai'){alert('Open this on a Plaud tab (web.plaud.ai) after signing in, then click the bookmark.');return;}var seg=/^[A-Za-z0-9_-]+$/;var dec=function(s){try{var b=s.replace(/-/g,'+').replace(/_/g,'/');return JSON.parse(atob(b+'='.repeat((4-b.length%4)%4)));}catch(e){return null;}};var now=Date.now();var pick=function(v){if(typeof v!=='string'||v.length>4096)return null;var t=v.trim().replace(/^bearer +/i,'').trim();var p=t.split('.');if(p.length!==3||!seg.test(p[0])||!seg.test(p[1])||!seg.test(p[2]))return null;var hd=dec(p[0]);var pl=dec(p[1]);if(hd===null||pl===null||hd.typ==='WRT')return null;if(typeof pl.client_id!=='string'||pl.client_id.length===0)return null;if(typeof pl.exp!=='number'||!(pl.exp*1000>now))return null;return t;};var a=[];var add=function(v){var t=pick(v);if(t!==null&&a.indexOf(t)<0&&a.length<5)a.push(t);};add(localStorage.getItem('token'));for(var i=0;i<localStorage.length;i++){var k=localStorage.key(i);if(k!==null&&k!=='token')add(localStorage.getItem(k));}if(a.length===0){alert('No usable Plaud sign-in token found on this page. Sign in to Plaud in this tab, then click the bookmark again.');return;}var b='obsidian://plaud-importer-token?tokens=';var u=b+encodeURIComponent(JSON.stringify(a));while(a.length>1&&u.length>1900){a.pop();u=b+encodeURIComponent(JSON.stringify(a));}location.replace(u);setTimeout(function(){if(document.hasFocus())prompt('Obsidian should have opened and saved your Plaud sign-in. If nothing happened, copy this whole line, then click Paste token from clipboard in the plugin settings:',u);},1500);}catch(e){alert('Could not read the Plaud token: '+e);}})()";
+	"(function(){try{var h=location.hostname.toLowerCase();if(h!=='plaud.ai'&&h.slice(-9)!=='.plaud.ai'){alert('Open this on a Plaud tab (web.plaud.ai) after signing in, then click the bookmark.');return;}var seg=/^[A-Za-z0-9_-]+$/;var dec=function(s){try{var b=s.replace(/-/g,'+').replace(/_/g,'/');return JSON.parse(atob(b+'='.repeat((4-b.length%4)%4)));}catch(e){return null;}};var now=Date.now();var d=[];var ty=function(t){return t==='WT'||t==='WRT'||t==='JWT'?t:'other';};var pick=function(v){if(typeof v!=='string'||v.length>4096)return null;var t=v.trim().replace(/^bearer +/i,'').trim();var p=t.split('.');if(p.length!==3||!seg.test(p[0])||!seg.test(p[1])||!seg.test(p[2]))return null;var hd=dec(p[0]);var pl=dec(p[1]);if(hd===null||pl===null)return null;if(d.length<12)d.push(ty(hd.typ)+'/'+(typeof pl.client_id)+'/'+(typeof pl.exp==='number'?Math.round((pl.exp*1000-now)/3600000)+'h':'noexp'));if(hd.typ==='WRT')return null;if(typeof pl.client_id!=='string'||pl.client_id.length===0)return null;if(typeof pl.exp!=='number'||!(pl.exp*1000>now))return null;return t;};var a=[];var add=function(v){var t=pick(v);if(t!==null&&a.indexOf(t)<0&&a.length<5)a.push(t);};var n=4000;var W=function(x,y){if(y>6||n<=0||a.length>=5)return;n=n-1;if(typeof x==='string'){add(x);var s=x.trim();if(s.length<=262144&&(s.charAt(0)==='{'||s.charAt(0)==='[')){try{W(JSON.parse(s),y+1);}catch(e){}}return;}if(x!==null&&typeof x==='object'){for(var q in x){if(Object.prototype.hasOwnProperty.call(x,q))W(x[q],y+1);}}};var P=function(k){return k==='token'||k==='tokenstr'||k.slice(0,4)==='pld_';};W(localStorage.getItem('token'),0);for(var i=0;i<localStorage.length;i++){var k=localStorage.key(i);if(k===null||k==='token')continue;if(P(k))W(localStorage.getItem(k),0);else add(localStorage.getItem(k));}if(a.length===0){prompt('No usable Plaud sign-in found on this page. Make sure you are signed in to Plaud in this tab, then click the bookmark again. If you ARE signed in and this keeps happening, copy this line and send it to the plugin maintainer. It carries no token and no personal details:','plaud-capture-miss keys='+localStorage.length+' jwts='+d.length+' '+d.join(' '));return;}var b='obsidian://plaud-importer-token?tokens=';var u=b+encodeURIComponent(JSON.stringify(a));while(a.length>1&&u.length>1900){a.pop();u=b+encodeURIComponent(JSON.stringify(a));}location.replace(u);setTimeout(function(){if(document.hasFocus())prompt('Obsidian should have opened and saved your Plaud sign-in. If nothing happened, copy this whole line, then click Paste token from clipboard in the plugin settings:',u);},1500);}catch(e){alert('Could not read the Plaud token: '+e);}})()";

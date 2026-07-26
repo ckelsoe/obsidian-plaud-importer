@@ -4,6 +4,13 @@ All notable changes to Plaud Importer will be documented in this file.
 
 ## [Unreleased]
 
+## [0.35.1] - 2026-07-26
+
+### Fixed
+
+- **The browser bookmark now finds your sign-in on Google and Apple accounts, where 0.35.0 found nothing.** On those accounts Plaud stores no plain sign-in token at all: the live credential sits nested inside a larger block of data, alongside a second token that the server rejects and a profile record holding your name and email. 0.35.0 only looked at whole stored values, so it saw none of them and told you to sign in when you already were. The bookmark now looks inside stored data structures too, and still picks by asking Plaud which credential actually works, so the reject-on-use token and the profile record are never chosen. Verified end to end against a real Apple sign-in.
+- **A failed capture is no longer a dead end.** When the bookmark finds nothing it used to stop at a message with no way forward, which was worse than the version before it. It now always hands back something: either your sign-in, or a short diagnostic line you can send on. That line contains no token and no personal details.
+
 ## [0.35.0] - 2026-07-26
 
 ### Changed
