@@ -2601,18 +2601,32 @@ export default class PlaudImporterPlugin extends Plugin {
 			if (this.disposed) {
 				return false;
 			}
-			this.app.secretStorage.setSecret(CAPTURED_SECRET_ID, result.token);
-			this.settings.secretId = CAPTURED_SECRET_ID;
-			// Record how this session was captured so Reconnect reopens the same
-			// surface, and blank any legacy WRT so it cannot shadow that signal.
-			this.settings.signInMethod = "window";
-			this.clearStoredRefreshToken();
+			// The window now hands back CANDIDATES, because Plaud's web app stopped
+			// writing a single plain token: the live credential is nested beside a
+			// refresh token the API answers -3901 to. Route them through the same
+			// probe-and-select the deep link uses, so exactly one place decides
+			// which credential is real. "window" is preserved as the recorded
+			// sign-in method so Reconnect still reopens this surface.
+			// Apply the discovered region only if a credential is actually stored.
+			// Otherwise a failed sign-in leaves a new host in memory beside the
+			// OLD linked credential, and the next settings save would persist
+			// that pairing, sending the old token to the wrong region.
+			const previousApiBaseUrl = this.settings.apiBaseUrl;
 			if (result.apiBaseUrl !== null) {
 				this.settings.apiBaseUrl = result.apiBaseUrl;
 			}
-			await this.saveSettings();
-			this.noteShortLifetimeOnCapture(result.token);
-			this.reconcileSessionExpiryWarning();
+			const outcome = await this.storeFirstWorkingCandidate(
+				result.tokens,
+				() => !this.disposed,
+				"window",
+			);
+			if (!outcome.stored) {
+				this.settings.apiBaseUrl = previousApiBaseUrl;
+				if (outcome.message.length > 0) {
+					new Notice(outcome.message);
+				}
+				return false;
+			}
 			return true;
 		} finally {
 			this.reauthInFlight = false;
@@ -2721,7 +2735,13 @@ export default class PlaudImporterPlugin extends Plugin {
 	// anything when the value fails the capture guard (payload must carry a
 	// client_id and a still-future exp). Shared by the browser deep-link handler
 	// and the clipboard-paste button.
-	async storeAccessToken(rawToken: string): Promise<boolean> {
+	async storeAccessToken(
+		rawToken: string,
+		// Which surface captured this credential. Reconnect reopens the same one,
+		// so the embedded window must record "window" even though it now shares
+		// the browser path's probe-and-select machinery.
+		signInMethod: SignInMethod = "browser",
+	): Promise<boolean> {
 		const token = rawToken.trim().replace(/^bearer\s+/i, "");
 		if (token.length === 0 || !isUsableUserToken(token)) {
 			return false;
@@ -2731,7 +2751,7 @@ export default class PlaudImporterPlugin extends Plugin {
 		// A pasted/deep-linked token came through the browser flow. Record that
 		// so Reconnect routes there, and blank any legacy WRT from a previous
 		// session so it cannot shadow the recorded method.
-		this.settings.signInMethod = "browser";
+		this.settings.signInMethod = signInMethod;
 		this.clearStoredRefreshToken();
 		await this.saveSettings();
 		this.noteShortLifetimeOnCapture(token);
@@ -2767,6 +2787,7 @@ export default class PlaudImporterPlugin extends Plugin {
 		// overwrite a newer sign-in's token. Callers with no such window keep
 		// the default.
 		canStore: () => boolean = () => true,
+		signInMethod: SignInMethod = "browser",
 	): Promise<{ stored: boolean; message: string }> {
 		// The region redirect a probe may follow is captured locally instead of
 		// being persisted by the client's own callback: an unvalidated
@@ -2828,7 +2849,7 @@ export default class PlaudImporterPlugin extends Plugin {
 			if (selection.usable.length !== 1) {
 				return { stored: false, message: DEEP_LINK_UNREACHABLE_NOTICE };
 			}
-			const stored = await this.storeAccessToken(selection.usable[0]);
+			const stored = await this.storeAccessToken(selection.usable[0], signInMethod);
 			return {
 				stored,
 				message: stored
@@ -2847,7 +2868,7 @@ export default class PlaudImporterPlugin extends Plugin {
 		if (detected.baseUrl !== null) {
 			this.settings.apiBaseUrl = detected.baseUrl;
 		}
-		const stored = await this.storeAccessToken(token);
+		const stored = await this.storeAccessToken(token, signInMethod);
 		return {
 			stored,
 			message: stored ? DEEP_LINK_SAVED_NOTICE : DEEP_LINK_BAD_TOKEN_NOTICE,

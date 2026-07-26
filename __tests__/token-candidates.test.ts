@@ -99,7 +99,7 @@ describe('collectTokenCandidates', () => {
 
 	it('keeps stable storage order for the non-primary keys', () => {
 		const found = collectTokenCandidates(
-			entries({ zzz: OTHER_TOKEN, aaa: WORKSPACE_TOKEN }),
+			entries({ pld_zzz: OTHER_TOKEN, pld_aaa: WORKSPACE_TOKEN }),
 			NOW_MS,
 		);
 		expect(found).toEqual([OTHER_TOKEN, WORKSPACE_TOKEN]);
@@ -187,7 +187,7 @@ describe('collectTokenCandidates', () => {
 		const many: StoredEntry[] = [];
 		for (let i = 0; i < 9; i += 1) {
 			many.push({
-				key: `k${i}`,
+				key: `pld_k${i}`,
 				value: makeJwt(
 					{ alg: 'HS256', typ: 'JWT' },
 					{ sub: `u${i}`, exp: FUTURE_EXP, client_id: 'web' },
@@ -199,7 +199,7 @@ describe('collectTokenCandidates', () => {
 
 	it('skips oversized values without decoding them', () => {
 		const huge = `${USER_TOKEN}${'A'.repeat(MAX_CANDIDATE_LENGTH)}`;
-		expect(collectTokenCandidates(entries({ blob: huge }), NOW_MS)).toEqual([]);
+		expect(collectTokenCandidates(entries({ pld_blob: huge }), NOW_MS)).toEqual([]);
 	});
 });
 
@@ -292,12 +292,20 @@ describe('nested extraction bounds', () => {
 		).toEqual([]);
 	});
 
-	it('still reads a bare top-level token under a non-Plaud key', () => {
-		// Narrowing where we DESCEND must not narrow what we accept at the top
-		// level, or a future key that drops the prefix stops working.
+	it('does NOT collect a bare top-level JWT under a non-Plaud key', () => {
+		// Every candidate is sent to Plaud as a bearer token while probing, so a
+		// third-party SDK's token at top level (sb-access-token and friends) must
+		// never be collected. Skipping non-Plaud keys entirely, rather than
+		// merely not descending into them, is what makes that true.
 		expect(
-			collectTokenCandidates([{ key: 'somethingElse', value: USER_TOKEN }], NOW_MS),
-		).toEqual([USER_TOKEN]);
+			collectTokenCandidates(
+				[
+					{ key: 'sb-access-token', value: USER_TOKEN },
+					{ key: 'ph_token', value: OTHER_TOKEN },
+				],
+				NOW_MS,
+			),
+		).toEqual([]);
 	});
 
 	it('leaves non-JSON values alone instead of scanning them for substrings', () => {

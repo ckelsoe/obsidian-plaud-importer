@@ -4,6 +4,16 @@ All notable changes to Plaud Importer will be documented in this file.
 
 ## [Unreleased]
 
+## [0.35.3] - 2026-07-26
+
+### Fixed
+
+- **"Sign in with email" captures your session again.** The sign-in window looked for your session in one fixed place, and Plaud's web app stopped putting it there: it now nests the credential inside a larger block of data. The window would open, you would log in successfully, and nothing would happen, because it never found anything to capture. It now looks inside stored data structures the same way the browser bookmark does, and confirms the credential with Plaud before saving it, so the token that gets stored is the one that actually works. This affects both email and Google/Apple accounts, which Plaud moved to the same session model.
+
+### Changed
+
+- **Sessions now last about 24 hours on every account.** This is Plaud's change, not the plugin's: the long-lived session that used to last months is no longer issued to anyone, on any sign-in method. The plugin shows your real expiry in settings and warns before it lapses with a one-click reconnect. Nothing the plugin can do restores the longer session.
+
 ## [0.35.2] - 2026-07-26
 
 ### Fixed
