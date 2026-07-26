@@ -903,19 +903,33 @@ export default class PlaudImporterPlugin extends Plugin {
 					return false;
 				}
 				if (!checking) {
-					void this.refreshSessionNow().then((outcome) => {
-						new Notice(
-							outcome === "refreshed"
-								? "Plaud session refreshed. A fresh token is stored."
-								: outcome === "busy"
-									? "A session refresh is already running."
-									: outcome === "superseded"
-										? "Session refresh skipped: the stored sign-in changed while it ran."
-										: outcome === "unsupported"
-											? "This session cannot be refreshed in the background. Reconnect to sign in again."
-											: "Session refresh failed. See the debug log, then reconnect.",
-						);
-					});
+					void this.refreshSessionNow()
+						.then((outcome) => {
+							new Notice(
+								outcome === "refreshed"
+									? "Plaud session refreshed. A fresh token is stored."
+									: outcome === "busy"
+										? "A session refresh is already running."
+										: outcome === "superseded"
+											? "Session refresh skipped: the stored sign-in changed while it ran."
+											: outcome === "unsupported"
+												? "This session cannot be refreshed in the background. Reconnect to sign in again."
+												: "Session refresh failed. See the debug log, then reconnect.",
+							);
+						})
+						.catch((err: unknown) => {
+							// A command the user pressed must always answer. The
+							// scheduled path has its own catch; without one here a
+							// rejection would be swallowed as an unhandled promise
+							// and the palette entry would look like it did nothing.
+							console.error(
+								"Plaud importer: manual session refresh failed",
+								err,
+							);
+							new Notice(
+								"Session refresh failed. See the debug log, then reconnect.",
+							);
+						});
 				}
 				return true;
 			},
@@ -1148,7 +1162,7 @@ export default class PlaudImporterPlugin extends Plugin {
 		// every reconcile. The stamp is keyed to this exact expMs; a fresh
 		// credential carries a different exp and warns again.
 		this.settings.sessionWarnedForExpMs = decision.expMs;
-		void this.saveSettings();
+		this.saveSettingsDetached("saving the session warning stamp failed");
 		// Above ~2 days speak in days ("about 7 days"), below in hours: the
 		// long (7-day) lead would otherwise read as "about 168 hours".
 		const hoursLeft = Math.max(
@@ -1193,6 +1207,10 @@ export default class PlaudImporterPlugin extends Plugin {
 		// credential would trade months of life for 24 hours; see
 		// isWorkspaceToken.
 		if (!isWorkspaceToken(token)) return;
+		// No transport, no renewal. Arming a timer that can only ever return
+		// "unsupported" wastes a wake-up and, worse, lets the settings copy go
+		// on promising a renewal this build cannot perform.
+		if (buildPartitionPost() === null) return;
 		const delay = computeRefreshDelayMs(token, Date.now());
 		if (delay === null) return;
 		this.sessionRefreshTimeoutId = window.setTimeout(() => {
@@ -1411,6 +1429,19 @@ export default class PlaudImporterPlugin extends Plugin {
 		}
 	}
 
+	// Fire-and-forget settings write, for the paths that are synchronous by
+	// design (timer callbacks, notice handlers) and have no caller to await it.
+	// The catch is not optional here. This exact feature reaches these lines
+	// BECAUSE a vault write failed, so a bare `void saveSettings()` would very
+	// likely reject for the same reason and, being detached, would escape every
+	// caller's catch as the unhandled rejection the refresh path exists to
+	// avoid.
+	private saveSettingsDetached(context: string): void {
+		void this.saveSettings().catch((err: unknown) => {
+			console.error(`Plaud importer: ${context}`, err);
+		});
+	}
+
 	// A failed refresh pauses unattended renewal and asks for a reconnect. It
 	// deliberately does NOT re-arm: see the no-retry note above.
 	private onSessionRefreshFailed(): void {
@@ -1433,7 +1464,13 @@ export default class PlaudImporterPlugin extends Plugin {
 		// user's only Reconnect prompt away and put nothing back. The stamp
 		// exists to stop repeat nagging for one expiry; a refresh that just
 		// failed is new information and earns the one re-warn.
+		// Persisted, not just assigned. reconcileSessionExpiryWarning only saves
+		// when it actually warns, so without this the cleared stamp lives in
+		// memory alone: a reload would restore the OLD stamp from disk and
+		// suppress the reconnect warning for the very credential whose renewal
+		// just failed.
 		this.settings.sessionWarnedForExpMs = 0;
+		this.saveSettingsDetached("clearing the session warning stamp failed");
 		this.reconcileSessionExpiryWarning();
 		// Renewal now runs a clear margin BEFORE the warning's own lead, so at
 		// the moment a refresh fails the credential is usually still OUTSIDE
@@ -3988,18 +4025,26 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 				stored && !expired && !unreadable,
 			);
 			const connected = stored && !expired && !unreadable;
-			// Mirrors reconcileSessionRefresh's own two conditions, method AND
-			// token type. A window sign-in holding a long-lived pre-v2 token is
-			// deliberately skipped by the scheduler (refreshing would trade
-			// months for 24 hours), so it must not be promised renewal either.
+			// Mirrors what reconcileSessionRefresh actually requires: the right
+			// sign-in method, a workspace token (a long-lived pre-v2 token is
+			// deliberately skipped, since refreshing would trade months for 24
+			// hours), and a build that can reach the partition at all.
+			const canRenew =
+				this.plugin.settings.signInMethod === "window" &&
+				isWorkspaceToken(value) &&
+				buildPartitionPost() !== null;
+			// Three states, not two. Folding "renewal stopped after a failure"
+			// into "this sign-in cannot renew" describes the wrong cause and
+			// sends the user to the wrong remedy: the first is fixed by
+			// reconnecting, the second is simply how that sign-in method works.
 			renewalEl.setText(
 				!connected
 					? ""
-					: this.plugin.settings.signInMethod === "window" &&
-						  isWorkspaceToken(value) &&
-						  !this.plugin.sessionRenewalPaused
-						? "Renews itself in the background for about 30 days, then asks you to sign in again."
-						: "This sign-in cannot renew itself in the background. Reconnect when the session lapses.",
+					: !canRenew
+						? "This sign-in cannot renew itself in the background. Reconnect when the session lapses."
+						: this.plugin.sessionRenewalPaused
+							? "Automatic renewal stopped after a failed attempt. Reconnect to restart it."
+							: "Renews itself in the background for about 30 days, then asks you to sign in again.",
 			);
 		};
 		this.signinRefresh = refreshStatus;

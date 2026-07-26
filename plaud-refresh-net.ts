@@ -431,9 +431,21 @@ function requireElectron(): ElectronLike | null {
  * silent refresh cannot run on this build.
  */
 export function buildPartitionPost(): SessionPost | null {
-	const session = requireElectron()?.remote?.session?.fromPartition(
-		PLAUD_PARTITION,
-	);
+	// fromPartition() is inside the try, not just the require. Returning
+	// `| null` is this function's whole contract for "not available on this
+	// build", and a throw from the partition lookup would break that contract
+	// for every caller: the manual command surfaces it as an unhandled
+	// rejection with no feedback, and the scheduler cannot tell "unavailable"
+	// from "broken". Whatever goes wrong reaching the remote surface, the
+	// answer callers need is the same one.
+	let session: ElectronSessionLike | undefined;
+	try {
+		session = requireElectron()?.remote?.session?.fromPartition(
+			PLAUD_PARTITION,
+		);
+	} catch {
+		return null;
+	}
 	if (session === undefined || !hasFetch(session)) {
 		return null;
 	}
