@@ -4,6 +4,12 @@ All notable changes to Plaud Importer will be documented in this file.
 
 ## [Unreleased]
 
+## [0.35.2] - 2026-07-26
+
+### Fixed
+
+- **The bookmark now works when you have more than one vault open.** Obsidian hands a link like this one to whichever vault window is focused, so if that was not the vault running Plaud Importer you got "Unrecognized URI action" and nothing else. The bookmark is now built for the vault you set it up in and says so on the setup page, so it reaches that vault whatever else has focus. If you use the plugin in more than one vault, run **Set up bookmark** in each and keep a bookmark per vault.
+
 ## [0.35.1] - 2026-07-26
 
 ### Fixed

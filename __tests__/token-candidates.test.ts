@@ -17,7 +17,7 @@ import {
 	parseClipboardTokens,
 	parseTokenCandidates,
 	selectWorkingCandidate,
-	SIGN_IN_BOOKMARKLET,
+	buildSignInBookmarklet,
 	TOKEN_DEEP_LINK_BASE,
 	type StoredEntry,
 } from '../token-candidates';
@@ -596,6 +596,9 @@ describe('selectWorkingCandidate', () => {
 // buildTokenDeepLink that cannot import them (it runs as a javascript: URL in
 // the user's browser). These tests execute the SHIPPED string against the same
 // fixtures and assert the two agree, so the copy cannot drift silently.
+const TEST_VAULT = 'obs-test-vault';
+const SIGN_IN_BOOKMARKLET = buildSignInBookmarklet(TEST_VAULT);
+
 describe('SIGN_IN_BOOKMARKLET', () => {
 	interface BookmarkletRun {
 		alerts: string[];
@@ -680,6 +683,35 @@ describe('SIGN_IN_BOOKMARKLET', () => {
 		expect(escaped).not.toContain('>');
 	});
 
+	it('targets its own vault, so a multi-vault user does not get a wrong window', () => {
+		// Obsidian delivers obsidian:// URIs to the FOCUSED window. Without this
+		// param, a user with several vaults open (the normal case) gets
+		// "Unrecognized URI action" whenever the focused vault is not the one
+		// running the plugin.
+		const run = runBookmarklet({ token: USER_TOKEN });
+		expect(run.href).toContain(`vault=${TEST_VAULT}&`);
+	});
+
+	it('survives the percent-decoding a javascript: URL gets before it runs', () => {
+		// A browser percent-decodes a javascript: URL BEFORE evaluating it, so a
+		// baked-in %27 would arrive as a real quote and end the string early,
+		// and %26 / %23 would arrive as & / # and truncate the Obsidian URI.
+		// The name is therefore carried as char codes: digits and commas are
+		// inert under that decoding pass.
+		const name = "Charles' vault & #1 <notes>";
+		const nasty = buildSignInBookmarklet(name);
+		expect(nasty).not.toContain('\\');
+		// The name never appears literally, so it cannot end the JS string or
+		// truncate the URI no matter what it contains.
+		expect(nasty).not.toContain(name);
+		const seg = nasty.slice(nasty.indexOf('String.fromCharCode(') + 20);
+		const encoded = seg.slice(0, seg.indexOf(')'));
+		// Digits and commas only: inert under the browser's percent-decoding of
+		// a javascript: URL, and containing no quote, %, & or # to be mangled.
+		expect(encoded).toMatch(/^[0-9,]+$/);
+		expect(String.fromCharCode(...encoded.split(',').map(Number))).toBe(name);
+	});
+
 	it('is a single line with no backslashes, so it pastes as a bookmark URL', () => {
 		expect(SIGN_IN_BOOKMARKLET).not.toContain('\n');
 		expect(SIGN_IN_BOOKMARKLET).not.toContain('\\');
@@ -729,7 +761,7 @@ describe('SIGN_IN_BOOKMARKLET', () => {
 		['duplicates under different keys', { token: USER_TOKEN, copy: USER_TOKEN }],
 	])('matches collectTokenCandidates for %s', (_name, map) => {
 		const expected = collectTokenCandidates(entries(map), NOW_MS);
-		expect(runBookmarklet(map).href).toBe(buildTokenDeepLink(expected));
+		expect(runBookmarklet(map).href).toBe(buildTokenDeepLink(expected, TEST_VAULT));
 	});
 
 	it('never dead-ends: a miss offers a diagnostic instead of only an alert', () => {

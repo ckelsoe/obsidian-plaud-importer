@@ -38,7 +38,7 @@ import {
 	parseClipboardTokens,
 	parseTokenCandidates,
 	selectWorkingCandidate,
-	SIGN_IN_BOOKMARKLET,
+	buildSignInBookmarklet,
 } from "./token-candidates";
 import {
 	NoteWriter,
@@ -161,8 +161,8 @@ const AUTO_SYNC_DESC =
 // for `&`: the bookmarklet carries `&&`, comparison operators, and quotes, and
 // escaping the quote characters is what keeps the value from being able to
 // close the attribute at all.
-function bookmarkSetupHtml(): string {
-	const href = escapeHtmlAttribute(SIGN_IN_BOOKMARKLET);
+function bookmarkSetupHtml(vaultName: string): string {
+	const href = escapeHtmlAttribute(buildSignInBookmarklet(vaultName));
 	return [
 		"<!doctype html>",
 		'<html lang="en"><head><meta charset="utf-8">',
@@ -179,6 +179,12 @@ function bookmarkSetupHtml(): string {
 		'<p><a class="bm" href="' + href + '">Plaud → Obsidian (v2)</a></p>',
 		'<p class="note">Bookmarks bar hidden? Press Ctrl+Shift+B (Cmd+Shift+B on Mac) to show it, then drag the button onto it.</p>',
 		'<p class="note">Already have an older Plaud → Obsidian bookmark? Replace it with this one. The new bookmark sends the token to Obsidian for you instead of asking you to copy and paste it.</p>',
+		// Names the target vault: the bookmark is built for ONE vault, and a
+		// user with several open would otherwise have no way to tell which
+		// bookmark belongs to which.
+		'<p class="note">This bookmark delivers to your <strong>' +
+			vaultName.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;") +
+			"</strong> vault, so it works even when another vault has focus. Set it up again from a different vault to make a bookmark for that one.</p>",
 		"<hr><p>After it is saved, each time you need to connect:</p>",
 		"<ol>",
 		"<li>Sign in to Plaud in this browser.</li>",
@@ -2673,7 +2679,7 @@ export default class PlaudImporterPlugin extends Plugin {
 	async openBookmarkSetupPage(): Promise<void> {
 		const req = (window as { require?: (id: string) => unknown }).require;
 		if (typeof req !== "function") {
-			void copyToClipboard(SIGN_IN_BOOKMARKLET, () => {
+			void copyToClipboard(buildSignInBookmarklet(this.app.vault.getName()), () => {
 				new Notice(
 					"Bookmarklet copied. Make a new bookmark and paste it into the address field.",
 				);
@@ -2689,7 +2695,7 @@ export default class PlaudImporterPlugin extends Plugin {
 				join(...parts: string[]): string;
 			};
 			const file = pathMod.join(os.tmpdir(), "plaud-importer-bookmark.html");
-			fs.writeFileSync(file, bookmarkSetupHtml());
+			fs.writeFileSync(file, bookmarkSetupHtml(this.app.vault.getName()));
 			const shell = (
 				req("electron") as {
 					shell?: { openPath(path: string): Promise<string> };
