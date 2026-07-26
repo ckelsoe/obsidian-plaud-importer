@@ -4,6 +4,7 @@ import {
 	describeTokenLifetime,
 	formatSessionStatus,
 	isUsableUserToken,
+	isWorkspaceToken,
 	readTokenClientId,
 	readTokenLifetime,
 	SHORT_LIFETIME_HOURS,
@@ -70,6 +71,22 @@ const REFRESH_TOKEN = makeJwt(
 	{ alg: 'HS256', typ: 'WRT' },
 	{ sub: 'user-123', exp: FUTURE_EXP, client_id: 'web', region: 'us' },
 );
+
+describe('isWorkspaceToken (refresh gate, NOT a capture gate)', () => {
+	it('is true only for a header typ of WT', () => {
+		expect(isWorkspaceToken(WORKSPACE_TOKEN)).toBe(true);
+		expect(isWorkspaceToken(LONG_LIVED_TOKEN)).toBe(false);
+		expect(isWorkspaceToken('not-a-token')).toBe(false);
+	});
+
+	it('does not narrow what capture accepts', () => {
+		// The refresh is WT-only, but capture must keep taking a long-lived
+		// pre-v2 token where one still exists. These two guards disagreeing on
+		// LONG_LIVED_TOKEN is the point, not a bug.
+		expect(isUsableUserToken(LONG_LIVED_TOKEN, NOW_MS)).toBe(true);
+		expect(isWorkspaceToken(LONG_LIVED_TOKEN)).toBe(false);
+	});
+});
 
 describe('isUsableUserToken (capture guard)', () => {
 	it('accepts a live long-lived user token (future exp and client_id)', () => {

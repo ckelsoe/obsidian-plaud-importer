@@ -274,6 +274,16 @@
 	color: var(--text-success);
 }
 
+/* Renewal line under the sign-in status. Stays muted even when the status
+   above it is green: it is a statement of fact about this session, not a
+   second success indicator. Empty when nothing is connected, and an empty
+   div adds no margin of its own. */
+.plaud-importer-signin-renewal:not(:empty) {
+	margin-top: 0.2em;
+	font-size: var(--font-ui-smaller);
+	color: var(--text-muted);
+}
+
 /* Result line under the "Test connection" setting */
 .plaud-importer-test-status {
 	margin-top: 0.35em;

@@ -1001,8 +1001,10 @@ export class ReverseEngineeredPlaudClient implements PlaudClient {
 			// -3900 "invalid auth header" is what a DEAD long-lived user token
 			// returns (HTTP 200, negative in-band status): on a previously good
 			// token it means the token died, which for our single stored
-			// credential is the ~yearly re-auth trigger, so route it to
-			// pause + Reconnect too. (-3901 "token type does not match parse mode"
+			// credential is the re-auth trigger, so route it to
+			// pause + Reconnect too. (Unattended renewal covers roughly 30
+			// days for embedded-window sessions and never applies to SSO or
+			// bookmarklet ones; both end in this same manual reconnect.) (-3901 "token type does not match parse mode"
 			// is a header/client mismatch, not token death; it stays an api-error
 			// below since the plugin derives app-platform from the token itself.)
 			if (

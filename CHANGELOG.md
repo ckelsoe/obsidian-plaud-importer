@@ -4,6 +4,13 @@ All notable changes to Plaud Importer will be documented in this file.
 
 ## [Unreleased]
 
+## [0.36.0] - 2026-07-26
+
+### Added
+
+- **Email sign-ins now keep themselves signed in for about 30 days.** Plaud sessions last 24 hours, so the plugin has been asking you to reconnect every day. If you signed in with the **Sign in with email** window, it now renews that session quietly in the background before it lapses, and imports and auto-sync keep running without you doing anything. After about 30 days Plaud requires a real sign-in again, and you get the usual reconnect prompt. This has a limit worth knowing: renewal works only for the email window, because that is the only sign-in the plugin can renew on your behalf. Google and Apple sign-ins finish in your web browser, and the bookmark runs there too, so neither leaves the plugin anything to renew with. Those sessions keep working exactly as before and ask you to reconnect when they lapse. Settings now says which of the two your session is, under the connection status.
+- **If a renewal fails, the plugin says so instead of failing quietly.** It stops, shows the reconnect prompt, and does not keep hammering Plaud, which has an hourly limit on sign-in attempts. Turning on debug logging adds a **Debug: refresh the session now** command so a failure can be captured for a bug report.
+
 ### Fixed
 
 - **The sign-in window no longer gets stuck when your browser storage holds several old sign-in values.** It gathers a handful of possible credentials and tries each against Plaud, but it was counting anything that merely looked like a credential toward that handful. Expired leftovers and the companion value Plaud stores beside your real session could use up every slot before it reached the one that works, leaving the window open forever after a successful login. It now ignores values it can already tell are unusable, so the slots go to real candidates. This also means one less rejected call to Plaud each time you sign in.
