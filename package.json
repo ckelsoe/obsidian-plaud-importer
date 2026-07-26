@@ -1,13 +1,13 @@
 {
 	"name": "obsidian-plaud-importer",
-	"version": "0.35.2",
+	"version": "0.35.3",
 	"description": "Import meeting summaries, transcripts, and attachments from Plaud.AI into an Obsidian vault.",
 	"main": "main.js",
 	"scripts": {
 		"dev": "node esbuild.config.mjs",
 		"build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
 		"package:brat": "npm run build && node package-brat.mjs",
-		"lint": "eslint main.ts plaud-client.ts plaud-client-re.ts plaud-login.ts reconnect-routing.ts plaud-token.ts session-expiry.ts token-candidates.ts import-core.ts import-modal.ts import-runner.ts attachment-importer.ts note-writer.ts folder-catalog.ts debug-logger.ts vault-index.ts __tests__/plaud-client-re.test.ts __tests__/plaud-token.test.ts __tests__/plaud-login-origin.test.ts __tests__/reconnect-routing.test.ts __tests__/session-expiry.test.ts __tests__/token-candidates.test.ts __tests__/summary-metadata.test.ts __tests__/import-modal.test.ts __tests__/import-runner.test.ts __tests__/note-writer.test.ts __tests__/folder-catalog.test.ts __tests__/attachment-importer.test.ts __tests__/debug-logger.test.ts __tests__/vault-index.test.ts --max-warnings 0 && node scripts/check-submission.mjs && node scripts/check-icons.mjs",
+		"lint": "eslint main.ts plaud-client.ts plaud-client-re.ts plaud-login.ts reconnect-routing.ts plaud-token.ts session-expiry.ts token-candidates.ts import-core.ts import-modal.ts import-runner.ts attachment-importer.ts note-writer.ts folder-catalog.ts debug-logger.ts vault-index.ts __tests__/plaud-client-re.test.ts __tests__/plaud-token.test.ts __tests__/plaud-login-origin.test.ts __tests__/plaud-login-probe.test.ts __tests__/reconnect-routing.test.ts __tests__/session-expiry.test.ts __tests__/token-candidates.test.ts __tests__/summary-metadata.test.ts __tests__/import-modal.test.ts __tests__/import-runner.test.ts __tests__/note-writer.test.ts __tests__/folder-catalog.test.ts __tests__/attachment-importer.test.ts __tests__/debug-logger.test.ts __tests__/vault-index.test.ts --max-warnings 0 && node scripts/check-submission.mjs && node scripts/check-icons.mjs",
 		"test": "jest --passWithNoTests",
 		"version": "node version-bump.mjs && git add manifest.json versions.json"
 	},

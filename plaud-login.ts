@@ -47,25 +47,119 @@ const POLL_INTERVAL_MS = 1000;
 // The in-page hostname gate means a non-Plaud page's localStorage is never
 // even read; the plugin-side isPlaudOrigin check on the returned href stays
 // as the authoritative gate (defense in depth, both keyed on the same page).
-const PROBE_JS = `(() => {
+/**
+ * Injected into the sign-in window each poll to collect candidate tokens.
+ *
+ * Exported ONLY so `__tests__/plaud-login-probe.test.ts` can execute this exact
+ * string against fixtures. It is a string, not a function, because it runs via
+ * `executeJavaScript` inside the window, so it cannot import the shared
+ * collector and is necessarily a hand-written twin of it. That twin is what the
+ * test pins: 0.35.0 shipped a capture that no unit test caught because every
+ * fixture was written from the same assumption as the code.
+ */
+export const PROBE_JS = `(() => {
 	try {
-		var token = null;
+		var tokens = [];
 		var domain = null;
 		var h = String(location.hostname || '').toLowerCase().replace(/\\.$/, '');
 		var httpsOk = location.protocol === 'https:';
 		if (httpsOk && (h === 'plaud.ai' || (h.length > 9 && h.slice(-9) === '.plaud.ai'))) {
-			try { token = localStorage.getItem('token'); } catch (e) {}
+			// Collect candidates the same way the bookmarklet does. Plaud's web app
+			// stopped writing a plain 'token' key: the live credential is nested
+			// inside the workspaceList JSON, so a top-level-only read finds nothing
+			// and the window never settles. Descend ONLY into Plaud's own key
+			// namespace so an unrelated SDK's cached JWT can never be captured.
+			// Only JWT-SHAPED values count toward the cap. Without this, ordinary
+			// string settings sharing the pld_ namespace fill the list before the
+			// walk reaches the credential nested in workspaceList, and the window
+			// never settles. Shape only here; the claim guard runs plugin-side.
+			var seg = /^[A-Za-z0-9_-]+$/;
+			var add = function (v) {
+				if (typeof v !== 'string' || v.length > 4096) { return; }
+				var t = v.trim().replace(/^bearer +/i, '').trim();
+				var p = t.split('.');
+				if (p.length !== 3 || !seg.test(p[0]) || !seg.test(p[1]) || !seg.test(p[2])) { return; }
+				if (tokens.indexOf(t) < 0 && tokens.length < 8) { tokens.push(t); }
+			};
+			var budget = 4000;
+			var walk = function (x, depth) {
+				if (depth > 6 || budget <= 0 || tokens.length >= 8) { return; }
+				budget = budget - 1;
+				if (typeof x === 'string') {
+					add(x);
+					var t = x.trim();
+					if (t.length <= 262144 && (t.charAt(0) === '{' || t.charAt(0) === '[')) {
+						try { walk(JSON.parse(t), depth + 1); } catch (e) {}
+					}
+					return;
+				}
+				if (x !== null && typeof x === 'object') {
+					for (var q in x) {
+						if (Object.prototype.hasOwnProperty.call(x, q)) { walk(x[q], depth + 1); }
+					}
+				}
+			};
+			var scoped = function (k) {
+				return k === 'token' || k === 'tokenstr' || k.slice(0, 4) === 'pld_';
+			};
+			try { walk(localStorage.getItem('token'), 0); } catch (e) {}
+			// Then hoist the ACTIVE workspace's token ahead of the other
+			// workspaces. The plain token key is read first and outranks this: it
+			// is account-scoped and long-lived, so if Plaud ever restores it, it
+			// wins. On a multi-workspace account the generic sweep below collects
+			// every workspace's token in array order, and each is genuinely valid
+			// for its OWN workspace, so selection would settle on whichever came
+			// first and imports would silently target the wrong workspace. A
+			// preference, not a filter: if Plaud reshapes this we lose the
+			// ordering hint and still capture. No backticks in here, ever: this
+			// whole probe is a template literal.
+			try {
+				var current = null;
+				for (var c = 0; c < localStorage.length; c++) {
+					var ck = localStorage.key(c);
+					if (ck !== null && ck.slice(-19) === ':currentWorkspaceId') {
+						current = localStorage.getItem(ck);
+					}
+				}
+				if (current) {
+					current = String(current).replace(/^"|"$/g, '');
+					for (var w = 0; w < localStorage.length; w++) {
+						var wk = localStorage.key(w);
+						if (wk === null || wk.slice(-13) !== 'workspaceList') { continue; }
+						var list = JSON.parse(localStorage.getItem(wk));
+						if (!list || typeof list !== 'object') { continue; }
+						for (var e in list) {
+							if (!Object.prototype.hasOwnProperty.call(list, e)) { continue; }
+							var entry = list[e];
+							if (entry && typeof entry === 'object' && entry.workspaceId === current) {
+								add(entry.workspaceToken);
+							}
+						}
+					}
+				}
+			} catch (e) {}
+			for (var i = 0; i < localStorage.length; i++) {
+				var k = localStorage.key(i);
+				if (k === null || k === 'token') { continue; }
+				try { if (scoped(k)) { walk(localStorage.getItem(k), 0); } else { add(localStorage.getItem(k)); } } catch (e) {}
+			}
 			try { domain = localStorage.getItem('pld_plaud_user_api_domain'); } catch (e) {}
 		}
-		return JSON.stringify({ token: token, domain: domain, href: location.href });
+		return JSON.stringify({ tokens: tokens, domain: domain, href: location.href });
 	} catch (e) {
 		return JSON.stringify({ error: String(e) });
 	}
 })()`;
 
 export interface PlaudLoginResult {
-	/** The long-lived user token read from the window's localStorage. */
-	readonly token: string;
+	/**
+	 * Candidate session tokens read from the window's localStorage, in
+	 * collection order. A LIST because Plaud stopped writing a single plain
+	 * `token` key: the live credential is nested, and sits beside a refresh
+	 * token the API rejects, so only probing each against the API can tell
+	 * which one works. The caller does that selection.
+	 */
+	readonly tokens: readonly string[];
 	/** Regional API origin if discoverable, else null. */
 	readonly apiBaseUrl: string | null;
 }
@@ -75,7 +169,7 @@ export interface PlaudLoginOptions {
 }
 
 interface ProbeResult {
-	token?: string | null;
+	tokens?: unknown;
 	domain?: string | null;
 	href?: string;
 	error?: string;
@@ -347,10 +441,13 @@ class PlaudLoginSession {
 			} catch {
 				// Page mid-navigation; try again next tick.
 			}
-			const token =
-				typeof probe?.token === 'string' && probe.token.trim().length > 0
-					? probe.token.trim()
-					: null;
+			// Every candidate that survives the shared capture guard, not just one.
+			const candidates = Array.isArray(probe?.tokens)
+				? (probe.tokens as unknown[])
+						.filter((v): v is string => typeof v === 'string')
+						.map((v) => v.trim().replace(/^bearer\s+/i, '').trim())
+						.filter((v) => v.length > 0)
+				: [];
 			const apiBaseUrl = normalizeApiDomain(probe?.domain);
 			// Only ever read the token off a Plaud origin. The window loads
 			// web.plaud.ai, but a login redirect could land it elsewhere; a generic
@@ -360,34 +457,45 @@ class PlaudLoginSession {
 			// The capture guard is the gate: it accepts a live long-lived user
 			// token (client_id + future exp) and rejects the neighboring profile/ID
 			// JWT and any already-expired token still sitting in localStorage.
-			const usable = token !== null && onPlaud && isUsableUserToken(token);
+			const usable = onPlaud
+				? candidates.filter((value) => isUsableUserToken(value))
+				: [];
 			if (this.debugLogger.enabled) {
-				this.note('probe', 'note', { href: probe?.href, captured: usable });
+				// Counts only: never the values. Enough to diagnose a capture miss
+				// from a shipped debug log without putting a credential in it.
+				this.note('probe', 'note', {
+					href: probe?.href,
+					candidates: candidates.length,
+					usable: usable.length,
+					captured: usable.length > 0,
+				});
 			}
-			if (usable && !this.settled) {
-				this.captureToken(token, apiBaseUrl);
+			if (usable.length > 0 && !this.settled) {
+				this.captureToken(usable, apiBaseUrl);
 			}
 		};
 		void poll();
 		this.pollHandle = window.setInterval(() => void poll(), POLL_INTERVAL_MS);
 	}
 
-	private captureToken(token: string, apiBaseUrl: string | null): void {
-		// Store the bare token; the web app persists it as `bearer eyJ…`, and the
-		// data client prepends its own scheme, so strip any leading `bearer `.
-		const value = token.trim().replace(/^bearer\s+/i, '');
-		if (value.length === 0) {
+	private captureToken(tokens: readonly string[], apiBaseUrl: string | null): void {
+		// Values arrive already trimmed and bearer-stripped by the caller.
+		const values = tokens.filter((value) => value.length > 0);
+		if (values.length === 0) {
 			return;
 		}
 		// Measure, never assume, the issued lifetime (issue #78: some accounts
-		// get a 24h token under the same key). Advisory: never blocks capture.
-		const life = readTokenLifetime(value);
+		// get a 24h token). Advisory: never blocks capture. Reported for the
+		// FIRST candidate only; which one actually wins is decided by the
+		// caller probing them against the API.
+		const life = readTokenLifetime(values[0]);
 		this.note('token captured', 'note', {
 			apiBaseUrl,
+			candidates: values.length,
 			lifetimeHours: life?.lifetimeHours ?? null,
 			typ: life?.typ ?? null,
 		});
-		this.settle({ token: value, apiBaseUrl });
+		this.settle({ tokens: values, apiBaseUrl });
 		this.closeWindow();
 	}
 
