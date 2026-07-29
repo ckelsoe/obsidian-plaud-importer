@@ -735,6 +735,13 @@ export default class PlaudImporterPlugin extends Plugin {
 	// reconnect, and the later expiry warning would stack a second prompt on
 	// top of it. Cleared wherever sessionExpiryNotice is.
 	private sessionRefreshFailureNotice: Notice | null = null;
+	// The auto-sync auth-pause "Reconnect" prompt, held for the same reason as
+	// the two notices above (issue #88). It also has no duration, and a paused
+	// session can now heal with NO user action: a background refresh finishing
+	// after a tick already paused. Without a handle nothing can take the prompt
+	// down, so it outlives the pause it describes and invites a reconnect the
+	// plugin no longer needs. Cleared by clearAutoSyncPauseNotice().
+	private autoSyncPauseNotice: Notice | null = null;
 	/**
 	 * True when unattended renewal has stopped for the current credential and
 	 * will not resume without a reconnect. Read by the settings tab so its
@@ -1081,6 +1088,7 @@ export default class PlaudImporterPlugin extends Plugin {
 		}
 		this.actionNotices.clear();
 		this.sessionExpiryNotice = null;
+		this.autoSyncPauseNotice = null;
 		// Obsidian auto-detaches ribbon icons on unload; clear our
 		// state so a subsequent onload starts from a known baseline.
 		this.ribbonIconEl = null;
@@ -2309,9 +2317,26 @@ export default class PlaudImporterPlugin extends Plugin {
 					classification.category === "not-configured"
 						? "Plaud auto-sync paused: no Plaud token is configured."
 						: "Plaud auto-sync paused: your session expired.";
-				this.showActionNotice(lead, "Reconnect", () =>
-					this.reconnectFromNotice(),
-				);
+				// Lifecycle re-check AFTER this method's awaits, not just at its
+				// top: onunload hides every sticky action notice and clears the
+				// set, so a duration-0 prompt created after that sweep is
+				// untracked, outlives the plugin, and sits on screen until the
+				// user clicks it away. The log below still runs either way, so an
+				// unload race stays visible in a debug capture.
+				if (!this.disposed) {
+					// Held so a session that heals itself can take this down
+					// (issue #88). Clearing first keeps the field the single
+					// owner of whatever is on screen: a tick short-circuits
+					// while paused, so today there is nothing to replace, but
+					// that is the tick guard's property rather than this call
+					// site's.
+					this.clearAutoSyncPauseNotice();
+					this.autoSyncPauseNotice = this.showActionNotice(
+						lead,
+						"Reconnect",
+						() => this.reconnectFromNotice(),
+					);
+				}
 			}
 			this.logAutoSync("tick failed", {
 				outcome,
@@ -2355,8 +2380,27 @@ export default class PlaudImporterPlugin extends Plugin {
 		this.logAutoSync("auto-sync scheduled", { minutes });
 	}
 
+	/**
+	 * Take down the auth-pause "Reconnect" prompt if one is on screen (issue
+	 * #88). Same three steps reconcileSessionExpiryWarning() uses for the expiry
+	 * and renewal-failure notices: hide it, drop it from the onunload sweep set
+	 * so dismissed notices do not accumulate there, and null the handle.
+	 */
+	private clearAutoSyncPauseNotice(): void {
+		if (this.autoSyncPauseNotice === null) return;
+		this.autoSyncPauseNotice.hide();
+		this.actionNotices.delete(this.autoSyncPauseNotice);
+		this.autoSyncPauseNotice = null;
+	}
+
 	/** Clear an auth pause and run a tick soon. Called on token re-save / test / toggle. */
 	resumeAutoSyncIfPaused(): void {
+		// Above the paused check on purpose. The prompt and the pause state can
+		// come apart: a resume that already ran, or a path that cleared the pause
+		// without coming through here, leaves state un-paused with the prompt
+		// still up. Behind the early return that prompt would be stranded on
+		// screen for the rest of the session.
+		this.clearAutoSyncPauseNotice();
 		if (!this.autoSyncState.paused) return;
 		this.autoSyncState = nextAutoSyncState(this.autoSyncState, "ok");
 		this.logAutoSync("auto-sync resumed after re-auth");
