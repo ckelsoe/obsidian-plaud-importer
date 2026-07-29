@@ -2317,17 +2317,26 @@ export default class PlaudImporterPlugin extends Plugin {
 					classification.category === "not-configured"
 						? "Plaud auto-sync paused: no Plaud token is configured."
 						: "Plaud auto-sync paused: your session expired.";
-				// Held so a session that heals itself can take this down (issue
-				// #88). Clearing first keeps the field the single owner of
-				// whatever is on screen: a tick short-circuits while paused, so
-				// today there is nothing to replace, but that is the tick
-				// guard's property rather than this call site's.
-				this.clearAutoSyncPauseNotice();
-				this.autoSyncPauseNotice = this.showActionNotice(
-					lead,
-					"Reconnect",
-					() => this.reconnectFromNotice(),
-				);
+				// Lifecycle re-check AFTER this method's awaits, not just at its
+				// top: onunload hides every sticky action notice and clears the
+				// set, so a duration-0 prompt created after that sweep is
+				// untracked, outlives the plugin, and sits on screen until the
+				// user clicks it away. The log below still runs either way, so an
+				// unload race stays visible in a debug capture.
+				if (!this.disposed) {
+					// Held so a session that heals itself can take this down
+					// (issue #88). Clearing first keeps the field the single
+					// owner of whatever is on screen: a tick short-circuits
+					// while paused, so today there is nothing to replace, but
+					// that is the tick guard's property rather than this call
+					// site's.
+					this.clearAutoSyncPauseNotice();
+					this.autoSyncPauseNotice = this.showActionNotice(
+						lead,
+						"Reconnect",
+						() => this.reconnectFromNotice(),
+					);
+				}
 			}
 			this.logAutoSync("tick failed", {
 				outcome,

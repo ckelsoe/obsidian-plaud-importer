@@ -6,7 +6,7 @@ All notable changes to Plaud Importer will be documented in this file.
 
 ### Fixed
 
-- **The "session expired" prompt now goes away once your session is working again.** When background sync ran into an expired session it paused itself and showed a reconnect prompt. That prompt deliberately has no timeout, so it cannot disappear before you read it, but nothing ever took it back down. If the session recovered on its own, which is easiest to hit when Obsidian wakes from sleep and a background renewal finishes just after a sync attempt already failed, imports carried on normally while the prompt sat there asking you to reconnect a session that was already fine. Every path that clears the pause now clears the prompt with it (issue #88).
+- **The "session expired" prompt now goes away once your session is working again.** When background sync ran into an expired session it paused itself and showed a reconnect prompt. That prompt deliberately has no timeout, so it cannot disappear before you read it, but nothing ever took it back down. If the session recovered on its own, which is easiest to hit when Obsidian wakes from sleep and a background renewal finishes just after a sync attempt already failed, imports carried on normally while the prompt sat there asking you to reconnect a session that was already fine. Every path that clears the pause now clears the prompt with it, and the prompt is no longer raised at all if the plugin is shutting down while a background check is still finishing (issue #88).
 
 ## [0.36.0] - 2026-07-26
 
