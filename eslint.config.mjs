@@ -48,6 +48,17 @@ export default [
 		},
 	},
 	{
+		// __tests__/__mocks__/obsidian.ts IS the stub that stands in for the
+		// `obsidian` module under jest, so the restricted-import rule's remedy
+		// ("import moment from 'obsidian'") would make it import itself. Scoped
+		// off here for the mocks directory only, because the config forbids
+		// disabling this rule inline and real test files should keep it.
+		files: ["__tests__/__mocks__/**/*.ts"],
+		rules: {
+			"@typescript-eslint/no-restricted-imports": "off",
+		},
+	},
+	{
 		ignores: [
 			"main.js",
 			"node_modules/**",
