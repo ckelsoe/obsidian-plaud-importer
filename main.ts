@@ -140,6 +140,16 @@ const DEEP_LINK_UNVERIFIED_NOTICE =
 // sentence-case lint, which only inspects literals at the call site, accepts
 // the product name mid-sentence.
 const DEEP_LINK_PROBING_NOTICE = "Checking which Plaud sign-in still works…";
+// A capture that failed while being SAVED, rather than one the token was wrong
+// for. Every notice above means the credential was the problem; this one means
+// it may well have been fine, so repeating the sign-in is not the fix. The
+// wording names the likely cause as something to check rather than as a
+// diagnosis: the capture path throws opaquely (a settings write is the common
+// source, but not the only one), so asserting "the vault is not writable" would
+// be the same over-claiming this notice exists to stop. Telling the two apart
+// properly needs the result union tracked in issue #86.
+const CAPTURE_SAVE_FAILED_NOTICE =
+	"Plaud: could not save the token. If this keeps happening, check that this vault is writable and has free space.";
 // Several candidates and no way to ask which one works. Picking blind would
 // store the wrong credential (a revoked long-lived token outranks a live short
 // one on every claim we can read), so store nothing and let the user retry.
@@ -3291,14 +3301,21 @@ export default class PlaudImporterPlugin extends Plugin {
 			this.settings.apiBaseUrl = apiBaseUrl;
 		}
 		this.clearStoredRefreshToken();
-		// KNOWN GAP, pre-dates this method's current shape and deliberately not
-		// patched here: if saveSettings rejects (read-only vault, disk full),
-		// the secret above is already durably written while settings.json still
-		// names the old region and method. Rolling that back looks obvious and
-		// is not: capture surfaces are not serialized, so an unwind can wipe a
-		// deep-link or paste capture that completed meanwhile, and the failure
-		// is currently reported to callers as a bad token rather than as a save
-		// failure. See dev-docs/plaud-importer for the writeup.
+		// KNOWN GAP (issue #86), pre-dates this method's current shape and
+		// deliberately not patched here: if saveSettings rejects (read-only vault,
+		// disk full), the secret above is already durably written while
+		// settings.json still names the old region and method. Rolling that back
+		// looks obvious and is not: capture surfaces are not serialized, so an
+		// unwind can wipe a deep-link or paste capture that completed meanwhile.
+		//
+		// This comment used to add that the failure "is reported to callers as a
+		// bad token rather than as a save failure". That was never true and is
+		// corrected here: the only `return false` above is the pre-write guard, so
+		// a rejection can only ever THROW, and DEEP_LINK_BAD_TOKEN_NOTICE is
+		// unreachable from it. Every caller now catches and says the save failed.
+		// What is still missing is the ability to tell a persistence failure from
+		// any other throw, which needs this method to return a result union rather
+		// than a boolean. See dev-docs/plaud-importer for the writeup.
 		await this.saveSettings();
 		if (!background) {
 			this.noteShortLifetimeOnCapture(token);
@@ -3718,7 +3735,9 @@ class ConfirmModal extends Modal {
 	}
 }
 
-class PlaudImporterSettingsTab extends PluginSettingTab {
+// Exported for tests only (issue #90). The plugin registers this itself in
+// onload; nothing outside main.ts constructs it.
+export class PlaudImporterSettingsTab extends PluginSettingTab {
 	plugin: PlaudImporterPlugin;
 
 	// Set by renderSigninControl() so the Clear sign-in button can refresh the
@@ -4154,7 +4173,26 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 				.onClick(async () => {
 					btn.setDisabled(true);
 					try {
-						const ok = await this.plugin.reauthenticate();
+						let ok: boolean;
+						// Scoped to the capture call ALONE, deliberately. Capturing
+						// writes secret storage and THEN awaits a settings save, and
+						// that save can reject (read-only vault, full disk, a sync
+						// client holding the file). A rejection is the only way a save
+						// failure can surface, because the store's single `false` is
+						// its pre-write validation guard, so without a catch here the
+						// async click rejected unhandled: the button re-enabled and the
+						// user was told nothing, which is the hardest version of this
+						// failure to diagnose (issue #86). Widening it to cover the
+						// success branch below would be worse than the bug: a redraw
+						// that threw after a token was safely stored would show the
+						// success notice AND a save-failure notice contradicting it.
+						try {
+							ok = await this.plugin.reauthenticate();
+						} catch (err) {
+							console.error("Plaud importer: sign-in failed to save", err);
+							new Notice(CAPTURE_SAVE_FAILED_NOTICE);
+							return;
+						}
 						if (ok) {
 							new Notice("Plaud token captured and saved.");
 							this.signinRefresh?.();
@@ -4204,7 +4242,19 @@ class PlaudImporterSettingsTab extends PluginSettingTab {
 		);
 		setting.addButton((btn) =>
 			btn.setButtonText("Paste token from clipboard").onClick(async () => {
-				const ok = await this.plugin.pasteTokenFromClipboard();
+				let ok: boolean;
+				// Scoped to the paste call alone, for the same reason as the Sign in
+				// button above (issue #86). pasteTokenFromClipboard handles a
+				// clipboard read failure itself and returns false after saying so,
+				// but the store behind it can still reject on the settings write, and
+				// that arrives here as a throw.
+				try {
+					ok = await this.plugin.pasteTokenFromClipboard();
+				} catch (err) {
+					console.error("Plaud importer: paste failed to save", err);
+					new Notice(CAPTURE_SAVE_FAILED_NOTICE);
+					return;
+				}
 				if (ok) {
 					new Notice("Token saved. Run a connection test to confirm it works.");
 					this.signinRefresh?.();

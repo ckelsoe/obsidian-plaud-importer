@@ -149,12 +149,71 @@ export class PluginSettingTab {
 	hide(): void {}
 }
 
-/** Chainable Setting stub. Every setter and adder returns `this` so builder chains run. */
+/**
+ * Observable button stub, handed to the callbacks `Setting.addButton` and
+ * `addExtraButton` take. The real components are chainable and register a click
+ * handler; this records the label and keeps the handler callable so a test can
+ * fire the click. Without that, everything a settings button DOES is unreachable
+ * from jest, which is how the issue #86 silent-failure path went uncovered.
+ */
+export class ButtonStub {
+	label = "";
+	cta = false;
+	disabled = false;
+	icon = "";
+	tooltip = "";
+	clickCount = 0;
+	buttonEl: ChainableStub = new ChainableStub();
+	/** Set by onClick(). Await it to drive the handler under test. */
+	handler: (evt?: unknown) => unknown = () => undefined;
+
+	setButtonText(text: string): this {
+		this.label = text;
+		return this;
+	}
+	setCta(): this {
+		this.cta = true;
+		return this;
+	}
+	setWarning(): this {
+		return this;
+	}
+	setDisabled(disabled: boolean): this {
+		this.disabled = disabled;
+		return this;
+	}
+	setIcon(icon: string): this {
+		this.icon = icon;
+		return this;
+	}
+	setTooltip(tooltip: string): this {
+		this.tooltip = tooltip;
+		return this;
+	}
+	onClick(cb: (evt?: unknown) => unknown): this {
+		this.handler = cb;
+		return this;
+	}
+	/** Fire the registered handler the way a real click would. */
+	async click(): Promise<void> {
+		this.clickCount += 1;
+		await this.handler();
+	}
+}
+
+/**
+ * Chainable Setting stub. Every setter and adder returns `this` so builder
+ * chains run. The button adders INVOKE their callback with a ButtonStub and
+ * collect it on `buttons`, because a callback that is never called cannot be
+ * tested; find one with `settingButton(setting, "Sign in")`.
+ */
 export class Setting {
 	settingEl: ChainableStub = new ChainableStub();
 	nameEl: ChainableStub = new ChainableStub();
 	descEl: ChainableStub = new ChainableStub();
 	controlEl: ChainableStub = new ChainableStub();
+	/** Every button added to this Setting, in the order they were added. */
+	buttons: ButtonStub[] = [];
 
 	constructor(_containerEl?: unknown) {}
 
@@ -185,10 +244,16 @@ export class Setting {
 	addDropdown(_cb: unknown): this {
 		return this;
 	}
-	addButton(_cb: unknown): this {
+	addButton(cb: (btn: ButtonStub) => unknown): this {
+		const btn = new ButtonStub();
+		this.buttons.push(btn);
+		cb(btn);
 		return this;
 	}
-	addExtraButton(_cb: unknown): this {
+	addExtraButton(cb: (btn: ButtonStub) => unknown): this {
+		const btn = new ButtonStub();
+		this.buttons.push(btn);
+		cb(btn);
 		return this;
 	}
 	addSearch(_cb: unknown): this {
@@ -197,6 +262,20 @@ export class Setting {
 	then(_cb: unknown): this {
 		return this;
 	}
+}
+
+/**
+ * Find a button on a rendered Setting by its label. Throws rather than
+ * returning undefined so a renamed label fails the test loudly instead of
+ * quietly asserting nothing.
+ */
+export function settingButton(setting: Setting, label: string): ButtonStub {
+	const found = setting.buttons.find((b) => b.label === label);
+	if (found === undefined) {
+		const seen = setting.buttons.map((b) => b.label).join(", ");
+		throw new Error(`No button labeled "${label}". Present: ${seen || "none"}`);
+	}
+	return found;
 }
 
 export class SecretComponent {
