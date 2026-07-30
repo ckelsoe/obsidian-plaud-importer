@@ -3312,7 +3312,9 @@ export default class PlaudImporterPlugin extends Plugin {
 		// bad token rather than as a save failure". That was never true and is
 		// corrected here: the only `return false` above is the pre-write guard, so
 		// a rejection can only ever THROW, and DEEP_LINK_BAD_TOKEN_NOTICE is
-		// unreachable from it. Every caller now catches and says the save failed.
+		// unreachable from it. Every caller now catches the throw; the user-facing
+		// capture surfaces say the save failed, while the background refresh takes
+		// its own path (logs, prompts Reconnect, re-arms the schedule).
 		// What is still missing is the ability to tell a persistence failure from
 		// any other throw, which needs this method to return a result union rather
 		// than a boolean. See dev-docs/plaud-importer for the writeup.
