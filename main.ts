@@ -1580,15 +1580,23 @@ export default class PlaudImporterPlugin extends Plugin {
 	// True when reconcileSessionRefresh would arm background renewal for this
 	// credential: the right sign-in method, a workspace token (a long-lived
 	// pre-v2 token is deliberately skipped, since refreshing would trade
-	// months of life for 24 hours), and a build that can reach the partition.
-	// Must mirror that method's own early-return gates; every user-facing
-	// claim about renewal routes through here so the copy cannot disagree
-	// with what the scheduler actually does.
-	canRenewCredential(token: string): boolean {
+	// months of life for 24 hours), a build that can reach the partition, and
+	// an expiry the scheduler can compute a wake-up from. Runtime state
+	// (disposed, a failed attempt, a pause) is deliberately NOT in here;
+	// callers report those separately. Every user-facing claim about renewal
+	// routes through here so the copy cannot disagree with what the scheduler
+	// actually does. signInMethod is a parameter because capture surfaces are
+	// not serialized (issue #86): a capture notice must describe the capture
+	// it belongs to even if a concurrent capture rewrites settings meanwhile.
+	canRenewCredential(
+		token: string,
+		signInMethod: SignInMethod = this.settings.signInMethod,
+	): boolean {
 		return (
-			this.settings.signInMethod === "window" &&
+			signInMethod === "window" &&
 			isWorkspaceToken(token) &&
-			buildPartitionPost() !== null
+			buildPartitionPost() !== null &&
+			computeRefreshDelayMs(token, Date.now()) !== null
 		);
 	}
 
@@ -1596,7 +1604,10 @@ export default class PlaudImporterPlugin extends Plugin {
 	// now, so the message's job is to say what happens when it runs out.
 	// Advisory only: lifetime never gates a capture, and an unreadable or
 	// iat-less token stays silent rather than guessing.
-	private noteShortLifetimeOnCapture(token: string): void {
+	private noteShortLifetimeOnCapture(
+		token: string,
+		signInMethod: SignInMethod,
+	): void {
 		const life = readTokenLifetime(token);
 		if (life === null || life.lifetimeHours === null) {
 			return;
@@ -1605,10 +1616,10 @@ export default class PlaudImporterPlugin extends Plugin {
 			return;
 		}
 		const hours = Math.max(1, Math.round(life.lifetimeHours));
-		// Caller (storeAccessToken) has already recorded settings.signInMethod
-		// for THIS capture, so canRenewCredential describes the token just
-		// stored, not a previous session.
-		const canRenew = this.canRenewCredential(token);
+		// The method is passed in rather than read back from settings: a
+		// concurrent capture could rewrite settings.signInMethod between this
+		// capture's save and its notice.
+		const canRenew = this.canRenewCredential(token, signInMethod);
 		const issued = `Plaud issued this sign-in a session of about ${hours} hour${
 			hours === 1 ? "" : "s"
 		}.`;
@@ -3340,7 +3351,7 @@ export default class PlaudImporterPlugin extends Plugin {
 		// than a boolean. See dev-docs/plaud-importer for the writeup.
 		await this.saveSettings();
 		if (!background) {
-			this.noteShortLifetimeOnCapture(token);
+			this.noteShortLifetimeOnCapture(token, signInMethod);
 		}
 		// A newly stored credential clears any prior refresh failure: whatever
 		// was wrong, the user just replaced the thing that was failing.
