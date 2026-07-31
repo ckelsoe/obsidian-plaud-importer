@@ -157,7 +157,7 @@ const DEEP_LINK_UNREACHABLE_NOTICE =
 	"Could not reach Plaud to check which sign-in token to use, so nothing was saved. Check your connection, then click the bookmark again.";
 
 const SIGN_IN_NOTE =
-	"Plaud has no official API, so this plugin relies on their internal one. That makes sign-in fragile, and it may stop working when Plaud changes that internal API. We expect this whole process to get much simpler once Plaud releases an official API. There are two ways to sign in, depending on how you log in to Plaud. Use 'Sign in with email' if you log in with an email address and password. Use 'Sign in with Google or Apple' if you use single sign-on (SSO) through a Google or Apple account. How long a session lasts is set by Plaud and varies by account: most accounts get a long session (months to about a year), but some get as little as 24 hours. The status line under Plaud token shows yours. When the session lapses the plugin shows a one-click Reconnect that reopens the sign-in matching your account.";
+	"Plaud has no official API, so this plugin relies on their internal one. That makes sign-in fragile, and it may stop working when Plaud changes that internal API. We expect this whole process to get much simpler once Plaud releases an official API. There are two ways to sign in, depending on how you log in to Plaud. Use 'Sign in with email' if you log in with an email address and password. Use 'Sign in with Google or Apple' if you use single sign-on (SSO) through a Google or Apple account. How long you stay signed in depends on the method: a session from the email sign-in window normally renews itself in the background for about 30 days before asking you to sign in again, while a session captured from a Google or Apple login cannot be renewed by the plugin and usually lasts about 24 hours. If you use Google or Apple, you can add a password to your Plaud account and use the email sign-in instead. The status line under Plaud token shows your session's actual expiry and whether background renewal is active for it. When the session lapses the plugin shows a one-click Reconnect that reopens the sign-in matching your account.";
 
 // Automatic-sync toggle description. ONE constant consumed by both settings
 // paths (the 1.13+ declarative definitions and the 1.12 imperative display()
@@ -1577,13 +1577,37 @@ export default class PlaudImporterPlugin extends Plugin {
 		}
 	}
 
-	// One-time capture heads-up (issue #78): some accounts get a short (24h)
-	// session under the same localStorage key the long-lived token uses.
-	// Saying so at capture time makes the rejection ~24h later a predictable
-	// event instead of a surprise. Advisory only: lifetime never gates a
-	// capture, and an unreadable or iat-less token stays silent rather than
-	// guessing.
-	private noteShortLifetimeOnCapture(token: string): void {
+	// True when reconcileSessionRefresh would arm background renewal for this
+	// credential: the right sign-in method, a workspace token (a long-lived
+	// pre-v2 token is deliberately skipped, since refreshing would trade
+	// months of life for 24 hours), a build that can reach the partition, and
+	// an expiry the scheduler can compute a wake-up from. Runtime state
+	// (disposed, a failed attempt, a pause) is deliberately NOT in here;
+	// callers report those separately. Every user-facing claim about renewal
+	// routes through here so the copy cannot disagree with what the scheduler
+	// actually does. signInMethod is a parameter because capture surfaces are
+	// not serialized (issue #86): a capture notice must describe the capture
+	// it belongs to even if a concurrent capture rewrites settings meanwhile.
+	canRenewCredential(
+		token: string,
+		signInMethod: SignInMethod = this.settings.signInMethod,
+	): boolean {
+		return (
+			signInMethod === "window" &&
+			isWorkspaceToken(token) &&
+			buildPartitionPost() !== null &&
+			computeRefreshDelayMs(token, Date.now()) !== null
+		);
+	}
+
+	// One-time capture heads-up (issue #78): a short (24h) session is normal
+	// now, so the message's job is to say what happens when it runs out.
+	// Advisory only: lifetime never gates a capture, and an unreadable or
+	// iat-less token stays silent rather than guessing.
+	private noteShortLifetimeOnCapture(
+		token: string,
+		signInMethod: SignInMethod,
+	): void {
 		const life = readTokenLifetime(token);
 		if (life === null || life.lifetimeHours === null) {
 			return;
@@ -1592,10 +1616,17 @@ export default class PlaudImporterPlugin extends Plugin {
 			return;
 		}
 		const hours = Math.max(1, Math.round(life.lifetimeHours));
+		// The method is passed in rather than read back from settings: a
+		// concurrent capture could rewrite settings.signInMethod between this
+		// capture's save and its notice.
+		const canRenew = this.canRenewCredential(token, signInMethod);
+		const issued = `Plaud issued this sign-in a session of about ${hours} hour${
+			hours === 1 ? "" : "s"
+		}.`;
 		new Notice(
-			`Plaud issued this sign-in a session of about ${hours} hour${
-				hours === 1 ? "" : "s"
-			}, not the long session most accounts get. The plugin will ask you to sign in again when it expires.`,
+			canRenew
+				? `${issued} The plugin renews it in the background for about 30 days, then asks you to sign in again.`
+				: `${issued} The plugin will ask you to sign in again when it expires.`,
 			12000,
 		);
 	}
@@ -3320,7 +3351,7 @@ export default class PlaudImporterPlugin extends Plugin {
 		// than a boolean. See dev-docs/plaud-importer for the writeup.
 		await this.saveSettings();
 		if (!background) {
-			this.noteShortLifetimeOnCapture(token);
+			this.noteShortLifetimeOnCapture(token, signInMethod);
 		}
 		// A newly stored credential clears any prior refresh failure: whatever
 		// was wrong, the user just replaced the thing that was failing.
@@ -4090,14 +4121,7 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 				stored && !expired && !unreadable,
 			);
 			const connected = stored && !expired && !unreadable;
-			// Mirrors what reconcileSessionRefresh actually requires: the right
-			// sign-in method, a workspace token (a long-lived pre-v2 token is
-			// deliberately skipped, since refreshing would trade months for 24
-			// hours), and a build that can reach the partition at all.
-			const canRenew =
-				this.plugin.settings.signInMethod === "window" &&
-				isWorkspaceToken(value) &&
-				buildPartitionPost() !== null;
+			const canRenew = this.plugin.canRenewCredential(value);
 			// Three states, not two. Folding "renewal stopped after a failure"
 			// into "this sign-in cannot renew" describes the wrong cause and
 			// sends the user to the wrong remedy: the first is fixed by
