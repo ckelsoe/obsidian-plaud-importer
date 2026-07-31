@@ -125,11 +125,13 @@ Use this if you log in to Plaud with an **email address and password**.
 2. A separate sign-in window opens with Plaud's website. Log in with your email and password.
 3. Once you reach your library, the plugin captures your token automatically and the window closes. The **Plaud token** status changes to **"connected."**
 
-Google and Apple logins do **not** complete in this window. For those, use the next method.
+Google and Apple logins do **not** complete in this window. If your account uses Google or Apple, see the next method, and the tip there about adding a password to your Plaud account so you can use this window instead.
 
 #### Sign in with Google or Apple
 
 Use this if you log in to Plaud with **single sign-on (SSO) through a Google or Apple account**. Those logins only work in a real web browser, so this method signs you in there and hands the token back to Obsidian. There is a quick one-time setup (saving a bookmark), then a few clicks each time.
+
+> **Recommended: add a password to your Plaud account and use email sign-in instead.** A Plaud account can have a password and Google or Apple sign-in at the same time, and adding one does not change or replace how you sign in anywhere else. Set a password for your account email in Plaud's account settings, then use [Sign in with email](#sign-in-with-email) above. That method renews itself in the background for about 30 days between sign-ins. A Google or Apple session captured with the bookmark below cannot be renewed by the plugin, and on many accounts it expires after about 24 hours, which means repeating the sign-in steps every day. The bookmark method below keeps working and stays supported if you prefer not to add a password.
 
 **One-time setup (do this once):**
 
@@ -155,7 +157,7 @@ If nothing at all happens when you click the bookmark, make sure you are signed 
 
 **Starting over:** the **Clear sign-in** button clears the plugin's stored token and its own embedded sign-in session, so you can connect a different account or recover from a stuck state. It does not sign you out of Plaud in your normal web browser.
 
-How long a sign-in lasts is set by Plaud and varies by account: most accounts get a long session (months to about a year), but some get as little as 24 hours. The plugin settings show your session's actual expiry in the status line under **Plaud token**, and when the plugin can tell your session is short, it says so at sign-in. When imports stop working, repeat the "each time you connect" steps to get a fresh one. This is the same for email and password accounts and for Google and Apple accounts. If a session lapses during background auto-sync, the pause notice's **Reconnect** button reopens the right sign-in for your account type, so an SSO account is not sent to the email window where Google and Apple logins do not work.
+How long a sign-in lasts depends on the sign-in method. A session from the email sign-in window renews itself in the background for about 30 days, then asks you to sign in again. A session captured from a Google or Apple login cannot be renewed by the plugin, and on many accounts it lasts only about 24 hours, which is why adding a password to your account (see the tip above) is the recommended path for Google and Apple users. The plugin settings show your session's actual expiry in the status line under **Plaud token**, and when the plugin can tell your session is short, it says so at sign-in. When imports stop working, sign in again with the method for your account. If a session lapses during background auto-sync, the pause notice's **Reconnect** button reopens the right sign-in for your account type, so an SSO account is not sent to the email window where Google and Apple logins do not work.
 
 The token is stored in Obsidian's per-vault secret storage either way. It is **never written to `data.json`** and does not travel through Obsidian Sync. Switching vaults requires re-connecting.
 
