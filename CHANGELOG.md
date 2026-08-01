@@ -2,6 +2,18 @@
 
 All notable changes to Plaud Importer will be documented in this file.
 
+## [Unreleased]
+
+### Changed
+
+- **Each vault now keeps its own Plaud sign-in.** The sign-in belonged to your Obsidian installation rather than to any one vault, so every vault running the plugin shared a single one. **You will need to sign in once more in each vault after updating**, and that is the whole cost of the fix below. In return, signing in to one vault no longer changes another, **Clear sign-in** only signs out the vault you run it in, and you can point different vaults at different Plaud accounts if you want to. If you use the plugin in a single vault, nothing changes except that one sign-in.
+- **Clear sign-in also removes the old shared sign-in left behind by the update.** The previous installation-wide session is not deleted when you update, because a vault still running an older version of the plugin may legitimately still be using it, and Obsidian updates plugins one vault at a time. That leaves a session on disk that nothing signs into any more. **Clear sign-in** now clears it along with this vault's own, so there is a way to remove it rather than waiting out its expiry. It otherwise lapses on its own within about 30 days.
+
+### Fixed
+
+- **Two vaults no longer knock each other's sessions offline.** Every vault kept its own renewal schedule but they all renewed the same shared sign-in. When two of them came due around the same time, both rotated the same underlying credential and whichever finished second found the value it was holding already replaced. It reported a renewal failure, stopped renewing, and asked you to reconnect, even though your account was completely fine. It also spent two of the roughly ten renewals an hour Plaud allows where one would have done. Sessions are now separate per vault, so there is nothing left to collide over (issue #87).
+- **Two vaults signed in to two different Plaud accounts no longer overwrite each other.** Because the single shared sign-in held whichever account logged in most recently, this was ambiguous before background renewal existed. Separate sign-ins remove the ambiguity rather than working around it.
+
 ## [0.36.1] - 2026-07-31
 
 ### Fixed

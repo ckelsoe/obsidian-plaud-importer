@@ -33,6 +33,11 @@
 
 import { App, Platform } from 'obsidian';
 import { NoopDebugLogger, type DebugLogger } from './debug-logger';
+import {
+	isLegacyPartition,
+	LEGACY_PLAUD_PARTITION,
+	plaudPartition,
+} from './plaud-partition';
 import { isUsableUserToken, readTokenLifetime } from './plaud-token';
 import { MAX_COLLECTED_CANDIDATES } from './token-candidates';
 
@@ -43,9 +48,11 @@ import { MAX_COLLECTED_CANDIDATES } from './token-candidates';
 // plaud-client-re.ts), so the captured token must come from the web client to
 // match. Verified against a live web.plaud.ai HAR capture on 2026-06-18.
 const PLAUD_LOGIN_URL = 'https://web.plaud.ai';
-// Persistent partition so a returning user keeps their Plaud session and does
-// not have to sign in every time. Isolated from Obsidian's own web sessions.
-const PLAUD_PARTITION = 'persist:plaud-importer';
+// The partition is persistent (a returning user keeps their Plaud session and
+// does not sign in every time), isolated from Obsidian's own web sessions, and
+// PER VAULT since issue #87. It is derived once per operation from the vault's
+// own id rather than held as a module constant here; see plaud-partition.ts for
+// why, including why plaud-refresh-net.ts must derive it the same way.
 const POLL_INTERVAL_MS = 1000;
 
 
@@ -299,21 +306,78 @@ function spoofUserAgent(): string {
 	return `Mozilla/5.0 (${os}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36`;
 }
 
+export interface ClearPlaudLoginSessionOptions {
+	/**
+	 * Also clear the pre-#87 installation-wide partition. Pass this ONLY from an
+	 * explicit user sign-out. It can sign out a sibling vault still running an
+	 * older build, which is acceptable when the user asked to sign out and is not
+	 * when a single vault is merely recovering its own session.
+	 */
+	readonly includeLegacyShared?: boolean;
+}
+
 /**
- * Clear the sign-in browser's stored session for the Plaud partition: cookies,
- * local storage, and cache. After this, the next sign-in starts logged out.
- * Returns true if a clearable session was found, false when the session API is
- * unavailable on this build (in which case there is nothing to clear because
+ * Clear the sign-in browser's stored session for THIS VAULT's Plaud partition:
+ * cookies, local storage, and cache. After this, the next sign-in starts logged
+ * out. Returns true if a clearable session was found, false when the session API
+ * is unavailable on this build (in which case there is nothing to clear because
  * sign-in is unavailable anyway).
+ *
+ * Scoped to the calling vault since issue #87. Signing out of one vault must not
+ * sign the user out of every other vault, which is what clearing the shared
+ * partition used to do.
  */
-export async function clearPlaudLoginSession(): Promise<boolean> {
-	const session = requireElectron()?.remote?.session?.fromPartition(
-		PLAUD_PARTITION,
-	);
+export async function clearPlaudLoginSession(
+	app: App,
+	options: ClearPlaudLoginSessionOptions = {},
+): Promise<boolean> {
+	const remote = requireElectron()?.remote;
+	const partition = plaudPartition(app.appId);
+	const session = remote?.session?.fromPartition(partition);
 	if (session === undefined || typeof session.clearStorageData !== 'function') {
 		return false;
 	}
-	await session.clearStorageData();
+	await clearOneSession(session);
+	// Also clear the pre-#87 installation-wide partition, which no vault signs
+	// into any more but which still holds whatever session was captured before
+	// the upgrade, with a refresh token good for up to 30 days.
+	//
+	// Opt-in, and only the explicit Clear sign-in button opts in. This is the
+	// ONLY route to that leftover: it is deliberately not wiped on upgrade,
+	// because Obsidian updates plugins one vault at a time and a vault still on
+	// an older build may legitimately still be using it. Leaving it unreachable
+	// would strand a live credential on disk with no way to remove it, which is
+	// worse than either clearing it eagerly or exposing a way to clear it.
+	//
+	// Why the reconnect path must NOT pass this: reconnect is a routine recovery
+	// action, reached by clicking a prompt, and it clears the session only to
+	// force a fresh sign-in screen. Wiping the shared leftover from there would
+	// sign out a sibling vault on an older build as a side effect of one vault
+	// recovering its own session. An explicit sign-out may do that, exactly as
+	// this button did before sign-out became per-vault; a recovery must not.
+	//
+	// Skipped when this vault fell back to the legacy partition, in which case it
+	// is the vault's own session and was already cleared above.
+	if (options.includeLegacyShared === true && !isLegacyPartition(partition)) {
+		try {
+			const legacy = remote?.session?.fromPartition(LEGACY_PLAUD_PARTITION);
+			if (legacy !== undefined) {
+				await clearOneSession(legacy);
+			}
+		} catch {
+			// Best effort. The user's own vault is signed out either way, which is
+			// what the button promises; failing that promise over a leftover would
+			// be the wrong trade.
+		}
+	}
+	return true;
+}
+
+/** Wipe one session's cookies, storage, and cache. Cache failure is non-fatal. */
+async function clearOneSession(session: SessionLike): Promise<void> {
+	if (typeof session.clearStorageData === 'function') {
+		await session.clearStorageData();
+	}
 	if (typeof session.clearCache === 'function') {
 		try {
 			await session.clearCache();
@@ -321,7 +385,6 @@ export async function clearPlaudLoginSession(): Promise<boolean> {
 			// Best effort; clearing cookies/storage is what signs the user out.
 		}
 	}
-	return true;
 }
 
 /**
@@ -334,13 +397,18 @@ export function openPlaudLogin(
 	app: App,
 	options: PlaudLoginOptions = {},
 ): Promise<PlaudLoginResult | null> {
-	void app;
+	// The partition is resolved ONCE here and carried through the whole session,
+	// rather than re-derived at each use. The user-agent is set on it, the window
+	// is created on it, and the session must be the same one in both places; one
+	// value threaded through makes that structural instead of a convention.
+	const partition = plaudPartition(app.appId);
 	return new Promise((resolve) => {
-		new PlaudLoginSession(options, resolve).start();
+		new PlaudLoginSession(partition, options, resolve).start();
 	});
 }
 
 class PlaudLoginSession {
+	private readonly partition: string;
 	private readonly debugLogger: DebugLogger;
 	private readonly resolve: (result: PlaudLoginResult | null) => void;
 	private win: BrowserWindowLike | null = null;
@@ -348,9 +416,11 @@ class PlaudLoginSession {
 	private settled = false;
 
 	constructor(
+		partition: string,
 		options: PlaudLoginOptions,
 		resolve: (result: PlaudLoginResult | null) => void,
 	) {
+		this.partition = partition;
 		this.debugLogger = options.debugLogger ?? new NoopDebugLogger();
 		this.resolve = resolve;
 	}
@@ -374,7 +444,7 @@ class PlaudLoginSession {
 				title: 'Plaud sign-in',
 				autoHideMenuBar: true,
 				webPreferences: {
-					partition: PLAUD_PARTITION,
+					partition: this.partition,
 				},
 			});
 		} catch (err) {
@@ -555,7 +625,7 @@ class PlaudLoginSession {
 
 	private applySessionUserAgent(): void {
 		const session = requireElectron()?.remote?.session?.fromPartition(
-			PLAUD_PARTITION,
+			this.partition,
 		);
 		if (session === undefined) {
 			this.note('session unavailable; relying on localStorage poll, host user-agent');

@@ -117,6 +117,8 @@ The plugin reads your recordings using your Plaud web-session token. **You never
 
 Because Plaud has no official API, which method works depends on **how you log in to Plaud**. Pick the one that matches your account. Both store your token the same way; the difference is only how the token is captured.
 
+> **If you use the plugin in more than one vault:** each vault keeps its own separate Plaud sign-in, so you sign in once per vault. This is deliberate. Vaults no longer interrupt each other's sessions, **Clear sign-in** in one vault leaves the others signed in, and you can point different vaults at different Plaud accounts if you want to.
+
 #### Sign in with email
 
 Use this if you log in to Plaud with an **email address and password**.

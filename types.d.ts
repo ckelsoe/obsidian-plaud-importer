@@ -39,6 +39,24 @@ declare module 'obsidian' {
 
     interface App {
         foldManager: FoldManager;
+
+        /**
+         * Obsidian's per-vault id. Not part of the publicly documented API, but
+         * it is the key the vault is filed under in Obsidian's own vault
+         * registry (`obsidian.json`), confirmed against live behavior on
+         * 2026-07-31: the value read here matched the registry key exactly.
+         *
+         * Measured the same day: it is a stored random value, not a hash of the
+         * vault path (six hash algorithms over four path encodings produced no
+         * match), it differs between two vaults open simultaneously, and it
+         * survives a restart unchanged.
+         *
+         * Used to give each vault its own Plaud sign-in partition (issue #87).
+         * Typed as optional and validated at the point of use in
+         * plaud-partition.ts, because it is an undocumented host property and a
+         * future build could stop providing it.
+         */
+        appId?: string;
     }
 
     /**
