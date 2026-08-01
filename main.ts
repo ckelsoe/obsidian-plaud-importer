@@ -33,6 +33,7 @@ import {
 	readTokenLifetime,
 	SHORT_LIFETIME_HOURS,
 } from "./plaud-token";
+import { isLegacyPartition, plaudPartition } from "./plaud-partition";
 import { sessionExpiryDecision } from "./session-expiry";
 import { computeRefreshDelayMs, isRefreshDue } from "./refresh-schedule";
 import {
@@ -589,6 +590,22 @@ interface PlaudImporterSettings {
 	settingsVersion: number;
 }
 
+// Rendered in two places (the settings tab and the declarative registry), which
+// previously held two verbatim copies of this sentence. One definition so they
+// cannot drift, which matters here because the behavior it describes changed:
+// clearing is scoped to the calling vault since issue #87.
+const CLEAR_SIGN_IN_DESC =
+	"Sign out of the embedded Plaud browser for this vault and wipe the stored token so the next sign-in starts completely fresh. Other vaults keep their own sign-ins. This also removes the older shared sign-in left over from before each vault had its own. Use this to reach the sign-in screen when it keeps signing you in automatically. Obsidian has no way to delete the secret entry, so an emptied one may stay in the token picker, but it holds no token.";
+
+// Current settings schema version. A fresh install is born at this version and
+// runs no migrations; loadSettings compares the STORED version against it.
+//   1 (issue #30): date templates moved to Moment tokens.
+//   2 (issue #87): the sign-in partition became per-vault, so an existing window
+//      session no longer lives where this vault looks for it. Nothing in
+//      data.json changes; the bump exists to fire the one-time heads-up exactly
+//      once per vault rather than on every load.
+const CURRENT_SETTINGS_VERSION = 2;
+
 const DEFAULT_SETTINGS: PlaudImporterSettings = {
 	secretId: "",
 	apiBaseUrl: "https://api.plaud.ai",
@@ -637,7 +654,7 @@ const DEFAULT_SETTINGS: PlaudImporterSettings = {
 	autoSyncIntervalMinutes: 60,
 	signInMethod: "",
 	sessionWarnedForExpMs: 0,
-	settingsVersion: 1,
+	settingsVersion: CURRENT_SETTINGS_VERSION,
 };
 
 // Adapt Obsidian's requestUrl to the PlaudHttpFetcher shape the client
@@ -1046,6 +1063,19 @@ export default class PlaudImporterPlugin extends Plugin {
 			this.reconcileSessionExpiryWarning();
 			// And the silent refresh, for window sessions that can use it.
 			this.reconcileSessionRefresh();
+			// One-time heads-up when this vault's sign-in moved partitions (#87).
+			this.notePerVaultSignInChange();
+			// A vault whose id the host did not supply falls back to the old
+			// shared partition. Behavior is the pre-#87 one, which is survivable,
+			// but it means this vault can still race another, so say so where a
+			// debug log will show it rather than failing silently.
+			if (isLegacyPartition(this.signInPartition())) {
+				this.debugLogger.log({
+					kind: "error",
+					message:
+						"per-vault sign-in unavailable: no usable vault id, using the shared partition",
+				});
+			}
 		});
 	}
 
@@ -1206,6 +1236,17 @@ export default class PlaudImporterPlugin extends Plugin {
 	// reconcileSessionExpiryWarning, so the timer can never describe a stale
 	// credential.
 	//
+	// This vault's Plaud sign-in partition (issue #87).
+	//
+	// Derived on every use rather than cached in a field, because the value is
+	// only ever a pure function of the host's vault id and re-deriving costs a
+	// regex test. Caching it would add a second place for sign-in and refresh to
+	// disagree about which cookie jar is current, which is precisely the class of
+	// bug this change exists to remove.
+	private signInPartition(): string {
+		return plaudPartition(this.app.appId);
+	}
+
 	// Gated on the RECORDED sign-in method. The refresh authenticates with the
 	// embedded sign-in window's partition cookies, and only that window ever
 	// populates that partition: SSO completes in the external browser and the
@@ -1228,7 +1269,7 @@ export default class PlaudImporterPlugin extends Plugin {
 		// No transport, no renewal. Arming a timer that can only ever return
 		// "unsupported" wastes a wake-up and, worse, lets the settings copy go
 		// on promising a renewal this build cannot perform.
-		if (buildPartitionPost() === null) return;
+		if (buildPartitionPost(this.signInPartition()) === null) return;
 		const delay = computeRefreshDelayMs(token, Date.now());
 		if (delay === null) return;
 		this.sessionRefreshTimeoutId = window.setTimeout(() => {
@@ -1300,7 +1341,7 @@ export default class PlaudImporterPlugin extends Plugin {
 		// comparison alone would call that unchanged and then re-link
 		// CAPTURED_SECRET_ID underneath the user's choice.
 		const currentSecretId = this.settings.secretId;
-		const post = buildPartitionPost();
+		const post = buildPartitionPost(this.signInPartition());
 		if (post === null) {
 			this.debugLogger.log({
 				kind: "error",
@@ -1559,7 +1600,7 @@ export default class PlaudImporterPlugin extends Plugin {
 		try {
 			if (this.reconnectPrefersWindow() && !this.reauthInFlight) {
 				try {
-					await clearPlaudLoginSession();
+					await clearPlaudLoginSession(this.app);
 				} catch (err) {
 					console.error(
 						"Plaud importer: failed to clear login session before reconnect",
@@ -1595,7 +1636,7 @@ export default class PlaudImporterPlugin extends Plugin {
 		return (
 			signInMethod === "window" &&
 			isWorkspaceToken(token) &&
-			buildPartitionPost() !== null &&
+			buildPartitionPost(this.signInPartition()) !== null &&
 			computeRefreshDelayMs(token, Date.now()) !== null
 		);
 	}
@@ -3029,9 +3070,59 @@ export default class PlaudImporterPlugin extends Plugin {
 			this.settings.subfolderTemplate = migrateLegacyDateTemplate(
 				this.settings.subfolderTemplate,
 			);
-			this.settings.settingsVersion = 1;
+		}
+		// v2 (issue #87): the sign-in partition is now derived from the vault's
+		// own id, so a session captured before this upgrade sits in the old
+		// installation-wide partition and this vault's renewal cannot see it.
+		// Nothing is migrated between partitions, deliberately: two vaults holding
+		// copies of one refresh token is one session in two jars, not two, and the
+		// first to rotate would invalidate the other, reproducing the very bug
+		// this change fixes. So the user signs in once more, per vault.
+		//
+		// Only vaults that HAD a window session are affected. SSO and bookmarklet
+		// captures never populated a partition, and a vault with no stored
+		// credential has nothing to lose, so neither gets a notice about a change
+		// they cannot perceive. The flag is consumed at layout-ready rather than
+		// shown here: loadSettings runs during onload, before the workspace can
+		// render a Notice.
+		if (stored !== null && storedVersion < 2) {
+			this.perVaultSignInNoticePending =
+				this.settings.signInMethod === "window" &&
+				this.settings.secretId.length > 0;
+		}
+		// One write covers every migration above, so an install arriving from
+		// version 0 does not pay two saves.
+		if (stored !== null && storedVersion < CURRENT_SETTINGS_VERSION) {
+			this.settings.settingsVersion = CURRENT_SETTINGS_VERSION;
 			await this.saveSettings();
 		}
+	}
+
+	// Shown once per vault, at layout-ready, after the #87 partition change moved
+	// where this vault's sign-in lives. Set by loadSettings' v2 migration.
+	private perVaultSignInNoticePending = false;
+
+	private notePerVaultSignInChange(): void {
+		// Layout-ready can fire after the plugin was disabled (loadSettings runs
+		// during onload and the callback is queued), and a notice from a
+		// tearing-down plugin would outlive it on screen. Its neighbours in the
+		// same callback guard on `disposed` for the same reason.
+		//
+		// Losing the notice here is accepted, not recovered: settingsVersion was
+		// already written as 2, so a later enable reads a migrated install and
+		// never re-arms this. The window is "disabled within a moment of the first
+		// load after upgrading", and the cost is a heads-up the user does not see;
+		// the behavior it describes is unaffected, and they still learn they need
+		// to sign in from the reconnect prompt. Persisting a second flag purely to
+		// survive that window would put a settings key on disk forever to protect
+		// one cosmetic message.
+		if (this.disposed) return;
+		if (!this.perVaultSignInNoticePending) return;
+		this.perVaultSignInNoticePending = false;
+		new Notice(
+			"Plaud sign-ins are now separate for each vault, so vaults no longer interrupt each other's sessions. Sign in again in this vault when convenient.",
+			15000,
+		);
 	}
 
 	async saveSettings() {
@@ -3076,7 +3167,13 @@ export default class PlaudImporterPlugin extends Plugin {
 	async clearSignIn(): Promise<{ sessionCleared: boolean }> {
 		let sessionCleared = false;
 		try {
-			sessionCleared = await clearPlaudLoginSession();
+			// Explicit sign-out, so it also removes the pre-#87 shared leftover.
+			// The reconnect path deliberately does not: see the note in
+			// clearPlaudLoginSession about not signing out a sibling vault as a
+			// side effect of one vault recovering.
+			sessionCleared = await clearPlaudLoginSession(this.app, {
+				includeLegacyShared: true,
+			});
 		} catch (err) {
 			console.error(
 				"Plaud importer: failed to clear sign-in browser session",
@@ -3848,7 +3945,7 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 			this.makeSetting(
 				containerEl,
 				"Clear sign-in",
-				"Sign out of the embedded Plaud browser and wipe the stored token so the next sign-in starts completely fresh. Use this to reach the sign-in screen when it keeps signing you in automatically. Obsidian has no way to delete the secret entry, so an emptied one may stay in the token picker, but it holds no token.",
+				CLEAR_SIGN_IN_DESC,
 			),
 		);
 		this.renderRegionControl(
@@ -5020,7 +5117,7 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 					},
 					{
 						name: "Clear sign-in",
-						desc: "Sign out of the embedded Plaud browser and wipe the stored token so the next sign-in starts completely fresh. Use this to reach the sign-in screen when it keeps signing you in automatically. Obsidian has no way to delete the secret entry, so an emptied one may stay in the token picker, but it holds no token.",
+						desc: CLEAR_SIGN_IN_DESC,
 						searchable: false,
 						render: (setting: Setting) =>
 							this.renderClearSignInControl(setting),

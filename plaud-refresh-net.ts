@@ -41,8 +41,14 @@
 //   - The Electron partition really does carry those cookies. That was the one
 //     unproven assumption in the whole design (everything else had been measured
 //     in Chrome), so it was gated before this module was restored: inside
-//     Obsidian, `persist:plaud-importer` holds `pld_ut`/`pld_urt` and
-//     `session.fetch` attaches them, mint returning in-band `status: 0`.
+//     Obsidian, the sign-in partition holds `pld_ut`/`pld_urt` and
+//     `session.fetch` attaches them, mint returning in-band `status: 0`. Those
+//     two cookies are the whole of the session as far as this module is
+//     concerned; the workspace token comes from the caller, out of Obsidian's
+//     secret storage. Re-confirmed 2026-08-01 by enumerating a live partition.
+//
+// The partition is now PER VAULT (issue #87) and arrives as an argument rather
+// than a module constant. See plaud-partition.ts.
 //
 // SCOPE, and it is narrow: this works ONLY for sessions captured through the
 // embedded sign-in window, because only that window populates the partition.
@@ -76,11 +82,6 @@ function readJwtPayloadClaim(value: string, claim: string): string | null {
 	const raw = payload[claim];
 	return typeof raw === 'string' && raw.length > 0 ? raw : null;
 }
-
-// The Plaud web app's sign-in partition. Mirrors PLAUD_PARTITION in
-// plaud-login.ts (kept local so this module never imports the login-window
-// module).
-const PLAUD_PARTITION = 'persist:plaud-importer';
 
 const REFRESH_USER_TOKEN_PATH = '/auth/refresh-user-token';
 const WORKSPACE_TOKEN_PATH_PREFIX = '/user-app/auth/workspace/token/';
@@ -429,8 +430,13 @@ function requireElectron(): ElectronLike | null {
  * `session.fetch` (Electron 28+, present on Obsidian 1.11.4's runtime). Returns
  * null when the remote/session/fetch surface is unavailable, in which case the
  * silent refresh cannot run on this build.
+ *
+ * `partition` MUST be the same value plaud-login.ts signed in against, which is
+ * why both callers derive it from the one definition in plaud-partition.ts. A
+ * mismatch is silent and nasty: the cookie jar this authenticates against would
+ * simply be empty, so every renewal would fail as though the session had died.
  */
-export function buildPartitionPost(): SessionPost | null {
+export function buildPartitionPost(partition: string): SessionPost | null {
 	// fromPartition() is inside the try, not just the require. Returning
 	// `| null` is this function's whole contract for "not available on this
 	// build", and a throw from the partition lookup would break that contract
@@ -440,9 +446,7 @@ export function buildPartitionPost(): SessionPost | null {
 	// answer callers need is the same one.
 	let session: ElectronSessionLike | undefined;
 	try {
-		session = requireElectron()?.remote?.session?.fromPartition(
-			PLAUD_PARTITION,
-		);
+		session = requireElectron()?.remote?.session?.fromPartition(partition);
 	} catch {
 		return null;
 	}

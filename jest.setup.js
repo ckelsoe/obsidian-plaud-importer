@@ -24,3 +24,17 @@ function makeElementStub() {
 }
 
 global.createFragment = () => makeElementStub();
+
+// Plugin code runs in Obsidian's renderer, so it reaches for `window`: timers
+// (`window.setTimeout`) and Electron's bridge (`window.require`). jest's `node`
+// environment provides neither. Timers delegate to node's own so behavior is
+// faithful rather than inert; `require` is deliberately ABSENT, because that is
+// what a build without the remote module looks like and several call sites are
+// specified to return "unavailable" in exactly that case. A test that wants
+// Electron installs its own `window.require` and removes it afterwards.
+global.window = global.window || {
+	setTimeout: (...args) => setTimeout(...args),
+	clearTimeout: (...args) => clearTimeout(...args),
+	setInterval: (...args) => setInterval(...args),
+	clearInterval: (...args) => clearInterval(...args),
+};
