@@ -157,11 +157,11 @@ export class PluginSettingTab {
  * from jest, which is how the issue #86 silent-failure path went uncovered.
  */
 export class ButtonStub {
-	label = "";
+	label = '';
 	cta = false;
 	disabled = false;
-	icon = "";
-	tooltip = "";
+	icon = '';
+	tooltip = '';
 	clickCount = 0;
 	buttonEl: ChainableStub = new ChainableStub();
 	/** Set by onClick(). Await it to drive the handler under test. */
@@ -272,8 +272,10 @@ export class Setting {
 export function settingButton(setting: Setting, label: string): ButtonStub {
 	const found = setting.buttons.find((b) => b.label === label);
 	if (found === undefined) {
-		const seen = setting.buttons.map((b) => b.label).join(", ");
-		throw new Error(`No button labeled "${label}". Present: ${seen || "none"}`);
+		const seen = setting.buttons.map((b) => b.label).join(', ');
+		throw new Error(
+			`No button labeled "${label}". Present: ${seen || 'none'}`,
+		);
 	}
 	return found;
 }
@@ -285,7 +287,7 @@ export class SecretComponent {
 		return this;
 	}
 	getValue(): string {
-		return "";
+		return '';
 	}
 	onChange(_cb: unknown): this {
 		return this;
@@ -296,16 +298,16 @@ export class SecretComponent {
 }
 
 export class TFile {
-	path = "";
-	name = "";
-	basename = "";
-	extension = "";
+	path = '';
+	name = '';
+	basename = '';
+	extension = '';
 }
 
 /** Network stub. Tests that need a response should jest.mock this per suite. */
 export function requestUrl(_options: unknown): never {
 	throw new Error(
-		"requestUrl is not stubbed for this test. Mock it in the suite that needs it.",
+		'requestUrl is not stubbed for this test. Mock it in the suite that needs it.',
 	);
 }
 
@@ -322,5 +324,5 @@ export function setIcon(_el: unknown, _icon: string): void {}
 // this file cannot do: it IS the 'obsidian' stub, so it would import itself.
 // Scoped off for __mocks__ in the eslint config rather than disabled inline,
 // because the config forbids inline disables of that rule.
-import * as moment from "moment";
+import * as moment from 'moment';
 export { moment };

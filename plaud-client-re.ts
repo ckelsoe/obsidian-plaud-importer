@@ -30,7 +30,9 @@ import type { DebugLogger } from './debug-logger';
  * in, status + json out) means the adapter is three lines and the test
  * doubles don't have to simulate a full Response.
  */
-export type PlaudHttpFetcher = (req: PlaudHttpRequest) => Promise<PlaudHttpResponse>;
+export type PlaudHttpFetcher = (
+	req: PlaudHttpRequest,
+) => Promise<PlaudHttpResponse>;
 
 /**
  * Function that returns the currently-configured Plaud token, or null if the
@@ -140,7 +142,8 @@ export class ReverseEngineeredPlaudClient implements PlaudClient {
 	// later request goes straight to the regional host.
 	private baseUrl: string;
 	private readonly debugLogger: DebugLogger | undefined;
-	private readonly onBaseUrlChanged: ((newBaseUrl: string) => void) | undefined;
+	private readonly onBaseUrlChanged:
+		((newBaseUrl: string) => void) | undefined;
 	// Per-session cache of the flat folder/tag catalog (`GET /filetag/`). The
 	// catalog changes rarely, so one fetch per plugin session is enough; a
 	// folder renamed in Plaud after this is read shows its old name until the
@@ -160,7 +163,9 @@ export class ReverseEngineeredPlaudClient implements PlaudClient {
 		this.onBaseUrlChanged = options.onBaseUrlChanged;
 	}
 
-	async listRecordings(filter?: RecordingFilter): Promise<readonly Recording[]> {
+	async listRecordings(
+		filter?: RecordingFilter,
+	): Promise<readonly Recording[]> {
 		// Reject unsupported filter dimensions loudly rather than silently
 		// dropping them. /file/simple/web does not return folder metadata,
 		// so folderId cannot be applied at this layer.
@@ -210,7 +215,8 @@ export class ReverseEngineeredPlaudClient implements PlaudClient {
 				.slice(0, 3)
 				.map((r) => `[${r.index}] ${r.reason}`)
 				.join('; ');
-			const suffix = rejected.length > 3 ? `; +${rejected.length - 3} more` : '';
+			const suffix =
+				rejected.length > 3 ? `; +${rejected.length - 3} more` : '';
 			throw new PlaudParseError(
 				`${rejected.length}/${list.length} recordings from ${endpoint} failed validation: ${preview}${suffix}`,
 				endpoint,
@@ -259,7 +265,9 @@ export class ReverseEngineeredPlaudClient implements PlaudClient {
 		return catalog;
 	}
 
-	async getTranscriptAndSummary(id: PlaudRecordingId): Promise<TranscriptAndSummary> {
+	async getTranscriptAndSummary(
+		id: PlaudRecordingId,
+	): Promise<TranscriptAndSummary> {
 		if (id.length === 0) {
 			throw new PlaudApiError(
 				'getTranscriptAndSummary called with empty id',
@@ -339,7 +347,11 @@ export class ReverseEngineeredPlaudClient implements PlaudClient {
 		// the original Plaud error (retryable api-error) rather than writing an
 		// empty note. When the bundle DID produce content, the legacy failure
 		// was recoverable, so it is intentionally swallowed.
-		if (legacyError !== null && finalTranscript === null && finalSummary === null) {
+		if (
+			legacyError !== null &&
+			finalTranscript === null &&
+			finalSummary === null
+		) {
 			throw legacyError instanceof Error
 				? legacyError
 				: new PlaudApiError(
@@ -368,13 +380,21 @@ export class ReverseEngineeredPlaudClient implements PlaudClient {
 				}, aiKeywords=${bundle.aiKeywords.length}`,
 				payload: {
 					transcriptSource:
-						bundle.polishedTranscript !== null ? 'transaction_polish' : 'ai/transsumm',
+						bundle.polishedTranscript !== null
+							? 'transaction_polish'
+							: 'ai/transsumm',
 					summarySource:
-						bundle.newerSummary !== null ? 'auto_sum_note' : 'ai/transsumm',
+						bundle.newerSummary !== null
+							? 'auto_sum_note'
+							: 'ai/transsumm',
 					bundleErrorMessage:
-						bundleError !== null ? describeUnknownError(bundleError) : null,
+						bundleError !== null
+							? describeUnknownError(bundleError)
+							: null,
 					legacyErrorMessage:
-						legacyError !== null ? describeUnknownError(legacyError) : null,
+						legacyError !== null
+							? describeUnknownError(legacyError)
+							: null,
 					segmentCount: finalTranscript?.segments.length ?? 0,
 					summaryLength: finalSummary?.text.length ?? 0,
 					aiKeywordCount: bundle.aiKeywords.length,
@@ -394,12 +414,15 @@ export class ReverseEngineeredPlaudClient implements PlaudClient {
 				Object.keys(bundle.nestedAssetLinks).length > 0
 					? bundle.nestedAssetLinks
 					: legacy.nestedAssetLinks,
-			aiKeywords: bundle.aiKeywords.length > 0 ? bundle.aiKeywords : undefined,
+			aiKeywords:
+				bundle.aiKeywords.length > 0 ? bundle.aiKeywords : undefined,
 			chapters: bundle.chapters.length > 0 ? bundle.chapters : undefined,
 			attachments:
 				bundle.attachments.length > 0 ? bundle.attachments : undefined,
 			consumerNotes:
-				bundle.consumerNotes.length > 0 ? bundle.consumerNotes : undefined,
+				bundle.consumerNotes.length > 0
+					? bundle.consumerNotes
+					: undefined,
 		};
 	}
 
@@ -466,7 +489,10 @@ export class ReverseEngineeredPlaudClient implements PlaudClient {
 		// /ai/transsumm/{id} is POST despite carrying no payload — the empty
 		// JSON object body is required. Confirmed against rsteckler/applaud
 		// (server/src/plaud/transcript.ts) which is the canonical RE client.
-		const raw = await this.fetchJson(url, endpoint, { method: 'POST', body: '{}' });
+		const raw = await this.fetchJson(url, endpoint, {
+			method: 'POST',
+			body: '{}',
+		});
 		return parseTranssummResponse(id, raw, endpoint);
 	}
 
@@ -498,7 +524,10 @@ export class ReverseEngineeredPlaudClient implements PlaudClient {
 		const rawDetail = await this.fetchJson(detailUrl, detailEndpoint);
 
 		const polishLink = findTransactionPolishLink(rawDetail, detailEndpoint);
-		const rawTranscriptLink = findRawTranscriptLink(rawDetail, detailEndpoint);
+		const rawTranscriptLink = findRawTranscriptLink(
+			rawDetail,
+			detailEndpoint,
+		);
 		const outlineLink = findOutlineLink(rawDetail, detailEndpoint);
 		// Best-effort: a drift in Plaud's summary envelope (malformed JSON,
 		// missing ai_content, non-array list) must never abort the bundle and
@@ -508,7 +537,10 @@ export class ReverseEngineeredPlaudClient implements PlaudClient {
 		// surfaces earlier via findTransactionPolishLink.
 		let newerSummaryMarkdown: string | null = null;
 		try {
-			newerSummaryMarkdown = findNewerSummaryMarkdown(rawDetail, detailEndpoint);
+			newerSummaryMarkdown = findNewerSummaryMarkdown(
+				rawDetail,
+				detailEndpoint,
+			);
 		} catch (err) {
 			if (this.debugLogger?.enabled === true) {
 				this.debugLogger.log({
@@ -531,14 +563,19 @@ export class ReverseEngineeredPlaudClient implements PlaudClient {
 		let summaryMetadata: SummaryMetadata = {};
 		if (newerSummaryMarkdown !== null) {
 			try {
-				summaryMetadata = findSummaryMetadata(rawDetail, detailEndpoint);
+				summaryMetadata = findSummaryMetadata(
+					rawDetail,
+					detailEndpoint,
+				);
 			} catch (err) {
 				if (this.debugLogger?.enabled === true) {
 					this.debugLogger.log({
 						kind: 'parsed',
 						endpoint: detailEndpoint,
 						message: `summary-metadata extraction failed for ${id}; frontmatter extras omitted: ${describeUnknownError(err)}`,
-						payload: { summaryMetadataError: describeUnknownError(err) },
+						payload: {
+							summaryMetadataError: describeUnknownError(err),
+						},
 					});
 				}
 			}
@@ -565,7 +602,10 @@ export class ReverseEngineeredPlaudClient implements PlaudClient {
 		}
 		const aiKeywords = findAiKeywords(rawDetail, detailEndpoint);
 		const attachments = findAttachmentAssets(rawDetail, detailEndpoint);
-		const nestedAssetLinks = findNestedAssetLinks(rawDetail, detailEndpoint);
+		const nestedAssetLinks = findNestedAssetLinks(
+			rawDetail,
+			detailEndpoint,
+		);
 		const detailDataTypes = collectDetailDataTypes(rawDetail);
 		const attachmentDataTypes = [
 			...new Set(attachments.map((asset) => asset.dataType)),
@@ -593,13 +633,21 @@ export class ReverseEngineeredPlaudClient implements PlaudClient {
 				polishLink !== null
 					? `/s3/file_transaction_polish/${encodeURIComponent(id)}`
 					: `/s3/file_transaction/${encodeURIComponent(id)}`;
-			const rawTranscript = await this.fetchJson(transcriptLink, transcriptEndpoint, {
-				skipAuth: true,
-			});
+			const rawTranscript = await this.fetchJson(
+				transcriptLink,
+				transcriptEndpoint,
+				{
+					skipAuth: true,
+				},
+			);
 			// The transcript file is a bare JSON array of segments (no
 			// envelope). parseTranscriptField handles that shape directly —
 			// pass the raw value as the segments list.
-			polishedTranscript = parseTranscriptField(id, rawTranscript, transcriptEndpoint);
+			polishedTranscript = parseTranscriptField(
+				id,
+				rawTranscript,
+				transcriptEndpoint,
+			);
 		}
 
 		let chapters: readonly Chapter[] = [];
@@ -610,9 +658,13 @@ export class ReverseEngineeredPlaudClient implements PlaudClient {
 			// failure at this step is swallowed upstream in
 			// getTranscriptAndSummary (best-effort outline), so we don't
 			// wrap it here.
-			const rawOutline = await this.fetchJson(outlineLink, outlineEndpoint, {
-				skipAuth: true,
-			});
+			const rawOutline = await this.fetchJson(
+				outlineLink,
+				outlineEndpoint,
+				{
+					skipAuth: true,
+				},
+			);
 			chapters = parseOutlineBody(rawOutline);
 			if (chapters.length === 0 && this.debugLogger?.enabled === true) {
 				// Shape discovery aid: the wire shape of the outline body is
@@ -640,7 +692,11 @@ export class ReverseEngineeredPlaudClient implements PlaudClient {
 		// never abort the bundle and drag the transcript/summary down with it.
 		let consumerNotes: readonly ConsumerNote[] = [];
 		try {
-			consumerNotes = await this.fetchConsumerNotes(rawDetail, detailEndpoint, id);
+			consumerNotes = await this.fetchConsumerNotes(
+				rawDetail,
+				detailEndpoint,
+				id,
+			);
 		} catch (err) {
 			if (this.debugLogger?.enabled === true) {
 				this.debugLogger.log({
@@ -921,7 +977,9 @@ export class ReverseEngineeredPlaudClient implements PlaudClient {
 			return { data_file_list: [], data_file_total: 0 };
 		}
 		if (response.status < 200 || response.status >= 300) {
-			const bodySnippet = (response.text ?? '').slice(0, 200).replace(/\s+/g, ' ');
+			const bodySnippet = (response.text ?? '')
+				.slice(0, 200)
+				.replace(/\s+/g, ' ');
 			throw new PlaudApiError(
 				`Plaud API ${endpoint} returned HTTP ${response.status}: ${bodySnippet}`,
 				response.status,
@@ -940,7 +998,9 @@ export class ReverseEngineeredPlaudClient implements PlaudClient {
 			) {
 				return null;
 			}
-			const bodySnippet = (response.text ?? '').slice(0, 200).replace(/\s+/g, ' ');
+			const bodySnippet = (response.text ?? '')
+				.slice(0, 200)
+				.replace(/\s+/g, ' ');
 			throw new PlaudParseError(
 				`Plaud API ${endpoint} returned 2xx with no JSON body (got: "${bodySnippet}")`,
 				endpoint,
@@ -977,7 +1037,10 @@ export class ReverseEngineeredPlaudClient implements PlaudClient {
 			const retryUrl = url.startsWith(previousBase)
 				? redirectHost + url.slice(previousBase.length)
 				: url;
-			return this.fetchJson(retryUrl, endpoint, { ...options, isRegionRetry: true });
+			return this.fetchJson(retryUrl, endpoint, {
+				...options,
+				isRegionRetry: true,
+			});
 		}
 
 		// Plaud reports failures in-band: HTTP 200 with a negative `status` and
@@ -1077,12 +1140,17 @@ function detectRegionRedirect(json: unknown): string | null {
 	// Plaud always serves over https. Reject anything else, and reject
 	// embedded credentials (https://api.plaud.ai@evil.example parses with
 	// hostname evil.example — the userinfo is the bypass).
-	if (parsed.protocol !== 'https:' || parsed.username !== '' || parsed.password !== '') {
+	if (
+		parsed.protocol !== 'https:' ||
+		parsed.username !== '' ||
+		parsed.password !== ''
+	) {
 		return null;
 	}
 	const host = parsed.hostname.toLowerCase().replace(/\.$/, '');
 	const allowed =
-		ALLOWED_REGION_EXACT_HOSTS.has(host) || host.endsWith(ALLOWED_REGION_HOST_SUFFIX);
+		ALLOWED_REGION_EXACT_HOSTS.has(host) ||
+		host.endsWith(ALLOWED_REGION_HOST_SUFFIX);
 	if (!allowed) {
 		return null;
 	}
@@ -1105,7 +1173,9 @@ function detectRegionRedirect(json: unknown): string | null {
 // negative status cleanly separates errors from success without misreading a
 // valid payload. Returns the code and message, or null when the body is not an
 // in-band error.
-function detectInBandError(json: unknown): { status: number; msg: string } | null {
+function detectInBandError(
+	json: unknown,
+): { status: number; msg: string } | null {
 	if (!isRecord(json)) {
 		return null;
 	}
@@ -1118,7 +1188,9 @@ function detectInBandError(json: unknown): { status: number; msg: string } | nul
 		return null;
 	}
 	const msg =
-		typeof json.msg === 'string' && json.msg.length > 0 ? json.msg : '(no message)';
+		typeof json.msg === 'string' && json.msg.length > 0
+			? json.msg
+			: '(no message)';
 	return { status, msg };
 }
 
@@ -1163,7 +1235,17 @@ function readTokenClientId(token: string): string | null {
 // (never `sub`/`wid`/`jti` or the token string) so a debug log can reveal a
 // token-type / parse-mode mismatch, or a short issued lifetime (issue #78),
 // without leaking identity.
-const TOKEN_DIAG_CLAIMS = ['typ', 'alg', 'client_id', 'ver', 'wtype', 'auth_method', 'exp', 'iat', 'region'];
+const TOKEN_DIAG_CLAIMS = [
+	'typ',
+	'alg',
+	'client_id',
+	'ver',
+	'wtype',
+	'auth_method',
+	'exp',
+	'iat',
+	'region',
+];
 function decodeTokenDiagnostics(token: string): Record<string, unknown> {
 	const parts = token.split('.');
 	if (parts.length < 2) {
@@ -1216,13 +1298,19 @@ interface RawRecording {
 	readonly wait_pull?: number;
 }
 
-function parseListResponse(raw: unknown, endpoint: string): readonly RawRecording[] {
+function parseListResponse(
+	raw: unknown,
+	endpoint: string,
+): readonly RawRecording[] {
 	if (!isRecord(raw)) {
 		throw new PlaudParseError('Response body is not an object', endpoint);
 	}
 	const list = raw.data_file_list;
 	if (!Array.isArray(list)) {
-		throw new PlaudParseError('Response is missing data_file_list array', endpoint);
+		throw new PlaudParseError(
+			'Response is missing data_file_list array',
+			endpoint,
+		);
 	}
 	return list.map((item, index) => {
 		if (!isRawRecording(item)) {
@@ -1254,8 +1342,12 @@ function isRawFiletag(value: unknown): value is RawFiletag {
 		typeof value.id === 'string' &&
 		value.id.length > 0 &&
 		typeof value.name === 'string' &&
-		(value.icon === undefined || value.icon === null || typeof value.icon === 'string') &&
-		(value.color === undefined || value.color === null || typeof value.color === 'string')
+		(value.icon === undefined ||
+			value.icon === null ||
+			typeof value.icon === 'string') &&
+		(value.color === undefined ||
+			value.color === null ||
+			typeof value.color === 'string')
 	);
 }
 
@@ -1276,7 +1368,10 @@ function parseFolderCatalog(
 	}
 	const list = raw.data_filetag_list;
 	if (!Array.isArray(list)) {
-		throw new PlaudParseError('Response is missing data_filetag_list array', endpoint);
+		throw new PlaudParseError(
+			'Response is missing data_filetag_list array',
+			endpoint,
+		);
 	}
 	const catalog: PlaudFolder[] = [];
 	let skipped = 0;
@@ -1323,7 +1418,10 @@ function parseRecording(raw: RawRecording, endpoint: string): Recording {
 		throw new PlaudParseError('Recording has empty id', endpoint);
 	}
 	if (raw.filename.length === 0) {
-		throw new PlaudParseError(`Recording ${raw.id} has empty filename`, endpoint);
+		throw new PlaudParseError(
+			`Recording ${raw.id} has empty filename`,
+			endpoint,
+		);
 	}
 	if (raw.duration < 0 || !Number.isFinite(raw.duration)) {
 		throw new PlaudParseError(
@@ -1397,7 +1495,8 @@ function parseRecording(raw: RawRecording, endpoint: string): Recording {
 		// treats version_ms as optional, so a malformed value stays undefined
 		// rather than corrupting the stored marker.
 		versionMs:
-			typeof raw.version_ms === 'number' && Number.isFinite(raw.version_ms)
+			typeof raw.version_ms === 'number' &&
+			Number.isFinite(raw.version_ms)
 				? raw.version_ms
 				: undefined,
 		// wait_pull === 1 means still syncing from the device; anything else
@@ -1406,7 +1505,10 @@ function parseRecording(raw: RawRecording, endpoint: string): Recording {
 	};
 }
 
-function matchesFilter(recording: Recording, filter?: RecordingFilter): boolean {
+function matchesFilter(
+	recording: Recording,
+	filter?: RecordingFilter,
+): boolean {
 	if (!filter) {
 		return true;
 	}
@@ -1447,7 +1549,8 @@ function describeUnknownError(err: unknown): string {
 	} catch {
 		// Fall through to constructor-name fallback.
 	}
-	const ctor = (err as { constructor?: { name?: string } })?.constructor?.name;
+	const ctor = (err as { constructor?: { name?: string } })?.constructor
+		?.name;
 	return ctor ? `[object ${ctor}]` : 'unknown error';
 }
 
@@ -1463,8 +1566,10 @@ function isRawRecording(value: unknown): value is RawRecording {
 	if (typeof value.is_summary !== 'boolean') return false;
 	if (
 		value.filetag_id_list !== undefined &&
-		!(Array.isArray(value.filetag_id_list) &&
-			value.filetag_id_list.every((t) => typeof t === 'string'))
+		!(
+			Array.isArray(value.filetag_id_list) &&
+			value.filetag_id_list.every((t) => typeof t === 'string')
+		)
 	) {
 		return false;
 	}
@@ -1570,7 +1675,10 @@ export interface FileDetailBundle {
  * is available and returns null (not an error). Exported as a pure function so
  * the URL extraction is unit-testable without the fetch plumbing.
  */
-export function parseAudioTempUrl(raw: unknown, endpoint: string): string | null {
+export function parseAudioTempUrl(
+	raw: unknown,
+	endpoint: string,
+): string | null {
 	if (!isRecord(raw)) {
 		throw new PlaudParseError(
 			`Response body for ${endpoint} is not an object`,
@@ -1981,7 +2089,10 @@ export function findSummaryMetadata(
 	// its scoped subtree, so resolve it direct-only (maxDepth 0) — this keeps a
 	// generic key like `category` from bleeding into a nested unrelated one
 	// (e.g. a per-question `category` under `recommend_questions`).
-	const template = resolveString(templateScope, ['template_name', 'summ_type']);
+	const template = resolveString(templateScope, [
+		'template_name',
+		'summ_type',
+	]);
 	const model = resolveString(modelScope, ['model'], 0);
 	const headline = resolveString(headerScope, ['headline'], 0);
 	const category = resolveString(headerScope, ['category'], 0);
@@ -2013,10 +2124,7 @@ export function findSummaryMetadata(
  * return the `data_link` string. Null on any absent-but-valid case; throws
  * only on structurally corrupt responses.
  */
-export function findOutlineLink(
-	raw: unknown,
-	endpoint: string,
-): string | null {
+export function findOutlineLink(raw: unknown, endpoint: string): string | null {
 	return findContentListLink(raw, endpoint, 'outline');
 }
 
@@ -2271,9 +2379,7 @@ function looksLikeAttachmentUrl(value: string): boolean {
 	if (lower.startsWith('permanent/') || lower.includes('/permanent/')) {
 		return true;
 	}
-	if (
-		/\.(png|jpe?g|gif|webp|bmp|svg|json|html|pdf|txt)(\?|$)/i.test(value)
-	) {
+	if (/\.(png|jpe?g|gif|webp|bmp|svg|json|html|pdf|txt)(\?|$)/i.test(value)) {
 		return true;
 	}
 	if (lower.includes('mindmap') || lower.includes('card')) {
@@ -2465,7 +2571,11 @@ export function parseOutlineBody(raw: unknown): readonly Chapter[] {
 		);
 		const chapter: Chapter =
 			endMs !== undefined
-				? { title, startSeconds: startMs / 1000, endSeconds: endMs / 1000 }
+				? {
+						title,
+						startSeconds: startMs / 1000,
+						endSeconds: endMs / 1000,
+					}
 				: { title, startSeconds: startMs / 1000 };
 		out.push(chapter);
 	}
@@ -2505,7 +2615,14 @@ function collectOutlineCandidates(raw: unknown): readonly unknown[] {
 
 	// Envelope walk: unwrap { content: ... } → { topics: ... } / { outline: ... }
 	// until we hit an array or run out of known keys.
-	const keyChain = ['content', 'data', 'result', 'topics', 'outline', 'chapters'] as const;
+	const keyChain = [
+		'content',
+		'data',
+		'result',
+		'topics',
+		'outline',
+		'chapters',
+	] as const;
 	const visited = new Set<unknown>();
 	while (isRecord(cursor) && !visited.has(cursor)) {
 		visited.add(cursor);
@@ -2693,7 +2810,10 @@ function parseTranscriptSegment(
 			endpoint,
 		);
 	}
-	if (raw.start_time > MAX_PLAUSIBLE_SEGMENT_MS || raw.end_time > MAX_PLAUSIBLE_SEGMENT_MS) {
+	if (
+		raw.start_time > MAX_PLAUSIBLE_SEGMENT_MS ||
+		raw.end_time > MAX_PLAUSIBLE_SEGMENT_MS
+	) {
 		throw new PlaudParseError(
 			`data_result[${index}] for ${id} has timestamps beyond 24h (start=${raw.start_time}ms end=${raw.end_time}ms) — producer may have sent seconds instead of milliseconds`,
 			endpoint,
@@ -2725,9 +2845,10 @@ function parseTranscriptSegment(
 	// wire identifier" — the real semantics are the opposite.
 	const speaker = pickNonEmptyString(raw.speaker, raw.original_speaker);
 
-	const segment: TranscriptSegment = speaker !== undefined
-		? { startSeconds, endSeconds, speaker, text: raw.content }
-		: { startSeconds, endSeconds, text: raw.content };
+	const segment: TranscriptSegment =
+		speaker !== undefined
+			? { startSeconds, endSeconds, speaker, text: raw.content }
+			: { startSeconds, endSeconds, text: raw.content };
 	return segment;
 }
 
@@ -2915,7 +3036,8 @@ function summarizeShape(value: unknown): string {
 		const json = JSON.stringify(value, (_key, v: unknown) => {
 			if (typeof v === 'string') {
 				if (v.length > 120) return `[string:${v.length}chars]`;
-				if (/^(bearer\s+)?ey[A-Za-z0-9_-]+\./i.test(v)) return '[redacted-token]';
+				if (/^(bearer\s+)?ey[A-Za-z0-9_-]+\./i.test(v))
+					return '[redacted-token]';
 			}
 			return v;
 		});

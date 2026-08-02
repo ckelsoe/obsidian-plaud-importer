@@ -96,7 +96,11 @@ describe('runAutoSyncTick', () => {
 			['synced-b', 500],
 			['synced-c', 500],
 		]);
-		const { deps: d, listSkips, importCalls } = deps({
+		const {
+			deps: d,
+			listSkips,
+			importCalls,
+		} = deps({
 			index,
 			pageSize: 2,
 			pages: [
@@ -134,7 +138,15 @@ describe('runAutoSyncTick', () => {
 			index: new Map(),
 			pageSize: 10,
 			maxImportsPerTick: 3,
-			pages: [[rec('a', 9), rec('b', 8), rec('c', 7), rec('d', 6), rec('e', 5)]],
+			pages: [
+				[
+					rec('a', 9),
+					rec('b', 8),
+					rec('c', 7),
+					rec('d', 6),
+					rec('e', 5),
+				],
+			],
 		});
 		const result = await runAutoSyncTick(d);
 		expect(result.cappedByImports).toBe(true);

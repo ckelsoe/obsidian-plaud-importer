@@ -145,7 +145,9 @@ function bodySnippet(text: string): string {
 }
 
 /** A human-readable `message`/`msg` field off an envelope, when present. */
-function envelopeMessage(envelope: Record<string, unknown>): string | undefined {
+function envelopeMessage(
+	envelope: Record<string, unknown>,
+): string | undefined {
 	if (typeof envelope.message === 'string') return envelope.message;
 	if (typeof envelope.msg === 'string') return envelope.msg;
 	return undefined;
@@ -212,7 +214,9 @@ export function normalizeTrustedOrigin(raw: string): string | null {
  * body is not a redirect or the target is not a trusted Plaud https host.
  * Exported for unit testing.
  */
-export function readRegionRedirect(envelope: Record<string, unknown>): string | null {
+export function readRegionRedirect(
+	envelope: Record<string, unknown>,
+): string | null {
 	if (envelope.status !== STATUS_REGION_REDIRECT) {
 		return null;
 	}
@@ -293,10 +297,13 @@ export async function performNetRefresh(
 	try {
 		const wid = extractWorkspaceId(deps.currentToken);
 		if (wid === null) {
-			log('net refresh aborted: stored token has no wid claim to mint against');
+			log(
+				'net refresh aborted: stored token has no wid claim to mint against',
+			);
 			return null;
 		}
-		const clientId = readJwtPayloadClaim(deps.currentToken, 'client_id') ?? 'web';
+		const clientId =
+			readJwtPayloadClaim(deps.currentToken, 'client_id') ?? 'web';
 		const headers = baseHeaders(clientId);
 
 		// Validate the starting host BEFORE any cookie-bearing POST: a malformed
@@ -305,9 +312,12 @@ export async function performNetRefresh(
 		// way inside the loop.
 		let base = normalizeTrustedOrigin(deps.baseUrl);
 		if (base === null) {
-			log('net refresh aborted: stored base URL is not a trusted Plaud host', {
-				baseUrl: deps.baseUrl,
-			});
+			log(
+				'net refresh aborted: stored base URL is not a trusted Plaud host',
+				{
+					baseUrl: deps.baseUrl,
+				},
+			);
 			return null;
 		}
 		let apiBaseUrl: string | null = null;
@@ -319,10 +329,13 @@ export async function performNetRefresh(
 			);
 			const envelope = parseEnvelope(res.text);
 			if (envelope === null) {
-				log('net refresh step 1 (refresh-user-token): non-JSON response', {
-					httpStatus: res.status,
-					body: bodySnippet(res.text),
-				});
+				log(
+					'net refresh step 1 (refresh-user-token): non-JSON response',
+					{
+						httpStatus: res.status,
+						body: bodySnippet(res.text),
+					},
+				);
 				return null;
 			}
 			if (envelope.status === STATUS_OK) {
@@ -330,11 +343,14 @@ export async function performNetRefresh(
 			}
 			const redirect = readRegionRedirect(envelope);
 			if (redirect === null || attempt === 1) {
-				log('net refresh step 1 (refresh-user-token): non-OK envelope', {
-					httpStatus: res.status,
-					envelopeStatus: envelope.status,
-					message: envelopeMessage(envelope),
-				});
+				log(
+					'net refresh step 1 (refresh-user-token): non-OK envelope',
+					{
+						httpStatus: res.status,
+						envelopeStatus: envelope.status,
+						message: envelopeMessage(envelope),
+					},
+				);
 				return null;
 			}
 			base = redirect;
@@ -350,19 +366,25 @@ export async function performNetRefresh(
 		);
 		const mintEnvelope = parseEnvelope(mint.text);
 		if (mintEnvelope === null) {
-			log('net refresh step 2 (workspace token mint): non-JSON response', {
-				httpStatus: mint.status,
-				body: bodySnippet(mint.text),
-			});
+			log(
+				'net refresh step 2 (workspace token mint): non-JSON response',
+				{
+					httpStatus: mint.status,
+					body: bodySnippet(mint.text),
+				},
+			);
 			return null;
 		}
 		const parsed = parseWorkspaceTokenResponse(mintEnvelope);
 		if (parsed === null) {
-			log('net refresh step 2 (workspace token mint): no workspace_token', {
-				httpStatus: mint.status,
-				envelopeStatus: mintEnvelope.status,
-				message: envelopeMessage(mintEnvelope),
-			});
+			log(
+				'net refresh step 2 (workspace token mint): no workspace_token',
+				{
+					httpStatus: mint.status,
+					envelopeStatus: mintEnvelope.status,
+					message: envelopeMessage(mintEnvelope),
+				},
+			);
 			return null;
 		}
 		log('net refresh succeeded via the direct (windowless) path');

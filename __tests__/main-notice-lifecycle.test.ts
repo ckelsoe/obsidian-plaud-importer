@@ -15,8 +15,8 @@
  * Globals Obsidian injects (`createFragment`) come from jest.setup.js, so
  * nothing here touches globalThis.
  */
-import PlaudImporterPlugin from "../main";
-import { Notice } from "./__mocks__/obsidian";
+import PlaudImporterPlugin from '../main';
+import { Notice } from './__mocks__/obsidian';
 
 /** The subset of the plugin these tests drive. Private members need the cast. */
 interface NoticeHost {
@@ -55,20 +55,20 @@ function makeHost(overrides: Partial<NoticeHost> = {}): NoticeHost {
 /** Post a sticky prompt the way the auto-sync tick's auth branch does. */
 function postPausePrompt(host: NoticeHost): Notice {
 	const notice = host.showActionNotice(
-		"Plaud auto-sync paused: your session expired.",
-		"Reconnect",
+		'Plaud auto-sync paused: your session expired.',
+		'Reconnect',
 		() => undefined,
 	);
 	host.autoSyncPauseNotice = notice;
 	return notice;
 }
 
-describe("auth-pause prompt lifecycle (issue #88)", () => {
+describe('auth-pause prompt lifecycle (issue #88)', () => {
 	beforeEach(() => {
 		Notice.reset();
 	});
 
-	it("posts the prompt as sticky and tracks it for the unload sweep", () => {
+	it('posts the prompt as sticky and tracks it for the unload sweep', () => {
 		const host = makeHost();
 		const notice = postPausePrompt(host);
 
@@ -78,7 +78,7 @@ describe("auth-pause prompt lifecycle (issue #88)", () => {
 		expect(host.actionNotices.has(notice)).toBe(true);
 	});
 
-	it("clears a held prompt and resumes when paused", () => {
+	it('clears a held prompt and resumes when paused', () => {
 		const host = makeHost();
 		const notice = postPausePrompt(host);
 
@@ -91,7 +91,7 @@ describe("auth-pause prompt lifecycle (issue #88)", () => {
 		expect(host.autoSyncState.paused).toBe(false);
 	});
 
-	it("clears a held prompt even when the pause was already cleared", () => {
+	it('clears a held prompt even when the pause was already cleared', () => {
 		// The regression case, and the reason the teardown sits ABOVE
 		// resumeAutoSyncIfPaused's `if (!paused) return` guard: the prompt and the
 		// pause state can come apart. Move the teardown below that guard and this
@@ -108,7 +108,7 @@ describe("auth-pause prompt lifecycle (issue #88)", () => {
 		expect(host.autoSyncPauseNotice).toBeNull();
 	});
 
-	it("is a no-op when no prompt is held", () => {
+	it('is a no-op when no prompt is held', () => {
 		const host = makeHost();
 
 		expect(() => {
@@ -118,7 +118,7 @@ describe("auth-pause prompt lifecycle (issue #88)", () => {
 		expect(Notice.instances).toHaveLength(0);
 	});
 
-	it("does not hide the same prompt twice across repeated resumes", () => {
+	it('does not hide the same prompt twice across repeated resumes', () => {
 		const host = makeHost();
 		const notice = postPausePrompt(host);
 
@@ -129,7 +129,7 @@ describe("auth-pause prompt lifecycle (issue #88)", () => {
 		expect(notice.hideCount).toBe(1);
 	});
 
-	it("replaces rather than orphans a prompt when one is already held", () => {
+	it('replaces rather than orphans a prompt when one is already held', () => {
 		const host = makeHost();
 		const first = postPausePrompt(host);
 		// The tick's auth branch clears before posting, so the field stays the

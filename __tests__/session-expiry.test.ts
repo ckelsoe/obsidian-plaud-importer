@@ -16,7 +16,9 @@ const DAY_MS = 24 * HOUR_MS;
 // Builds a measured lifetime the way readTokenLifetime would report it. The
 // decision function must derive remaining time from expMs and its own nowMs,
 // so remainingMs here is deliberately stale garbage.
-function life(overrides: Partial<TokenLifetime> & { expMs: number }): TokenLifetime {
+function life(
+	overrides: Partial<TokenLifetime> & { expMs: number },
+): TokenLifetime {
 	return {
 		issuedAtMs: null,
 		lifetimeHours: null,

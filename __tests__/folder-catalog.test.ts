@@ -20,7 +20,10 @@ describe('buildFolderNameMap', () => {
 	});
 
 	it('skips entries with an empty id', () => {
-		const map = buildFolderNameMap([{ id: '', name: 'Orphan' }, ...CATALOG]);
+		const map = buildFolderNameMap([
+			{ id: '', name: 'Orphan' },
+			...CATALOG,
+		]);
 		expect(map.has('')).toBe(false);
 		expect(map.size).toBe(3);
 	});
@@ -63,7 +66,10 @@ describe('resolveFolderNames', () => {
 	});
 
 	it('returns empty results for undefined or empty ids', () => {
-		expect(resolveFolderNames(undefined, map)).toEqual({ names: [], missing: [] });
+		expect(resolveFolderNames(undefined, map)).toEqual({
+			names: [],
+			missing: [],
+		});
 		expect(resolveFolderNames([], map)).toEqual({ names: [], missing: [] });
 	});
 

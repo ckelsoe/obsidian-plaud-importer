@@ -79,7 +79,11 @@ describe('classifyError', () => {
 
 	describe('PlaudApiError branches', () => {
 		it('maps 429 to rate-limited with retry enabled', () => {
-			const err = new PlaudApiError('rate limited', 429, '/file/simple/web');
+			const err = new PlaudApiError(
+				'rate limited',
+				429,
+				'/file/simple/web',
+			);
 			const result = classifyError(err);
 			expect(result.category).toBe('rate-limited');
 			expect(result.canRetry).toBe(true);
@@ -95,7 +99,11 @@ describe('classifyError', () => {
 		});
 
 		it('maps 503 to server-error', () => {
-			const err = new PlaudApiError('service unavailable', 503, '/file/simple/web');
+			const err = new PlaudApiError(
+				'service unavailable',
+				503,
+				'/file/simple/web',
+			);
 			expect(classifyError(err).category).toBe('server-error');
 		});
 
@@ -141,12 +149,16 @@ describe('classifyError', () => {
 			expect(result.canRetry).toBe(true);
 			// Leads with the "no transcript/summary, likely no speech" framing
 			// for -12, without promising a retry will succeed...
-			expect(result.message).toMatch(/no transcript or summary for this recording/i);
+			expect(result.message).toMatch(
+				/no transcript or summary for this recording/i,
+			);
 			expect(result.message).toMatch(/no detectable speech/i);
 			// ...and states plainly that the fault is Plaud's, not the plugin's
 			// inability to read the response.
 			expect(result.message).toMatch(/plaud-side issue/i);
-			expect(result.message).toMatch(/parsed plaud's response correctly/i);
+			expect(result.message).toMatch(
+				/parsed plaud's response correctly/i,
+			);
 			// Keeps Plaud's raw status/msg for bug reports.
 			expect(result.message).toContain('status=-12');
 		});
@@ -171,16 +183,23 @@ describe('classifyError', () => {
 			['404 not found', 404],
 			['418 teapot', 418],
 			['451 unavailable for legal reasons', 451],
-		])('maps non-auth/non-rate-limit 4xx (%s) to api-error with retry disabled', (_label, status) => {
-			const err = new PlaudApiError('plaud said no', status, '/file/simple/web');
-			const result = classifyError(err);
-			expect(result.category).toBe('api-error');
-			expect(result.canRetry).toBe(false);
-			expect(result.message).toContain(String(status));
-			// Must NOT say "Could not reach Plaud.AI" — that would be a lie
-			// (the network reached Plaud just fine, Plaud returned an error).
-			expect(result.message).not.toMatch(/could not reach/i);
-		});
+		])(
+			'maps non-auth/non-rate-limit 4xx (%s) to api-error with retry disabled',
+			(_label, status) => {
+				const err = new PlaudApiError(
+					'plaud said no',
+					status,
+					'/file/simple/web',
+				);
+				const result = classifyError(err);
+				expect(result.category).toBe('api-error');
+				expect(result.canRetry).toBe(false);
+				expect(result.message).toContain(String(status));
+				// Must NOT say "Could not reach Plaud.AI" — that would be a lie
+				// (the network reached Plaud just fine, Plaud returned an error).
+				expect(result.message).not.toMatch(/could not reach/i);
+			},
+		);
 	});
 
 	describe('non-Plaud errors', () => {
@@ -256,7 +275,10 @@ describe('classifyError', () => {
 
 		it('classifies PlaudParseError as parse-error, not network-error', () => {
 			// Same concern — PlaudParseError extends PlaudApiError with no status.
-			const err = new PlaudParseError('shape mismatch', '/file/simple/web');
+			const err = new PlaudParseError(
+				'shape mismatch',
+				'/file/simple/web',
+			);
 			const result = classifyError(err);
 			expect(result.category).toBe('parse-error');
 		});
@@ -312,13 +334,16 @@ describe('formatDuration', () => {
 		['NaN', Number.NaN],
 		['positive Infinity', Number.POSITIVE_INFINITY],
 		['negative Infinity', Number.NEGATIVE_INFINITY],
-	])('returns "0m 0s" for non-finite input (%s) instead of rendering garbage', (_label, value) => {
-		// The parser rejects non-finite durations upstream, but formatDuration
-		// is exported as a standalone helper — a future caller could pass a
-		// hand-constructed Recording and trigger "NaNh NaNm NaNs" in the UI.
-		// Guard here.
-		expect(formatDuration(value)).toBe('0m 0s');
-	});
+	])(
+		'returns "0m 0s" for non-finite input (%s) instead of rendering garbage',
+		(_label, value) => {
+			// The parser rejects non-finite durations upstream, but formatDuration
+			// is exported as a standalone helper — a future caller could pass a
+			// hand-constructed Recording and trigger "NaNh NaNm NaNs" in the UI.
+			// Guard here.
+			expect(formatDuration(value)).toBe('0m 0s');
+		},
+	);
 });
 
 // mergeRecordings -----------------------------------------------------------
@@ -340,13 +365,17 @@ describe('mergeRecordings', () => {
 	});
 
 	it('reports hasMore=true when page is full', () => {
-		const incoming = Array.from({ length: 10 }, (_, i) => rec(String(i + 1)));
+		const incoming = Array.from({ length: 10 }, (_, i) =>
+			rec(String(i + 1)),
+		);
 		const merged = mergeRecordings([], incoming, 10);
 		expect(merged.hasMore).toBe(true);
 	});
 
 	it('reports hasMore=false when page is partial', () => {
-		const incoming = Array.from({ length: 3 }, (_, i) => rec(String(i + 1)));
+		const incoming = Array.from({ length: 3 }, (_, i) =>
+			rec(String(i + 1)),
+		);
 		const merged = mergeRecordings([], incoming, 10);
 		expect(merged.hasMore).toBe(false);
 	});
@@ -377,20 +406,15 @@ describe('filterVisibleRecordings', () => {
 
 	it('preserves order of the visible recordings', () => {
 		const ordered = [live2, trashed, live1];
-		expect(filterVisibleRecordings(ordered, false).map((r) => r.id)).toEqual([
-			'c',
-			'a',
-		]);
+		expect(
+			filterVisibleRecordings(ordered, false).map((r) => r.id),
+		).toEqual(['c', 'a']);
 	});
 });
 
 // tallyImportResults --------------------------------------------------------
 
-function rec(
-	id: string,
-	title = `rec ${id}`,
-	isTrashed = false,
-): Recording {
+function rec(id: string, title = `rec ${id}`, isTrashed = false): Recording {
 	return {
 		id: id as PlaudRecordingId,
 		title,
@@ -504,7 +528,11 @@ describe('tallyImportResults', () => {
 			written('4', 'skipped'),
 			failed('5', 'third'),
 		]);
-		expect(tally.failures.map((f) => f.recording.id)).toEqual(['1', '3', '5']);
+		expect(tally.failures.map((f) => f.recording.id)).toEqual([
+			'1',
+			'3',
+			'5',
+		]);
 	});
 
 	it('counts no-content skips in their own bucket, separate from duplicate-skips and failures', () => {
@@ -520,7 +548,10 @@ describe('tallyImportResults', () => {
 		expect(tally.failed).toBe(1);
 		// No-content skips are NOT failures.
 		expect(tally.failures).toHaveLength(1);
-		expect(tally.noContentResults.map((r) => r.recording.id)).toEqual(['c', 'd']);
+		expect(tally.noContentResults.map((r) => r.recording.id)).toEqual([
+			'c',
+			'd',
+		]);
 	});
 
 	it('counts placeholder writes in their own bucket, separate from failures and skips', () => {
@@ -534,7 +565,10 @@ describe('tallyImportResults', () => {
 		expect(tally.failed).toBe(1);
 		// Placeholders are NOT failures.
 		expect(tally.failures).toHaveLength(1);
-		expect(tally.placeholderResults.map((r) => r.recording.id)).toEqual(['b', 'c']);
+		expect(tally.placeholderResults.map((r) => r.recording.id)).toEqual([
+			'b',
+			'c',
+		]);
 	});
 });
 
@@ -561,12 +595,19 @@ describe('isPlaudUnprocessedError', () => {
 	});
 
 	it('is false for a parse error (a plugin bug, not missing content)', () => {
-		const err = new PlaudParseError('unexpected shape', '/ai/transsumm/abc');
+		const err = new PlaudParseError(
+			'unexpected shape',
+			'/ai/transsumm/abc',
+		);
 		expect(isPlaudUnprocessedError(err)).toBe(false);
 	});
 
 	it('is false for a transport failure (no in-band envelope, retry may work)', () => {
-		const err = new PlaudApiError('network unreachable', undefined, '/ai/transsumm/abc');
+		const err = new PlaudApiError(
+			'network unreachable',
+			undefined,
+			'/ai/transsumm/abc',
+		);
 		expect(isPlaudUnprocessedError(err)).toBe(false);
 	});
 

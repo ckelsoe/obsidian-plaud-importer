@@ -2,7 +2,10 @@ import { runInNewContext } from 'vm';
 
 import { PROBE_JS } from '../plaud-login';
 import { isUsableUserToken } from '../plaud-token';
-import { MAX_COLLECTED_CANDIDATES, collectTokenCandidates } from '../token-candidates';
+import {
+	MAX_COLLECTED_CANDIDATES,
+	collectTokenCandidates,
+} from '../token-candidates';
 
 // Executes the SHIPPED probe string against fixtures, the same way the
 // bookmarklet parity tests do. The probe cannot import the shared collector (it
@@ -28,7 +31,13 @@ const PAST_EXP = Math.floor(Date.now() / 1000) - 3600;
 // probed in-band status 0; the refresh token beside it probed -3901.
 const WORKSPACE_TOKEN = makeJwt(
 	{ alg: 'HS256', typ: 'WT' },
-	{ sub: 'u1', exp: FUTURE_EXP, iat: FUTURE_EXP - 24 * 3600, client_id: 'web', wid: 'ws-1' },
+	{
+		sub: 'u1',
+		exp: FUTURE_EXP,
+		iat: FUTURE_EXP - 24 * 3600,
+		client_id: 'web',
+		wid: 'ws-1',
+	},
 );
 const REFRESH_TOKEN = makeJwt(
 	{ alg: 'HS256', typ: 'WRT' },
@@ -40,7 +49,13 @@ const PROFILE_JWT = makeJwt(
 );
 const LONG_LIVED_TOKEN = makeJwt(
 	{ alg: 'HS256', typ: 'JWT' },
-	{ sub: 'u1', exp: FUTURE_EXP + 300 * 24 * 3600, iat: FUTURE_EXP, client_id: 'web', region: 'us' },
+	{
+		sub: 'u1',
+		exp: FUTURE_EXP + 300 * 24 * 3600,
+		iat: FUTURE_EXP,
+		client_id: 'web',
+		region: 'us',
+	},
 );
 const EXPIRED_TOKEN = makeJwt(
 	{ alg: 'HS256', typ: 'JWT' },
@@ -108,15 +123,29 @@ function usableFrom(out: ProbeOut): string[] {
 // at the workspace the user is actually in.
 const OTHER_WORKSPACE_TOKEN = makeJwt(
 	{ alg: 'HS256', typ: 'WT' },
-	{ sub: 'u1', exp: FUTURE_EXP, iat: FUTURE_EXP - 24 * 3600, client_id: 'web', wid: 'ws-other' },
+	{
+		sub: 'u1',
+		exp: FUTURE_EXP,
+		iat: FUTURE_EXP - 24 * 3600,
+		client_id: 'web',
+		wid: 'ws-other',
+	},
 );
 
 describe('PROBE_JS on a multi-workspace account', () => {
 	const MULTI: Record<string, string> = {
 		'pld_abc:currentWorkspaceId': 'ws_clF1vOqcHS',
 		'pld_abc:workspaceList': JSON.stringify([
-			{ workspaceId: 'ws_other', name: 'Team', workspaceToken: OTHER_WORKSPACE_TOKEN },
-			{ workspaceId: 'ws_clF1vOqcHS', name: 'Personal', workspaceToken: WORKSPACE_TOKEN },
+			{
+				workspaceId: 'ws_other',
+				name: 'Team',
+				workspaceToken: OTHER_WORKSPACE_TOKEN,
+			},
+			{
+				workspaceId: 'ws_clF1vOqcHS',
+				name: 'Personal',
+				workspaceToken: WORKSPACE_TOKEN,
+			},
 		]),
 	};
 
@@ -127,12 +156,17 @@ describe('PROBE_JS on a multi-workspace account', () => {
 	});
 
 	it('still degrades to plain collection when the hint is missing', () => {
-		const noHint = { 'pld_abc:workspaceList': MULTI['pld_abc:workspaceList'] };
+		const noHint = {
+			'pld_abc:workspaceList': MULTI['pld_abc:workspaceList'],
+		};
 		expect(usableFrom(runProbe(noHint)).length).toBeGreaterThan(0);
 	});
 
 	it('quotes around the stored id do not defeat the match', () => {
-		const quoted = { ...MULTI, 'pld_abc:currentWorkspaceId': '"ws_clF1vOqcHS"' };
+		const quoted = {
+			...MULTI,
+			'pld_abc:currentWorkspaceId': '"ws_clF1vOqcHS"',
+		};
 		expect(usableFrom(runProbe(quoted))[0]).toBe(WORKSPACE_TOKEN);
 	});
 });
@@ -163,7 +197,9 @@ describe('PROBE_JS candidate cap', () => {
 	}
 
 	it('stops at MAX_COLLECTED_CANDIDATES, not a literal of its own', () => {
-		expect(runProbe(OVERSIZED).tokens).toHaveLength(MAX_COLLECTED_CANDIDATES);
+		expect(runProbe(OVERSIZED).tokens).toHaveLength(
+			MAX_COLLECTED_CANDIDATES,
+		);
 	});
 
 	it('collects exactly as many as the reference collector does', () => {
@@ -201,7 +237,11 @@ describe('PROBE_JS candidate cap', () => {
 		// probe returns) would see nothing usable and poll forever.
 		const decoyed: Record<string, string> = {};
 		for (let i = 0; i < MAX_COLLECTED_CANDIDATES + 3; i++) {
-			decoyed[`pld_abc:decoy${i}`] = [REFRESH_TOKEN, PROFILE_JWT, EXPIRED_TOKEN][i % 3];
+			decoyed[`pld_abc:decoy${i}`] = [
+				REFRESH_TOKEN,
+				PROFILE_JWT,
+				EXPIRED_TOKEN,
+			][i % 3];
 		}
 		decoyed['pld_abc:workspaceList'] = JSON.stringify([
 			{ workspaceId: 'ws_clF1vOqcHS', workspaceToken: WORKSPACE_TOKEN },
@@ -221,11 +261,15 @@ describe('PROBE_JS against the current Plaud web app', () => {
 	it('never settles on the 30-day refresh token beside it', () => {
 		// Probed live: this value answers -3901. It also outlives the credential,
 		// so any longest-expiry preference would pick exactly the wrong one.
-		expect(usableFrom(runProbe(CURRENT_WEB_APP))).not.toContain(REFRESH_TOKEN);
+		expect(usableFrom(runProbe(CURRENT_WEB_APP))).not.toContain(
+			REFRESH_TOKEN,
+		);
 	});
 
 	it('never settles on the profile JWT holding email, id, and name', () => {
-		expect(usableFrom(runProbe(CURRENT_WEB_APP))).not.toContain(PROFILE_JWT);
+		expect(usableFrom(runProbe(CURRENT_WEB_APP))).not.toContain(
+			PROFILE_JWT,
+		);
 	});
 
 	it('still prefers a plain `token` key when one exists', () => {
@@ -252,7 +296,9 @@ describe('PROBE_JS against the current Plaud web app', () => {
 		// a bare top-level foreign token was still being collected.
 		const foreign = {
 			...CURRENT_WEB_APP,
-			ph_phc_abc_posthog: JSON.stringify({ auth: { jwt: LONG_LIVED_TOKEN } }),
+			ph_phc_abc_posthog: JSON.stringify({
+				auth: { jwt: LONG_LIVED_TOKEN },
+			}),
 			'sb-access-token': LONG_LIVED_TOKEN,
 			ph_token: OTHER_WORKSPACE_TOKEN,
 		};
@@ -261,7 +307,9 @@ describe('PROBE_JS against the current Plaud web app', () => {
 
 	it('rejects an expired leftover', () => {
 		expect(
-			usableFrom(runProbe({ token: EXPIRED_TOKEN, pld_x: EXPIRED_TOKEN })),
+			usableFrom(
+				runProbe({ token: EXPIRED_TOKEN, pld_x: EXPIRED_TOKEN }),
+			),
 		).toEqual([]);
 	});
 
@@ -271,7 +319,11 @@ describe('PROBE_JS against the current Plaud web app', () => {
 			pld_loginMethod: '"email"',
 			'pld_abc:frillSsoToken': PROFILE_JWT,
 			'pld_abc:workspaceList': JSON.stringify([
-				{ workspaceId: 'ws_clF1vOqcHS', name: 'Personal', role: 'owner' },
+				{
+					workspaceId: 'ws_clF1vOqcHS',
+					name: 'Personal',
+					role: 'owner',
+				},
 			]),
 		};
 		expect(usableFrom(runProbe(signedOut))).toEqual([]);

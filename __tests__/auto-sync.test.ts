@@ -10,7 +10,9 @@ import {
 	INITIAL_AUTO_SYNC_STATE,
 } from '../auto-sync';
 
-function rec(overrides: Partial<Omit<Recording, 'id'>> & { id: string }): Recording {
+function rec(
+	overrides: Partial<Omit<Recording, 'id'>> & { id: string },
+): Recording {
 	return {
 		id: overrides.id as PlaudRecordingId,
 		title: overrides.title ?? `title-${overrides.id}`,
@@ -34,12 +36,16 @@ function idx(
 
 describe('classifyRecording', () => {
 	it('classifies a recording not in the index as new', () => {
-		expect(classifyRecording(rec({ id: 'a', versionMs: 100 }), idx([]))).toBe('new');
+		expect(
+			classifyRecording(rec({ id: 'a', versionMs: 100 }), idx([])),
+		).toBe('new');
 	});
 
 	it('classifies a listed version_ms greater than stored as changed', () => {
 		const index = idx([['a', { path: 'p', versionMs: 100 }]]);
-		expect(classifyRecording(rec({ id: 'a', versionMs: 200 }), index)).toBe('changed');
+		expect(classifyRecording(rec({ id: 'a', versionMs: 200 }), index)).toBe(
+			'changed',
+		);
 	});
 
 	it('classifies listed <= stored (with a marker) as the up-to-date boundary', () => {
@@ -61,16 +67,19 @@ describe('classifyRecording', () => {
 
 	it('treats a missing listed version_ms as current (cannot compare)', () => {
 		const index = idx([['a', { path: 'p', versionMs: 100 }]]);
-		expect(classifyRecording(rec({ id: 'a', versionMs: undefined }), index)).toBe(
-			'up-to-date-current',
-		);
+		expect(
+			classifyRecording(rec({ id: 'a', versionMs: undefined }), index),
+		).toBe('up-to-date-current');
 	});
 
 	it('imports a wait_pull recording that already has content ready', () => {
 		// wait_pull tracks the device audio pull, not transcript/summary
 		// readiness: a transcribed recording must import even while wait_pull=1.
 		expect(
-			classifyRecording(rec({ id: 'a', versionMs: 999, waitPull: true }), idx([])),
+			classifyRecording(
+				rec({ id: 'a', versionMs: 999, waitPull: true }),
+				idx([]),
+			),
 		).toBe('new');
 	});
 
@@ -92,21 +101,33 @@ describe('classifyRecording', () => {
 	it('classifies an ignored recording as ignored (ignore wins over new/changed)', () => {
 		const ignoredIds = new Set(['a' as PlaudRecordingId]);
 		// New but ignored.
-		expect(classifyRecording(rec({ id: 'a', versionMs: 100 }), idx([]), ignoredIds)).toBe(
-			'ignored',
-		);
+		expect(
+			classifyRecording(
+				rec({ id: 'a', versionMs: 100 }),
+				idx([]),
+				ignoredIds,
+			),
+		).toBe('ignored');
 		// Changed (listed > stored) but ignored.
 		const index = idx([['a', { path: 'p', versionMs: 100 }]]);
 		expect(
-			classifyRecording(rec({ id: 'a', versionMs: 200 }), index, ignoredIds),
+			classifyRecording(
+				rec({ id: 'a', versionMs: 200 }),
+				index,
+				ignoredIds,
+			),
 		).toBe('ignored');
 	});
 
 	it('does not classify a non-ignored recording as ignored', () => {
 		const ignoredIds = new Set(['other' as PlaudRecordingId]);
-		expect(classifyRecording(rec({ id: 'a', versionMs: 100 }), idx([]), ignoredIds)).toBe(
-			'new',
-		);
+		expect(
+			classifyRecording(
+				rec({ id: 'a', versionMs: 100 }),
+				idx([]),
+				ignoredIds,
+			),
+		).toBe('new');
 	});
 });
 
@@ -128,7 +149,10 @@ describe('selectAutoSyncCandidates', () => {
 			rec({ id: 'below-synced', versionMs: 5 }), // in index, up-to-date, skip
 			rec({ id: 'also-new', versionMs: 1 }), // NEW, below the boundary -> must be caught
 		];
-		const { candidates, reachedUpToDate } = selectAutoSyncCandidates(page, index);
+		const { candidates, reachedUpToDate } = selectAutoSyncCandidates(
+			page,
+			index,
+		);
 		expect(reachedUpToDate).toBe(false); // the page produced candidates
 		expect(candidates.map((c) => `${c.recording.id}:${c.kind}`)).toEqual([
 			'brand-new:new',
@@ -146,7 +170,10 @@ describe('selectAutoSyncCandidates', () => {
 			rec({ id: 'a', versionMs: 500 }), // up-to-date-boundary
 			rec({ id: 'b', versionMs: 400 }), // up-to-date-boundary
 		];
-		const { candidates, reachedUpToDate } = selectAutoSyncCandidates(page, index);
+		const { candidates, reachedUpToDate } = selectAutoSyncCandidates(
+			page,
+			index,
+		);
 		expect(candidates).toEqual([]);
 		expect(reachedUpToDate).toBe(true);
 	});
@@ -162,7 +189,10 @@ describe('selectAutoSyncCandidates', () => {
 			rec({ id: 'legacy-a', versionMs: 900 }),
 			rec({ id: 'legacy-b', versionMs: 800 }),
 		];
-		const { candidates, reachedUpToDate } = selectAutoSyncCandidates(page, index);
+		const { candidates, reachedUpToDate } = selectAutoSyncCandidates(
+			page,
+			index,
+		);
 		expect(candidates).toEqual([]);
 		expect(reachedUpToDate).toBe(false);
 	});
@@ -184,7 +214,10 @@ describe('selectAutoSyncCandidates', () => {
 				summaryAvailable: false,
 			}),
 		];
-		const { candidates, reachedUpToDate } = selectAutoSyncCandidates(page, idx([]));
+		const { candidates, reachedUpToDate } = selectAutoSyncCandidates(
+			page,
+			idx([]),
+		);
 		expect(candidates).toEqual([]);
 		expect(reachedUpToDate).toBe(false);
 	});
@@ -195,7 +228,10 @@ describe('selectAutoSyncCandidates', () => {
 			rec({ id: 'legacy', versionMs: 999 }), // migration: skip, do NOT stop
 			rec({ id: 'new-below', versionMs: 5 }), // must still be reached
 		];
-		const { candidates, reachedUpToDate } = selectAutoSyncCandidates(page, index);
+		const { candidates, reachedUpToDate } = selectAutoSyncCandidates(
+			page,
+			index,
+		);
 		expect(reachedUpToDate).toBe(false);
 		expect(candidates.map((c) => c.recording.id)).toEqual(['new-below']);
 	});
@@ -220,15 +256,22 @@ describe('selectAutoSyncCandidates', () => {
 			}),
 			rec({ id: 'ready', versionMs: 800 }),
 		];
-		const { candidates, reachedUpToDate } = selectAutoSyncCandidates(page, idx([]));
+		const { candidates, reachedUpToDate } = selectAutoSyncCandidates(
+			page,
+			idx([]),
+		);
 		expect(reachedUpToDate).toBe(false);
 		expect(candidates.map((c) => c.recording.id)).toEqual(['ready']);
 	});
 
 	it('imports a wait_pull recording that has content (transcribed but audio still pulling)', () => {
-		const page = [rec({ id: 'pending-with-content', versionMs: 900, waitPull: true })];
+		const page = [
+			rec({ id: 'pending-with-content', versionMs: 900, waitPull: true }),
+		];
 		const { candidates } = selectAutoSyncCandidates(page, idx([]));
-		expect(candidates.map((c) => c.recording.id)).toEqual(['pending-with-content']);
+		expect(candidates.map((c) => c.recording.id)).toEqual([
+			'pending-with-content',
+		]);
 	});
 
 	it('skips an ignored recording and keeps scanning so a ready one below is caught', () => {
@@ -247,7 +290,10 @@ describe('selectAutoSyncCandidates', () => {
 	});
 
 	it('a page of only ignored recordings is not a frontier (paging continues)', () => {
-		const ignoredIds = new Set(['i1' as PlaudRecordingId, 'i2' as PlaudRecordingId]);
+		const ignoredIds = new Set([
+			'i1' as PlaudRecordingId,
+			'i2' as PlaudRecordingId,
+		]);
 		const page = [
 			rec({ id: 'i1', versionMs: 900 }),
 			rec({ id: 'i2', versionMs: 800 }),
@@ -273,7 +319,9 @@ describe('nextAutoSyncState', () => {
 	it('counts transient failures without pausing', () => {
 		const s1 = nextAutoSyncState(INITIAL_AUTO_SYNC_STATE, 'transient');
 		expect(s1).toEqual({ paused: false, consecutiveTransientFailures: 1 });
-		expect(nextAutoSyncState(s1, 'transient').consecutiveTransientFailures).toBe(2);
+		expect(
+			nextAutoSyncState(s1, 'transient').consecutiveTransientFailures,
+		).toBe(2);
 	});
 
 	it('a transient failure while paused stays paused', () => {
@@ -283,7 +331,9 @@ describe('nextAutoSyncState', () => {
 
 	it('ok resumes and resets the counter', () => {
 		const paused = { paused: true, consecutiveTransientFailures: 3 };
-		expect(nextAutoSyncState(paused, 'ok')).toEqual(INITIAL_AUTO_SYNC_STATE);
+		expect(nextAutoSyncState(paused, 'ok')).toEqual(
+			INITIAL_AUTO_SYNC_STATE,
+		);
 	});
 });
 
@@ -294,7 +344,13 @@ describe('tickOutcomeForCategory', () => {
 	});
 
 	it('maps everything else to transient', () => {
-		for (const c of ['rate-limited', 'server-error', 'network-error', 'parse-error', 'api-error'] as const) {
+		for (const c of [
+			'rate-limited',
+			'server-error',
+			'network-error',
+			'parse-error',
+			'api-error',
+		] as const) {
 			expect(tickOutcomeForCategory(c)).toBe('transient');
 		}
 	});

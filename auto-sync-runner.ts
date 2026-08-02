@@ -53,7 +53,9 @@ export interface AutoSyncTickResult {
  * listPage/importCandidates error to the caller so the scheduler's state
  * machine can classify it (auth pause vs transient).
  */
-export async function runAutoSyncTick(deps: AutoSyncTickDeps): Promise<AutoSyncTickResult> {
+export async function runAutoSyncTick(
+	deps: AutoSyncTickDeps,
+): Promise<AutoSyncTickResult> {
 	const index = deps.buildIndex();
 	const newRecs: Recording[] = [];
 	const changedRecs: Recording[] = [];
@@ -73,11 +75,8 @@ export async function runAutoSyncTick(deps: AutoSyncTickDeps): Promise<AutoSyncT
 		if (page.length === 0) {
 			break;
 		}
-		const { candidates, reachedUpToDate: hitBoundary } = selectAutoSyncCandidates(
-			page,
-			index,
-			deps.ignoredIds,
-		);
+		const { candidates, reachedUpToDate: hitBoundary } =
+			selectAutoSyncCandidates(page, index, deps.ignoredIds);
 		for (const candidate of candidates) {
 			if (newRecs.length + changedRecs.length >= deps.maxImportsPerTick) {
 				cappedByImports = true;
@@ -123,7 +122,10 @@ export async function runAutoSyncTick(deps: AutoSyncTickDeps): Promise<AutoSyncT
 		};
 	}
 
-	const { imported, updated } = await deps.importCandidates(newRecs, changedRecs);
+	const { imported, updated } = await deps.importCandidates(
+		newRecs,
+		changedRecs,
+	);
 	return {
 		imported,
 		updated,

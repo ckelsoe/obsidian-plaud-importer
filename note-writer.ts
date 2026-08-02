@@ -271,9 +271,28 @@ export type PlaceholderWriteOutcome = {
 // subfolder path rejects it instead (see assertUsableFolderSegment), so one
 // list serves both.
 const WINDOWS_RESERVED_NAMES = new Set([
-	'CON', 'PRN', 'AUX', 'NUL',
-	'COM1', 'COM2', 'COM3', 'COM4', 'COM5', 'COM6', 'COM7', 'COM8', 'COM9',
-	'LPT1', 'LPT2', 'LPT3', 'LPT4', 'LPT5', 'LPT6', 'LPT7', 'LPT8', 'LPT9',
+	'CON',
+	'PRN',
+	'AUX',
+	'NUL',
+	'COM1',
+	'COM2',
+	'COM3',
+	'COM4',
+	'COM5',
+	'COM6',
+	'COM7',
+	'COM8',
+	'COM9',
+	'LPT1',
+	'LPT2',
+	'LPT3',
+	'LPT4',
+	'LPT5',
+	'LPT6',
+	'LPT7',
+	'LPT8',
+	'LPT9',
 ]);
 
 // Whether a file or folder name is a Windows reserved device name. Windows keys
@@ -477,7 +496,9 @@ function formatLocalDateTime(d: Date): string {
  * Extract the deduplicated, ordered list of distinct speakers from a
  * transcript. First-seen order is preserved so frontmatter reads naturally.
  */
-export function extractSpeakers(transcript: Transcript | null): readonly string[] {
+export function extractSpeakers(
+	transcript: Transcript | null,
+): readonly string[] {
 	if (!transcript) {
 		return [];
 	}
@@ -536,16 +557,19 @@ function expandDateTemplate(
 	// where moment already resolves (locally), which is why the plugin config turns
 	// off no-unnecessary-type-assertion.
 	const m = (moment as typeof import('moment'))(date).locale('en');
-	return template.replace(/\{\{([^}]*)\}\}/g, (_match, raw: string): string => {
-		const inner = raw.trim();
-		if (title !== undefined && inner === 'title') {
-			return title;
-		}
-		if (folder !== undefined && inner === 'plaud-folder') {
-			return folder;
-		}
-		return m.format(inner);
-	});
+	return template.replace(
+		/\{\{([^}]*)\}\}/g,
+		(_match, raw: string): string => {
+			const inner = raw.trim();
+			if (title !== undefined && inner === 'title') {
+				return title;
+			}
+			if (folder !== undefined && inner === 'plaud-folder') {
+				return folder;
+			}
+			return m.format(inner);
+		},
+	);
 }
 
 /**
@@ -572,7 +596,10 @@ export function formatDatetime(template: string, date: Date): string {
  * intentionally excluded: the caller splits on it, so a segment never contains
  * one.
  */
-function sanitizeFolderSegment(segment: string, replacement: string = '-'): string {
+function sanitizeFolderSegment(
+	segment: string,
+	replacement: string = '-',
+): string {
 	// Defense-in-depth, matching sanitizeFilename: never trust an unsafe
 	// replacement, which would reintroduce a forbidden character; fall back to '-'.
 	const repl = isValidReplacementChar(replacement) ? replacement : '-';
@@ -672,7 +699,11 @@ export function resolveSubfolder(
 		// emptyFallback '' so a title that reduces to nothing (only a date, or only
 		// punctuation like '.') yields an empty segment for the _untitled bucket
 		// below, instead of sanitizeFilename's 'Untitled' fallback.
-		safeTitle = sanitizeFilename(titleWithoutLeadingDate(title), replacement, '');
+		safeTitle = sanitizeFilename(
+			titleWithoutLeadingDate(title),
+			replacement,
+			'',
+		);
 	}
 	// {{plaud-folder}} support (issue #16 follow-up): the recording's Plaud folder
 	// name, sanitized into one legal segment the same way as {{title}}. Plaud
@@ -694,7 +725,9 @@ export function resolveSubfolder(
 		// Drop empty/whitespace-only segments so nesting stays as authored.
 		.filter((segment) => segment.trim() !== '')
 		.map((segment) =>
-			assertUsableFolderSegment(sanitizeFolderSegment(segment, replacement)),
+			assertUsableFolderSegment(
+				sanitizeFolderSegment(segment, replacement),
+			),
 		)
 		.join('/');
 	// Empty-title bucket: a {{title}}-only template whose title reduced to nothing
@@ -758,8 +791,14 @@ export const DEFAULT_NOTE_NAME_TEMPLATE = '{{YYYY}}-{{MM}}-{{DD}} {{title}}';
  *   formatNoteName("{{title}} {{YYYY}}-{{MM}}-{{DD}}", 2026-07-03, "Sync")
  *     === "Sync 2026-07-03"
  */
-export function formatNoteName(template: string, date: Date, title: string): string {
-	return expandDateTemplate(template, date, title).replace(/\s+/g, ' ').trim();
+export function formatNoteName(
+	template: string,
+	date: Date,
+	title: string,
+): string {
+	return expandDateTemplate(template, date, title)
+		.replace(/\s+/g, ' ')
+		.trim();
 }
 
 /**
@@ -864,7 +903,11 @@ const NOTE_NAME_SAMPLE_TITLE = 'Title';
  * `{{title}}` placeholder here) is sanitized separately at write time.
  */
 export function isValidNoteNameTemplate(template: string): boolean {
-	const rendered = formatNoteName(template, NOTE_NAME_SAMPLE_DATE, NOTE_NAME_SAMPLE_TITLE);
+	const rendered = formatNoteName(
+		template,
+		NOTE_NAME_SAMPLE_DATE,
+		NOTE_NAME_SAMPLE_TITLE,
+	);
 	return sanitizeFilename(rendered) === rendered;
 }
 
@@ -900,10 +943,13 @@ const LEGACY_TOKEN_MIGRATION: ReadonlyMap<string, string> = new Map([
  * never throws, so a hand-edited bad template cannot block settings load.
  */
 export function migrateLegacyDateTemplate(template: string): string {
-	return template.replace(/\{\{([^}]*)\}\}/g, (match, raw: string): string => {
-		const mapped = LEGACY_TOKEN_MIGRATION.get(raw.trim());
-		return mapped === undefined ? match : `{{${mapped}}}`;
-	});
+	return template.replace(
+		/\{\{([^}]*)\}\}/g,
+		(match, raw: string): string => {
+			const mapped = LEGACY_TOKEN_MIGRATION.get(raw.trim());
+			return mapped === undefined ? match : `{{${mapped}}}`;
+		},
+	);
 }
 
 /**
@@ -985,13 +1031,27 @@ export function formatDurationHoursMinutes(seconds: number): string {
 // Reserved YAML tokens that parse as something other than a string if left
 // unquoted. Covers all the common casings a real title/id could match.
 const YAML_RESERVED_TOKENS = new Set([
-	'true', 'True', 'TRUE',
-	'false', 'False', 'FALSE',
-	'yes', 'Yes', 'YES',
-	'no', 'No', 'NO',
-	'on', 'On', 'ON',
-	'off', 'Off', 'OFF',
-	'null', 'Null', 'NULL',
+	'true',
+	'True',
+	'TRUE',
+	'false',
+	'False',
+	'FALSE',
+	'yes',
+	'Yes',
+	'YES',
+	'no',
+	'No',
+	'NO',
+	'on',
+	'On',
+	'ON',
+	'off',
+	'Off',
+	'OFF',
+	'null',
+	'Null',
+	'NULL',
 	'~',
 ]);
 
@@ -1303,22 +1363,19 @@ export function expandCustomFrontmatterValue(
 	// the Moment date engine. The moment cast mirrors expandDateTemplate: it pins
 	// the factory to moment's own type at the marketplace type-check boundary.
 	const m = (moment as typeof import('moment'))(ctx.date).locale('en');
-	return value.replace(
-		/\{\{([^}]*)\}\}/g,
-		(_match, raw: string): string => {
-			const inner = raw.trim();
-			if (Object.prototype.hasOwnProperty.call(content, inner)) {
-				return content[inner];
-			}
-			if (inner === 'title') {
-				return ctx.title;
-			}
-			if (inner === 'plaud-folder') {
-				return ctx.folderName;
-			}
-			return m.format(inner);
-		},
-	);
+	return value.replace(/\{\{([^}]*)\}\}/g, (_match, raw: string): string => {
+		const inner = raw.trim();
+		if (Object.prototype.hasOwnProperty.call(content, inner)) {
+			return content[inner];
+		}
+		if (inner === 'title') {
+			return ctx.title;
+		}
+		if (inner === 'plaud-folder') {
+			return ctx.folderName;
+		}
+		return m.format(inner);
+	});
 }
 
 /**
@@ -1457,7 +1514,8 @@ export function formatFrontmatter(
 		// through. Plaud's real topical classification lives in `industry` and is
 		// emitted separately as plaud-industry, never mixed into category.
 		const category =
-			summary.category !== undefined && summary.category === summary.template
+			summary.category !== undefined &&
+			summary.category === summary.template
 				? undefined
 				: summary.category;
 		const extras: ReadonlyArray<readonly [string, string | undefined]> = [
@@ -1709,7 +1767,10 @@ export function extractPlaudPlaceholderFlag(content: string): boolean {
 	if (!markerLine) {
 		return false;
 	}
-	const value = markerLine[1].trim().replace(/^["']|["']$/g, '').toLowerCase();
+	const value = markerLine[1]
+		.trim()
+		.replace(/^["']|["']$/g, '')
+		.toLowerCase();
 	return value === 'true' || value === 'yes';
 }
 
@@ -1719,10 +1780,14 @@ function formatSummaryBody(summary: Summary | null): string {
 	}
 	if (summary.sections && summary.sections.length > 0) {
 		return summary.sections
-			.map((section) => `### ${section.heading}\n\n${section.body.trim()}`)
+			.map(
+				(section) => `### ${section.heading}\n\n${section.body.trim()}`,
+			)
 			.join('\n\n');
 	}
-	return neutralizeSetextDashes(stripLeadingSummaryHeading(summary.text.trim()));
+	return neutralizeSetextDashes(
+		stripLeadingSummaryHeading(summary.text.trim()),
+	);
 }
 
 function stripLeadingSummaryHeading(text: string): string {
@@ -2008,7 +2073,9 @@ const TEMPLATE_OUTPUTS_HEADING = '## Template outputs';
  * user's Plaud-side template selection, so a transcript-style template is
  * rendered too and never de-duplicated against the pipeline transcript.
  */
-function formatConsumerNotesSection(consumerNotes: readonly ConsumerNote[]): string {
+function formatConsumerNotesSection(
+	consumerNotes: readonly ConsumerNote[],
+): string {
 	const parts: string[] = [TEMPLATE_OUTPUTS_HEADING, ''];
 	for (const note of consumerNotes) {
 		const title = note.heading.trim() || 'Template output';
@@ -2045,7 +2112,10 @@ function parseCodeFence(line: string): CodeFence | null {
  * different-marker fence line inside a block (e.g. ``` inside a ~~~ block) stays
  * content rather than ending the block prematurely.
  */
-function nextFenceState(active: CodeFence | null, line: string): CodeFence | null {
+function nextFenceState(
+	active: CodeFence | null,
+	line: string,
+): CodeFence | null {
 	const fence = parseCodeFence(line);
 	if (fence === null) {
 		return active;
@@ -2249,7 +2319,11 @@ export function formatMarkdown(
 			summary !== null
 				? {
 						...summary,
-						text: substitutePlaudPlaceholders(summary.text, recording, transcript),
+						text: substitutePlaudPlaceholders(
+							summary.text,
+							recording,
+							transcript,
+						),
 					}
 				: null;
 		parts.push('## Summary', '', formatSummaryBody(renderedSummary), '');
@@ -2456,7 +2530,10 @@ export async function renameRecordingNote(
 	return { notePath: newNotePath, assetsFolderRenamed };
 }
 
-async function readPlaudId(vault: VaultLike, file: FileLike): Promise<string | null> {
+async function readPlaudId(
+	vault: VaultLike,
+	file: FileLike,
+): Promise<string | null> {
 	try {
 		return extractPlaudIdFromFrontmatter(await vault.read(file));
 	} catch {
@@ -2483,7 +2560,9 @@ export class NoteWriter {
 	private readonly customFrontmatter: readonly CustomFrontmatterRow[];
 	private readonly preserveUnknownFrontmatter: boolean;
 	private readonly forbiddenCharReplacement: string;
-	private readonly existingPathForPlaudId?: (plaudId: string) => string | null;
+	private readonly existingPathForPlaudId?: (
+		plaudId: string,
+	) => string | null;
 	private readonly migrateExistingNote?: (
 		oldNotePath: string,
 		newNotePath: string,
@@ -2502,7 +2581,10 @@ export class NoteWriter {
 				`Invalid onDuplicate policy "${String(options.onDuplicate)}" — expected 'skip', 'overwrite', or 'prompt'`,
 			);
 		}
-		if (options.onDuplicate === 'prompt' && typeof options.promptOnDuplicate !== 'function') {
+		if (
+			options.onDuplicate === 'prompt' &&
+			typeof options.promptOnDuplicate !== 'function'
+		) {
 			throw new NoteWriterError(
 				"Invalid onDuplicate policy 'prompt' — a promptOnDuplicate callback is required",
 			);
@@ -2523,7 +2605,8 @@ export class NoteWriter {
 		this.customFrontmatter = options.customFrontmatter ?? [];
 		// Default true: a headless caller (or hand-edited data.json) that omits this
 		// gets the non-destructive behavior, matching DEFAULT_SETTINGS.
-		this.preserveUnknownFrontmatter = options.preserveUnknownFrontmatter ?? true;
+		this.preserveUnknownFrontmatter =
+			options.preserveUnknownFrontmatter ?? true;
 		// Defense-in-depth: the settings layer validates this, but a headless caller
 		// or hand-edited data.json could pass anything, so fall back to '-' for an
 		// unusable value rather than sanitizing with a forbidden character.
@@ -2585,7 +2668,9 @@ export class NoteWriter {
 			this.noteNameTemplate,
 		);
 		const filename = `${sanitizeFilename(expandedTitle, this.forbiddenCharReplacement)}.md`;
-		return destinationFolder === '' ? filename : `${destinationFolder}/${filename}`;
+		return destinationFolder === ''
+			? filename
+			: `${destinationFolder}/${filename}`;
 	}
 
 	/**
@@ -2665,7 +2750,10 @@ export class NoteWriter {
 			this.noteNameTemplate,
 			this.datetimeTemplate,
 		);
-		const { existing, notePath } = this.findExistingNote(recording, targetPath);
+		const { existing, notePath } = this.findExistingNote(
+			recording,
+			targetPath,
+		);
 		if (existing === null) {
 			try {
 				await this.vault.create(targetPath, markdown);
@@ -2725,7 +2813,10 @@ export class NoteWriter {
 		// transcript heading (no chapters, transcript excluded, or empty-segment
 		// fallback), which the caller treats as "no fold state to apply".
 		const headerLevel: HeadingLevel = options.transcriptHeaderLevel ?? 4;
-		const transcriptHeadingLine = findTranscriptHeadingLine(markdown, headerLevel);
+		const transcriptHeadingLine = findTranscriptHeadingLine(
+			markdown,
+			headerLevel,
+		);
 		const foldInfo: WriteFoldInfo | undefined =
 			transcriptHeadingLine !== null
 				? {
@@ -2761,7 +2852,11 @@ export class NoteWriter {
 		// heading — but never write a contentless note when the transcript is
 		// missing too. (A missing-but-advertised transcript already threw
 		// above; this also covers a not-advertised null transcript.)
-		if (recording.summaryAvailable && summary === null && transcript === null) {
+		if (
+			recording.summaryAvailable &&
+			summary === null &&
+			transcript === null
+		) {
 			throw new NoteWriterError(
 				`Recording ${recording.id} advertised a summary but neither a summary nor a transcript could be retrieved — refusing to write an empty note`,
 			);
@@ -2772,7 +2867,10 @@ export class NoteWriter {
 		// so the resolved path stays stable across re-imports. The folder names come
 		// from formatOptions so a {{plaud-folder}} template files the note under its
 		// Plaud folder.
-		const targetPath = await this.resolveTargetPath(recording, formatOptions?.folders);
+		const targetPath = await this.resolveTargetPath(
+			recording,
+			formatOptions?.folders,
+		);
 		const effectiveFormatOptions: FormatMarkdownOptions = {
 			...this.defaultFormatOptions,
 			...formatOptions,
@@ -2787,7 +2885,10 @@ export class NoteWriter {
 		// change from writing a second copy of a recording already imported
 		// elsewhere. The existing note is left in place — this is dedup, not
 		// migration; moving notes is a separate, opt-in feature.
-		const { existing, notePath } = this.findExistingNote(recording, targetPath);
+		const { existing, notePath } = this.findExistingNote(
+			recording,
+			targetPath,
+		);
 
 		if (existing === null) {
 			// Fresh note: nothing to preserve, so build with no existing frontmatter.
@@ -2837,7 +2938,8 @@ export class NoteWriter {
 		// This is what makes the placeholder self-healing: a later import that
 		// actually has the transcript/summary replaces the stub even under a
 		// 'skip' or 'prompt' policy that would otherwise leave it stranded.
-		const supersedingPlaceholder = extractPlaudPlaceholderFlag(existingContent);
+		const supersedingPlaceholder =
+			extractPlaudPlaceholderFlag(existingContent);
 
 		if (!supersedingPlaceholder && this.onDuplicate === 'skip') {
 			return { status: 'skipped', path: notePath };

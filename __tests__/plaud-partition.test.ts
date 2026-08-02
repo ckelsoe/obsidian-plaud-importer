@@ -15,7 +15,9 @@ const VAULT_B = '0bb8309763b6e8a9';
 
 describe('plaudPartition', () => {
 	it('derives a distinct partition per vault', () => {
-		expect(plaudPartition(VAULT_A)).toBe(`${LEGACY_PLAUD_PARTITION}-${VAULT_A}`);
+		expect(plaudPartition(VAULT_A)).toBe(
+			`${LEGACY_PLAUD_PARTITION}-${VAULT_A}`,
+		);
 		expect(plaudPartition(VAULT_A)).not.toBe(plaudPartition(VAULT_B));
 	});
 
@@ -108,7 +110,7 @@ describe('per-vault partition routing (issue #87)', () => {
 		delete (window as unknown as { require?: unknown }).require;
 	});
 
-	it('routes a vault\'s renewal at that vault\'s own partition', async () => {
+	it("routes a vault's renewal at that vault's own partition", async () => {
 		const calls = installFakeElectron();
 		const post = buildPartitionPost(plaudPartition(VAULT_A));
 		expect(post).not.toBeNull();
@@ -195,7 +197,7 @@ describe('clearPlaudLoginSession scope (issue #87)', () => {
 		delete (window as unknown as { require?: unknown }).require;
 	});
 
-	it('clears this vault\'s partition, not another vault\'s', async () => {
+	it("clears this vault's partition, not another vault's", async () => {
 		const cleared = installClearRecorder();
 		await clearPlaudLoginSession({ appId: VAULT_A } as unknown as App);
 		expect(cleared).toContain(plaudPartition(VAULT_A));

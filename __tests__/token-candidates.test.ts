@@ -42,7 +42,13 @@ const PAST_EXP = 1_770_000_000; // seconds → 2026-02-01, before NOW_MS
 // The au-coco / treyb shape: a user token under the `token` key.
 const USER_TOKEN = makeJwt(
 	{ alg: 'HS256', typ: 'JWT' },
-	{ sub: 'u1', exp: FUTURE_EXP, iat: 1_774_000_000, client_id: 'web', region: 'us' },
+	{
+		sub: 'u1',
+		exp: FUTURE_EXP,
+		iat: 1_774_000_000,
+		client_id: 'web',
+		region: 'us',
+	},
 );
 
 // The rogerfsh shape: the only LIVE credential is a workspace token (typ WT,
@@ -199,7 +205,9 @@ describe('collectTokenCandidates', () => {
 
 	it('skips oversized values without decoding them', () => {
 		const huge = `${USER_TOKEN}${'A'.repeat(MAX_CANDIDATE_LENGTH)}`;
-		expect(collectTokenCandidates(entries({ pld_blob: huge }), NOW_MS)).toEqual([]);
+		expect(
+			collectTokenCandidates(entries({ pld_blob: huge }), NOW_MS),
+		).toEqual([]);
 	});
 });
 
@@ -230,48 +238,60 @@ const APPLE_SSO_STORAGE: Record<string, string> = {
 
 describe('the Apple-SSO account shape (issue #78, 0.35.0 regression)', () => {
 	it('finds the workspace token nested inside workspaceList', () => {
-		expect(collectTokenCandidates(entries(APPLE_SSO_STORAGE), NOW_MS)).toEqual([
-			WORKSPACE_TOKEN,
-		]);
+		expect(
+			collectTokenCandidates(entries(APPLE_SSO_STORAGE), NOW_MS),
+		).toEqual([WORKSPACE_TOKEN]);
 	});
 
 	it('never offers the 30-day refresh token sitting beside it', () => {
 		// Probed live: this value answers -3901 "token type does not match parse
 		// mode". It has a longer life than the credential, so any exp-based
 		// ranking would have picked exactly the wrong one.
-		const found = collectTokenCandidates(entries(APPLE_SSO_STORAGE), NOW_MS);
+		const found = collectTokenCandidates(
+			entries(APPLE_SSO_STORAGE),
+			NOW_MS,
+		);
 		expect(found).not.toContain(REFRESH_TOKEN);
 	});
 
 	it('never offers the profile JWT holding email, id, and name', () => {
-		expect(collectTokenCandidates(entries(APPLE_SSO_STORAGE), NOW_MS)).not.toContain(
-			PROFILE_JWT,
-		);
+		expect(
+			collectTokenCandidates(entries(APPLE_SSO_STORAGE), NOW_MS),
+		).not.toContain(PROFILE_JWT);
 	});
 
 	it('delivers that token through the deep link', () => {
 		const url = buildTokenDeepLink(
 			collectTokenCandidates(entries(APPLE_SSO_STORAGE), NOW_MS),
 		);
-		expect(parseTokenCandidates(
-			Object.fromEntries(new URLSearchParams(url.slice(url.indexOf('?') + 1))),
-		)).toEqual([WORKSPACE_TOKEN]);
+		expect(
+			parseTokenCandidates(
+				Object.fromEntries(
+					new URLSearchParams(url.slice(url.indexOf('?') + 1)),
+				),
+			),
+		).toEqual([WORKSPACE_TOKEN]);
 	});
 });
 
 describe('nested extraction bounds', () => {
 	it('walks arrays, objects, and JSON-inside-JSON', () => {
-		const nested = JSON.stringify({ a: [{ b: JSON.stringify({ c: USER_TOKEN }) }] });
-		expect(collectTokenCandidates([{ key: 'pld_k', value: nested }], NOW_MS)).toEqual([
-			USER_TOKEN,
-		]);
+		const nested = JSON.stringify({
+			a: [{ b: JSON.stringify({ c: USER_TOKEN }) }],
+		});
+		expect(
+			collectTokenCandidates([{ key: 'pld_k', value: nested }], NOW_MS),
+		).toEqual([USER_TOKEN]);
 	});
 
 	it('stops descending past the depth cap', () => {
 		let deep: unknown = USER_TOKEN;
 		for (let i = 0; i < MAX_WALK_DEPTH + 3; i += 1) deep = [deep];
 		expect(
-			collectTokenCandidates([{ key: 'pld_k', value: JSON.stringify(deep) }], NOW_MS),
+			collectTokenCandidates(
+				[{ key: 'pld_k', value: JSON.stringify(deep) }],
+				NOW_MS,
+			),
 		).toEqual([]);
 	});
 
@@ -312,9 +332,9 @@ describe('nested extraction bounds', () => {
 		// The -3900 lesson: only complete parsed string values are candidates,
 		// never a substring cut out of arbitrary text.
 		const smuggled = `noise ${USER_TOKEN} noise`;
-		expect(collectTokenCandidates([{ key: 'pld_k', value: smuggled }], NOW_MS)).toEqual(
-			[],
-		);
+		expect(
+			collectTokenCandidates([{ key: 'pld_k', value: smuggled }], NOW_MS),
+		).toEqual([]);
 	});
 });
 
@@ -333,9 +353,19 @@ describe('buildTokenDeepLink', () => {
 		const bulky = (n: number): string =>
 			makeJwt(
 				{ alg: 'HS256', typ: 'JWT' },
-				{ sub: `u${n}`, exp: FUTURE_EXP, client_id: 'web', pad: 'x'.repeat(600) },
+				{
+					sub: `u${n}`,
+					exp: FUTURE_EXP,
+					client_id: 'web',
+					pad: 'x'.repeat(600),
+				},
 			);
-		const url = buildTokenDeepLink([bulky(1), bulky(2), bulky(3), bulky(4)]);
+		const url = buildTokenDeepLink([
+			bulky(1),
+			bulky(2),
+			bulky(3),
+			bulky(4),
+		]);
 		expect(url.length).toBeLessThanOrEqual(MAX_DEEP_LINK_URL_LENGTH);
 		const encoded = url.slice(`${TOKEN_DEEP_LINK_BASE}?tokens=`.length);
 		const kept = JSON.parse(decodeURIComponent(encoded)) as string[];
@@ -347,7 +377,12 @@ describe('buildTokenDeepLink', () => {
 	it('keeps one candidate even when it alone exceeds the budget', () => {
 		const enormous = makeJwt(
 			{ alg: 'HS256', typ: 'JWT' },
-			{ sub: 'u1', exp: FUTURE_EXP, client_id: 'web', pad: 'x'.repeat(3000) },
+			{
+				sub: 'u1',
+				exp: FUTURE_EXP,
+				client_id: 'web',
+				pad: 'x'.repeat(3000),
+			},
 		);
 		const url = buildTokenDeepLink([enormous]);
 		expect(url.length).toBeGreaterThan(MAX_DEEP_LINK_URL_LENGTH);
@@ -358,13 +393,15 @@ describe('buildTokenDeepLink', () => {
 
 describe('parseTokenCandidates', () => {
 	it('reads the legacy single token parameter', () => {
-		expect(parseTokenCandidates({ token: USER_TOKEN })).toEqual([USER_TOKEN]);
+		expect(parseTokenCandidates({ token: USER_TOKEN })).toEqual([
+			USER_TOKEN,
+		]);
 	});
 
 	it('strips a bearer prefix and surrounding whitespace', () => {
-		expect(parseTokenCandidates({ token: `  bearer ${USER_TOKEN} ` })).toEqual([
-			USER_TOKEN,
-		]);
+		expect(
+			parseTokenCandidates({ token: `  bearer ${USER_TOKEN} ` }),
+		).toEqual([USER_TOKEN]);
 	});
 
 	it('reads the tokens array', () => {
@@ -391,15 +428,21 @@ describe('parseTokenCandidates', () => {
 				{ sub: `u${i}`, exp: FUTURE_EXP, client_id: 'web' },
 			),
 		);
-		expect(parseTokenCandidates({ tokens: JSON.stringify(list) })).toHaveLength(
-			8,
-		);
+		expect(
+			parseTokenCandidates({ tokens: JSON.stringify(list) }),
+		).toHaveLength(8);
 	});
 
 	it('drops non-string elements', () => {
 		expect(
 			parseTokenCandidates({
-				tokens: JSON.stringify([1, null, { a: 1 }, [USER_TOKEN], USER_TOKEN]),
+				tokens: JSON.stringify([
+					1,
+					null,
+					{ a: 1 },
+					[USER_TOKEN],
+					USER_TOKEN,
+				]),
 			}),
 		).toEqual([USER_TOKEN]);
 	});
@@ -407,22 +450,26 @@ describe('parseTokenCandidates', () => {
 	it('drops oversized elements', () => {
 		const huge = 'A'.repeat(MAX_CANDIDATE_LENGTH + 1);
 		expect(
-			parseTokenCandidates({ tokens: JSON.stringify([huge, USER_TOKEN]) }),
+			parseTokenCandidates({
+				tokens: JSON.stringify([huge, USER_TOKEN]),
+			}),
 		).toEqual([USER_TOKEN]);
 	});
 
 	it('drops empty and whitespace-only elements', () => {
 		expect(
-			parseTokenCandidates({ tokens: JSON.stringify(['', '   ', '\t\n']) }),
+			parseTokenCandidates({
+				tokens: JSON.stringify(['', '   ', '\t\n']),
+			}),
 		).toEqual([]);
 	});
 
 	it('returns nothing for malformed JSON, missing params, or a non-array', () => {
 		expect(parseTokenCandidates({ tokens: 'not json' })).toEqual([]);
 		expect(parseTokenCandidates({})).toEqual([]);
-		expect(parseTokenCandidates({ tokens: JSON.stringify({ a: 1 }) })).toEqual(
-			[],
-		);
+		expect(
+			parseTokenCandidates({ tokens: JSON.stringify({ a: 1 }) }),
+		).toEqual([]);
 	});
 
 	it('falls back to the legacy token when the array is malformed', () => {
@@ -434,14 +481,18 @@ describe('parseTokenCandidates', () => {
 	it('shapes values but does not judge them; the selector does that', () => {
 		// A profile JWT survives parsing and is rejected at selection, so the
 		// trust boundary and the credential guard stay separate concerns.
-		expect(parseTokenCandidates({ token: PROFILE_JWT })).toEqual([PROFILE_JWT]);
+		expect(parseTokenCandidates({ token: PROFILE_JWT })).toEqual([
+			PROFILE_JWT,
+		]);
 	});
 });
 
 describe('parseClipboardTokens', () => {
 	it('reads a bare token, the pre-0.35.0 clipboard shape', () => {
 		expect(parseClipboardTokens(`  ${USER_TOKEN}  `)).toEqual([USER_TOKEN]);
-		expect(parseClipboardTokens(`bearer ${USER_TOKEN}`)).toEqual([USER_TOKEN]);
+		expect(parseClipboardTokens(`bearer ${USER_TOKEN}`)).toEqual([
+			USER_TOKEN,
+		]);
 	});
 
 	it('reads a pasted deep link and keeps every candidate', () => {
@@ -462,9 +513,11 @@ describe('parseClipboardTokens', () => {
 
 	it('tolerates surrounding whitespace and scheme casing on a deep link', () => {
 		const link = buildTokenDeepLink([USER_TOKEN]);
-		expect(parseClipboardTokens(`\n ${link.toUpperCase().slice(0, 10)}${link.slice(10)} `)).toEqual(
-			[USER_TOKEN],
-		);
+		expect(
+			parseClipboardTokens(
+				`\n ${link.toUpperCase().slice(0, 10)}${link.slice(10)} `,
+			),
+		).toEqual([USER_TOKEN]);
 	});
 
 	it('returns nothing for empty or absurdly large clipboard content', () => {
@@ -478,7 +531,11 @@ describe('isCredentialRejection', () => {
 	it('treats a rejected token as the candidate’s fault', () => {
 		expect(
 			isCredentialRejection(
-				new PlaudAuthError('token_rejected', 'dead', '/file/simple/web'),
+				new PlaudAuthError(
+					'token_rejected',
+					'dead',
+					'/file/simple/web',
+				),
 			),
 		).toBe(true);
 	});
@@ -486,7 +543,12 @@ describe('isCredentialRejection', () => {
 	it('treats an in-band error as the candidate’s fault', () => {
 		expect(
 			isCredentialRejection(
-				new PlaudApiError('in-band', undefined, '/file/simple/web', -3901),
+				new PlaudApiError(
+					'in-band',
+					undefined,
+					'/file/simple/web',
+					-3901,
+				),
 			),
 		).toBe(true);
 	});
@@ -498,8 +560,12 @@ describe('isCredentialRejection', () => {
 		expect(isCredentialRejection(new PlaudApiError('network error'))).toBe(
 			false,
 		);
-		expect(isCredentialRejection(new PlaudApiError('429', 429))).toBe(false);
-		expect(isCredentialRejection(new PlaudParseError('bad shape'))).toBe(false);
+		expect(isCredentialRejection(new PlaudApiError('429', 429))).toBe(
+			false,
+		);
+		expect(isCredentialRejection(new PlaudParseError('bad shape'))).toBe(
+			false,
+		);
 		expect(isCredentialRejection(new Error('boom'))).toBe(false);
 	});
 });
@@ -509,7 +575,12 @@ describe('selectWorkingCandidate', () => {
 		throw new PlaudAuthError('token_rejected', 'dead', '/file/simple/web');
 	};
 	const inBand = (status: number): never => {
-		throw new PlaudApiError('in-band', undefined, '/file/simple/web', status);
+		throw new PlaudApiError(
+			'in-band',
+			undefined,
+			'/file/simple/web',
+			status,
+		);
 	};
 
 	it('selects the first candidate Plaud accepts', async () => {
@@ -717,7 +788,9 @@ describe('SIGN_IN_BOOKMARKLET', () => {
 		// Digits and commas only: inert under the browser's percent-decoding of
 		// a javascript: URL, and containing no quote, %, & or # to be mangled.
 		expect(encoded).toMatch(/^[0-9,]+$/);
-		expect(String.fromCharCode(...encoded.split(',').map(Number))).toBe(name);
+		expect(String.fromCharCode(...encoded.split(',').map(Number))).toBe(
+			name,
+		);
 	});
 
 	it('is a single line with no backslashes, so it pastes as a bookmark URL', () => {
@@ -727,9 +800,12 @@ describe('SIGN_IN_BOOKMARKLET', () => {
 	});
 
 	it('refuses to run off a Plaud origin', () => {
-		const run = runBookmarklet({ token: USER_TOKEN }, {
-			hostname: 'evil.example.com',
-		});
+		const run = runBookmarklet(
+			{ token: USER_TOKEN },
+			{
+				hostname: 'evil.example.com',
+			},
+		);
 		expect(run.href).toBeNull();
 		expect(run.prompts).toEqual([]);
 		expect(run.alerts).toHaveLength(1);
@@ -737,14 +813,17 @@ describe('SIGN_IN_BOOKMARKLET', () => {
 
 	it('accepts the apex domain and subdomains', () => {
 		expect(
-			runBookmarklet({ token: USER_TOKEN }, { hostname: 'plaud.ai' }).href,
+			runBookmarklet({ token: USER_TOKEN }, { hostname: 'plaud.ai' })
+				.href,
 		).not.toBeNull();
 		expect(
-			runBookmarklet({ token: USER_TOKEN }, { hostname: 'WEB.Plaud.AI' }).href,
+			runBookmarklet({ token: USER_TOKEN }, { hostname: 'WEB.Plaud.AI' })
+				.href,
 		).not.toBeNull();
 		// Suffix match must not accept a lookalike registrable domain.
 		expect(
-			runBookmarklet({ token: USER_TOKEN }, { hostname: 'notplaud.ai' }).href,
+			runBookmarklet({ token: USER_TOKEN }, { hostname: 'notplaud.ai' })
+				.href,
 		).toBeNull();
 	});
 
@@ -755,7 +834,11 @@ describe('SIGN_IN_BOOKMARKLET', () => {
 		],
 		[
 			'no primary key at all (the rogerfsh shape)',
-			{ pld_ws1: WORKSPACE_TOKEN, tokenstr: REVOKED_LONG_TOKEN, userInfo: PROFILE_JWT },
+			{
+				pld_ws1: WORKSPACE_TOKEN,
+				tokenstr: REVOKED_LONG_TOKEN,
+				userInfo: PROFILE_JWT,
+			},
 		],
 		[
 			'refresh token, expired token, and junk mixed in',
@@ -766,10 +849,15 @@ describe('SIGN_IN_BOOKMARKLET', () => {
 				n: '42',
 			},
 		],
-		['duplicates under different keys', { token: USER_TOKEN, copy: USER_TOKEN }],
+		[
+			'duplicates under different keys',
+			{ token: USER_TOKEN, copy: USER_TOKEN },
+		],
 	])('matches collectTokenCandidates for %s', (_name, map) => {
 		const expected = collectTokenCandidates(entries(map), NOW_MS);
-		expect(runBookmarklet(map).href).toBe(buildTokenDeepLink(expected, TEST_VAULT));
+		expect(runBookmarklet(map).href).toBe(
+			buildTokenDeepLink(expected, TEST_VAULT),
+		);
 	});
 
 	it('never dead-ends: a miss offers a diagnostic instead of only an alert', () => {
@@ -777,7 +865,10 @@ describe('SIGN_IN_BOOKMARKLET', () => {
 		// - strictly worse than the pre-deep-link bookmarklet, which at least
 		// showed something to paste. A miss must now always hand back something
 		// actionable.
-		const run = runBookmarklet({ userInfo: PROFILE_JWT, stale: EXPIRED_TOKEN });
+		const run = runBookmarklet({
+			userInfo: PROFILE_JWT,
+			stale: EXPIRED_TOKEN,
+		});
 		expect(run.href).toBeNull();
 		expect(run.alerts).toEqual([]);
 		expect(run.prompts).toHaveLength(1);
@@ -809,7 +900,10 @@ describe('SIGN_IN_BOOKMARKLET', () => {
 		// Not just the first candidate: the paste path has to be able to choose
 		// between them too, or the fallback saves a revoked token on the very
 		// accounts this release exists for.
-		const run = runBookmarklet({ pld_ws1: WORKSPACE_TOKEN, token: USER_TOKEN });
+		const run = runBookmarklet({
+			pld_ws1: WORKSPACE_TOKEN,
+			token: USER_TOKEN,
+		});
 		expect(run.prompts).toHaveLength(1);
 		expect(run.prompts[0].value).toBe(run.href);
 		expect(parseClipboardTokens(run.prompts[0].value)).toEqual([
@@ -826,7 +920,9 @@ describe('SIGN_IN_BOOKMARKLET', () => {
 		expect(runBookmarklet(map).href).not.toBeNull();
 		const later = runBookmarklet(map, { nowMs: (FUTURE_EXP + 1) * 1000 });
 		expect(later.href).toBeNull();
-		expect(later.prompts[0].value.startsWith('plaud-capture-miss')).toBe(true);
+		expect(later.prompts[0].value.startsWith('plaud-capture-miss')).toBe(
+			true,
+		);
 	});
 
 	it('stays silent when the deep link took focus away', () => {
@@ -840,6 +936,9 @@ describe('SIGN_IN_BOOKMARKLET', () => {
 		const href = runBookmarklet(map).href ?? '';
 		const query = href.slice(href.indexOf('?') + 1);
 		const params = Object.fromEntries(new URLSearchParams(query));
-		expect(parseTokenCandidates(params)).toEqual([USER_TOKEN, WORKSPACE_TOKEN]);
+		expect(parseTokenCandidates(params)).toEqual([
+			USER_TOKEN,
+			WORKSPACE_TOKEN,
+		]);
 	});
 });

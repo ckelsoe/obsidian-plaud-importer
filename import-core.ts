@@ -275,7 +275,8 @@ export function classifyError(err: unknown): ErrorClassification {
 		if (err.status === 429) {
 			return {
 				category: 'rate-limited',
-				message: 'Plaud is rate-limiting requests. Try again in a minute.',
+				message:
+					'Plaud is rate-limiting requests. Try again in a minute.',
 				canRetry: true,
 			};
 		}
@@ -460,7 +461,9 @@ export interface ImportTally {
 	readonly placeholderResults: readonly ImportResult[];
 }
 
-export function tallyImportResults(results: readonly ImportResult[]): ImportTally {
+export function tallyImportResults(
+	results: readonly ImportResult[],
+): ImportTally {
 	let created = 0;
 	let overwritten = 0;
 	let skipped = 0;
@@ -545,7 +548,9 @@ export function formatImportNotice(tally: ImportTally): string {
  * future "copy failure details" button in the summary view can share
  * the same format.
  */
-export function formatErrorForClipboard(classification: ErrorClassification): string {
+export function formatErrorForClipboard(
+	classification: ErrorClassification,
+): string {
 	return [
 		'Plaud Importer error',
 		`Category: ${classification.category}`,
@@ -742,8 +747,4 @@ export interface ArtifactSelection {
  * short-circuit subsequent duplicates in the same batch.
  */
 export type DuplicateDecisionChoice =
-	| 'overwrite'
-	| 'skip'
-	| 'overwrite-all'
-	| 'skip-all'
-	| 'cancel';
+	'overwrite' | 'skip' | 'overwrite-all' | 'skip-all' | 'cancel';
