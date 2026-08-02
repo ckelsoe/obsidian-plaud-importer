@@ -348,6 +348,10 @@ See [PRIVACY.md](./PRIVACY.md) for the full privacy policy and liability disclai
 - **Import silently "skipped"** — your duplicate handling was set to Skip and the note already existed. Switch to **Ask each time** (default since 0.2.0) or **Overwrite**.
 - **A brand-new recording will not import yet.** A recording does not become available to import until you have opened Plaud (web or app) and its cloud has finished finalizing the recording. Until then the plugin cannot see it. Open Plaud, let it finish processing, then run the import again. This is a Plaud-side step, not a plugin limitation.
 
+## Community
+
+Questions, ideas, and general discussion happen on [Discord](https://discord.gg/gd6tKJDPj4). For anything that needs tracking, a GitHub issue is still the better home.
+
 ## Support and issues
 
 Please report bugs and feature requests at [github.com/ckelsoe/obsidian-plaud-importer/issues](https://github.com/ckelsoe/obsidian-plaud-importer/issues). Include:

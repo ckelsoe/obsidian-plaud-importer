@@ -2,6 +2,19 @@
 
 All notable changes to Plaud Importer will be documented in this file.
 
+## [Unreleased]
+
+### Added
+
+- **A Discord link in the settings footer and the README.** Questions, ideas, and general discussion now have somewhere to go that is not a GitHub issue. The invite never expires. A GitHub issue is still the better home for anything that needs tracking.
+- **A funding link.** Obsidian shows it beside the plugin in Community plugins for anyone who wants to support the work. Entirely optional and it changes nothing about how the plugin behaves.
+
+### Fixed
+
+- **Template names with stray braces no longer misbehave.** A note-name or folder template containing an unmatched `{`, for example `{{{{YYYY}}`, was read starting from the first brace, so the plugin fed the date formatter a nonsense pattern and put garbage in your filename. It now reads the well-formed `{{YYYY}}` and leaves the stray braces as the plain text they are. A template with a long run of `{` characters could also make the plugin hang for seconds while it worked through them; that is now instant.
+- **The description of "Keep AI keywords as note property" is the same on every Obsidian version.** The settings tab renders through two different code paths depending on your Obsidian version, and the one used by 1.12 was missing the sentence explaining why the toggle is off by default. Both now show the full description.
+- **The links in the settings footer no longer run together.** The separators between them depended on plain whitespace, which the layout dropped, so the row could read `GitHub|Report issues`. They are spaced by the layout now.
+
 ## [0.37.0] - 2026-08-02
 
 ### Changed
