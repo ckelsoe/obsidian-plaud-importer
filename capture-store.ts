@@ -383,20 +383,23 @@ export class CaptureStore<S extends CaptureSettings> {
 		if (apiBaseUrl !== undefined) {
 			live.apiBaseUrl = apiBaseUrl;
 		}
-		// Blank any legacy WRT from a previous session so it cannot shadow the
-		// recorded method. After the commit, like the credential: a capture that
-		// never stored must not clear the session it failed to replace.
-		this.host.clearStoredRefreshToken();
-		// A newly stored credential clears any prior refresh failure: whatever
-		// was wrong, the user just replaced the thing that was failing.
-		this.host.clearRefreshFailure();
-		// Everything below is bookkeeping about a store that has already
-		// succeeded. A throw in it must not escape, or the caller reports a
-		// save failure for a credential that is durably linked; the redraw
-		// guard this generalizes existed for exactly that reason. Each call is
-		// guarded ALONE, because they are independent: one failing must not
-		// skip the rest, or a stored credential is left without its renewal
+		// EVERY host call below this line is bookkeeping about a store that has
+		// already succeeded. A throw in one must not escape, or the caller
+		// reports a save failure for a credential that is durably linked; the
+		// redraw guard this generalizes existed for exactly that reason. Each
+		// call is guarded ALONE, because they are independent: one failing must
+		// not skip the rest, or a stored credential is left without its renewal
 		// timer or with a stale settings tab.
+		//
+		// The guard covers the two clears as well, which it did not have to when
+		// this lived on the plugin: there `clearStoredRefreshToken` was a private
+		// method with its own try/catch and the refresh-failure clear was a bare
+		// field assignment, so neither could throw and the guard could start
+		// below them. Behind an interface they are arbitrary host callbacks, and
+		// `setSecret` (which the plugin's implementation calls) is documented
+		// throwable. Relying on a host to swallow its own errors would make an
+		// undocumented precondition load-bearing on the plugin's most delicate
+		// path.
 		const guarded = (what: string, run: () => void): void => {
 			try {
 				run();
@@ -407,6 +410,15 @@ export class CaptureStore<S extends CaptureSettings> {
 				);
 			}
 		};
+		// Blank any legacy WRT from a previous session so it cannot shadow the
+		// recorded method. After the commit, like the credential: a capture that
+		// never stored must not clear the session it failed to replace.
+		guarded('legacy refresh-token blank', () =>
+			this.host.clearStoredRefreshToken(),
+		);
+		// A newly stored credential clears any prior refresh failure: whatever
+		// was wrong, the user just replaced the thing that was failing.
+		guarded('refresh-failure clear', () => this.host.clearRefreshFailure());
 		if (!background) {
 			guarded('short-lifetime notice', () =>
 				this.host.noteShortLifetimeOnCapture(token, signInMethod),

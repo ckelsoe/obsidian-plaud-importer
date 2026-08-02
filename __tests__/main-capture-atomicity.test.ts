@@ -89,6 +89,13 @@ interface Harness {
 	failSave: Error | null;
 	/** Set to make the CAPTURED-id credential write throw, recording nothing. */
 	failSecret: Error | null;
+	/**
+	 * Set to make the LEGACY-id blank throw. A separate switch from failSecret
+	 * because the two happen on opposite sides of the commit: the credential
+	 * write can still undo a capture, the legacy blank is bookkeeping after one
+	 * has already succeeded and must not be able to fail it.
+	 */
+	failLegacySecret: Error | null;
 	/** Runs during the settings write, while the commit is still in flight. */
 	duringSave: (() => void) | null;
 	/**
@@ -123,6 +130,7 @@ function makeHarness(settings: Partial<HarnessSettings> = {}): Harness {
 		secrets,
 		failSave: null,
 		failSecret: null,
+		failLegacySecret: null,
 		duringSave: null,
 		shortLifetimeNotices: 0,
 	};
@@ -142,6 +150,12 @@ function makeHarness(settings: Partial<HarnessSettings> = {}): Harness {
 			if (id === CAPTURED_SECRET_ID && harness.failSecret !== null) {
 				// A backend that refused the write recorded nothing.
 				throw harness.failSecret;
+			}
+			if (
+				id === LEGACY_REFRESH_SECRET_ID &&
+				harness.failLegacySecret !== null
+			) {
+				throw harness.failLegacySecret;
 			}
 			calls.push(`setSecret:${id}`);
 			secrets.set(id, secret);
@@ -409,6 +423,58 @@ describe('storing a capture is all-or-nothing (issue #86)', () => {
 			);
 			expect(h.calls).toContain('reconcileRefresh');
 			expect(h.calls).toContain('settingsRefresh');
+		});
+
+		it('does not fail a stored capture when blanking the legacy token throws', async () => {
+			// The legacy blank writes a secret, and setSecret is throwable. On the
+			// plugin this call was a private method that swallowed its own errors,
+			// so it could sit outside the guard; behind the host interface it is an
+			// arbitrary callback, and a throwing one would reject a store whose
+			// credential is already durably written. The bookkeeping after it must
+			// still run: a stored window credential without its renewal timer stops
+			// renewing silently.
+			const h = makeHarness();
+			h.failLegacySecret = new Error('secret backing store unavailable');
+			h.host.settingsRefresh = () => h.calls.push('settingsRefresh');
+			const token = usableToken();
+
+			const result = await h.store.storeAccessToken(token, 'window');
+
+			expect(result).toEqual({ outcome: 'stored' });
+			expect(h.secrets.get(CAPTURED_SECRET_ID)).toBe(token);
+			expect(h.host.settings.secretId).toBe(CAPTURED_SECRET_ID);
+			expect(consoleError).toHaveBeenCalledWith(
+				expect.stringContaining(
+					'legacy refresh-token blank after a stored capture failed',
+				),
+				expect.any(Error),
+			);
+			expect(h.calls).toContain('reconcileExpiry');
+			expect(h.calls).toContain('reconcileRefresh');
+			expect(h.calls).toContain('settingsRefresh');
+		});
+
+		it('does not fail a stored capture when clearing the refresh failure throws', async () => {
+			// Same reasoning as the legacy blank. On the plugin this was a bare
+			// field assignment that could not throw; through the host it is a
+			// callback like any other.
+			const h = makeHarness();
+			h.host.clearRefreshFailure = (): void => {
+				throw new Error('refresh-failure clear blew up');
+			};
+			const token = usableToken();
+
+			const result = await h.store.storeAccessToken(token, 'window');
+
+			expect(result).toEqual({ outcome: 'stored' });
+			expect(h.secrets.get(CAPTURED_SECRET_ID)).toBe(token);
+			expect(consoleError).toHaveBeenCalledWith(
+				expect.stringContaining(
+					'refresh-failure clear after a stored capture failed',
+				),
+				expect.any(Error),
+			);
+			expect(h.calls).toContain('reconcileRefresh');
 		});
 	});
 
