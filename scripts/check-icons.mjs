@@ -54,12 +54,12 @@ if (!listMatch) {
 	console.error("check-icons: could not locate the RIBBON_ICON_CHOICES array in main.ts (did its shape change?).");
 	process.exit(1);
 }
-for (const m of listMatch[1].matchAll(/id:\s*"([a-z0-9-]+)"/g)) {
+for (const m of listMatch[1].matchAll(/id:\s*["']([a-z0-9-]+)["']/g)) {
 	add(m[1], "RIBBON_ICON_CHOICES");
 }
 
 // 2. The default ribbon icon.
-const defaultMatch = code.match(/DEFAULT_RIBBON_ICON\s*=\s*"([a-z0-9-]+)"/);
+const defaultMatch = code.match(/DEFAULT_RIBBON_ICON\s*=\s*["']([a-z0-9-]+)["']/);
 if (defaultMatch) add(defaultMatch[1], "DEFAULT_RIBBON_ICON");
 
 // 3. Literal ids passed to setIcon(...) (both `el.setIcon("x")` and
@@ -67,7 +67,7 @@ if (defaultMatch) add(defaultMatch[1], "DEFAULT_RIBBON_ICON");
 // result (e.g. resolveRibbonIconId(...)) are skipped: they resolve to a value
 // already covered above or coerced to the default at runtime. The convention this
 // guard assumes is "curated list + plain quoted literals".
-for (const m of code.matchAll(/setIcon\(\s*(?:[^,"'()]+,\s*)?"([a-z0-9-]+)"\s*\)/g)) {
+for (const m of code.matchAll(/setIcon\(\s*(?:[^,"'()]+,\s*)?["']([a-z0-9-]+)["']\s*\)/g)) {
 	add(m[1], 'setIcon("...")');
 }
 
