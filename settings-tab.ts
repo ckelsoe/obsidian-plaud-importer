@@ -2147,7 +2147,7 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 	private renderFooter(setting: Setting): void {
 		const el = setting.settingEl;
 		el.empty();
-		el.addClass('plaud-importer-footer');
+		el.addClass('plaud-importer-settings-footer');
 
 		const manifestVersion = this.plugin.manifest.version || '0.0.0';
 		el.createSpan({ text: `Version ${manifestVersion} | ` });
