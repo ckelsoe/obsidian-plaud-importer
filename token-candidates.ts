@@ -134,7 +134,10 @@ export interface StoredEntry {
  * whitespace form, so a stray tab costs a few URL characters and nothing else.
  */
 function normalizeCandidate(raw: string): string | null {
-	const token = raw.trim().replace(/^bearer +/i, '').trim();
+	const token = raw
+		.trim()
+		.replace(/^bearer +/i, '')
+		.trim();
 	return token.length === 0 ? null : token;
 }
 
@@ -188,7 +191,11 @@ export function collectTokenCandidates(
 	// that swallow adjacent characters) still holds.
 	let budget = MAX_WALK_NODES;
 	const walk = (node: unknown, depth: number): void => {
-		if (depth > MAX_WALK_DEPTH || budget <= 0 || out.length >= MAX_COLLECTED_CANDIDATES) {
+		if (
+			depth > MAX_WALK_DEPTH ||
+			budget <= 0 ||
+			out.length >= MAX_COLLECTED_CANDIDATES
+		) {
 			return;
 		}
 		budget -= 1;
@@ -420,17 +427,29 @@ export async function selectWorkingCandidate(
 	probe: (token: string) => Promise<void>,
 	nowMs: number = Date.now(),
 ): Promise<CandidateSelection> {
-	const usable = candidates.filter((token) => isUsableUserToken(token, nowMs));
+	const usable = candidates.filter((token) =>
+		isUsableUserToken(token, nowMs),
+	);
 	if (usable.length === 0) {
 		return { outcome: 'none-usable', token: null, usable, error: null };
 	}
 	for (const candidate of usable) {
 		try {
 			await probe(candidate);
-			return { outcome: 'selected', token: candidate, usable, error: null };
+			return {
+				outcome: 'selected',
+				token: candidate,
+				usable,
+				error: null,
+			};
 		} catch (err) {
 			if (!isCredentialRejection(err)) {
-				return { outcome: 'unreachable', token: null, usable, error: err };
+				return {
+					outcome: 'unreachable',
+					token: null,
+					usable,
+					error: err,
+				};
 			}
 		}
 	}
@@ -462,7 +481,7 @@ export async function selectWorkingCandidate(
 // The `javascript:` scheme is held in its own const and concatenated, so the
 // one place that strips it (the parity test, which executes the body) can
 // reuse the same value instead of re-spelling the scheme.
-export const BOOKMARKLET_SCHEME = "javascript:";
+export const BOOKMARKLET_SCHEME = 'javascript:';
 
 /**
  * Escapes the bookmarklet for embedding as an HTML attribute VALUE on the

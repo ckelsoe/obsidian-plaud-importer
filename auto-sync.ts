@@ -196,7 +196,9 @@ export type AutoSyncTickOutcome = 'ok' | 'auth' | 'transient';
  * pause). Single-sources the auth predicate with the import runner via
  * `categoryAllowsReauth`.
  */
-export function tickOutcomeForCategory(category: ErrorCategory): AutoSyncTickOutcome {
+export function tickOutcomeForCategory(
+	category: ErrorCategory,
+): AutoSyncTickOutcome {
 	return categoryAllowsReauth(category) ? 'auth' : 'transient';
 }
 
@@ -211,7 +213,8 @@ export function nextAutoSyncState(
 		case 'transient':
 			return {
 				paused: state.paused,
-				consecutiveTransientFailures: state.consecutiveTransientFailures + 1,
+				consecutiveTransientFailures:
+					state.consecutiveTransientFailures + 1,
 			};
 		case 'ok':
 			return INITIAL_AUTO_SYNC_STATE;
@@ -222,7 +225,9 @@ export function nextAutoSyncState(
 // Interval coercion
 // -----------------------------------------------------------------------------
 
-export const AUTO_SYNC_INTERVAL_PRESETS = [15, 30, 60, 120, 240, 480, 1440] as const;
+export const AUTO_SYNC_INTERVAL_PRESETS = [
+	15, 30, 60, 120, 240, 480, 1440,
+] as const;
 export const AUTO_SYNC_INTERVAL_FLOOR = 15;
 export const AUTO_SYNC_INTERVAL_CEILING = 1440;
 export const AUTO_SYNC_INTERVAL_DEFAULT = 60;
@@ -249,5 +254,8 @@ export function coerceIntervalMinutes(value: unknown): number {
 	if (!Number.isFinite(n)) {
 		return AUTO_SYNC_INTERVAL_DEFAULT;
 	}
-	return Math.min(AUTO_SYNC_INTERVAL_CEILING, Math.max(AUTO_SYNC_INTERVAL_FLOOR, Math.floor(n)));
+	return Math.min(
+		AUTO_SYNC_INTERVAL_CEILING,
+		Math.max(AUTO_SYNC_INTERVAL_FLOOR, Math.floor(n)),
+	);
 }

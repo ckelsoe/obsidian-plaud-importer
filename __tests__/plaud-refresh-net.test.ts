@@ -64,12 +64,20 @@ describe('readRegionRedirect', () => {
 	it('returns null for non-redirect status, non-plaud host, or non-https', () => {
 		expect(readRegionRedirect({ status: 0 })).toBeNull();
 		expect(
-			readRegionRedirect({ status: -302, data: { domains: { api: 'https://evil.com' } } }),
+			readRegionRedirect({
+				status: -302,
+				data: { domains: { api: 'https://evil.com' } },
+			}),
 		).toBeNull();
 		expect(
-			readRegionRedirect({ status: -302, data: { domains: { api: 'http://api.plaud.ai' } } }),
+			readRegionRedirect({
+				status: -302,
+				data: { domains: { api: 'http://api.plaud.ai' } },
+			}),
 		).toBeNull();
-		expect(readRegionRedirect({ status: -302, data: { domains: {} } })).toBeNull();
+		expect(
+			readRegionRedirect({ status: -302, data: { domains: {} } }),
+		).toBeNull();
 	});
 });
 
@@ -78,21 +86,35 @@ describe('parseWorkspaceTokenResponse', () => {
 		expect(
 			parseWorkspaceTokenResponse({
 				status: 0,
-				data: { workspace_token: 'eyJ.wt.sig', refresh_token: 'urt-value' },
+				data: {
+					workspace_token: 'eyJ.wt.sig',
+					refresh_token: 'urt-value',
+				},
 			}),
 		).toEqual({ token: 'eyJ.wt.sig', refreshToken: 'urt-value' });
 	});
 	it('treats an absent refresh token as null', () => {
 		expect(
-			parseWorkspaceTokenResponse({ status: 0, data: { workspace_token: 'eyJ.wt.sig' } }),
+			parseWorkspaceTokenResponse({
+				status: 0,
+				data: { workspace_token: 'eyJ.wt.sig' },
+			}),
 		).toEqual({ token: 'eyJ.wt.sig', refreshToken: null });
 	});
 	it('returns null on non-success status or a missing token', () => {
 		expect(
-			parseWorkspaceTokenResponse({ status: -1, data: { workspace_token: 'eyJ.wt.sig' } }),
+			parseWorkspaceTokenResponse({
+				status: -1,
+				data: { workspace_token: 'eyJ.wt.sig' },
+			}),
 		).toBeNull();
 		expect(parseWorkspaceTokenResponse({ status: 0, data: {} })).toBeNull();
-		expect(parseWorkspaceTokenResponse({ status: 0, data: { workspace_token: '' } })).toBeNull();
+		expect(
+			parseWorkspaceTokenResponse({
+				status: 0,
+				data: { workspace_token: '' },
+			}),
+		).toBeNull();
 	});
 });
 
@@ -125,7 +147,11 @@ describe('performNetRefresh', () => {
 			baseUrl: 'https://api.plaud.ai',
 			post,
 		});
-		expect(result).toEqual({ token: FRESH_WT, refreshToken: 'new-urt', apiBaseUrl: null });
+		expect(result).toEqual({
+			token: FRESH_WT,
+			refreshToken: 'new-urt',
+			apiBaseUrl: null,
+		});
 		expect(calls[0]).toEqual({
 			url: 'https://api.plaud.ai/auth/refresh-user-token',
 			body: '{}',
@@ -180,14 +206,22 @@ describe('performNetRefresh', () => {
 	});
 
 	it('returns null when refresh is not JSON, fails, or the mint fails', async () => {
-		const bad = { currentToken: STORED_WT, baseUrl: 'https://api.plaud.ai' };
+		const bad = {
+			currentToken: STORED_WT,
+			baseUrl: 'https://api.plaud.ai',
+		};
 		await expect(
-			performNetRefresh({ ...bad, post: recordingPost([{ status: 200, text: 'nope' }]).post }),
+			performNetRefresh({
+				...bad,
+				post: recordingPost([{ status: 200, text: 'nope' }]).post,
+			}),
 		).resolves.toBeNull();
 		await expect(
 			performNetRefresh({
 				...bad,
-				post: recordingPost([{ status: 200, text: JSON.stringify({ status: -1 }) }]).post,
+				post: recordingPost([
+					{ status: 200, text: JSON.stringify({ status: -1 }) },
+				]).post,
 			}),
 		).resolves.toBeNull();
 		await expect(
@@ -202,21 +236,29 @@ describe('performNetRefresh', () => {
 	});
 
 	it('returns null (never throws) when the transport throws', async () => {
-		const post: SessionPost = () => Promise.reject(new Error('network down'));
+		const post: SessionPost = () =>
+			Promise.reject(new Error('network down'));
 		await expect(
-			performNetRefresh({ currentToken: STORED_WT, baseUrl: 'https://api.plaud.ai', post }),
+			performNetRefresh({
+				currentToken: STORED_WT,
+				baseUrl: 'https://api.plaud.ai',
+				post,
+			}),
 		).resolves.toBeNull();
 	});
 
 	it('redacts a JWT-shaped string from a logged error body', async () => {
 		const jwt = 'aaaaaaaa.bbbbbbbb.cccccccc';
-		const { post } = recordingPost([{ status: 200, text: `oops ${jwt} boom` }]);
+		const { post } = recordingPost([
+			{ status: 200, text: `oops ${jwt} boom` },
+		]);
 		const logged: Array<{ body?: string }> = [];
 		const result = await performNetRefresh({
 			currentToken: STORED_WT,
 			baseUrl: 'https://api.plaud.ai',
 			post,
-			log: (_message, payload) => logged.push(payload as { body?: string }),
+			log: (_message, payload) =>
+				logged.push(payload as { body?: string }),
 		});
 		expect(result).toBeNull();
 		const bodies = logged

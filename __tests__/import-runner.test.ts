@@ -1,4 +1,9 @@
-import { runImport, type ImportRunDeps, type ImportRunObserver, type AttachmentPipeline } from '../import-runner';
+import {
+	runImport,
+	type ImportRunDeps,
+	type ImportRunObserver,
+	type AttachmentPipeline,
+} from '../import-runner';
 import {
 	NoteWriter,
 	type FileLike,
@@ -54,7 +59,10 @@ function makeFakeVault(): FakeVault {
 		async read(file: FileLike): Promise<string> {
 			return files.get(file.path) ?? '';
 		},
-		async process(file: FileLike, fn: (data: string) => string): Promise<string> {
+		async process(
+			file: FileLike,
+			fn: (data: string) => string,
+		): Promise<string> {
 			const next = fn(files.get(file.path) ?? '');
 			files.set(file.path, next);
 			return next;
@@ -93,7 +101,12 @@ function makeTranscript(id: PlaudRecordingId): Transcript {
 	return {
 		id,
 		segments: [
-			{ startSeconds: 0, endSeconds: 10, speaker: 'Charles', text: 'Hello.' },
+			{
+				startSeconds: 0,
+				endSeconds: 10,
+				speaker: 'Charles',
+				text: 'Hello.',
+			},
 		],
 		rawText: 'Hello.',
 	};
@@ -130,7 +143,11 @@ const OPTIONS: ImportModalOptions = {
 
 function makeAttachmentStub(): {
 	pipeline: AttachmentPipeline;
-	importCalls: Array<{ notePath: string; replaceExisting: boolean; recordingId: string }>;
+	importCalls: Array<{
+		notePath: string;
+		replaceExisting: boolean;
+		recordingId: string;
+	}>;
 	audioCalls: Array<{ notePath: string; audioUrl: string }>;
 } {
 	const importCalls: Array<{
@@ -142,7 +159,13 @@ function makeAttachmentStub(): {
 	const pipeline: AttachmentPipeline = {
 		extractAttachmentAssetsFromSummaryMarkdown: () => [],
 		mergeAttachmentAssets: (base, extra) => [...base, ...extra],
-		importAttachmentsForNote: async (notePath, _attachments, _selection, replaceExisting, recordingId) => {
+		importAttachmentsForNote: async (
+			notePath,
+			_attachments,
+			_selection,
+			replaceExisting,
+			recordingId,
+		) => {
 			importCalls.push({ notePath, replaceExisting, recordingId });
 		},
 		importAudioForNote: async (notePath, audioUrl) => {
@@ -155,9 +178,14 @@ function makeAttachmentStub(): {
 
 function makeFetch(
 	artifactsById: Map<PlaudRecordingId, TranscriptAndSummary | (() => never)>,
-): { fetchArtifacts: ImportRunDeps['fetchArtifacts']; calls: PlaudRecordingId[] } {
+): {
+	fetchArtifacts: ImportRunDeps['fetchArtifacts'];
+	calls: PlaudRecordingId[];
+} {
 	const calls: PlaudRecordingId[] = [];
-	const fetchArtifacts = async (id: PlaudRecordingId): Promise<TranscriptAndSummary> => {
+	const fetchArtifacts = async (
+		id: PlaudRecordingId,
+	): Promise<TranscriptAndSummary> => {
 		calls.push(id);
 		const entry = artifactsById.get(id);
 		if (typeof entry === 'function') {
@@ -364,7 +392,9 @@ describe('runImport', () => {
 		};
 
 		const first = await runImport(deps);
-		expect(first.results[0]).toMatchObject({ writeOutcome: { status: 'created' } });
+		expect(first.results[0]).toMatchObject({
+			writeOutcome: { status: 'created' },
+		});
 
 		const second = await runImport(deps);
 		expect(second.stop).toBe('completed');
@@ -424,7 +454,10 @@ describe('runImport', () => {
 		});
 
 		expect(outcome.stop).toBe('completed');
-		expect(outcome.results[0]).toEqual({ kind: 'skipped-no-content', recording });
+		expect(outcome.results[0]).toEqual({
+			kind: 'skipped-no-content',
+			recording,
+		});
 		// onRecordingStart still fires (the button text advances), but no fetch
 		// and no badge refresh.
 		expect(starts).toEqual([[1, 1]]);
@@ -436,7 +469,14 @@ describe('runImport', () => {
 		const vault = makeFakeVault();
 		const recording = makeRecording();
 		const { fetchArtifacts } = makeFetch(
-			new Map([[recording.id, () => { throw unprocessedError(); }]]),
+			new Map([
+				[
+					recording.id,
+					() => {
+						throw unprocessedError();
+					},
+				],
+			]),
 		);
 		const { observer, written } = makeObserver();
 
@@ -464,7 +504,9 @@ describe('runImport', () => {
 		const writer = makeWriter(vault);
 
 		// First, a successful import writes the real note.
-		const good = makeFetch(new Map([[recording.id, makeArtifacts(recording)]]));
+		const good = makeFetch(
+			new Map([[recording.id, makeArtifacts(recording)]]),
+		);
 		await runImport({
 			recordings: [recording],
 			selection: SELECTION,
@@ -477,7 +519,14 @@ describe('runImport', () => {
 		// Then a later run fails to fetch with an unprocessed error; the existing
 		// real note must win over a downgrade to a stub.
 		const bad = makeFetch(
-			new Map([[recording.id, () => { throw unprocessedError(); }]]),
+			new Map([
+				[
+					recording.id,
+					() => {
+						throw unprocessedError();
+					},
+				],
+			]),
 		);
 		const { observer, written } = makeObserver();
 		const outcome = await runImport({
@@ -503,7 +552,14 @@ describe('runImport', () => {
 		const recording = makeRecording();
 		const boom = new Error('network down');
 		const { fetchArtifacts } = makeFetch(
-			new Map([[recording.id, () => { throw boom; }]]),
+			new Map([
+				[
+					recording.id,
+					() => {
+						throw boom;
+					},
+				],
+			]),
 		);
 
 		const outcome = await runImport({
@@ -516,14 +572,24 @@ describe('runImport', () => {
 		});
 
 		expect(outcome.stop).toBe('completed');
-		expect(outcome.results[0]).toMatchObject({ kind: 'failed', cause: boom });
+		expect(outcome.results[0]).toMatchObject({
+			kind: 'failed',
+			cause: boom,
+		});
 	});
 
 	it('records a failure for an unprocessed error when placeholders are disabled', async () => {
 		const vault = makeFakeVault();
 		const recording = makeRecording();
 		const { fetchArtifacts } = makeFetch(
-			new Map([[recording.id, () => { throw unprocessedError(); }]]),
+			new Map([
+				[
+					recording.id,
+					() => {
+						throw unprocessedError();
+					},
+				],
+			]),
 		);
 
 		const outcome = await runImport({
@@ -562,7 +628,9 @@ describe('runImport', () => {
 		// Prompt overwrites the first duplicate, cancels the second.
 		const promptWriter = makeWriter(vault, {
 			onDuplicate: 'prompt',
-			promptOnDuplicate: async ({ recordingId }): Promise<DuplicatePromptDecision> =>
+			promptOnDuplicate: async ({
+				recordingId,
+			}): Promise<DuplicatePromptDecision> =>
 				recordingId === recB.id ? 'cancel' : 'overwrite',
 		});
 		const outcome = await runImport({
@@ -579,7 +647,9 @@ describe('runImport', () => {
 		// the finished recordings, the x in "x/y".
 		expect(outcome.processed).toBe(1);
 		expect(outcome.results).toHaveLength(1);
-		expect(outcome.results[0]).toMatchObject({ writeOutcome: { status: 'overwritten' } });
+		expect(outcome.results[0]).toMatchObject({
+			writeOutcome: { status: 'overwritten' },
+		});
 	});
 
 	it('stops with aborted before processing the next recording', async () => {
@@ -646,7 +716,9 @@ describe('runImport', () => {
 		expect(outcome.processed).toBe(1);
 		// The recording WAS written before the final abort fired.
 		expect(outcome.results).toHaveLength(1);
-		expect(outcome.results[0]).toMatchObject({ writeOutcome: { status: 'created' } });
+		expect(outcome.results[0]).toMatchObject({
+			writeOutcome: { status: 'created' },
+		});
 	});
 
 	it('fetches once per processed recording and reports 1-based progress in order', async () => {
@@ -685,7 +757,11 @@ describe('runImport', () => {
 		// Fetch skips the no-content recording entirely.
 		expect(calls).toEqual([withContent1.id, withContent2.id]);
 		// Progress is 1-based and fires for every recording, including the skip.
-		expect(starts).toEqual([[1, 3], [2, 3], [3, 3]]);
+		expect(starts).toEqual([
+			[1, 3],
+			[2, 3],
+			[3, 3],
+		]);
 		expect(written).toEqual([withContent1.id, withContent2.id]);
 		// Ordering: start precedes the corresponding written, and the skip's
 		// start fires between the two writes.
@@ -701,9 +777,18 @@ describe('runImport', () => {
 	it('imports attachments only when the bundle has assets and the note was written', async () => {
 		const vault = makeFakeVault();
 		const recording = makeRecording();
-		const asset = { dataType: 'image', url: 'https://example.com/a.png', name: 'a.png' };
+		const asset = {
+			dataType: 'image',
+			url: 'https://example.com/a.png',
+			name: 'a.png',
+		};
 		const { fetchArtifacts } = makeFetch(
-			new Map([[recording.id, makeArtifacts(recording, { attachments: [asset] })]]),
+			new Map([
+				[
+					recording.id,
+					makeArtifacts(recording, { attachments: [asset] }),
+				],
+			]),
 		);
 		const { pipeline, importCalls } = makeAttachmentStub();
 
@@ -738,7 +823,9 @@ describe('runImport', () => {
 			attachments: makeAttachmentStub().pipeline,
 			options: OPTIONS,
 			fetchArtifacts,
-			applyFold: async (path) => { foldPaths.push(path); },
+			applyFold: async (path) => {
+				foldPaths.push(path);
+			},
 		};
 
 		await runImport(deps);
@@ -765,9 +852,16 @@ describe('runImport', () => {
 		const { fetchArtifacts, calls } = makeFetch(
 			new Map<PlaudRecordingId, TranscriptAndSummary | (() => never)>([
 				[recA.id, makeArtifacts(recA)],
-				[recB.id, (): never => {
-					throw new PlaudAuthError('token_rejected', 'rejected', '/ai/transsumm');
-				}],
+				[
+					recB.id,
+					(): never => {
+						throw new PlaudAuthError(
+							'token_rejected',
+							'rejected',
+							'/ai/transsumm',
+						);
+					},
+				],
 				[recC.id, makeArtifacts(recC)],
 			]),
 		);
@@ -796,7 +890,10 @@ describe('runImport', () => {
 		// recC was never fetched: the loop returned at recB.
 		expect(calls).toEqual([recA.id, recB.id]);
 		// recB's progress started (fires before the fetch); recC's never did.
-		expect(starts).toEqual([[1, 3], [2, 3]]);
+		expect(starts).toEqual([
+			[1, 3],
+			[2, 3],
+		]);
 		expect(written).toEqual([recA.id]);
 	});
 
@@ -806,9 +903,16 @@ describe('runImport', () => {
 		const recB = makeRecording();
 		const { fetchArtifacts, calls } = makeFetch(
 			new Map<PlaudRecordingId, TranscriptAndSummary | (() => never)>([
-				[recA.id, (): never => {
-					throw new PlaudAuthError('token_rejected', 'rejected', '/ai/transsumm');
-				}],
+				[
+					recA.id,
+					(): never => {
+						throw new PlaudAuthError(
+							'token_rejected',
+							'rejected',
+							'/ai/transsumm',
+						);
+					},
+				],
 				[recB.id, makeArtifacts(recB)],
 			]),
 		);
@@ -839,9 +943,16 @@ describe('runImport', () => {
 		const { fetchArtifacts } = makeFetch(
 			new Map<PlaudRecordingId, TranscriptAndSummary | (() => never)>([
 				[recA.id, makeArtifacts(recA)],
-				[recB.id, (): never => {
-					throw new PlaudAuthError('not_configured', 'no token', '/ai/transsumm');
-				}],
+				[
+					recB.id,
+					(): never => {
+						throw new PlaudAuthError(
+							'not_configured',
+							'no token',
+							'/ai/transsumm',
+						);
+					},
+				],
 			]),
 		);
 
@@ -867,9 +978,12 @@ describe('runImport', () => {
 		const { fetchArtifacts, calls } = makeFetch(
 			new Map<PlaudRecordingId, TranscriptAndSummary | (() => never)>([
 				[recA.id, makeArtifacts(recA)],
-				[recB.id, (): never => {
-					throw new Error('transient network blip');
-				}],
+				[
+					recB.id,
+					(): never => {
+						throw new Error('transient network blip');
+					},
+				],
 				[recC.id, makeArtifacts(recC)],
 			]),
 		);

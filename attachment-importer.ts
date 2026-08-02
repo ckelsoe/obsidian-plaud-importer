@@ -65,7 +65,8 @@ export class AttachmentImporter {
 	constructor(options: AttachmentImporterOptions) {
 		this.app = options.app;
 		this.resolveAuthToken = options.getAuthToken ?? (() => null);
-		this.resolveApiBaseUrl = options.getApiBaseUrl ?? (() => DEFAULT_PLAUD_API_BASE);
+		this.resolveApiBaseUrl =
+			options.getApiBaseUrl ?? (() => DEFAULT_PLAUD_API_BASE);
 		this.debugLogger = options.debugLogger ?? new NoopDebugLogger();
 	}
 
@@ -86,21 +87,29 @@ export class AttachmentImporter {
 		});
 		const noteFile = this.app.vault.getFileByPath(notePath);
 		if (!(noteFile instanceof TFile)) {
-			this.logAttachmentDebug('attachment import aborted: note file not found', {
-				notePath,
-			});
+			this.logAttachmentDebug(
+				'attachment import aborted: note file not found',
+				{
+					notePath,
+				},
+			);
 			return;
 		}
 		const folderPath = notePath.replace(/\.md$/i, '-assets');
 		const folder = this.app.vault.getFolderByPath(folderPath);
 		if (folder === null) {
 			await this.app.vault.createFolder(folderPath);
-			this.logAttachmentDebug('created attachment folder', { folderPath });
-		} else if (replaceExisting && folder instanceof TFolder) {
-			await this.clearAttachmentFolder(folder);
-			this.logAttachmentDebug('cleared existing attachment folder for overwrite', {
+			this.logAttachmentDebug('created attachment folder', {
 				folderPath,
 			});
+		} else if (replaceExisting && folder instanceof TFolder) {
+			await this.clearAttachmentFolder(folder);
+			this.logAttachmentDebug(
+				'cleared existing attachment folder for overwrite',
+				{
+					folderPath,
+				},
+			);
 		}
 
 		const genericLinks: string[] = [];
@@ -152,11 +161,14 @@ export class AttachmentImporter {
 			const assetLabel = `${asset.dataType}#${i + 1}`;
 			const kind = this.classifyAttachmentKind(asset);
 			if (!this.shouldIncludeAttachmentKind(kind, selection)) {
-				this.logAttachmentDebug('skipping attachment due to artifact selection', {
-					assetLabel,
-					dataType: asset.dataType,
-					kind,
-				});
+				this.logAttachmentDebug(
+					'skipping attachment due to artifact selection',
+					{
+						assetLabel,
+						dataType: asset.dataType,
+						kind,
+					},
+				);
 				continue;
 			}
 			this.logAttachmentDebug('downloading primary attachment', {
@@ -172,7 +184,9 @@ export class AttachmentImporter {
 			);
 			this.logAttachmentDebug('primary attachment candidates resolved', {
 				assetLabel,
-				candidates: candidates.map((candidate) => this.sanitizeUrlForDebug(candidate)),
+				candidates: candidates.map((candidate) =>
+					this.sanitizeUrlForDebug(candidate),
+				),
 			});
 			let imported = false;
 			for (const candidate of candidates) {
@@ -186,206 +200,272 @@ export class AttachmentImporter {
 					) {
 						headers.Authorization = `Bearer ${token}`;
 					}
-				const blob = await requestUrl({
+					const blob = await requestUrl({
 						url: candidate,
-					method: 'GET',
-					throw: false,
+						method: 'GET',
+						throw: false,
 						headers,
-				});
-				const contentType = this.getResponseHeader(blob, 'content-type') ?? null;
-				this.logAttachmentDebug('primary attachment response', {
-					assetLabel,
-						candidate: this.sanitizeUrlForDebug(candidate),
-					status: blob.status,
-					contentType,
-				});
-				if (blob.status < 200 || blob.status >= 300) {
-					this.logAttachmentDebug('skipping primary attachment due to non-2xx status', {
+					});
+					const contentType =
+						this.getResponseHeader(blob, 'content-type') ?? null;
+					this.logAttachmentDebug('primary attachment response', {
 						assetLabel,
-							candidate: this.sanitizeUrlForDebug(candidate),
+						candidate: this.sanitizeUrlForDebug(candidate),
 						status: blob.status,
+						contentType,
 					});
+					if (blob.status < 200 || blob.status >= 300) {
+						this.logAttachmentDebug(
+							'skipping primary attachment due to non-2xx status',
+							{
+								assetLabel,
+								candidate: this.sanitizeUrlForDebug(candidate),
+								status: blob.status,
+							},
+						);
 						continue;
-				}
-				const bytes = this.responseToArrayBuffer(blob);
-				if (bytes === null) {
-					this.logAttachmentDebug('skipping primary attachment: empty body', {
-						assetLabel,
+					}
+					const bytes = this.responseToArrayBuffer(blob);
+					if (bytes === null) {
+						this.logAttachmentDebug(
+							'skipping primary attachment: empty body',
+							{
+								assetLabel,
+								candidate: this.sanitizeUrlForDebug(candidate),
+							},
+						);
+						continue;
+					}
+					const bodyText = blob.text ?? '';
+					const ext = inferAssetExtension(
+						asset,
+						bodyText,
+						contentType ?? '',
+					);
+					this.logAttachmentDebug(
+						'resolved primary attachment extension',
+						{
+							assetLabel,
 							candidate: this.sanitizeUrlForDebug(candidate),
-					});
-						continue;
-				}
-				const bodyText = blob.text ?? '';
-				const ext = inferAssetExtension(asset, bodyText, contentType ?? '');
-				this.logAttachmentDebug('resolved primary attachment extension', {
-					assetLabel,
-						candidate: this.sanitizeUrlForDebug(candidate),
-					extension: ext,
-					byteLength: bytes.byteLength,
-				});
-				if ((contentType ?? '').toLowerCase().includes('text/html')) {
-					this.logAttachmentDebug('parsing html attachment for image references', {
-						assetLabel,
-						bodyPreview: this.makeBodyPreview(bodyText),
-					});
-					const imageLinks = this.extractImageLinksFromHtml(bodyText);
-					const htmlKind = this.classifyHtmlArtifactKind(bodyText, kind);
-					if (htmlKind === 'mindmap') {
-						htmlMindmapCandidates += 1;
-					}
-					this.logAttachmentDebug('html attachment image extraction result', {
-						assetLabel,
-						htmlKind,
-						imageLinkCount: imageLinks.length,
-						imageLinks: imageLinks.map((link) => this.sanitizeUrlForDebug(link)),
-					});
-					if (imageLinks.length > 0) {
-						for (let j = 0; j < imageLinks.length; j++) {
-							const nestedLabel = `${assetLabel}/html#${j + 1}`;
-							const nestedKind =
-								htmlKind !== 'generic'
-									? htmlKind
-									: this.classifyAttachmentKindFromValues(
-											asset.dataType,
-											asset.name,
-											imageLinks[j],
-										);
-							const nested = await this.downloadNestedPictureAsset(
-								imageLinks[j],
-								folderPath,
-								nestedKind,
-								nestedLabel,
-								payloadToPath,
-								namingCounters,
-								idPrefix,
-								nestedAssetLinks,
-							);
-							if (nested !== null) {
-								pushRenderedAsset(nestedKind, nested, true);
+							extension: ext,
+							byteLength: bytes.byteLength,
+						},
+					);
+					if (
+						(contentType ?? '').toLowerCase().includes('text/html')
+					) {
+						this.logAttachmentDebug(
+							'parsing html attachment for image references',
+							{
+								assetLabel,
+								bodyPreview: this.makeBodyPreview(bodyText),
+							},
+						);
+						const imageLinks =
+							this.extractImageLinksFromHtml(bodyText);
+						const htmlKind = this.classifyHtmlArtifactKind(
+							bodyText,
+							kind,
+						);
+						if (htmlKind === 'mindmap') {
+							htmlMindmapCandidates += 1;
+						}
+						this.logAttachmentDebug(
+							'html attachment image extraction result',
+							{
+								assetLabel,
+								htmlKind,
+								imageLinkCount: imageLinks.length,
+								imageLinks: imageLinks.map((link) =>
+									this.sanitizeUrlForDebug(link),
+								),
+							},
+						);
+						if (imageLinks.length > 0) {
+							for (let j = 0; j < imageLinks.length; j++) {
+								const nestedLabel = `${assetLabel}/html#${j + 1}`;
+								const nestedKind =
+									htmlKind !== 'generic'
+										? htmlKind
+										: this.classifyAttachmentKindFromValues(
+												asset.dataType,
+												asset.name,
+												imageLinks[j],
+											);
+								const nested =
+									await this.downloadNestedPictureAsset(
+										imageLinks[j],
+										folderPath,
+										nestedKind,
+										nestedLabel,
+										payloadToPath,
+										namingCounters,
+										idPrefix,
+										nestedAssetLinks,
+									);
+								if (nested !== null) {
+									pushRenderedAsset(nestedKind, nested, true);
+								}
 							}
 						}
-					}
-					if (imageLinks.length === 0 && htmlKind === 'mindmap') {
-						const fp = this.computeAttachmentFingerprint(bytes);
-						const existingPath = payloadToPath.get(fp);
-						if (existingPath !== undefined) {
-							pushRenderedAsset('mindmap', existingPath, false);
-						} else {
-							const baseName = this.nextAttachmentBaseName(
-								'mindmap',
-								false,
-								namingCounters,
-							);
-							const prefixed = idPrefix.length > 0 ? `${idPrefix}-${baseName}` : baseName;
-							const htmlPath = await this.resolveUniqueAttachmentPath(
-								`${folderPath}/${prefixed}.html`,
-							);
-							await this.app.vault.createBinary(htmlPath, bytes);
-							payloadToPath.set(fp, htmlPath);
-							pushRenderedAsset('mindmap', htmlPath, false);
-						}
-					}
-					// Never persist raw HTML wrappers as attachment files.
-						imported = true;
-						break;
-				}
-				// JSON blobs are only used as metadata envelopes (mainly to
-				// discover nested picture_link images). We no longer persist
-				// the raw JSON file to keep the imported asset folder clean.
-				if (ext === 'json') {
-					this.logAttachmentDebug('parsing json attachment for picture_link entries', {
-						assetLabel,
-						bodyPreview: this.makeBodyPreview(bodyText),
-					});
-					const extraction = this.extractPictureLinksFromJson(bodyText);
-					this.logAttachmentDebug('json attachment picture_link extraction result', {
-						assetLabel,
-						pictureLinkCount: extraction.links.length,
-						parseError: extraction.parseError ?? null,
-						pictureLinks: extraction.links.map((link) =>
-							this.sanitizeUrlForDebug(link),
-						),
-					});
-					if (extraction.links.length > 0) {
-						for (let j = 0; j < extraction.links.length; j++) {
-							const nestedLabel = `${assetLabel}/nested#${j + 1}`;
-							const nestedKind = this.classifyAttachmentKindFromValues(
-								asset.dataType,
-								asset.name,
-								extraction.links[j],
-							);
-							const nested = await this.downloadNestedPictureAsset(
-								extraction.links[j],
-								folderPath,
-								nestedKind,
-								nestedLabel,
-								payloadToPath,
-								namingCounters,
-								idPrefix,
-								nestedAssetLinks,
-							);
-							if (nested !== null) {
-								this.logAttachmentDebug('saved nested picture asset', {
-									nestedLabel,
-									path: nested,
-								});
-								pushRenderedAsset(nestedKind, nested, true);
+						if (imageLinks.length === 0 && htmlKind === 'mindmap') {
+							const fp = this.computeAttachmentFingerprint(bytes);
+							const existingPath = payloadToPath.get(fp);
+							if (existingPath !== undefined) {
+								pushRenderedAsset(
+									'mindmap',
+									existingPath,
+									false,
+								);
 							} else {
-								this.logAttachmentDebug('nested picture asset download failed', {
-									nestedLabel,
-								});
+								const baseName = this.nextAttachmentBaseName(
+									'mindmap',
+									false,
+									namingCounters,
+								);
+								const prefixed =
+									idPrefix.length > 0
+										? `${idPrefix}-${baseName}`
+										: baseName;
+								const htmlPath =
+									await this.resolveUniqueAttachmentPath(
+										`${folderPath}/${prefixed}.html`,
+									);
+								await this.app.vault.createBinary(
+									htmlPath,
+									bytes,
+								);
+								payloadToPath.set(fp, htmlPath);
+								pushRenderedAsset('mindmap', htmlPath, false);
 							}
 						}
-					}
+						// Never persist raw HTML wrappers as attachment files.
 						imported = true;
 						break;
-				}
-				const fp = this.computeAttachmentFingerprint(bytes);
-				const existingPath = payloadToPath.get(fp);
-				if (existingPath !== undefined) {
-					this.logAttachmentDebug('reused existing attachment due to duplicate payload', {
+					}
+					// JSON blobs are only used as metadata envelopes (mainly to
+					// discover nested picture_link images). We no longer persist
+					// the raw JSON file to keep the imported asset folder clean.
+					if (ext === 'json') {
+						this.logAttachmentDebug(
+							'parsing json attachment for picture_link entries',
+							{
+								assetLabel,
+								bodyPreview: this.makeBodyPreview(bodyText),
+							},
+						);
+						const extraction =
+							this.extractPictureLinksFromJson(bodyText);
+						this.logAttachmentDebug(
+							'json attachment picture_link extraction result',
+							{
+								assetLabel,
+								pictureLinkCount: extraction.links.length,
+								parseError: extraction.parseError ?? null,
+								pictureLinks: extraction.links.map((link) =>
+									this.sanitizeUrlForDebug(link),
+								),
+							},
+						);
+						if (extraction.links.length > 0) {
+							for (let j = 0; j < extraction.links.length; j++) {
+								const nestedLabel = `${assetLabel}/nested#${j + 1}`;
+								const nestedKind =
+									this.classifyAttachmentKindFromValues(
+										asset.dataType,
+										asset.name,
+										extraction.links[j],
+									);
+								const nested =
+									await this.downloadNestedPictureAsset(
+										extraction.links[j],
+										folderPath,
+										nestedKind,
+										nestedLabel,
+										payloadToPath,
+										namingCounters,
+										idPrefix,
+										nestedAssetLinks,
+									);
+								if (nested !== null) {
+									this.logAttachmentDebug(
+										'saved nested picture asset',
+										{
+											nestedLabel,
+											path: nested,
+										},
+									);
+									pushRenderedAsset(nestedKind, nested, true);
+								} else {
+									this.logAttachmentDebug(
+										'nested picture asset download failed',
+										{
+											nestedLabel,
+										},
+									);
+								}
+							}
+						}
+						imported = true;
+						break;
+					}
+					const fp = this.computeAttachmentFingerprint(bytes);
+					const existingPath = payloadToPath.get(fp);
+					if (existingPath !== undefined) {
+						this.logAttachmentDebug(
+							'reused existing attachment due to duplicate payload',
+							{
+								assetLabel,
+								existingPath,
+							},
+						);
+						if (this.isImageExtension(ext)) {
+							summaryEmbedRewrites.set(asset.url, existingPath);
+							pushRenderedAsset(kind, existingPath, true);
+						} else {
+							pushRenderedAsset(kind, existingPath, false);
+						}
+						imported = true;
+						break;
+					}
+					const base = this.nextAttachmentBaseName(
+						kind,
+						this.isImageExtension(ext),
+						namingCounters,
+					);
+					const prefixed =
+						idPrefix.length > 0 ? `${idPrefix}-${base}` : base;
+					const attachmentPath =
+						await this.resolveUniqueAttachmentPath(
+							`${folderPath}/${prefixed}.${ext}`,
+						);
+					await this.app.vault.createBinary(attachmentPath, bytes);
+					payloadToPath.set(fp, attachmentPath);
+					this.logAttachmentDebug('saved primary attachment', {
 						assetLabel,
-						existingPath,
+						attachmentPath,
+						byteLength: bytes.byteLength,
 					});
 					if (this.isImageExtension(ext)) {
-						summaryEmbedRewrites.set(asset.url, existingPath);
-						pushRenderedAsset(kind, existingPath, true);
+						summaryEmbedRewrites.set(asset.url, attachmentPath);
+						pushRenderedAsset(kind, attachmentPath, true);
 					} else {
-						pushRenderedAsset(kind, existingPath, false);
+						pushRenderedAsset(kind, attachmentPath, false);
 					}
-					imported = true;
-					break;
-				}
-				const base = this.nextAttachmentBaseName(
-					kind,
-					this.isImageExtension(ext),
-					namingCounters,
-				);
-				const prefixed = idPrefix.length > 0 ? `${idPrefix}-${base}` : base;
-				const attachmentPath = await this.resolveUniqueAttachmentPath(
-					`${folderPath}/${prefixed}.${ext}`,
-				);
-				await this.app.vault.createBinary(attachmentPath, bytes);
-				payloadToPath.set(fp, attachmentPath);
-				this.logAttachmentDebug('saved primary attachment', {
-					assetLabel,
-					attachmentPath,
-					byteLength: bytes.byteLength,
-				});
-				if (this.isImageExtension(ext)) {
-					summaryEmbedRewrites.set(asset.url, attachmentPath);
-					pushRenderedAsset(kind, attachmentPath, true);
-				} else {
-					pushRenderedAsset(kind, attachmentPath, false);
-				}
 					imported = true;
 					break;
 				} catch (err) {
-					this.logAttachmentDebug('primary attachment import failed with exception', {
-						assetLabel,
-						candidate: this.sanitizeUrlForDebug(candidate),
-						error: err instanceof Error ? err.message : String(err),
-					});
+					this.logAttachmentDebug(
+						'primary attachment import failed with exception',
+						{
+							assetLabel,
+							candidate: this.sanitizeUrlForDebug(candidate),
+							error:
+								err instanceof Error
+									? err.message
+									: String(err),
+						},
+					);
 				}
 			}
 			if (!imported) {
@@ -410,17 +490,27 @@ export class AttachmentImporter {
 			const files = assets.filter((asset) => !asset.isImage);
 			if (images.length > 0) {
 				for (let i = 0; i < images.length; i++) {
-					lines.push(`#### ${imageLabel} ${i + 1}`, `![[${images[i].path}]]`, '');
+					lines.push(
+						`#### ${imageLabel} ${i + 1}`,
+						`![[${images[i].path}]]`,
+						'',
+					);
 				}
 			}
 			if (files.length > 0) {
 				for (let i = 0; i < files.length; i++) {
-					lines.push(`#### ${fileLabel} ${i + 1}`, `- [[${files[i].path}]]`, '');
+					lines.push(
+						`#### ${fileLabel} ${i + 1}`,
+						`- [[${files[i].path}]]`,
+						'',
+					);
 				}
 			}
 			return lines;
 		};
-		const renderCardSection = (assets: readonly RenderedAsset[]): readonly string[] => {
+		const renderCardSection = (
+			assets: readonly RenderedAsset[],
+		): readonly string[] => {
 			if (assets.length === 0) {
 				return [];
 			}
@@ -436,10 +526,22 @@ export class AttachmentImporter {
 			return lines;
 		};
 		mindmapLinks.push(
-			...renderSection('### Mindmap', mindmapAssets, 'Mindmap image', 'Mindmap file'),
+			...renderSection(
+				'### Mindmap',
+				mindmapAssets,
+				'Mindmap image',
+				'Mindmap file',
+			),
 		);
 		cardLinks.push(...renderCardSection(cardAssets));
-		genericLinks.push(...renderSection('### Other attachments', genericAssets, 'Image', 'File'));
+		genericLinks.push(
+			...renderSection(
+				'### Other attachments',
+				genericAssets,
+				'Image',
+				'File',
+			),
+		);
 		if (selection.includeMindmap && mindmapAssets.length === 0) {
 			const kindCounts = { generic: 0, mindmap: 0, card: 0 };
 			for (const asset of attachments) {
@@ -468,29 +570,38 @@ export class AttachmentImporter {
 					name: asset.name ?? null,
 					url: this.sanitizeUrlForDebug(asset.url),
 				}));
-			this.logAttachmentDebug('mindmap import produced no rendered assets', {
-				notePath,
-				attachmentCount: attachments.length,
-				kindCounts,
-				htmlMindmapCandidates,
-				keywordHintAssetCount: keywordHintAssets.length,
-				keywordHintAssets,
-				htmlLikeAssetCount: htmlLikeAssets.length,
-				htmlLikeAssets,
-				likelyCause:
-					keywordHintAssets.length === 0 && htmlMindmapCandidates === 0
-						? 'no mindmap-like attachment references found in /file/detail bundle for this recording'
-						: 'mindmap-like references were present but none rendered',
-				attachmentDataTypes: attachments.map((a) => a.dataType),
-				attachmentUrls: attachments.map((a) => this.sanitizeUrlForDebug(a.url)),
-			});
+			this.logAttachmentDebug(
+				'mindmap import produced no rendered assets',
+				{
+					notePath,
+					attachmentCount: attachments.length,
+					kindCounts,
+					htmlMindmapCandidates,
+					keywordHintAssetCount: keywordHintAssets.length,
+					keywordHintAssets,
+					htmlLikeAssetCount: htmlLikeAssets.length,
+					htmlLikeAssets,
+					likelyCause:
+						keywordHintAssets.length === 0 &&
+						htmlMindmapCandidates === 0
+							? 'no mindmap-like attachment references found in /file/detail bundle for this recording'
+							: 'mindmap-like references were present but none rendered',
+					attachmentDataTypes: attachments.map((a) => a.dataType),
+					attachmentUrls: attachments.map((a) =>
+						this.sanitizeUrlForDebug(a.url),
+					),
+				},
+			);
 		}
 		const hasManagedLinks =
 			genericLinks.length + mindmapLinks.length + cardLinks.length > 0;
 		if (!hasManagedLinks && summaryEmbedRewrites.size === 0) {
-			this.logAttachmentDebug('attachment import completed with no rendered links', {
-				notePath,
-			});
+			this.logAttachmentDebug(
+				'attachment import completed with no rendered links',
+				{
+					notePath,
+				},
+			);
 			return;
 		}
 
@@ -499,11 +610,15 @@ export class AttachmentImporter {
 			// local copies we just downloaded (issue #52) BEFORE building the
 			// managed section. The managed section uses `![[...]]` wikilinks,
 			// which the inline-embed regex never matches, so ordering is safe.
-			const repointed = rewriteInlineSummaryEmbeds(content, summaryEmbedRewrites);
+			const repointed = rewriteInlineSummaryEmbeds(
+				content,
+				summaryEmbedRewrites,
+			);
 			if (!hasManagedLinks) {
 				return repointed;
 			}
-			const withoutManagedSection = this.stripManagedAttachmentsSection(repointed);
+			const withoutManagedSection =
+				this.stripManagedAttachmentsSection(repointed);
 			const trimmed = withoutManagedSection.replace(/\s+$/, '');
 			const section: string[] = [
 				'## Images and Attachments',
@@ -515,11 +630,15 @@ export class AttachmentImporter {
 			if (cardLinks.length > 0) section.push(...cardLinks);
 			if (genericLinks.length > 0) section.push(...genericLinks);
 			const renderedSection = section.join('\n');
-			return this.insertManagedAttachmentsSection(trimmed, renderedSection);
+			return this.insertManagedAttachmentsSection(
+				trimmed,
+				renderedSection,
+			);
 		});
 		this.logAttachmentDebug('attachments section appended to note', {
 			notePath,
-			renderedLinkCount: genericLinks.length + mindmapLinks.length + cardLinks.length,
+			renderedLinkCount:
+				genericLinks.length + mindmapLinks.length + cardLinks.length,
 			mindmapCount: mindmapLinks.length,
 			cardCount: cardLinks.length,
 		});
@@ -554,9 +673,12 @@ export class AttachmentImporter {
 	): Promise<number | null> {
 		const noteFile = this.app.vault.getFileByPath(notePath);
 		if (!(noteFile instanceof TFile)) {
-			this.logAttachmentDebug('audio import aborted: note file not found', {
-				notePath,
-			});
+			this.logAttachmentDebug(
+				'audio import aborted: note file not found',
+				{
+					notePath,
+				},
+			);
 			return null;
 		}
 		const folderPath = notePath.replace(/\.md$/i, '-assets');
@@ -571,19 +693,28 @@ export class AttachmentImporter {
 		if (this.app.vault.getFolderByPath(folderPath) === null) {
 			try {
 				await this.app.vault.createFolder(folderPath);
-				this.logAttachmentDebug('created attachment folder for audio', { folderPath });
-			} catch (err) {
-				const message = err instanceof Error ? err.message : String(err);
-				if (!/already exists/i.test(message)) {
-					this.logAttachmentDebug('audio import aborted: could not create assets folder', {
-						folderPath,
-						error: message,
-					});
-					return null;
-				}
-				this.logAttachmentDebug('assets folder already present (create race)', {
+				this.logAttachmentDebug('created attachment folder for audio', {
 					folderPath,
 				});
+			} catch (err) {
+				const message =
+					err instanceof Error ? err.message : String(err);
+				if (!/already exists/i.test(message)) {
+					this.logAttachmentDebug(
+						'audio import aborted: could not create assets folder',
+						{
+							folderPath,
+							error: message,
+						},
+					);
+					return null;
+				}
+				this.logAttachmentDebug(
+					'assets folder already present (create race)',
+					{
+						folderPath,
+					},
+				);
 			}
 		}
 		const idPrefix = this.getAttachmentIdPrefix(recordingId);
@@ -625,7 +756,8 @@ export class AttachmentImporter {
 		this.logAttachmentDebug('audio download response', {
 			notePath,
 			status: response.status,
-			contentType: this.getResponseHeader(response, 'content-type') ?? null,
+			contentType:
+				this.getResponseHeader(response, 'content-type') ?? null,
 			byteLength: bytes?.byteLength ?? 0,
 		});
 		if (response.status < 200 || response.status >= 300) {
@@ -637,7 +769,9 @@ export class AttachmentImporter {
 			return null;
 		}
 		if (bytes === null || bytes.byteLength === 0) {
-			this.logAttachmentDebug('audio download produced no bytes', { notePath });
+			this.logAttachmentDebug('audio download produced no bytes', {
+				notePath,
+			});
 			return null;
 		}
 
@@ -695,8 +829,11 @@ export class AttachmentImporter {
 		}
 	}
 
-	private responseToArrayBuffer(response: RequestUrlResponse): ArrayBuffer | null {
-		const candidate = (response as unknown as { arrayBuffer?: unknown }).arrayBuffer;
+	private responseToArrayBuffer(
+		response: RequestUrlResponse,
+	): ArrayBuffer | null {
+		const candidate = (response as unknown as { arrayBuffer?: unknown })
+			.arrayBuffer;
 		if (candidate instanceof ArrayBuffer) {
 			return candidate;
 		}
@@ -797,19 +934,27 @@ export class AttachmentImporter {
 	): string {
 		if (kind === 'card' && isImage) {
 			counters.cardImage += 1;
-			return counters.cardImage === 1 ? 'card' : `card${counters.cardImage}`;
+			return counters.cardImage === 1
+				? 'card'
+				: `card${counters.cardImage}`;
 		}
 		if (kind === 'mindmap' && isImage) {
 			counters.mindmapImage += 1;
-			return counters.mindmapImage === 1 ? 'mindmap' : `mindmap${counters.mindmapImage}`;
+			return counters.mindmapImage === 1
+				? 'mindmap'
+				: `mindmap${counters.mindmapImage}`;
 		}
 		if (kind === 'mindmap' && !isImage) {
 			counters.mindmapFile += 1;
-			return counters.mindmapFile === 1 ? 'mindmap' : `mindmap-file${counters.mindmapFile}`;
+			return counters.mindmapFile === 1
+				? 'mindmap'
+				: `mindmap-file${counters.mindmapFile}`;
 		}
 		if (kind === 'card' && !isImage) {
 			counters.cardFile += 1;
-			return counters.cardFile === 1 ? 'card-file' : `card-file${counters.cardFile}`;
+			return counters.cardFile === 1
+				? 'card-file'
+				: `card-file${counters.cardFile}`;
 		}
 		if (isImage) {
 			counters.genericImage += 1;
@@ -819,7 +964,9 @@ export class AttachmentImporter {
 		return `file${counters.genericFile}`;
 	}
 
-	private async resolveUniqueAttachmentPath(basePath: string): Promise<string> {
+	private async resolveUniqueAttachmentPath(
+		basePath: string,
+	): Promise<string> {
 		const dot = basePath.lastIndexOf('.');
 		const stem = dot >= 0 ? basePath.slice(0, dot) : basePath;
 		const ext = dot >= 0 ? basePath.slice(dot) : '';
@@ -870,8 +1017,10 @@ export class AttachmentImporter {
 	private extractImageLinksFromHtml(text: string): readonly string[] {
 		const out: string[] = [];
 		const seen = new Set<string>();
-		const srcRegex = /<(?:img|source)\b[^>]*?\bsrc\s*=\s*["']([^"']+)["']/gi;
-		const srcsetRegex = /<(?:img|source)\b[^>]*?\bsrcset\s*=\s*["']([^"']+)["']/gi;
+		const srcRegex =
+			/<(?:img|source)\b[^>]*?\bsrc\s*=\s*["']([^"']+)["']/gi;
+		const srcsetRegex =
+			/<(?:img|source)\b[^>]*?\bsrcset\s*=\s*["']([^"']+)["']/gi;
 		const cssUrlRegex = /url\((['"]?)([^'")]+)\1\)/gi;
 		const addCandidate = (raw: string): void => {
 			const link = raw.trim();
@@ -930,17 +1079,26 @@ export class AttachmentImporter {
 		nestedAssetLinks?: Readonly<Record<string, string>>,
 	): Promise<string | null> {
 		const token = this.resolveAuthToken()?.trim();
-		const candidates = this.buildAssetUrlCandidates(pictureLink, nestedAssetLinks);
+		const candidates = this.buildAssetUrlCandidates(
+			pictureLink,
+			nestedAssetLinks,
+		);
 		this.logAttachmentDebug('attempting nested picture download', {
 			nestedLabel,
 			pictureLink: this.sanitizeUrlForDebug(pictureLink),
-			candidates: candidates.map((candidate) => this.sanitizeUrlForDebug(candidate)),
+			candidates: candidates.map((candidate) =>
+				this.sanitizeUrlForDebug(candidate),
+			),
 			hasAuthToken: Boolean(token && token.length > 0),
 		});
 		for (const candidate of candidates) {
 			try {
 				const headers: Record<string, string> = { Accept: '*/*' };
-				if (token && token.length > 0 && this.shouldSendAuthHeader(candidate)) {
+				if (
+					token &&
+					token.length > 0 &&
+					this.shouldSendAuthHeader(candidate)
+				) {
 					headers.Authorization = `Bearer ${token}`;
 				}
 				const response = await requestUrl({
@@ -953,31 +1111,44 @@ export class AttachmentImporter {
 					nestedLabel,
 					candidate: this.sanitizeUrlForDebug(candidate),
 					status: response.status,
-					contentType: this.getResponseHeader(response, 'content-type') ?? null,
+					contentType:
+						this.getResponseHeader(response, 'content-type') ??
+						null,
 				});
 				if (response.status < 200 || response.status >= 300) {
-					this.logAttachmentDebug('nested candidate rejected by status', {
-						nestedLabel,
-						candidate: this.sanitizeUrlForDebug(candidate),
-						status: response.status,
-					});
+					this.logAttachmentDebug(
+						'nested candidate rejected by status',
+						{
+							nestedLabel,
+							candidate: this.sanitizeUrlForDebug(candidate),
+							status: response.status,
+						},
+					);
 					continue;
 				}
-				const contentType = (this.getResponseHeader(response, 'content-type') ?? '').toLowerCase();
+				const contentType = (
+					this.getResponseHeader(response, 'content-type') ?? ''
+				).toLowerCase();
 				if (contentType.includes('text/html')) {
-					this.logAttachmentDebug('nested candidate rejected due to html content', {
-						nestedLabel,
-						candidate: this.sanitizeUrlForDebug(candidate),
-						contentType,
-					});
+					this.logAttachmentDebug(
+						'nested candidate rejected due to html content',
+						{
+							nestedLabel,
+							candidate: this.sanitizeUrlForDebug(candidate),
+							contentType,
+						},
+					);
 					continue;
 				}
 				const bytes = this.responseToArrayBuffer(response);
 				if (bytes === null) {
-					this.logAttachmentDebug('nested candidate returned empty body', {
-						nestedLabel,
-						candidate: this.sanitizeUrlForDebug(candidate),
-					});
+					this.logAttachmentDebug(
+						'nested candidate returned empty body',
+						{
+							nestedLabel,
+							candidate: this.sanitizeUrlForDebug(candidate),
+						},
+					);
 					continue;
 				}
 				const ext = this.inferPictureExtension(
@@ -988,15 +1159,23 @@ export class AttachmentImporter {
 				const fp = this.computeAttachmentFingerprint(bytes);
 				const existingPath = payloadToPath.get(fp);
 				if (existingPath !== undefined) {
-					this.logAttachmentDebug('nested picture reused existing payload', {
-						nestedLabel,
-						candidate: this.sanitizeUrlForDebug(candidate),
-						existingPath,
-					});
+					this.logAttachmentDebug(
+						'nested picture reused existing payload',
+						{
+							nestedLabel,
+							candidate: this.sanitizeUrlForDebug(candidate),
+							existingPath,
+						},
+					);
 					return existingPath;
 				}
-				const baseName = this.nextAttachmentBaseName(kind, true, namingCounters);
-				const prefixed = idPrefix.length > 0 ? `${idPrefix}-${baseName}` : baseName;
+				const baseName = this.nextAttachmentBaseName(
+					kind,
+					true,
+					namingCounters,
+				);
+				const prefixed =
+					idPrefix.length > 0 ? `${idPrefix}-${baseName}` : baseName;
 				const path = await this.resolveUniqueAttachmentPath(
 					`${folderPath}/${prefixed}.${ext}`,
 				);
@@ -1040,7 +1219,9 @@ export class AttachmentImporter {
 		const fromMap = nestedAssetLinks?.[normalized];
 		const apiBase = this.resolveApiBaseUrl().replace(/\/+$/, '');
 		return [
-			...(typeof fromMap === 'string' && fromMap.length > 0 ? [fromMap] : []),
+			...(typeof fromMap === 'string' && fromMap.length > 0
+				? [fromMap]
+				: []),
 			`${apiBase}/${normalized}`,
 			`${PLAUD_WEB_BASE}/${normalized}`,
 		];
@@ -1190,7 +1371,10 @@ export class AttachmentImporter {
 
 	private extractSummaryAttachmentName(link: string): string | undefined {
 		const trimmed = link.trim();
-		const slash = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'));
+		const slash = Math.max(
+			trimmed.lastIndexOf('/'),
+			trimmed.lastIndexOf('\\'),
+		);
 		const base = slash >= 0 ? trimmed.slice(slash + 1) : trimmed;
 		const withoutQuery = base.split('?')[0].split('#')[0].trim();
 		return withoutQuery.length > 0 ? withoutQuery : undefined;
@@ -1231,7 +1415,9 @@ export class AttachmentImporter {
 		response: RequestUrlResponse,
 		name: string,
 	): string | undefined {
-		const raw = (response as unknown as { headers?: Record<string, string> }).headers;
+		const raw = (
+			response as unknown as { headers?: Record<string, string> }
+		).headers;
 		if (!raw) {
 			return undefined;
 		}
@@ -1259,7 +1445,10 @@ export class AttachmentImporter {
 		);
 	}
 
-	private insertManagedAttachmentsSection(content: string, section: string): string {
+	private insertManagedAttachmentsSection(
+		content: string,
+		section: string,
+	): string {
 		return this.insertSectionBeforeTranscript(content, section);
 	}
 
@@ -1271,7 +1460,10 @@ export class AttachmentImporter {
 	 * note must not capture the anchor and split the Template outputs block.
 	 * Shared by the attachments and audio sections.
 	 */
-	private insertSectionBeforeTranscript(content: string, section: string): string {
+	private insertSectionBeforeTranscript(
+		content: string,
+		section: string,
+	): string {
 		const re = /\n#{1,6} Transcript\s*\n/g;
 		let insertAt = -1;
 		let match: RegExpExecArray | null;
@@ -1324,7 +1516,9 @@ export function rewriteInlineSummaryEmbeds(
 	// wrapper and an optional "title". Capture the bare target only.
 	const inlineImage = /!\[[^\]]*]\(\s*<?([^)\s>]+)>?(?:\s+"[^"]*")?\s*\)/g;
 	return content.replace(inlineImage, (whole, rawTarget: string) => {
-		const normalized = rawTarget.replace(/^<|>$/g, '').replace(/^['"]|['"]$/g, '');
+		const normalized = rawTarget
+			.replace(/^<|>$/g, '')
+			.replace(/^['"]|['"]$/g, '');
 		const local = urlToLocalPath.get(normalized);
 		return local !== undefined ? `![[${local}]]` : whole;
 	});
@@ -1401,9 +1595,13 @@ export function inferAssetExtension(
 	bodyText: string,
 	responseContentType: string,
 ): string {
-	const fromMime = `${asset.mimeType ?? ''};${responseContentType}`.toLowerCase();
+	const fromMime =
+		`${asset.mimeType ?? ''};${responseContentType}`.toLowerCase();
 	const isPlainTextMime = fromMime.includes('text/plain');
-	if (fromMime.includes('text/html') || fromMime.includes('application/xhtml+xml')) {
+	if (
+		fromMime.includes('text/html') ||
+		fromMime.includes('application/xhtml+xml')
+	) {
 		return 'html';
 	}
 	if (fromMime.includes('png')) return 'png';
@@ -1439,4 +1637,3 @@ export function inferAssetExtension(
 	}
 	return 'bin';
 }
-

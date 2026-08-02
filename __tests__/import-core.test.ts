@@ -2,7 +2,9 @@ import type { PlaudRecordingId, Recording } from '../plaud-client';
 import type { ImportedRecord } from '../vault-index';
 import { filterListView, type ListViewFilter } from '../import-core';
 
-function rec(overrides: Partial<Omit<Recording, 'id'>> & { id: string }): Recording {
+function rec(
+	overrides: Partial<Omit<Recording, 'id'>> & { id: string },
+): Recording {
 	return {
 		id: overrides.id as PlaudRecordingId,
 		title: overrides.title ?? `title-${overrides.id}`,
@@ -50,17 +52,17 @@ describe('filterListView', () => {
 			rec({ id: 'a', versionMs: 100 }), // in index, unchanged -> hidden
 			rec({ id: 'b', versionMs: 200 }), // not in index -> shown
 		];
-		expect(ids(filterListView(page, filter({ hideProcessed: true, index })))).toEqual([
-			'b',
-		]);
+		expect(
+			ids(filterListView(page, filter({ hideProcessed: true, index }))),
+		).toEqual(['b']);
 	});
 
 	it('always shows a changed recording even when hideProcessed is on (governed by hideUpdates)', () => {
 		const index = idx([['a', { path: 'a.md', versionMs: 100 }]]);
 		const page = [rec({ id: 'a', versionMs: 200 })]; // listed > stored -> update available
-		expect(ids(filterListView(page, filter({ hideProcessed: true, index })))).toEqual([
-			'a',
-		]);
+		expect(
+			ids(filterListView(page, filter({ hideProcessed: true, index }))),
+		).toEqual(['a']);
 	});
 
 	it('hides a changed recording when hideUpdates is on', () => {
@@ -69,9 +71,9 @@ describe('filterListView', () => {
 			rec({ id: 'a', versionMs: 200 }), // update available -> hidden by hideUpdates
 			rec({ id: 'b', versionMs: 500 }), // new -> still shown
 		];
-		expect(ids(filterListView(page, filter({ hideUpdates: true, index })))).toEqual([
-			'b',
-		]);
+		expect(
+			ids(filterListView(page, filter({ hideUpdates: true, index }))),
+		).toEqual(['b']);
 	});
 
 	it('hideUpdates does not hide an unchanged processed recording', () => {
@@ -79,7 +81,12 @@ describe('filterListView', () => {
 		const page = [rec({ id: 'a', versionMs: 100 })]; // unchanged
 		// hideUpdates on but hideProcessed off -> unchanged import still shows.
 		expect(
-			ids(filterListView(page, filter({ hideUpdates: true, hideProcessed: false, index }))),
+			ids(
+				filterListView(
+					page,
+					filter({ hideUpdates: true, hideProcessed: false, index }),
+				),
+			),
 		).toEqual(['a']);
 	});
 
@@ -106,16 +113,21 @@ describe('filterListView', () => {
 	it('always shows a new (not-in-index) recording when hideProcessed is on', () => {
 		const page = [rec({ id: 'fresh', versionMs: 500 })];
 		expect(
-			ids(filterListView(page, filter({ hideProcessed: true, index: idx([]) }))),
+			ids(
+				filterListView(
+					page,
+					filter({ hideProcessed: true, index: idx([]) }),
+				),
+			),
 		).toEqual(['fresh']);
 	});
 
 	it('shows a processed recording when hideProcessed is off', () => {
 		const index = idx([['a', { path: 'a.md', versionMs: 100 }]]);
 		const page = [rec({ id: 'a', versionMs: 100 })];
-		expect(ids(filterListView(page, filter({ hideProcessed: false, index })))).toEqual([
-			'a',
-		]);
+		expect(
+			ids(filterListView(page, filter({ hideProcessed: false, index }))),
+		).toEqual(['a']);
 	});
 
 	it('hides ignored recordings when hideIgnored is on (even never-imported ones)', () => {
@@ -127,7 +139,10 @@ describe('filterListView', () => {
 			ids(
 				filterListView(
 					page,
-					filter({ hideIgnored: true, ignoredIds: ignored(['junk']) }),
+					filter({
+						hideIgnored: true,
+						ignoredIds: ignored(['junk']),
+					}),
 				),
 			),
 		).toEqual(['keep']);
@@ -139,7 +154,10 @@ describe('filterListView', () => {
 			ids(
 				filterListView(
 					page,
-					filter({ hideIgnored: false, ignoredIds: ignored(['junk']) }),
+					filter({
+						hideIgnored: false,
+						ignoredIds: ignored(['junk']),
+					}),
 				),
 			),
 		).toEqual(['junk']);
@@ -150,11 +168,12 @@ describe('filterListView', () => {
 			rec({ id: 'trash', isTrashed: true }),
 			rec({ id: 'keep' }),
 		];
-		expect(ids(filterListView(page, filter({ showTrashed: false })))).toEqual(['keep']);
-		expect(ids(filterListView(page, filter({ showTrashed: true })))).toEqual([
-			'trash',
-			'keep',
-		]);
+		expect(
+			ids(filterListView(page, filter({ showTrashed: false }))),
+		).toEqual(['keep']);
+		expect(
+			ids(filterListView(page, filter({ showTrashed: true }))),
+		).toEqual(['trash', 'keep']);
 	});
 
 	it('applies each toggle independently', () => {

@@ -13,18 +13,15 @@ import {
 	requestUrl,
 	setIcon,
 	type RequestUrlResponse,
-} from "obsidian";
+} from 'obsidian';
 import {
 	ReverseEngineeredPlaudClient,
 	PlaudAuthError,
 	type PlaudHttpFetcher,
-} from "./plaud-client-re";
-import { ImportModal, classifyError } from "./import-modal";
-import { BufferedDebugLogger } from "./debug-logger";
-import {
-	clearPlaudLoginSession,
-	openPlaudLogin,
-} from "./plaud-login";
+} from './plaud-client-re';
+import { ImportModal, classifyError } from './import-modal';
+import { BufferedDebugLogger } from './debug-logger';
+import { clearPlaudLoginSession, openPlaudLogin } from './plaud-login';
 import {
 	describeTokenLifetime,
 	formatSessionStatus,
@@ -32,22 +29,22 @@ import {
 	isWorkspaceToken,
 	readTokenLifetime,
 	SHORT_LIFETIME_HOURS,
-} from "./plaud-token";
-import { isLegacyPartition, plaudPartition } from "./plaud-partition";
-import { sessionExpiryDecision } from "./session-expiry";
-import { computeRefreshDelayMs, isRefreshDue } from "./refresh-schedule";
+} from './plaud-token';
+import { isLegacyPartition, plaudPartition } from './plaud-partition';
+import { sessionExpiryDecision } from './session-expiry';
+import { computeRefreshDelayMs, isRefreshDue } from './refresh-schedule';
 import {
 	buildPartitionPost,
 	extractWorkspaceId,
 	performNetRefresh,
-} from "./plaud-refresh-net";
+} from './plaud-refresh-net';
 import {
 	escapeHtmlAttribute,
 	parseClipboardTokens,
 	parseTokenCandidates,
 	selectWorkingCandidate,
 	buildSignInBookmarklet,
-} from "./token-candidates";
+} from './token-candidates';
 import {
 	NoteWriter,
 	DEFAULT_NOTE_NAME_TEMPLATE,
@@ -67,54 +64,54 @@ import {
 	type RenameFileFn,
 	type TagMode,
 	type CustomFrontmatterRow,
-} from "./note-writer";
+} from './note-writer';
 import {
 	AttachmentImporter,
 	// DEPRECATED one-time #52 migration; remove with the repair command below.
 	isLocalCardImage,
 	repairLegacyCardEmbeds,
-} from "./attachment-importer";
+} from './attachment-importer';
 import {
 	buildPlaudIdIndex,
 	buildPlaudIdIndexWithColdCheck,
 	outputFolderCacheIsCold,
 	type ImportedRecord,
-} from "./vault-index";
-import { runImport } from "./import-runner";
+} from './vault-index';
+import { runImport } from './import-runner';
 import {
 	PAGE_SIZE,
 	categoryAllowsReauth,
 	type ArtifactSelection,
 	type ImportModalOptions,
 	type ImportViewStatePatch,
-} from "./import-core";
-import type { PlaudClient, PlaudRecordingId, Recording } from "./plaud-client";
-import { runAutoSyncTick } from "./auto-sync-runner";
+} from './import-core';
+import type { PlaudClient, PlaudRecordingId, Recording } from './plaud-client';
+import { runAutoSyncTick } from './auto-sync-runner';
 import {
 	coerceIntervalMinutes,
 	nextAutoSyncState,
 	tickOutcomeForCategory,
 	INITIAL_AUTO_SYNC_STATE,
 	type AutoSyncState,
-} from "./auto-sync";
+} from './auto-sync';
 import {
 	preferWindowForReconnect,
 	type SignInMethod,
-} from "./reconnect-routing";
+} from './reconnect-routing';
 
 // Stable SecretStorage id for a token captured by the in-app sign-in flow.
 // Re-running sign-in overwrites it, mirroring "replace my token".
-const CAPTURED_SECRET_ID = "plaud-importer-token";
+const CAPTURED_SECRET_ID = 'plaud-importer-token';
 
 // Legacy secret id for the paired refresh token (typ WRT) that pre-0.32.0
 // email sign-ins stored. The refresh subsystem is gone; the secret is only
 // ever blanked (sign-out, fresh captures) and read once as the migration
 // signal for routing Reconnect (a stored WRT means an email-window session).
-const LEGACY_REFRESH_SECRET_ID = "plaud-importer-refresh-token";
+const LEGACY_REFRESH_SECRET_ID = 'plaud-importer-refresh-token';
 
 // Plaud web app, opened in the system browser for the browser-based sign-in
 // flow (where Google/Apple SSO work, unlike an embedded webview).
-const PLAUD_WEB_URL = "https://web.plaud.ai";
+const PLAUD_WEB_URL = 'https://web.plaud.ai';
 
 // Explanatory note shown under the "Sign in" heading. Held in a const so it can
 // name Plaud/Google/Apple plainly: the sentence-case lint only inspects string
@@ -124,23 +121,23 @@ const PLAUD_WEB_URL = "https://web.plaud.ai";
 // identical; built as variables so the sentence-case lint, which only inspects
 // literals at the call site, accepts the product name mid-sentence.
 const DEEP_LINK_SAVED_NOTICE =
-	"Plaud token received from your browser and saved.";
+	'Plaud token received from your browser and saved.';
 const DEEP_LINK_BAD_TOKEN_NOTICE =
-	"Plaud sign-in link did not carry a usable token. In your browser, sign in to Plaud before clicking the bookmarklet, then try again.";
+	'Plaud sign-in link did not carry a usable token. In your browser, sign in to Plaud before clicking the bookmarklet, then try again.';
 // Every candidate the browser sent was rejected by Plaud itself, so the
 // browser session is signed out or revoked rather than the link being wrong
 // (issue #78: rogerfsh's 300-day token still decodes cleanly but is revoked).
 const DEEP_LINK_ALL_REJECTED_NOTICE =
-	"Plaud rejected every sign-in token from your browser, so that session looks signed out or revoked. Sign in to Plaud in your browser again, then click the bookmark.";
+	'Plaud rejected every sign-in token from your browser, so that session looks signed out or revoked. Sign in to Plaud in your browser again, then click the bookmark.';
 // One candidate, and Plaud could not be reached to check it. Storing it
 // unverified matches the pre-0.35.0 behavior and keeps an offline reconnect
 // working; the user finds out from the next import if it was already dead.
 const DEEP_LINK_UNVERIFIED_NOTICE =
-	"Plaud token received from your browser and saved, but Plaud could not be reached to check it. Run Test connection once you are back online.";
+	'Plaud token received from your browser and saved, but Plaud could not be reached to check it. Run Test connection once you are back online.';
 // Shown while several candidates are probed. A const like its siblings so the
 // sentence-case lint, which only inspects literals at the call site, accepts
 // the product name mid-sentence.
-const DEEP_LINK_PROBING_NOTICE = "Checking which Plaud sign-in still works…";
+const DEEP_LINK_PROBING_NOTICE = 'Checking which Plaud sign-in still works…';
 // A capture that failed while being SAVED, rather than one the token was wrong
 // for. Every notice above means the credential was the problem; this one means
 // it may well have been fine, so repeating the sign-in is not the fix. The
@@ -150,17 +147,17 @@ const DEEP_LINK_PROBING_NOTICE = "Checking which Plaud sign-in still works…";
 // be the same over-claiming this notice exists to stop. Telling the two apart
 // properly needs the result union tracked in issue #86.
 const CAPTURE_SAVE_FAILED_NOTICE =
-	"Plaud: could not save the token. If this keeps happening, check that this vault is writable and has free space.";
+	'Plaud: could not save the token. If this keeps happening, check that this vault is writable and has free space.';
 // The one failure that cannot promise "nothing changed": the settings commit
 // landed, the credential write then threw, and writing the old settings back
 // failed too. Signing in again rewrites both halves, so that is the instruction.
 const CAPTURE_TORN_NOTICE =
-	"Plaud: the sign-in was recorded but its credential could not be stored, so the previous session is still in use. Sign in again to finish reconnecting.";
+	'Plaud: the sign-in was recorded but its credential could not be stored, so the previous session is still in use. Sign in again to finish reconnecting.';
 // Several candidates and no way to ask which one works. Picking blind would
 // store the wrong credential (a revoked long-lived token outranks a live short
 // one on every claim we can read), so store nothing and let the user retry.
 const DEEP_LINK_UNREACHABLE_NOTICE =
-	"Could not reach Plaud to check which sign-in token to use, so nothing was saved. Check your connection, then click the bookmark again.";
+	'Could not reach Plaud to check which sign-in token to use, so nothing was saved. Check your connection, then click the bookmark again.';
 
 /**
  * What storing a captured credential did (issue #86). A boolean could not carry
@@ -175,13 +172,13 @@ const DEEP_LINK_UNREACHABLE_NOTICE =
  */
 type CaptureStoreResult =
 	/** Failed the pre-write capture guard. Nothing was written. */
-	| { outcome: "unusable" }
+	| { outcome: 'unusable' }
 	/**
 	 * Something took over the credential while this store waited its turn.
 	 * Nothing was written, and nothing should be said: whatever superseded this
 	 * is what the user is holding.
 	 */
-	| { outcome: "superseded" }
+	| { outcome: 'superseded' }
 	/**
 	 * The settings write rejected (read-only vault, full disk, a sync client
 	 * holding the file), or the credential write threw and the settings were
@@ -189,7 +186,7 @@ type CaptureStoreResult =
 	 * logging; surfaces show CAPTURE_SAVE_FAILED_NOTICE rather than the raw
 	 * error.
 	 */
-	| { outcome: "save-failed"; error: unknown }
+	| { outcome: 'save-failed'; error: unknown }
 	/**
 	 * The settings commit landed, the credential write then threw, and writing
 	 * the previous settings back failed too. data.json names this capture
@@ -198,8 +195,8 @@ type CaptureStoreResult =
 	 * so surfaces show CAPTURE_TORN_NOTICE, which says exactly that. Carries
 	 * the credential write's cause.
 	 */
-	| { outcome: "torn"; error: unknown }
-	| { outcome: "stored" };
+	| { outcome: 'torn'; error: unknown }
+	| { outcome: 'stored' };
 
 /**
  * What a re-authentication attempt did. Needed because turning a save failure
@@ -210,11 +207,11 @@ type CaptureStoreResult =
  */
 type ReauthOutcome =
 	/** A credential was captured and stored. */
-	| "captured"
+	| 'captured'
 	/** The user closed the window, or the login API is unavailable on this build. */
-	| "closed"
+	| 'closed'
 	/** Failed, and the reason is already on screen. Say nothing more about it. */
-	| "reported";
+	| 'reported';
 
 const SIGN_IN_NOTE =
 	"Plaud has no official API, so this plugin relies on their internal one. That makes sign-in fragile, and it may stop working when Plaud changes that internal API. We expect this whole process to get much simpler once Plaud releases an official API. There are two ways to sign in, depending on how you log in to Plaud. Use 'Sign in with email' if you log in with an email address and password. Use 'Sign in with Google or Apple' if you use single sign-on (SSO) through a Google or Apple account. How long you stay signed in depends on the method: a session from the email sign-in window normally renews itself in the background for about 30 days before asking you to sign in again, while a session captured from a Google or Apple login cannot be renewed by the plugin and usually lasts about 24 hours. If you use Google or Apple, you can add a password to your Plaud account and use the email sign-in instead. The status line under Plaud token shows your session's actual expiry and whether background renewal is active for it. When the session lapses the plugin shows a one-click Reconnect that reopens the sign-in matching your account.";
@@ -241,17 +238,17 @@ const AUTO_SYNC_DESC =
 function bookmarkSetupHtml(vaultName: string): string {
 	const href = escapeHtmlAttribute(buildSignInBookmarklet(vaultName));
 	return [
-		"<!doctype html>",
+		'<!doctype html>',
 		'<html lang="en"><head><meta charset="utf-8">',
-		"<title>Plaud Importer bookmark setup</title>",
-		"<style>",
-		"body{font-family:system-ui,sans-serif;max-width:620px;margin:48px auto;padding:0 24px;line-height:1.55;color:#1a1a1a}",
-		"h1{font-size:1.35rem}",
-		".bm{display:inline-block;padding:12px 22px;background:#5b46f2;color:#fff;border-radius:8px;text-decoration:none;font-weight:600;font-size:1.05rem;cursor:grab}",
-		".note{color:#555;font-size:0.95rem}",
-		"ol{color:#333}",
-		"</style></head><body>",
-		"<h1>Plaud Importer: one-time setup</h1>",
+		'<title>Plaud Importer bookmark setup</title>',
+		'<style>',
+		'body{font-family:system-ui,sans-serif;max-width:620px;margin:48px auto;padding:0 24px;line-height:1.55;color:#1a1a1a}',
+		'h1{font-size:1.35rem}',
+		'.bm{display:inline-block;padding:12px 22px;background:#5b46f2;color:#fff;border-radius:8px;text-decoration:none;font-weight:600;font-size:1.05rem;cursor:grab}',
+		'.note{color:#555;font-size:0.95rem}',
+		'ol{color:#333}',
+		'</style></head><body>',
+		'<h1>Plaud Importer: one-time setup</h1>',
 		"<p><strong>Drag this button up onto your browser's bookmarks bar:</strong></p>",
 		'<p><a class="bm" href="' + href + '">Plaud → Obsidian (v2)</a></p>',
 		'<p class="note">Bookmarks bar hidden? Press Ctrl+Shift+B (Cmd+Shift+B on Mac) to show it, then drag the button onto it.</p>',
@@ -260,16 +257,19 @@ function bookmarkSetupHtml(vaultName: string): string {
 		// user with several open would otherwise have no way to tell which
 		// bookmark belongs to which.
 		'<p class="note">This bookmark delivers to your <strong>' +
-			vaultName.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;") +
-			"</strong> vault, so it works even when another vault has focus. Set it up again from a different vault to make a bookmark for that one.</p>",
-		"<hr><p>After it is saved, each time you need to connect:</p>",
-		"<ol>",
-		"<li>Sign in to Plaud in this browser.</li>",
-		"<li>Click the bookmark you just added. Obsidian opens and saves your token.</li>",
-		"</ol>",
+			vaultName
+				.replace(/&/g, '&amp;')
+				.replace(/</g, '&lt;')
+				.replace(/>/g, '&gt;') +
+			'</strong> vault, so it works even when another vault has focus. Set it up again from a different vault to make a bookmark for that one.</p>',
+		'<hr><p>After it is saved, each time you need to connect:</p>',
+		'<ol>',
+		'<li>Sign in to Plaud in this browser.</li>',
+		'<li>Click the bookmark you just added. Obsidian opens and saves your token.</li>',
+		'</ol>',
 		'<p class="note">If Obsidian does not open, the bookmark falls back to showing a line of text in a box. Copy the whole line, switch to Obsidian, and click the paste button in the plugin settings.</p>',
-		"</body></html>",
-	].join("");
+		'</body></html>',
+	].join('');
 }
 
 // Curated list of Lucide icon IDs offered in the "Ribbon icon" setting.
@@ -278,20 +278,20 @@ function bookmarkSetupHtml(vaultName: string): string {
 // dropdown for a full searchable picker without changing the settings
 // schema (the stored value is a plain Lucide ID either way).
 const RIBBON_ICON_CHOICES: ReadonlyArray<{ id: string; label: string }> = [
-	{ id: "audio-lines", label: "Audio waveform (default)" },
-	{ id: "mic", label: "Microphone" },
-	{ id: "mic-vocal", label: "Vocal mic" },
-	{ id: "headphones", label: "Headphones" },
-	{ id: "file-audio-2", label: "Audio file" },
-	{ id: "podcast", label: "Podcast" },
-	{ id: "radio", label: "Radio" },
-	{ id: "cassette-tape", label: "Cassette tape" },
-	{ id: "volume-2", label: "Speaker" },
-	{ id: "notebook-pen", label: "Notebook" },
-	{ id: "captions", label: "Captions" },
-	{ id: "users-round", label: "Meeting participants" },
+	{ id: 'audio-lines', label: 'Audio waveform (default)' },
+	{ id: 'mic', label: 'Microphone' },
+	{ id: 'mic-vocal', label: 'Vocal mic' },
+	{ id: 'headphones', label: 'Headphones' },
+	{ id: 'file-audio-2', label: 'Audio file' },
+	{ id: 'podcast', label: 'Podcast' },
+	{ id: 'radio', label: 'Radio' },
+	{ id: 'cassette-tape', label: 'Cassette tape' },
+	{ id: 'volume-2', label: 'Speaker' },
+	{ id: 'notebook-pen', label: 'Notebook' },
+	{ id: 'captions', label: 'Captions' },
+	{ id: 'users-round', label: 'Meeting participants' },
 ];
-const DEFAULT_RIBBON_ICON = "audio-lines";
+const DEFAULT_RIBBON_ICON = 'audio-lines';
 
 // Subfolder template documentation, shared by the declarative settings
 // (1.13+) and the imperative display() fallback (1.12) so both render the
@@ -306,15 +306,21 @@ const SUBFOLDER_TEMPLATE_INTRO =
 // learns them once; {{plaud-folder}} is subfolder-only (a folder name in a
 // per-note file name is surprising).
 const SUBFOLDER_TEMPLATE_TOKENS: ReadonlyArray<readonly [string, string]> = [
-	["{{YYYY}}", "year, for example 2026"],
-	["{{MM}}", "month, 01 to 12"],
-	["{{MMMM}}", "month name, for example June"],
-	["{{DD}}", "day, 01 to 31"],
-	["{{dddd}}", "weekday name, for example Monday"],
-	["{{WW}}", "ISO week number, 01 to 53"],
-	["{{Q}}", "quarter, 1 to 4"],
-	["{{title}}", "the recording title, with a leading numeric date removed (for folder-note layouts)"],
-	["{{plaud-folder}}", "the recording's Plaud folder name (or _unfiled when it has none)"],
+	['{{YYYY}}', 'year, for example 2026'],
+	['{{MM}}', 'month, 01 to 12'],
+	['{{MMMM}}', 'month name, for example June'],
+	['{{DD}}', 'day, 01 to 31'],
+	['{{dddd}}', 'weekday name, for example Monday'],
+	['{{WW}}', 'ISO week number, 01 to 53'],
+	['{{Q}}', 'quarter, 1 to 4'],
+	[
+		'{{title}}',
+		'the recording title, with a leading numeric date removed (for folder-note layouts)',
+	],
+	[
+		'{{plaud-folder}}',
+		"the recording's Plaud folder name (or _unfiled when it has none)",
+	],
 ];
 
 // [template, resulting folder] pairs for a June 4 2026 recording titled Team
@@ -322,20 +328,20 @@ const SUBFOLDER_TEMPLATE_TOKENS: ReadonlyArray<readonly [string, string]> = [
 // two tokens inside one {{ }}, and a folder-note title layout. Outputs verified
 // against Moment 2.29.
 const SUBFOLDER_TEMPLATE_EXAMPLES: ReadonlyArray<readonly [string, string]> = [
-	["{{YYYY-MM}}", "2026-06 (one folder)"],
-	["{{YYYY}}/{{MM}}", "2026/06 (a 2026 folder holding a 06 folder)"],
-	["{{DD}}-{{MM}}-{{YYYY}}", "04-06-2026 (day-first order)"],
-	["{{YYYY}}/W{{WW}}", "2026/W23 (by week)"],
-	["{{YYYY}}/{{MM MMMM}}", "2026/06 June (two tokens in one {{ }})"],
-	["{{YYYY}}/{{title}}", "2026/Team sync (a folder per recording)"],
-	["{{plaud-folder}}/{{YYYY}}", "Meetings/2026 (mirror the Plaud folder)"],
+	['{{YYYY-MM}}', '2026-06 (one folder)'],
+	['{{YYYY}}/{{MM}}', '2026/06 (a 2026 folder holding a 06 folder)'],
+	['{{DD}}-{{MM}}-{{YYYY}}', '04-06-2026 (day-first order)'],
+	['{{YYYY}}/W{{WW}}', '2026/W23 (by week)'],
+	['{{YYYY}}/{{MM MMMM}}', '2026/06 June (two tokens in one {{ }})'],
+	['{{YYYY}}/{{title}}', '2026/Team sync (a folder per recording)'],
+	['{{plaud-folder}}/{{YYYY}}', 'Meetings/2026 (mirror the Plaud folder)'],
 ];
 
 const SUBFOLDER_TEMPLATE_TOKENS_HEADING =
-	"Tokens (case matters; combine them with separators inside the braces):";
-const SUBFOLDER_TEMPLATE_EXAMPLES_HEADING = "Examples:";
+	'Tokens (case matters; combine them with separators inside the braces):';
+const SUBFOLDER_TEMPLATE_EXAMPLES_HEADING = 'Examples:';
 const SUBFOLDER_TEMPLATE_FOOTNOTE =
-	"Applies to new imports; notes you already imported stay where they are.";
+	'Applies to new imports; notes you already imported stay where they are.';
 
 // Note-name template documentation, shared by the declarative settings (1.13+)
 // and the imperative display() fallback (1.12). Held in consts (not inline
@@ -348,41 +354,50 @@ const NOTE_NAME_TEMPLATE_INTRO =
 // [token, what it expands to] pairs for a July 3 2026 recording. Real Moment
 // tokens (case matters), the same set the subfolder field uses plus {{title}}.
 const NOTE_NAME_TEMPLATE_TOKENS: ReadonlyArray<readonly [string, string]> = [
-	["{{YYYY}}", "year, for example 2026"],
-	["{{YY}}", "2-digit year, for example 26"],
-	["{{MMMM}}", "month name, for example July"],
-	["{{MMM}}", "short month, for example Jul"],
-	["{{MM}}", "month, 01 to 12"],
-	["{{M}}", "month, 1 to 12"],
-	["{{DD}}", "day, 01 to 31"],
-	["{{D}}", "day, 1 to 31"],
-	["{{dddd}}", "weekday name, for example Friday"],
-	["{{WW}}", "ISO week number, 01 to 53"],
-	["{{Q}}", "quarter, 1 to 4"],
-	["{{title}}", "the recording title, with a leading numeric date (MM-DD, YYYY-MM-DD, and similar) removed"],
+	['{{YYYY}}', 'year, for example 2026'],
+	['{{YY}}', '2-digit year, for example 26'],
+	['{{MMMM}}', 'month name, for example July'],
+	['{{MMM}}', 'short month, for example Jul'],
+	['{{MM}}', 'month, 01 to 12'],
+	['{{M}}', 'month, 1 to 12'],
+	['{{DD}}', 'day, 01 to 31'],
+	['{{D}}', 'day, 1 to 31'],
+	['{{dddd}}', 'weekday name, for example Friday'],
+	['{{WW}}', 'ISO week number, 01 to 53'],
+	['{{Q}}', 'quarter, 1 to 4'],
+	[
+		'{{title}}',
+		'the recording title, with a leading numeric date (MM-DD, YYYY-MM-DD, and similar) removed',
+	],
 ];
 
 // [template, resulting name] pairs for a July 3 2026 recording titled Team sync.
 // Covers date-first, date-last, a combined date in one {{ }}, and US order.
 // Outputs verified against Moment 2.29.
 const NOTE_NAME_TEMPLATE_EXAMPLES: ReadonlyArray<readonly [string, string]> = [
-	["{{YYYY}}-{{MM}}-{{DD}} {{title}}", "2026-07-03 Team sync"],
-	["{{title}} {{YYYY}}-{{MM}}-{{DD}}", "Team sync 2026-07-03 (date at the end)"],
-	["{{MMM D, YYYY}} - {{title}}", "Jul 3, 2026 - Team sync (one combined date token)"],
-	["{{MM}}-{{DD}}-{{YYYY}} {{title}}", "07-03-2026 Team sync (US order)"],
+	['{{YYYY}}-{{MM}}-{{DD}} {{title}}', '2026-07-03 Team sync'],
+	[
+		'{{title}} {{YYYY}}-{{MM}}-{{DD}}',
+		'Team sync 2026-07-03 (date at the end)',
+	],
+	[
+		'{{MMM D, YYYY}} - {{title}}',
+		'Jul 3, 2026 - Team sync (one combined date token)',
+	],
+	['{{MM}}-{{DD}}-{{YYYY}} {{title}}', '07-03-2026 Team sync (US order)'],
 ];
 
 const NOTE_NAME_TEMPLATE_TOKENS_HEADING =
-	"Tokens (case matters; combine them with separators inside the braces):";
-const NOTE_NAME_TEMPLATE_EXAMPLES_HEADING = "Examples:";
+	'Tokens (case matters; combine them with separators inside the braces):';
+const NOTE_NAME_TEMPLATE_EXAMPLES_HEADING = 'Examples:';
 const NOTE_NAME_TEMPLATE_FOOTNOTE =
-	"Applies to new imports; notes you already imported keep their current names.";
+	'Applies to new imports; notes you already imported keep their current names.';
 
 // Description for the forbidden-character replacement setting. Held in a const so
 // the declarative (1.13+) and imperative (1.12) settings paths show identical
 // text and the sentence-case lint inspects one literal.
 const FORBIDDEN_CHAR_REPLACEMENT_DESC =
-	"Character that replaces a slash, colon, or other character a file name or folder cannot contain, for example one that appears in a recording title. Must be a single character; the default is a dash.";
+	'Character that replaces a slash, colon, or other character a file name or folder cannot contain, for example one that appears in a recording title. Must be a single character; the default is a dash.';
 
 // Name and description for the duplicate-handling dropdown. Held in consts so
 // the declarative (1.13+) and imperative (1.12) settings paths show identical
@@ -394,19 +409,19 @@ const FORBIDDEN_CHAR_REPLACEMENT_DESC =
 // so the declarative (1.13+) and imperative (1.12) settings paths show identical
 // text and the sentence-case lint inspects one literal.
 const PRESERVE_UNKNOWN_FRONTMATTER_DESC =
-	"On by default. When a re-import overwrites a note, keep any frontmatter property you added yourself, or that another tool wrote, that the plugin does not manage. Leave this on so downstream automation and hand-added properties survive a re-import. To let the plugin manage and refresh a specific property instead, add it as an extra frontmatter row with preserve turned off.";
+	'On by default. When a re-import overwrites a note, keep any frontmatter property you added yourself, or that another tool wrote, that the plugin does not manage. Leave this on so downstream automation and hand-added properties survive a re-import. To let the plugin manage and refresh a specific property instead, add it as an extra frontmatter row with preserve turned off.';
 
-const DUPLICATE_HANDLING_NAME = "Duplicate handling for manual imports";
+const DUPLICATE_HANDLING_NAME = 'Duplicate handling for manual imports';
 const DUPLICATE_HANDLING_DESC =
-	"Controls what happens when you run Import recent recordings and a note for the recording already exists. Skip keeps your copy, overwrite replaces it, and ask each time prompts you for each one. Automatic sync ignores this and never prompts.";
+	'Controls what happens when you run Import recent recordings and a note for the recording already exists. Skip keeps your copy, overwrite replaces it, and ask each time prompts you for each one. Automatic sync ignores this and never prompts.';
 
 // [label, template] preset buttons. All dashes, so every preset is filename-safe.
 // ISO/US/EU cover the common date orders; putting the date after {{title}} (the
 // "date at the end" example in the reference) is left to the user to type.
 const NOTE_NAME_TEMPLATE_PRESETS: ReadonlyArray<readonly [string, string]> = [
-	["ISO", "{{YYYY}}-{{MM}}-{{DD}} {{title}}"],
-	["US", "{{MM}}-{{DD}}-{{YYYY}} {{title}}"],
-	["EU", "{{DD}}-{{MM}}-{{YYYY}} {{title}}"],
+	['ISO', '{{YYYY}}-{{MM}}-{{DD}} {{title}}'],
+	['US', '{{MM}}-{{DD}}-{{YYYY}} {{title}}'],
+	['EU', '{{DD}}-{{MM}}-{{YYYY}} {{title}}'],
 ];
 
 // [label, inserted token] for the insert-token buttons above each template
@@ -415,40 +430,43 @@ const NOTE_NAME_TEMPLATE_PRESETS: ReadonlyArray<readonly [string, string]> = [
 // be read as tokens). Both the note-name and subfolder fields add Title; the
 // subfolder uses it for folder-note layouts, flattening any slash in the title.
 const DATE_INSERT_TOKENS: ReadonlyArray<readonly [string, string]> = [
-	["Year", "{{YYYY}}"],
-	["Month #", "{{MM}}"],
-	["Month name", "{{MMMM}}"],
-	["Day", "{{DD}}"],
-	["Weekday", "{{dddd}}"],
-	["Quarter", "{{Q}}"],
-	["Week", "{{WW}}"],
+	['Year', '{{YYYY}}'],
+	['Month #', '{{MM}}'],
+	['Month name', '{{MMMM}}'],
+	['Day', '{{DD}}'],
+	['Weekday', '{{dddd}}'],
+	['Quarter', '{{Q}}'],
+	['Week', '{{WW}}'],
 	// Time tokens (issue #32). Available in every template field so a user can
 	// compose a time however they like; most useful in the datetime frontmatter
 	// field. Offset ({{Z}}) records the UTC offset so an ISO value is unambiguous.
-	["Hour", "{{HH}}"],
-	["Minute", "{{mm}}"],
-	["Second", "{{ss}}"],
-	["AM/PM", "{{A}}"],
-	["Offset", "{{Z}}"],
+	['Hour', '{{HH}}'],
+	['Minute', '{{mm}}'],
+	['Second', '{{ss}}'],
+	['AM/PM', '{{A}}'],
+	['Offset', '{{Z}}'],
 ];
-const TITLE_INSERT_TOKEN: readonly [string, string] = ["Title", "{{title}}"];
+const TITLE_INSERT_TOKEN: readonly [string, string] = ['Title', '{{title}}'];
 // Subfolder-only: the recording's Plaud folder name, for mirroring Plaud folders
 // into the vault tree. Not offered on the note-name field (a folder name in a
 // per-note file name is surprising).
-const FOLDER_INSERT_TOKEN: readonly [string, string] = ["Folder", "{{plaud-folder}}"];
+const FOLDER_INSERT_TOKEN: readonly [string, string] = [
+	'Folder',
+	'{{plaud-folder}}',
+];
 
 // Content tokens available only in the extra-frontmatter value field. They
 // surface recording/summary data the plugin already parses; they are not offered
 // on the note-name or subfolder fields, where a nullable value has no place in a
 // path. The summary-derived ones are empty on a recording with no AI summary.
 const CONTENT_INSERT_TOKENS: ReadonlyArray<readonly [string, string]> = [
-	["Duration", "{{duration}}"],
-	["Category", "{{category}}"],
-	["Industry", "{{industry}}"],
-	["Headline", "{{headline}}"],
-	["Language", "{{language}}"],
-	["Summary template", "{{template}}"],
-	["Model", "{{model}}"],
+	['Duration', '{{duration}}'],
+	['Category', '{{category}}'],
+	['Industry', '{{industry}}'],
+	['Headline', '{{headline}}'],
+	['Language', '{{language}}'],
+	['Summary template', '{{template}}'],
+	['Model', '{{model}}'],
 ];
 
 // Extra-frontmatter documentation. Each row is a property; its value takes the
@@ -459,25 +477,34 @@ const CUSTOM_FRONTMATTER_INTRO =
 	"Adds your own properties to each imported note's frontmatter. Each row is one property: a name, a value, and whether to preserve it. A value can be plain text or use the same {{ }} tokens as the other fields (the date set, {{title}}, {{plaud-folder}}) plus content tokens like {{category}} and {{duration}}. Leave a value empty to write the property with no value. Turn on preserve for a property you edit by hand (a status, a project) so a re-import keeps your value; leave it off for a value that should refresh from the recording each time.";
 
 const CUSTOM_FRONTMATTER_TOKENS: ReadonlyArray<readonly [string, string]> = [
-	["{{title}}", "the recording title"],
-	["{{plaud-folder}}", "the recording's Plaud folder name"],
-	["{{duration}}", "the recording length, for example 30m"],
-	["{{category}}", "the summary's category (empty with no AI summary)"],
-	["{{industry}}", "the summary's industry or topic (empty with no AI summary)"],
-	["{{headline}}", "the summary's one-line headline"],
-	["{{YYYY}} {{MM}} {{DD}} {{Q}} {{WW}}", "the date set, same as the other fields"],
+	['{{title}}', 'the recording title'],
+	['{{plaud-folder}}', "the recording's Plaud folder name"],
+	['{{duration}}', 'the recording length, for example 30m'],
+	['{{category}}', "the summary's category (empty with no AI summary)"],
+	[
+		'{{industry}}',
+		"the summary's industry or topic (empty with no AI summary)",
+	],
+	['{{headline}}', "the summary's one-line headline"],
+	[
+		'{{YYYY}} {{MM}} {{DD}} {{Q}} {{WW}}',
+		'the date set, same as the other fields',
+	],
 ];
 
 const CUSTOM_FRONTMATTER_EXAMPLES: ReadonlyArray<readonly [string, string]> = [
-	["status: unprocessed", "a fixed value you triage later (preserve on)"],
-	["quarter: Q{{Q}}-{{YYYY}}", "writes quarter: Q3-2026 for a July recording"],
-	["type: {{category}}", "the recording's own category under your key name"],
-	["project:", "writes project: with no value, to fill in by hand"],
+	['status: unprocessed', 'a fixed value you triage later (preserve on)'],
+	[
+		'quarter: Q{{Q}}-{{YYYY}}',
+		'writes quarter: Q3-2026 for a July recording',
+	],
+	['type: {{category}}', "the recording's own category under your key name"],
+	['project:', 'writes project: with no value, to fill in by hand'],
 ];
 
 const CUSTOM_FRONTMATTER_TOKENS_HEADING =
-	"Tokens (same {{ }} syntax as the other fields, plus content tokens):";
-const CUSTOM_FRONTMATTER_EXAMPLES_HEADING = "Examples:";
+	'Tokens (same {{ }} syntax as the other fields, plus content tokens):';
+const CUSTOM_FRONTMATTER_EXAMPLES_HEADING = 'Examples:';
 const CUSTOM_FRONTMATTER_FOOTNOTE =
 	"Applies to new imports. On a re-import, a preserved property keeps the note's current value; an unpreserved one is rewritten. A name that matches one of the plugin's own fields (like date, source, or plaud-id) is reserved and left to the plugin, so an extra property can only add a field, never override one.";
 
@@ -490,29 +517,32 @@ const DATETIME_TEMPLATE_INTRO =
 	"Adds a datetime property to each note's frontmatter, formatted with the same {{ }} Moment tokens as the other fields. Leave it empty to write no datetime property. The date property stays YYYY-MM-DD for Dataview; this separate field lets you record the recording time in any format. The value is your computer's local time, so include {{Z}} to capture the UTC offset if you want the instant to stay unambiguous across devices and time zones.";
 
 const DATETIME_TEMPLATE_TOKENS: ReadonlyArray<readonly [string, string]> = [
-	["{{YYYY}}-{{MM}}-{{DD}}", "the date, for example 2026-07-05"],
-	["{{HH}}", "hour, 00 to 23"],
-	["{{mm}}", "minute, 00 to 59"],
-	["{{ss}}", "second, 00 to 59"],
-	["{{h}}", "hour, 1 to 12"],
-	["{{A}}", "AM or PM"],
-	["{{Z}}", "UTC offset, for example +02:00"],
+	['{{YYYY}}-{{MM}}-{{DD}}', 'the date, for example 2026-07-05'],
+	['{{HH}}', 'hour, 00 to 23'],
+	['{{mm}}', 'minute, 00 to 59'],
+	['{{ss}}', 'second, 00 to 59'],
+	['{{h}}', 'hour, 1 to 12'],
+	['{{A}}', 'AM or PM'],
+	['{{Z}}', 'UTC offset, for example +02:00'],
 ];
 
 // [template, resulting value] pairs for the sample datetime 2026-07-05 14:30:00.
 // The ISO example's offset depends on the user's own time zone; the live preview
 // shows their real value, so the doc labels it rather than committing to one.
 const DATETIME_TEMPLATE_EXAMPLES: ReadonlyArray<readonly [string, string]> = [
-	["{{YYYY-MM-DD HH:mm}}", "2026-07-05 14:30 (24-hour)"],
-	["{{YYYY-MM-DD h:mm A}}", "2026-07-05 2:30 PM (12-hour)"],
-	["{{YYYY-MM-DDTHH:mm:ssZ}}", "2026-07-05T14:30:00±hh:mm, your local UTC offset (ISO 8601)"],
+	['{{YYYY-MM-DD HH:mm}}', '2026-07-05 14:30 (24-hour)'],
+	['{{YYYY-MM-DD h:mm A}}', '2026-07-05 2:30 PM (12-hour)'],
+	[
+		'{{YYYY-MM-DDTHH:mm:ssZ}}',
+		'2026-07-05T14:30:00±hh:mm, your local UTC offset (ISO 8601)',
+	],
 ];
 
 const DATETIME_TEMPLATE_TOKENS_HEADING =
-	"Tokens (case matters; combine them with separators inside the braces):";
-const DATETIME_TEMPLATE_EXAMPLES_HEADING = "Examples:";
+	'Tokens (case matters; combine them with separators inside the braces):';
+const DATETIME_TEMPLATE_EXAMPLES_HEADING = 'Examples:';
 const DATETIME_TEMPLATE_FOOTNOTE =
-	"Applies to new imports; notes you already imported keep their current frontmatter.";
+	'Applies to new imports; notes you already imported keep their current frontmatter.';
 
 /**
  * Coerce a stored ribbon icon ID to a known-good value. Protects against
@@ -521,7 +551,7 @@ const DATETIME_TEMPLATE_FOOTNOTE =
  * empty ribbon slot otherwise.
  */
 function resolveRibbonIconId(stored: string | undefined): string {
-	if (typeof stored !== "string" || stored.length === 0) {
+	if (typeof stored !== 'string' || stored.length === 0) {
 		return DEFAULT_RIBBON_ICON;
 	}
 	return RIBBON_ICON_CHOICES.some((choice) => choice.id === stored)
@@ -564,7 +594,7 @@ interface PlaudImporterSettings {
 	// path separators inside a {{title}} folder token. Default "-". Validated to a
 	// safe single char before saving (see isValidReplacementChar).
 	forbiddenCharReplacement: string;
-	onDuplicate: "skip" | "overwrite" | "prompt";
+	onDuplicate: 'skip' | 'overwrite' | 'prompt';
 	showRibbonIcon: boolean;
 	ribbonIcon: string;
 	debug: boolean;
@@ -654,7 +684,7 @@ interface PlaudImporterSettings {
 // cannot drift, which matters here because the behavior it describes changed:
 // clearing is scoped to the calling vault since issue #87.
 const CLEAR_SIGN_IN_DESC =
-	"Sign out of the embedded Plaud browser for this vault and wipe the stored token so the next sign-in starts completely fresh. Other vaults keep their own sign-ins. This also removes the older shared sign-in left over from before each vault had its own. Use this to reach the sign-in screen when it keeps signing you in automatically. Obsidian has no way to delete the secret entry, so an emptied one may stay in the token picker, but it holds no token.";
+	'Sign out of the embedded Plaud browser for this vault and wipe the stored token so the next sign-in starts completely fresh. Other vaults keep their own sign-ins. This also removes the older shared sign-in left over from before each vault had its own. Use this to reach the sign-in screen when it keeps signing you in automatically. Obsidian has no way to delete the secret entry, so an emptied one may stay in the token picker, but it holds no token.';
 
 // Current settings schema version. A fresh install is born at this version and
 // runs no migrations; loadSettings compares the STORED version against it.
@@ -666,22 +696,22 @@ const CLEAR_SIGN_IN_DESC =
 const CURRENT_SETTINGS_VERSION = 2;
 
 const DEFAULT_SETTINGS: PlaudImporterSettings = {
-	secretId: "",
-	apiBaseUrl: "https://api.plaud.ai",
-	outputFolder: "Plaud",
-	subfolderTemplate: "{{YYYY}}/{{MM}}",
+	secretId: '',
+	apiBaseUrl: 'https://api.plaud.ai',
+	outputFolder: 'Plaud',
+	subfolderTemplate: '{{YYYY}}/{{MM}}',
 	noteNameTemplate: DEFAULT_NOTE_NAME_TEMPLATE,
-	datetimeTemplate: "",
+	datetimeTemplate: '',
 	// A real, editable example so the setting is self-documenting on a fresh
 	// install. Writes "Recording Source: Plaud Importer" to new imports until the
 	// user edits or removes it. Existing configs (which already stored a value)
 	// are unaffected.
 	customFrontmatter: [
-		{ key: "Recording Source", value: "Plaud Importer", preserve: true },
+		{ key: 'Recording Source', value: 'Plaud Importer', preserve: true },
 	],
 	preserveUnknownFrontmatter: true,
-	forbiddenCharReplacement: "-",
-	onDuplicate: "prompt",
+	forbiddenCharReplacement: '-',
+	onDuplicate: 'prompt',
 	showRibbonIcon: true,
 	ribbonIcon: DEFAULT_RIBBON_ICON,
 	debug: false,
@@ -697,8 +727,8 @@ const DEFAULT_SETTINGS: PlaudImporterSettings = {
 	// that were flooding vaults with single-use tags. aiKeywordsAsProperty
 	// is off by default because Plaud's keyword list can run to hundreds of
 	// low-value entries per recording; users who want it can opt back in.
-	tagMode: "plaud",
-	customTags: "plaud-meeting",
+	tagMode: 'plaud',
+	customTags: 'plaud-meeting',
 	aiKeywordsAsProperty: false,
 	autoCloseSummary: true,
 	autoCloseSummarySeconds: 20,
@@ -711,7 +741,7 @@ const DEFAULT_SETTINGS: PlaudImporterSettings = {
 	autoUpdatePlaudTitle: false,
 	autoSyncEnabled: false,
 	autoSyncIntervalMinutes: 60,
-	signInMethod: "",
+	signInMethod: '',
 	sessionWarnedForExpMs: 0,
 	settingsVersion: CURRENT_SETTINGS_VERSION,
 };
@@ -720,7 +750,12 @@ const DEFAULT_SETTINGS: PlaudImporterSettings = {
 // depends on. Using requestUrl (not fetch) is required to avoid CORS and
 // certificate issues on Electron. `throw: false` lets us map status codes
 // in the client rather than Obsidian's implicit throw.
-const obsidianFetcher: PlaudHttpFetcher = async ({ url, method, headers, body }) => {
+const obsidianFetcher: PlaudHttpFetcher = async ({
+	url,
+	method,
+	headers,
+	body,
+}) => {
 	const response = await requestUrl({
 		url,
 		method,
@@ -731,7 +766,7 @@ const obsidianFetcher: PlaudHttpFetcher = async ({ url, method, headers, body })
 	return {
 		status: response.status,
 		json: safeJson(response),
-		text: response.text ?? "",
+		text: response.text ?? '',
 	};
 };
 
@@ -764,9 +799,9 @@ async function copyToClipboard(
 		await navigator.clipboard.writeText(text);
 		onSuccess();
 	} catch (err) {
-		console.error("Plaud Importer: clipboard write failed", err);
+		console.error('Plaud Importer: clipboard write failed', err);
 		new Notice(
-			"Plaud Importer: could not copy to clipboard — see the developer console (Ctrl+Shift+I) for the full error.",
+			'Plaud Importer: could not copy to clipboard — see the developer console (Ctrl+Shift+I) for the full error.',
 		);
 	}
 }
@@ -910,24 +945,30 @@ export default class PlaudImporterPlugin extends Plugin {
 		// The handler now makes network calls to pick the working candidate, so
 		// its rejection is caught here: an unhandled one would leave the user
 		// with a clicked bookmark and no feedback at all.
-		this.registerObsidianProtocolHandler("plaud-importer-token", (params) => {
-			void this.handleTokenDeepLink(params).catch((err: unknown) => {
-				console.error("Plaud importer: token deep link failed", err);
-				new Notice(
-					"Plaud: could not save the token from your browser. Try again, or paste it in settings.",
-				);
-			});
+		this.registerObsidianProtocolHandler(
+			'plaud-importer-token',
+			(params) => {
+				void this.handleTokenDeepLink(params).catch((err: unknown) => {
+					console.error(
+						'Plaud importer: token deep link failed',
+						err,
+					);
+					new Notice(
+						'Plaud: could not save the token from your browser. Try again, or paste it in settings.',
+					);
+				});
+			},
+		);
+
+		this.addCommand({
+			id: 'import-recent',
+			name: 'Import recent recordings',
+			callback: () => this.launchImportModal('command'),
 		});
 
 		this.addCommand({
-			id: "import-recent",
-			name: "Import recent recordings",
-			callback: () => this.launchImportModal("command"),
-		});
-
-		this.addCommand({
-			id: "backfill-version-markers",
-			name: "Backfill version markers for auto-sync",
+			id: 'backfill-version-markers',
+			name: 'Backfill version markers for auto-sync',
 			callback: () => {
 				void this.backfillVersionMarkers();
 			},
@@ -940,15 +981,15 @@ export default class PlaudImporterPlugin extends Plugin {
 		this.updateRibbonIcon();
 
 		this.addCommand({
-			id: "debug-copy-log",
-			name: "Debug: copy debug log to clipboard",
+			id: 'debug-copy-log',
+			name: 'Debug: copy debug log to clipboard',
 			callback: () => {
 				const formatted = this.debugLogger.format();
 				void copyToClipboard(formatted, () => {
 					const count = this.debugLogger.snapshot().length;
 					new Notice(
 						`Plaud Importer: copied ${count} debug event${
-							count === 1 ? "" : "s"
+							count === 1 ? '' : 's'
 						} to clipboard.`,
 					);
 				});
@@ -956,26 +997,26 @@ export default class PlaudImporterPlugin extends Plugin {
 		});
 
 		this.addCommand({
-			id: "debug-clear-log",
-			name: "Debug: clear debug log",
+			id: 'debug-clear-log',
+			name: 'Debug: clear debug log',
 			callback: () => {
 				const count = this.debugLogger.snapshot().length;
 				this.debugLogger.clear();
 				new Notice(
 					`Plaud Importer: cleared ${count} debug event${
-						count === 1 ? "" : "s"
+						count === 1 ? '' : 's'
 					}.`,
 				);
 			},
 		});
 
 		this.addCommand({
-			id: "debug-copy-session-status",
-			name: "Debug: copy session status to clipboard",
+			id: 'debug-copy-session-status',
+			name: 'Debug: copy session status to clipboard',
 			callback: () => {
 				void copyToClipboard(this.formatSessionStatus(), () => {
 					new Notice(
-						"Session status copied. It contains no token value and is safe to paste into a public issue.",
+						'Session status copied. It contains no token value and is safe to paste into a public issue.',
 					);
 				});
 			},
@@ -990,12 +1031,12 @@ export default class PlaudImporterPlugin extends Plugin {
 		// serve, so it never advertises a renewal SSO and bookmarklet users
 		// cannot receive.
 		this.addCommand({
-			id: "debug-refresh-session",
-			name: "Debug: refresh the session now",
+			id: 'debug-refresh-session',
+			name: 'Debug: refresh the session now',
 			checkCallback: (checking) => {
 				if (
 					!this.settings.debug ||
-					this.settings.signInMethod !== "window"
+					this.settings.signInMethod !== 'window'
 				) {
 					return false;
 				}
@@ -1003,15 +1044,15 @@ export default class PlaudImporterPlugin extends Plugin {
 					void this.refreshSessionNow()
 						.then((outcome) => {
 							new Notice(
-								outcome === "refreshed"
-									? "Plaud session refreshed. A fresh token is stored."
-									: outcome === "busy"
-										? "A session refresh is already running."
-										: outcome === "superseded"
-											? "Session refresh skipped: the stored sign-in changed while it ran."
-											: outcome === "unsupported"
-												? "This session cannot be refreshed in the background. Reconnect to sign in again."
-												: "Session refresh failed. See the debug log, then reconnect.",
+								outcome === 'refreshed'
+									? 'Plaud session refreshed. A fresh token is stored.'
+									: outcome === 'busy'
+										? 'A session refresh is already running.'
+										: outcome === 'superseded'
+											? 'Session refresh skipped: the stored sign-in changed while it ran.'
+											: outcome === 'unsupported'
+												? 'This session cannot be refreshed in the background. Reconnect to sign in again.'
+												: 'Session refresh failed. See the debug log, then reconnect.',
 							);
 						})
 						.catch((err: unknown) => {
@@ -1020,11 +1061,11 @@ export default class PlaudImporterPlugin extends Plugin {
 							// rejection would be swallowed as an unhandled promise
 							// and the palette entry would look like it did nothing.
 							console.error(
-								"Plaud importer: manual session refresh failed",
+								'Plaud importer: manual session refresh failed',
 								err,
 							);
 							new Notice(
-								"Session refresh failed. See the debug log, then reconnect.",
+								'Session refresh failed. See the debug log, then reconnect.',
 							);
 						});
 				}
@@ -1037,8 +1078,8 @@ export default class PlaudImporterPlugin extends Plugin {
 		// imported before it keep the broken inline embed. This user-invoked
 		// (never automatic) command repairs those existing notes in place.
 		this.addCommand({
-			id: "repair-legacy-card-links",
-			name: "Repair card image links from older imports (one-time)",
+			id: 'repair-legacy-card-links',
+			name: 'Repair card image links from older imports (one-time)',
 			callback: () => {
 				void this.repairLegacyCardLinks();
 			},
@@ -1050,8 +1091,8 @@ export default class PlaudImporterPlugin extends Plugin {
 		// cascades a user rename (from Obsidian's own rename UI) to the assets
 		// folder. All local: no write back to Plaud (that is a later feature).
 		this.addCommand({
-			id: "rename-recording",
-			name: "Rename recording",
+			id: 'rename-recording',
+			name: 'Rename recording',
 			checkCallback: (checking) => {
 				// Disable while a plugin-owned rename is in flight so a user
 				// rename cannot race our own cascade (the listener is already
@@ -1068,7 +1109,7 @@ export default class PlaudImporterPlugin extends Plugin {
 		});
 
 		this.registerEvent(
-			this.app.workspace.on("file-menu", (menu, file) => {
+			this.app.workspace.on('file-menu', (menu, file) => {
 				// Same suppression as the command: no user rename entry point
 				// while our own rename cascade is running.
 				if (this.selfRenameDepth > 0 || !this.isPlaudNote(file)) {
@@ -1076,8 +1117,8 @@ export default class PlaudImporterPlugin extends Plugin {
 				}
 				menu.addItem((item) =>
 					item
-						.setTitle("Rename imported recording")
-						.setIcon("pencil")
+						.setTitle('Rename imported recording')
+						.setIcon('pencil')
 						.onClick(() => this.promptRenameRecording(file)),
 				);
 			}),
@@ -1089,7 +1130,7 @@ export default class PlaudImporterPlugin extends Plugin {
 		// self-rename guard skips our OWN renames (auto-migration and the command
 		// above) so they do not double-cascade.
 		this.registerEvent(
-			this.app.vault.on("rename", (file, oldPath) => {
+			this.app.vault.on('rename', (file, oldPath) => {
 				if (this.selfRenameDepth > 0) {
 					return;
 				}
@@ -1134,9 +1175,9 @@ export default class PlaudImporterPlugin extends Plugin {
 			// debug log will show it rather than failing silently.
 			if (isLegacyPartition(this.signInPartition())) {
 				this.debugLogger.log({
-					kind: "error",
+					kind: 'error',
 					message:
-						"per-vault sign-in unavailable: no usable vault id, using the shared partition",
+						'per-vault sign-in unavailable: no usable vault id, using the shared partition',
 				});
 			}
 		});
@@ -1180,7 +1221,10 @@ export default class PlaudImporterPlugin extends Plugin {
 			try {
 				staleFlow.modal.close();
 			} catch (err) {
-				console.error("Plaud importer: failed to close reconnect modal", err);
+				console.error(
+					'Plaud importer: failed to close reconnect modal',
+					err,
+				);
 			}
 			staleFlow.release();
 		}
@@ -1203,7 +1247,9 @@ export default class PlaudImporterPlugin extends Plugin {
 	// session-status command, so they always describe the same credential.
 	readStoredTokenValue(): string {
 		const id = this.settings.secretId;
-		return id.length > 0 ? (this.app.secretStorage.getSecret(id) ?? "") : "";
+		return id.length > 0
+			? (this.app.secretStorage.getSecret(id) ?? '')
+			: '';
 	}
 
 	// Thin wrapper over the pure formatSessionStatus in plaud-token.ts (where
@@ -1259,21 +1305,21 @@ export default class PlaudImporterPlugin extends Plugin {
 			life,
 			this.settings.sessionWarnedForExpMs,
 		);
-		if (decision.action === "scheduled" && decision.armDelayMs !== null) {
+		if (decision.action === 'scheduled' && decision.armDelayMs !== null) {
 			this.sessionExpiryTimeoutId = window.setTimeout(() => {
 				this.sessionExpiryTimeoutId = undefined;
 				this.reconcileSessionExpiryWarning();
 			}, decision.armDelayMs);
 			return;
 		}
-		if (decision.action !== "warn" || decision.expMs === null) {
+		if (decision.action !== 'warn' || decision.expMs === null) {
 			return;
 		}
 		// Stamp BEFORE showing, so a notice path that throws cannot re-nag on
 		// every reconcile. The stamp is keyed to this exact expMs; a fresh
 		// credential carries a different exp and warns again.
 		this.settings.sessionWarnedForExpMs = decision.expMs;
-		this.saveSettingsDetached("saving the session warning stamp failed");
+		this.saveSettingsDetached('saving the session warning stamp failed');
 		// Above ~2 days speak in days ("about 7 days"), below in hours: the
 		// long (7-day) lead would otherwise read as "about 168 hours".
 		const hoursLeft = Math.max(
@@ -1283,12 +1329,12 @@ export default class PlaudImporterPlugin extends Plugin {
 		const timeLeft =
 			hoursLeft > 48
 				? `${Math.round(hoursLeft / 24)} days`
-				: `${hoursLeft} hour${hoursLeft === 1 ? "" : "s"}`;
+				: `${hoursLeft} hour${hoursLeft === 1 ? '' : 's'}`;
 		this.sessionExpiryNotice = this.showActionNotice(
 			decision.expired
-				? "Your Plaud session has expired. Reconnect to keep imports and auto-sync running."
+				? 'Your Plaud session has expired. Reconnect to keep imports and auto-sync running.'
 				: `Your Plaud session expires in about ${timeLeft}. Reconnect now to avoid an interruption.`,
-			"Reconnect",
+			'Reconnect',
 			() => this.reconnectFreshFromExpiryNotice(),
 		);
 	}
@@ -1322,7 +1368,7 @@ export default class PlaudImporterPlugin extends Plugin {
 			this.sessionRefreshTimeoutId = undefined;
 		}
 		if (this.disposed || this.sessionRefreshFailed) return;
-		if (this.settings.signInMethod !== "window") return;
+		if (this.settings.signInMethod !== 'window') return;
 		const token = this.readStoredTokenValue();
 		if (token.length === 0) return;
 		// Only a workspace token wants this. Minting against a long-lived
@@ -1341,7 +1387,7 @@ export default class PlaudImporterPlugin extends Plugin {
 			// background timer may reject into the console unhandled.
 			void this.runScheduledSessionRefresh().catch((err: unknown) => {
 				console.error(
-					"Plaud importer: scheduled session refresh failed",
+					'Plaud importer: scheduled session refresh failed',
 					err,
 				);
 			});
@@ -1369,7 +1415,7 @@ export default class PlaudImporterPlugin extends Plugin {
 		// "superseded" re-arms through the newer credential's own store, but
 		// reconciling again is idempotent and keeps the rule simple. "failed"
 		// deliberately does not re-arm; "unsupported" has nothing to arm.
-		if (outcome === "busy" || outcome === "superseded") {
+		if (outcome === 'busy' || outcome === 'superseded') {
 			this.reconcileSessionRefresh();
 		}
 	}
@@ -1383,9 +1429,9 @@ export default class PlaudImporterPlugin extends Plugin {
 	// budget and can lock it out of renewing at all. One attempt; on failure
 	// pause and prompt Reconnect.
 	async refreshSessionNow(): Promise<
-		"refreshed" | "unsupported" | "failed" | "busy" | "superseded"
+		'refreshed' | 'unsupported' | 'failed' | 'busy' | 'superseded'
 	> {
-		if (this.sessionRefreshInFlight) return "busy";
+		if (this.sessionRefreshInFlight) return 'busy';
 		// Never run underneath an open sign-in window. Reconnect CLEARS the
 		// sign-in partition before reopening it, and that partition's cookies
 		// are the only thing this refresh authenticates with, so the two would
@@ -1393,12 +1439,12 @@ export default class PlaudImporterPlugin extends Plugin {
 		// of this lock; both are needed, because in the other order the sign-in
 		// window can re-capture the stale pre-refresh token and store it over a
 		// refresh that had already succeeded.
-		if (this.reauthInFlight) return "busy";
-		if (this.settings.signInMethod !== "window") return "unsupported";
+		if (this.reauthInFlight) return 'busy';
+		if (this.settings.signInMethod !== 'window') return 'unsupported';
 		const current = this.readStoredTokenValue();
-		if (current.length === 0) return "unsupported";
+		if (current.length === 0) return 'unsupported';
 		// A long-lived credential must not be traded for a 24 hour one.
-		if (!isWorkspaceToken(current)) return "unsupported";
+		if (!isWorkspaceToken(current)) return 'unsupported';
 		// Which secret that value came from, not just the value. The picker can
 		// be pointed at a DIFFERENT secret holding the same token, and a value
 		// comparison alone would call that unchanged and then re-link
@@ -1407,12 +1453,12 @@ export default class PlaudImporterPlugin extends Plugin {
 		const post = buildPartitionPost(this.signInPartition());
 		if (post === null) {
 			this.debugLogger.log({
-				kind: "error",
-				endpoint: "/session-refresh",
+				kind: 'error',
+				endpoint: '/session-refresh',
 				message:
-					"session refresh unavailable: no Electron session.fetch on this build",
+					'session refresh unavailable: no Electron session.fetch on this build',
 			});
-			return "unsupported";
+			return 'unsupported';
 		}
 		// Held until the fresh token is STORED, not merely fetched. Clearing it
 		// when the network settled would reopen the gap it exists to close: the
@@ -1427,15 +1473,15 @@ export default class PlaudImporterPlugin extends Plugin {
 				post,
 				log: (message, payload) => {
 					this.debugLogger.log({
-						kind: "note",
-						endpoint: "/session-refresh",
+						kind: 'note',
+						endpoint: '/session-refresh',
 						message,
 						payload,
 					});
 				},
 			});
 			// A plugin unloaded mid-refresh must not write storage.
-			if (this.disposed) return "failed";
+			if (this.disposed) return 'failed';
 			// Supersede check FIRST, ahead of both the success and the failure
 			// branch. The two calls above take seconds and nothing serializes them
 			// against the user: a reconnect, a paste, a different linked secret or a
@@ -1451,12 +1497,12 @@ export default class PlaudImporterPlugin extends Plugin {
 				this.settings.secretId !== currentSecretId
 			) {
 				this.debugLogger.log({
-					kind: "note",
-					endpoint: "/session-refresh",
+					kind: 'note',
+					endpoint: '/session-refresh',
 					message:
-						"session refresh discarded: the stored credential changed while it ran",
+						'session refresh discarded: the stored credential changed while it ran',
 				});
-				return "superseded";
+				return 'superseded';
 			}
 			// Validate before storing, the same guard every other capture path
 			// applies. A mint that answered 200 with something that is not a usable
@@ -1487,21 +1533,21 @@ export default class PlaudImporterPlugin extends Plugin {
 				isRefreshDue(result.token, Date.now())
 			) {
 				this.debugLogger.log({
-					kind: "error",
-					endpoint: "/session-refresh",
+					kind: 'error',
+					endpoint: '/session-refresh',
 					message:
 						result === null
-							? "session refresh failed: the two-step refresh did not return a token"
+							? 'session refresh failed: the two-step refresh did not return a token'
 							: !isUsableUserToken(result.token)
-								? "session refresh failed: the minted value did not pass the capture guard"
+								? 'session refresh failed: the minted value did not pass the capture guard'
 								: !isWorkspaceToken(result.token)
-									? "session refresh failed: the minted value is not a workspace token"
+									? 'session refresh failed: the minted value is not a workspace token'
 									: extractWorkspaceId(result.token) === null
-										? "session refresh failed: the minted value carries no workspace id to refresh against"
-										: "session refresh failed: the minted token is already inside the refresh window",
+										? 'session refresh failed: the minted value carries no workspace id to refresh against'
+										: 'session refresh failed: the minted token is already inside the refresh window',
 				});
 				this.onSessionRefreshFailed();
-				return "failed";
+				return 'failed';
 			}
 			// A vault that will not take the settings write comes back as a
 			// `save-failed` outcome now rather than a throw, so it can be named in
@@ -1521,7 +1567,7 @@ export default class PlaudImporterPlugin extends Plugin {
 			try {
 				stored = await this.storeAccessToken(
 					result.token,
-					"window",
+					'window',
 					result.apiBaseUrl ?? undefined,
 					true,
 					() =>
@@ -1531,48 +1577,48 @@ export default class PlaudImporterPlugin extends Plugin {
 				);
 			} catch (err) {
 				this.debugLogger.log({
-					kind: "error",
-					endpoint: "/session-refresh",
+					kind: 'error',
+					endpoint: '/session-refresh',
 					message:
-						"session refresh failed: storing the fresh token threw",
+						'session refresh failed: storing the fresh token threw',
 					payload: {
 						error: err instanceof Error ? err.message : String(err),
 					},
 				});
 				this.onSessionRefreshFailed();
-				return "failed";
+				return 'failed';
 			}
-			if (stored.outcome === "superseded") {
+			if (stored.outcome === 'superseded') {
 				// Same meaning as the early supersede check, so the same result:
 				// drop it, and do NOT record a failure. Marking the user's brand new
 				// session as failed would clear the timer it had just armed.
 				this.debugLogger.log({
-					kind: "note",
-					endpoint: "/session-refresh",
+					kind: 'note',
+					endpoint: '/session-refresh',
 					message:
-						"session refresh discarded: the stored credential changed while the store was queued",
+						'session refresh discarded: the stored credential changed while the store was queued',
 				});
-				return "superseded";
+				return 'superseded';
 			}
-			if (stored.outcome !== "stored") {
+			if (stored.outcome !== 'stored') {
 				this.debugLogger.log({
-					kind: "error",
-					endpoint: "/session-refresh",
+					kind: 'error',
+					endpoint: '/session-refresh',
 					message:
-						stored.outcome === "save-failed"
-							? "session refresh failed: the vault would not accept the settings write, so the fresh token was not stored and the previous session is unchanged"
-							: stored.outcome === "torn"
-								? "session refresh failed: the settings write landed but the credential write did not, so data.json names a session whose token was never stored"
-								: "session refresh failed: the minted token did not pass the capture guard at store time",
+						stored.outcome === 'save-failed'
+							? 'session refresh failed: the vault would not accept the settings write, so the fresh token was not stored and the previous session is unchanged'
+							: stored.outcome === 'torn'
+								? 'session refresh failed: the settings write landed but the credential write did not, so data.json names a session whose token was never stored'
+								: 'session refresh failed: the minted token did not pass the capture guard at store time',
 				});
 				this.onSessionRefreshFailed();
-				return "failed";
+				return 'failed';
 			}
 			this.sessionRefreshFailed = false;
 			this.debugLogger.log({
-				kind: "note",
-				endpoint: "/session-refresh",
-				message: "session refresh succeeded; a fresh token is stored",
+				kind: 'note',
+				endpoint: '/session-refresh',
+				message: 'session refresh succeeded; a fresh token is stored',
 			});
 			// A tick that ran while the token was expired (Obsidian waking from
 			// sleep, say) will have paused auto-sync before this refresh
@@ -1581,7 +1627,7 @@ export default class PlaudImporterPlugin extends Plugin {
 			// hand, which is exactly the unattended operation this exists for.
 			this.resumeAutoSyncIfPaused();
 			// storeAccessToken already reconciled the warning and this schedule.
-			return "refreshed";
+			return 'refreshed';
 		} finally {
 			this.sessionRefreshInFlight = false;
 		}
@@ -1628,7 +1674,7 @@ export default class PlaudImporterPlugin extends Plugin {
 		// suppress the reconnect warning for the very credential whose renewal
 		// just failed.
 		this.settings.sessionWarnedForExpMs = 0;
-		this.saveSettingsDetached("clearing the session warning stamp failed");
+		this.saveSettingsDetached('clearing the session warning stamp failed');
 		this.reconcileSessionExpiryWarning();
 		// Renewal now runs a clear margin BEFORE the warning's own lead, so at
 		// the moment a refresh fails the credential is usually still OUTSIDE
@@ -1648,8 +1694,8 @@ export default class PlaudImporterPlugin extends Plugin {
 		// notice is already up, so the two never stack.
 		if (this.sessionExpiryNotice === null) {
 			this.sessionRefreshFailureNotice = this.showActionNotice(
-				"Could not renew your Plaud session automatically. Reconnect to keep imports and auto-sync running.",
-				"Reconnect",
+				'Could not renew your Plaud session automatically. Reconnect to keep imports and auto-sync running.',
+				'Reconnect',
 				() => this.reconnectFreshFromExpiryNotice(),
 			);
 		}
@@ -1658,7 +1704,7 @@ export default class PlaudImporterPlugin extends Plugin {
 		try {
 			this.settingsRefresh?.();
 		} catch (err) {
-			console.error("Plaud importer: settings refresh failed", err);
+			console.error('Plaud importer: settings refresh failed', err);
 		}
 	}
 	// Reconnect action for the pre-expiry notice specifically. For a
@@ -1682,7 +1728,7 @@ export default class PlaudImporterPlugin extends Plugin {
 		// seconds and, if it succeeds, removes the reason to reconnect at all.
 		if (this.sessionRefreshInFlight) {
 			new Notice(
-				"Renewing your session now. Try reconnecting in a moment if it does not clear.",
+				'Renewing your session now. Try reconnecting in a moment if it does not clear.',
 			);
 			return;
 		}
@@ -1702,7 +1748,7 @@ export default class PlaudImporterPlugin extends Plugin {
 					await clearPlaudLoginSession(this.app);
 				} catch (err) {
 					console.error(
-						"Plaud importer: failed to clear login session before reconnect",
+						'Plaud importer: failed to clear login session before reconnect',
 						err,
 					);
 				}
@@ -1733,7 +1779,7 @@ export default class PlaudImporterPlugin extends Plugin {
 		signInMethod: SignInMethod = this.settings.signInMethod,
 	): boolean {
 		return (
-			signInMethod === "window" &&
+			signInMethod === 'window' &&
 			isWorkspaceToken(token) &&
 			buildPartitionPost(this.signInPartition()) !== null &&
 			computeRefreshDelayMs(token, Date.now()) !== null
@@ -1761,7 +1807,7 @@ export default class PlaudImporterPlugin extends Plugin {
 		// capture's save and its notice.
 		const canRenew = this.canRenewCredential(token, signInMethod);
 		const issued = `Plaud issued this sign-in a session of about ${hours} hour${
-			hours === 1 ? "" : "s"
+			hours === 1 ? '' : 's'
 		}.`;
 		new Notice(
 			canRenew
@@ -1784,7 +1830,7 @@ export default class PlaudImporterPlugin extends Plugin {
 			return {
 				ok: false,
 				message:
-					"Plaud Importer is still starting up. Wait a moment and try again.",
+					'Plaud Importer is still starting up. Wait a moment and try again.',
 			};
 		}
 		try {
@@ -1798,13 +1844,13 @@ export default class PlaudImporterPlugin extends Plugin {
 			const lifeSentence =
 				value.length > 0
 					? ` ${describeTokenLifetime(readTokenLifetime(value))}.`
-					: "";
+					: '';
 			return {
 				ok: true,
 				message:
 					(recordings.length > 0
-						? "Connected to Plaud. Your token works and recordings are reachable."
-						: "Connected to Plaud. Your token works (no recordings found yet).") +
+						? 'Connected to Plaud. Your token works and recordings are reachable.'
+						: 'Connected to Plaud. Your token works (no recordings found yet).') +
 					lifeSentence,
 			};
 		} catch (err) {
@@ -1816,7 +1862,12 @@ export default class PlaudImporterPlugin extends Plugin {
 
 	private logAutoSync(message: string, payload?: unknown): void {
 		if (!this.debugLogger.enabled) return;
-		this.debugLogger.log({ kind: "note", endpoint: "/auto-sync", message, payload });
+		this.debugLogger.log({
+			kind: 'note',
+			endpoint: '/auto-sync',
+			message,
+			payload,
+		});
 	}
 
 	/**
@@ -1831,7 +1882,8 @@ export default class PlaudImporterPlugin extends Plugin {
 			noteNameTemplate: this.settings.noteNameTemplate,
 			datetimeTemplate: this.settings.datetimeTemplate,
 			customFrontmatter: this.settings.customFrontmatter,
-			preserveUnknownFrontmatter: this.settings.preserveUnknownFrontmatter,
+			preserveUnknownFrontmatter:
+				this.settings.preserveUnknownFrontmatter,
 			forbiddenCharReplacement: this.settings.forbiddenCharReplacement,
 			onDuplicate: this.settings.onDuplicate,
 			includeTranscript: this.settings.includeTranscript,
@@ -1915,7 +1967,7 @@ export default class PlaudImporterPlugin extends Plugin {
 	private isPlaudNote(file: unknown): file is TFile {
 		return (
 			file instanceof TFile &&
-			file.extension === "md" &&
+			file.extension === 'md' &&
 			this.plaudIdOf(file) !== null
 		);
 	}
@@ -1931,7 +1983,7 @@ export default class PlaudImporterPlugin extends Plugin {
 			return;
 		}
 		if (this.repairInFlight) {
-			new Notice("Plaud importer: card link repair is already running.");
+			new Notice('Plaud importer: card link repair is already running.');
 			return;
 		}
 		this.repairInFlight = true;
@@ -1957,15 +2009,18 @@ export default class PlaudImporterPlugin extends Plugin {
 					return;
 				}
 				// Cheap prefilter: Plaud's card poster path always carries this marker.
-				if (!content.includes("summary_poster")) {
+				if (!content.includes('summary_poster')) {
 					continue;
 				}
-				const assetsPath = file.path.replace(/\.md$/i, "-assets");
+				const assetsPath = file.path.replace(/\.md$/i, '-assets');
 				const folder = this.app.vault.getFolderByPath(assetsPath);
 				const cardPaths: string[] = [];
 				if (folder !== null) {
 					for (const child of folder.children) {
-						if (child instanceof TFile && isLocalCardImage(child.name)) {
+						if (
+							child instanceof TFile &&
+							isLocalCardImage(child.name)
+						) {
 							cardPaths.push(child.path);
 						}
 					}
@@ -1983,7 +2038,10 @@ export default class PlaudImporterPlugin extends Plugin {
 				try {
 					await this.app.vault.process(file, (fresh) => {
 						const r = repairLegacyCardEmbeds(fresh, cardPaths);
-						written = { repointed: r.repointed, unrepairable: r.unrepairable };
+						written = {
+							repointed: r.repointed,
+							unrepairable: r.unrepairable,
+						};
 						return r.content;
 					});
 				} catch {
@@ -2003,10 +2061,10 @@ export default class PlaudImporterPlugin extends Plugin {
 		}
 		const tail =
 			notesNeedingReimport > 0
-				? ` ${notesNeedingReimport} note${notesNeedingReimport === 1 ? "" : "s"} had a broken card with no local copy; re-import those.`
-				: "";
+				? ` ${notesNeedingReimport} note${notesNeedingReimport === 1 ? '' : 's'} had a broken card with no local copy; re-import those.`
+				: '';
 		new Notice(
-			`Plaud Importer: repaired ${linksRepointed} card link${linksRepointed === 1 ? "" : "s"} in ${notesRepaired} note${notesRepaired === 1 ? "" : "s"}.${tail}`,
+			`Plaud Importer: repaired ${linksRepointed} card link${linksRepointed === 1 ? '' : 's'} in ${notesRepaired} note${notesRepaired === 1 ? '' : 's'}.${tail}`,
 		);
 	}
 
@@ -2027,9 +2085,9 @@ export default class PlaudImporterPlugin extends Plugin {
 			// Obsidian represents the vault root as either "" or "/" depending on
 			// the call site; treat both as no-dir so a root note does not produce
 			// a leading-slash path like "/New name.md".
-			const parentPath = file.parent?.path ?? "";
+			const parentPath = file.parent?.path ?? '';
 			const dir =
-				parentPath === "" || parentPath === "/" ? "" : `${parentPath}/`;
+				parentPath === '' || parentPath === '/' ? '' : `${parentPath}/`;
 			const newPath = `${dir}${sanitized}.md`;
 			if (newPath === file.path) {
 				return;
@@ -2048,7 +2106,7 @@ export default class PlaudImporterPlugin extends Plugin {
 			await this.migrateRecordingNote(oldPath, newPath);
 			new Notice(`Plaud importer: renamed to "${displayName}".`);
 		} catch (err) {
-			console.error("Plaud importer: rename failed", err);
+			console.error('Plaud importer: rename failed', err);
 			new Notice(
 				`Plaud importer: rename failed. ${
 					err instanceof Error ? err.message : String(err)
@@ -2074,7 +2132,7 @@ export default class PlaudImporterPlugin extends Plugin {
 			await this.migrateRecordingNote(oldPath, newPath);
 		} catch (err) {
 			console.error(
-				"Plaud importer: attachments-folder rename cascade failed",
+				'Plaud importer: attachments-folder rename cascade failed',
 				err,
 			);
 			new Notice(
@@ -2094,12 +2152,15 @@ export default class PlaudImporterPlugin extends Plugin {
 	 * not a Plaud import. Widened through unknown to avoid an unsafe any.
 	 */
 	private plaudIdOf(file: TFile): string | null {
-		const fm: unknown = this.app.metadataCache.getFileCache(file)?.frontmatter;
-		if (fm === null || typeof fm !== "object") {
+		const fm: unknown =
+			this.app.metadataCache.getFileCache(file)?.frontmatter;
+		if (fm === null || typeof fm !== 'object') {
 			return null;
 		}
-		const id = (fm as Record<string, unknown>)["plaud-id"];
-		return typeof id === "string" && id.trim().length > 0 ? id.trim() : null;
+		const id = (fm as Record<string, unknown>)['plaud-id'];
+		return typeof id === 'string' && id.trim().length > 0
+			? id.trim()
+			: null;
 	}
 
 	/**
@@ -2131,7 +2192,7 @@ export default class PlaudImporterPlugin extends Plugin {
 		if (client === undefined) {
 			if (fromCommand && this.settings.autoUpdatePlaudTitle) {
 				new Notice(
-					"Plaud importer: not connected, so the recording title was not updated.",
+					'Plaud importer: not connected, so the recording title was not updated.',
 				);
 			}
 			return;
@@ -2147,17 +2208,22 @@ export default class PlaudImporterPlugin extends Plugin {
 		// Setting off and the user renamed via the command: confirm before any
 		// cloud write.
 		new ConfirmModal(this.app, {
-			title: "Update the recording title?",
+			title: 'Update the recording title?',
 			body: `Also update this recording's title in Plaud to "${title}"? This changes your Plaud account.`,
-			confirmText: "Update",
-			cancelText: "Keep local",
+			confirmText: 'Update',
+			cancelText: 'Keep local',
 			onConfirm: () => {
 				// Re-read at confirm time: the note may have been renamed again, or
 				// removed, while the prompt was open. Push the note's current name,
 				// and skip entirely if it is gone.
 				const current = this.app.vault.getFileByPath(file.path);
 				if (current instanceof TFile) {
-					void this.pushPlaudTitle(client, current, plaudId, current.basename);
+					void this.pushPlaudTitle(
+						client,
+						current,
+						plaudId,
+						current.basename,
+					);
 				}
 			},
 		}).open();
@@ -2189,7 +2255,9 @@ export default class PlaudImporterPlugin extends Plugin {
 			if (this.disposed) {
 				return;
 			}
-			new Notice(`Plaud importer: recording title updated to "${title}".`);
+			new Notice(
+				`Plaud importer: recording title updated to "${title}".`,
+			);
 			await this.refreshPlaudVersionMarker(client, file, plaudId);
 		} catch (err) {
 			// An expired or rejected session must not silently drop the write-back.
@@ -2201,7 +2269,7 @@ export default class PlaudImporterPlugin extends Plugin {
 				this.promptReauthAndRetryTitle(file, plaudId, title);
 				return;
 			}
-			console.error("Plaud importer: Plaud title update failed", err);
+			console.error('Plaud importer: Plaud title update failed', err);
 			new Notice(
 				`Plaud importer: could not update the recording title. ${
 					err instanceof Error ? err.message : String(err)
@@ -2221,24 +2289,27 @@ export default class PlaudImporterPlugin extends Plugin {
 		title: string,
 	): void {
 		new ConfirmModal(this.app, {
-			title: "Sign in to update the title?",
+			title: 'Sign in to update the title?',
 			body: `Your Plaud session expired, so the title was not updated to "${title}". Your note is already renamed. Sign in to Plaud and finish updating the title there?`,
-			confirmText: "Sign in",
-			cancelText: "Not now",
+			confirmText: 'Sign in',
+			cancelText: 'Not now',
 			onConfirm: () => {
 				void this.reauthAndRetryTitle(file, plaudId);
 			},
 		}).open();
 	}
 
-	private async reauthAndRetryTitle(file: TFile, plaudId: string): Promise<void> {
+	private async reauthAndRetryTitle(
+		file: TFile,
+		plaudId: string,
+	): Promise<void> {
 		try {
 			const outcome = await this.reauthenticate();
-			if (outcome !== "captured") {
+			if (outcome !== 'captured') {
 				// Shown for "reported" too: it adds the consequence rather than
 				// restating the cause, so it reads as a follow-on, not a contradiction.
 				new Notice(
-					"Plaud importer: sign-in was not completed, so the recording title was not updated.",
+					'Plaud importer: sign-in was not completed, so the recording title was not updated.',
 				);
 				return;
 			}
@@ -2256,19 +2327,28 @@ export default class PlaudImporterPlugin extends Plugin {
 			// name to this recording. alreadyReauthed = true so a second auth
 			// failure does not loop back into another sign-in prompt.
 			const current = this.app.vault.getFileByPath(file.path);
-			if (!(current instanceof TFile) || this.plaudIdOf(current) !== plaudId) {
+			if (
+				!(current instanceof TFile) ||
+				this.plaudIdOf(current) !== plaudId
+			) {
 				return;
 			}
-			await this.pushPlaudTitle(client, current, plaudId, current.basename, true);
+			await this.pushPlaudTitle(
+				client,
+				current,
+				plaudId,
+				current.basename,
+				true,
+			);
 		} catch (err) {
 			// reauthenticate() and its token persistence can throw; keep this
 			// fire-and-forget path from becoming an unhandled rejection.
 			console.error(
-				"Plaud importer: sign-in retry for the title update failed",
+				'Plaud importer: sign-in retry for the title update failed',
 				err,
 			);
 			new Notice(
-				"Plaud importer: sign-in failed, so the recording title was not updated.",
+				'Plaud importer: sign-in failed, so the recording title was not updated.',
 			);
 		}
 	}
@@ -2289,7 +2369,7 @@ export default class PlaudImporterPlugin extends Plugin {
 	): Promise<void> {
 		try {
 			const recent = await client.listRecordings({
-				sortBy: "edit_time",
+				sortBy: 'edit_time',
 				limit: 10,
 			});
 			const updated = recent.find((r) => r.id === plaudId);
@@ -2300,12 +2380,12 @@ export default class PlaudImporterPlugin extends Plugin {
 			await this.app.fileManager.processFrontMatter(
 				file,
 				(fm: Record<string, unknown>) => {
-					fm["plaud-version-ms"] = versionMs;
+					fm['plaud-version-ms'] = versionMs;
 				},
 			);
 		} catch (err) {
 			console.error(
-				"Plaud importer: version marker refresh after title update failed",
+				'Plaud importer: version marker refresh after title update failed',
 				err,
 			);
 		}
@@ -2316,7 +2396,8 @@ export default class PlaudImporterPlugin extends Plugin {
 		return {
 			includeSummary: this.settings.defaultIncludeSummary !== false,
 			includeTranscript: this.settings.includeTranscript !== false,
-			includeAttachments: this.settings.defaultIncludeAttachments !== false,
+			includeAttachments:
+				this.settings.defaultIncludeAttachments !== false,
 			includeMindmap: this.settings.defaultIncludeMindmap !== false,
 			includeCard: this.settings.defaultIncludeCard !== false,
 			includeAudio: this.settings.defaultIncludeAudio === true,
@@ -2361,7 +2442,7 @@ export default class PlaudImporterPlugin extends Plugin {
 		// when refactoring, or a background run could stall. NoteWriter's
 		// constructor also throws on 'prompt' without a callback, so a regression
 		// fails loud rather than hanging (see __tests__/note-writer.test.ts).
-		const makeWriter = (policy: "skip" | "overwrite"): NoteWriter =>
+		const makeWriter = (policy: 'skip' | 'overwrite'): NoteWriter =>
 			new NoteWriter(this.app.vault, {
 				...options,
 				onDuplicate: policy,
@@ -2370,7 +2451,7 @@ export default class PlaudImporterPlugin extends Plugin {
 			});
 		const runBatch = async (
 			recordings: readonly Recording[],
-			policy: "skip" | "overwrite",
+			policy: 'skip' | 'overwrite',
 		): Promise<number> => {
 			if (recordings.length === 0) return 0;
 			const outcome = await runImport({
@@ -2387,16 +2468,16 @@ export default class PlaudImporterPlugin extends Plugin {
 				// instance starts its own tick.
 				observer: { shouldAbort: () => this.disposed },
 			});
-			if (outcome.stop === "auth-failed") {
+			if (outcome.stop === 'auth-failed') {
 				// token_rejected (not not_configured) is correct here: this batch
 				// only runs after listPage already fetched a page with the stored
 				// token, so a mid-import auth failure is a rejected/expired token,
 				// not a missing one. Either way the state machine maps it to a
 				// pause via categoryAllowsReauth; the reason only sharpens the log.
 				throw new PlaudAuthError(
-					"token_rejected",
-					"Plaud session expired during auto-sync",
-					"/auto-sync",
+					'token_rejected',
+					'Plaud session expired during auto-sync',
+					'/auto-sync',
 				);
 			}
 			// Count only real writes. A 'written' result whose writeOutcome is
@@ -2408,13 +2489,14 @@ export default class PlaudImporterPlugin extends Plugin {
 			// principle as a 'skipped' write.
 			return outcome.results.filter(
 				(r) =>
-					(r.kind === "written" && r.writeOutcome.status !== "skipped") ||
-					(r.kind === "placeholder-written" &&
-						r.outcome.status !== "kept-existing"),
+					(r.kind === 'written' &&
+						r.writeOutcome.status !== 'skipped') ||
+					(r.kind === 'placeholder-written' &&
+						r.outcome.status !== 'kept-existing'),
 			).length;
 		};
-		const imported = await runBatch(newRecs, "skip");
-		const updated = await runBatch(changedRecs, "overwrite");
+		const imported = await runBatch(newRecs, 'skip');
+		const updated = await runBatch(changedRecs, 'overwrite');
 		return { imported, updated };
 	}
 
@@ -2426,11 +2508,11 @@ export default class PlaudImporterPlugin extends Plugin {
 	private async runAutoSyncTickSafe(): Promise<void> {
 		if (!this.settings.autoSyncEnabled) return;
 		if (this.autoSyncState.paused) {
-			this.logAutoSync("tick skipped: paused for re-auth");
+			this.logAutoSync('tick skipped: paused for re-auth');
 			return;
 		}
 		if (this.importModalOpen || this.autoSyncTickInFlight) {
-			this.logAutoSync("tick skipped: an import is already running");
+			this.logAutoSync('tick skipped: an import is already running');
 			return;
 		}
 		const client = this.client;
@@ -2453,7 +2535,9 @@ export default class PlaudImporterPlugin extends Plugin {
 				this.settings.outputFolder,
 			);
 			if (indexState.isCold) {
-				this.logAutoSync("tick skipped: output-folder metadata cache is cold");
+				this.logAutoSync(
+					'tick skipped: output-folder metadata cache is cold',
+				);
 				return;
 			}
 			const index = indexState.index;
@@ -2471,25 +2555,26 @@ export default class PlaudImporterPlugin extends Plugin {
 					),
 				),
 				listPage: (skip, limit) =>
-					client.listRecordings({ sortBy: "edit_time", skip, limit }),
+					client.listRecordings({ sortBy: 'edit_time', skip, limit }),
 				buildIndex: () => index,
 				// Reuse the index this tick already built (and cold-cache-guarded)
 				// so classification and the writer's dedup share one snapshot.
-				importCandidates: (n, c) => this.importAutoSyncCandidates(n, c, index),
+				importCandidates: (n, c) =>
+					this.importAutoSyncCandidates(n, c, index),
 				log: (m, p) => this.logAutoSync(m, p),
 			});
-			this.autoSyncState = nextAutoSyncState(this.autoSyncState, "ok");
+			this.autoSyncState = nextAutoSyncState(this.autoSyncState, 'ok');
 			if (result.imported + result.updated > 0) {
 				new Notice(
 					`Plaud auto-sync: imported ${result.imported} new, updated ${result.updated}.`,
 				);
 			}
-			this.logAutoSync("tick complete", result);
+			this.logAutoSync('tick complete', result);
 		} catch (err) {
 			const classification = classifyError(err);
 			const outcome = tickOutcomeForCategory(classification.category);
 			this.autoSyncState = nextAutoSyncState(this.autoSyncState, outcome);
-			if (outcome === "auth") {
+			if (outcome === 'auth') {
 				// The auth outcome covers both a rejected/expired token and a
 				// missing one; word the pause Notice for the actual category so a
 				// user who never configured a token is not told it "expired". A
@@ -2497,9 +2582,9 @@ export default class PlaudImporterPlugin extends Plugin {
 				// so the user does not have to hunt through settings. Signing in
 				// sets the token in the not-configured case too.
 				const lead =
-					classification.category === "not-configured"
-						? "Plaud auto-sync paused: no Plaud token is configured."
-						: "Plaud auto-sync paused: your session expired.";
+					classification.category === 'not-configured'
+						? 'Plaud auto-sync paused: no Plaud token is configured.'
+						: 'Plaud auto-sync paused: your session expired.';
 				// Lifecycle re-check AFTER this method's awaits, not just at its
 				// top: onunload hides every sticky action notice and clears the
 				// set, so a duration-0 prompt created after that sweep is
@@ -2516,12 +2601,12 @@ export default class PlaudImporterPlugin extends Plugin {
 					this.clearAutoSyncPauseNotice();
 					this.autoSyncPauseNotice = this.showActionNotice(
 						lead,
-						"Reconnect",
+						'Reconnect',
 						() => this.reconnectFromNotice(),
 					);
 				}
 			}
-			this.logAutoSync("tick failed", {
+			this.logAutoSync('tick failed', {
 				outcome,
 				message: classification.message,
 			});
@@ -2546,21 +2631,29 @@ export default class PlaudImporterPlugin extends Plugin {
 			this.autoSyncFirstRunTimeoutId = undefined;
 		}
 		if (!this.settings.autoSyncEnabled) return;
-		const minutes = coerceIntervalMinutes(this.settings.autoSyncIntervalMinutes);
+		const minutes = coerceIntervalMinutes(
+			this.settings.autoSyncIntervalMinutes,
+		);
 		// Plain setInterval, not registerInterval: this method reschedules on every
 		// settings change and clears the previous id itself (above) and on unload.
 		// registerInterval would push each id onto the component's cleanup list
 		// without ever removing the cleared ones, so they would accumulate.
-		this.autoSyncIntervalId = window.setInterval(() => {
-			void this.runAutoSyncTickSafe();
-		}, minutes * 60 * 1000);
+		this.autoSyncIntervalId = window.setInterval(
+			() => {
+				void this.runAutoSyncTickSafe();
+			},
+			minutes * 60 * 1000,
+		);
 		// Deferred first tick (~2 min) so startup is not blocked and the vault
 		// metadata cache is warm before the first index build.
-		this.autoSyncFirstRunTimeoutId = window.setTimeout(() => {
-			this.autoSyncFirstRunTimeoutId = undefined;
-			void this.runAutoSyncTickSafe();
-		}, 2 * 60 * 1000);
-		this.logAutoSync("auto-sync scheduled", { minutes });
+		this.autoSyncFirstRunTimeoutId = window.setTimeout(
+			() => {
+				this.autoSyncFirstRunTimeoutId = undefined;
+				void this.runAutoSyncTickSafe();
+			},
+			2 * 60 * 1000,
+		);
+		this.logAutoSync('auto-sync scheduled', { minutes });
 	}
 
 	/**
@@ -2585,8 +2678,8 @@ export default class PlaudImporterPlugin extends Plugin {
 		// screen for the rest of the session.
 		this.clearAutoSyncPauseNotice();
 		if (!this.autoSyncState.paused) return;
-		this.autoSyncState = nextAutoSyncState(this.autoSyncState, "ok");
-		this.logAutoSync("auto-sync resumed after re-auth");
+		this.autoSyncState = nextAutoSyncState(this.autoSyncState, 'ok');
+		this.logAutoSync('auto-sync resumed after re-auth');
 		this.scheduleFollowUpTick();
 	}
 
@@ -2616,9 +2709,9 @@ export default class PlaudImporterPlugin extends Plugin {
 	 */
 	private clearStoredRefreshToken(): void {
 		try {
-			this.app.secretStorage.setSecret(LEGACY_REFRESH_SECRET_ID, "");
+			this.app.secretStorage.setSecret(LEGACY_REFRESH_SECRET_ID, '');
 		} catch (err) {
-			console.error("Plaud importer: failed to blank refresh token", err);
+			console.error('Plaud importer: failed to blank refresh token', err);
 		}
 	}
 
@@ -2652,8 +2745,8 @@ export default class PlaudImporterPlugin extends Plugin {
 		// activate the action, not just a mouse click.
 		const actionEl = frag.createSpan({
 			text: actionLabel,
-			cls: "plaud-importer-notice-action",
-			attr: { role: "button", tabindex: "0" },
+			cls: 'plaud-importer-notice-action',
+			attr: { role: 'button', tabindex: '0' },
 		});
 		// 0 = stay until the user acts (or dismisses); an auth pause is not a
 		// message to blink past.
@@ -2662,7 +2755,7 @@ export default class PlaudImporterPlugin extends Plugin {
 		// Drop the reference whenever the notice is clicked away (manual dismiss
 		// or the action itself), so dismissed notices do not accumulate in the
 		// Set for the plugin's lifetime.
-		notice.messageEl.addEventListener("click", () => {
+		notice.messageEl.addEventListener('click', () => {
 			this.actionNotices.delete(notice);
 		});
 		const activate = (): void => {
@@ -2674,16 +2767,16 @@ export default class PlaudImporterPlugin extends Plugin {
 				try {
 					await onAction();
 				} catch (err) {
-					console.error("Plaud importer: notice action failed", err);
+					console.error('Plaud importer: notice action failed', err);
 					new Notice(
-						"Plaud: that action could not be completed. Try again from settings.",
+						'Plaud: that action could not be completed. Try again from settings.',
 					);
 				}
 			})();
 		};
-		actionEl.addEventListener("click", activate);
-		actionEl.addEventListener("keydown", (evt) => {
-			if (evt.key === "Enter" || evt.key === " ") {
+		actionEl.addEventListener('click', activate);
+		actionEl.addEventListener('keydown', (evt) => {
+			if (evt.key === 'Enter' || evt.key === ' ') {
 				evt.preventDefault();
 				activate();
 			}
@@ -2714,25 +2807,25 @@ export default class PlaudImporterPlugin extends Plugin {
 		}
 		try {
 			const outcome = await this.reauthenticate();
-			const captured = outcome === "captured";
+			const captured = outcome === 'captured';
 			// Plugin unloaded mid sign-in: skip side effects and messaging.
 			if (this.disposed) return captured;
 			if (captured) {
-				new Notice("Plaud reconnected.");
+				new Notice('Plaud reconnected.');
 				this.resumeAutoSyncIfPaused();
 				if (onReconnected) await onReconnected();
-			} else if (outcome === "closed") {
+			} else if (outcome === 'closed') {
 				// Only when nothing else is on screen. This used to test
 				// `!this.reauthInFlight`, which caught exactly one of the reasons
 				// reauthenticate speaks for itself and let "sign-in closed"
 				// contradict every other one, now including a failed save.
-				new Notice("Plaud sign-in closed. Still disconnected.");
+				new Notice('Plaud sign-in closed. Still disconnected.');
 			}
 			return captured;
 		} catch (err) {
-			console.error("Plaud importer: reconnect failed", err);
+			console.error('Plaud importer: reconnect failed', err);
 			if (!this.disposed) {
-				new Notice("Plaud reconnect failed. Still disconnected.");
+				new Notice('Plaud reconnect failed. Still disconnected.');
 			}
 			return false;
 		}
@@ -2757,7 +2850,7 @@ export default class PlaudImporterPlugin extends Plugin {
 		// cleared when it closes; paste-success, deep-link success, cancel, and
 		// dismiss all route through the modal's onClose.
 		if (this.reauthInFlight) {
-			new Notice("Plaud sign-in is already open.");
+			new Notice('Plaud sign-in is already open.');
 			return;
 		}
 		this.reauthInFlight = true;
@@ -2794,7 +2887,7 @@ export default class PlaudImporterPlugin extends Plugin {
 					// Plaud, so this window is seconds rather than milliseconds.
 					// Say so: a silent no-op reads as a broken button.
 					new Notice(
-						"Plaud sign-in from your browser is already being saved. Give it a moment.",
+						'Plaud sign-in from your browser is already being saved. Give it a moment.',
 					);
 					return false;
 				}
@@ -2833,7 +2926,10 @@ export default class PlaudImporterPlugin extends Plugin {
 		} catch (err) {
 			// A modal that failed to open can never fire onClose; restore the
 			// single-flight state here or every later sign-in would be refused.
-			console.error("Plaud importer: reconnect modal failed to open", err);
+			console.error(
+				'Plaud importer: reconnect modal failed to open',
+				err,
+			);
 			releaseGate();
 		}
 	}
@@ -2850,18 +2946,21 @@ export default class PlaudImporterPlugin extends Plugin {
 	 * flow can never complete a newer one. Returns whether it ran.
 	 */
 	private async completeBrowserReconnect(
-		flow: NonNullable<PlaudImporterPlugin["browserReconnect"]>,
+		flow: NonNullable<PlaudImporterPlugin['browserReconnect']>,
 	): Promise<boolean> {
 		if (this.disposed || this.browserReconnect !== flow) {
 			return false;
 		}
 		this.browserReconnect = null;
-		new Notice("Plaud reconnected.");
+		new Notice('Plaud reconnected.');
 		this.resumeAutoSyncIfPaused();
 		try {
 			flow.modal.close();
 		} catch (err) {
-			console.error("Plaud importer: failed to close reconnect modal", err);
+			console.error(
+				'Plaud importer: failed to close reconnect modal',
+				err,
+			);
 		}
 		// close() normally releases the gate via the modal's onClose; if close
 		// threw before onClose ran, release explicitly (idempotent) so the
@@ -2874,9 +2973,12 @@ export default class PlaudImporterPlugin extends Plugin {
 				// The reconnect itself succeeded; only the follow-up (e.g. a
 				// backfill retry) failed. Say so instead of letting the rejection
 				// surface as an unhandled error with no context.
-				console.error("Plaud importer: post-reconnect follow-up failed", err);
+				console.error(
+					'Plaud importer: post-reconnect follow-up failed',
+					err,
+				);
 				new Notice(
-					"Plaud reconnected, but the retried action failed. Run it again manually.",
+					'Plaud reconnected, but the retried action failed. Run it again manually.',
 				);
 			}
 		}
@@ -2894,13 +2996,17 @@ export default class PlaudImporterPlugin extends Plugin {
 	private async backfillVersionMarkers(): Promise<void> {
 		const client = this.client;
 		if (client === undefined) {
-			new Notice("Plaud importer: still starting up. Try again in a moment.");
+			new Notice(
+				'Plaud importer: still starting up. Try again in a moment.',
+			);
 			return;
 		}
 		// Participate in the single-flight gate: the backfill writes frontmatter
 		// across many notes, so it must not overlap a manual import or a tick.
 		if (this.importModalOpen || this.autoSyncTickInFlight) {
-			new Notice("Plaud importer: an import is running. Try backfill again shortly.");
+			new Notice(
+				'Plaud importer: an import is running. Try backfill again shortly.',
+			);
 			return;
 		}
 		if (outputFolderCacheIsCold(this.app, this.settings.outputFolder)) {
@@ -2908,12 +3014,12 @@ export default class PlaudImporterPlugin extends Plugin {
 			// the backfill would silently miss notes ("backfilled 0"). Ask the
 			// user to retry once Obsidian has finished loading.
 			new Notice(
-				"Plaud importer: still loading notes. Try backfill again in a moment.",
+				'Plaud importer: still loading notes. Try backfill again in a moment.',
 			);
 			return;
 		}
 		this.autoSyncTickInFlight = true;
-		new Notice("Plaud importer: backfilling version markers...");
+		new Notice('Plaud importer: backfilling version markers...');
 		try {
 			// Build id -> version_ms from the full list (bounded page loop).
 			const MAX_BACKFILL_PAGES = 500;
@@ -2924,7 +3030,7 @@ export default class PlaudImporterPlugin extends Plugin {
 				// Stop if the plugin unloaded mid-scan (finally clears the gate).
 				if (this.disposed) return;
 				const recs = await client.listRecordings({
-					sortBy: "edit_time",
+					sortBy: 'edit_time',
 					skip,
 					limit: PAGE_SIZE,
 				});
@@ -2933,7 +3039,8 @@ export default class PlaudImporterPlugin extends Plugin {
 					break;
 				}
 				for (const r of recs) {
-					if (r.versionMs !== undefined) versionById.set(r.id, r.versionMs);
+					if (r.versionMs !== undefined)
+						versionById.set(r.id, r.versionMs);
 				}
 				if (recs.length < PAGE_SIZE) {
 					reachedListEnd = true;
@@ -2942,7 +3049,10 @@ export default class PlaudImporterPlugin extends Plugin {
 				skip += recs.length;
 			}
 
-			const index = buildPlaudIdIndex(this.app, this.settings.outputFolder);
+			const index = buildPlaudIdIndex(
+				this.app,
+				this.settings.outputFolder,
+			);
 			let written = 0;
 			for (const [id, record] of index) {
 				// Stop writing frontmatter if the plugin unloaded mid-backfill.
@@ -2955,7 +3065,7 @@ export default class PlaudImporterPlugin extends Plugin {
 				await this.app.fileManager.processFrontMatter(
 					file,
 					(fm: Record<string, unknown>) => {
-						fm["plaud-version-ms"] = versionMs;
+						fm['plaud-version-ms'] = versionMs;
 					},
 				);
 				written += 1;
@@ -2963,12 +3073,12 @@ export default class PlaudImporterPlugin extends Plugin {
 			// The scan always restarts from the newest page, so re-running does not
 			// advance past the cap; say what happened without promising a fix.
 			const capNote = reachedListEnd
-				? ""
-				: " Stopped at the scan limit; the least recently updated recordings were not checked, so a few legacy notes may still lack a marker.";
+				? ''
+				: ' Stopped at the scan limit; the least recently updated recordings were not checked, so a few legacy notes may still lack a marker.';
 			new Notice(
-				`Plaud importer: backfilled ${written} version marker${written === 1 ? "" : "s"}.${capNote}`,
+				`Plaud importer: backfilled ${written} version marker${written === 1 ? '' : 's'}.${capNote}`,
 			);
-			this.logAutoSync("backfill complete", {
+			this.logAutoSync('backfill complete', {
 				written,
 				listed: versionById.size,
 				reachedListEnd,
@@ -2981,17 +3091,21 @@ export default class PlaudImporterPlugin extends Plugin {
 			// click to fix rather than a trip to settings and back.
 			if (categoryAllowsReauth(classification.category)) {
 				this.showActionNotice(
-					"Plaud importer: backfill needs a Plaud session.",
-					"Reconnect and retry",
+					'Plaud importer: backfill needs a Plaud session.',
+					'Reconnect and retry',
 					// Pass the retry as the post-reconnect continuation so it runs on
 					// BOTH the embedded (email) path and the async browser (SSO) path;
 					// the SSO path returns false immediately (paste completes later), so
 					// a caller that keyed the retry off the return value would skip it.
 					() =>
-						this.reconnectFromNotice(() => this.backfillVersionMarkers()),
+						this.reconnectFromNotice(() =>
+							this.backfillVersionMarkers(),
+						),
 				);
 			} else {
-				new Notice(`Plaud importer: backfill failed: ${classification.message}`);
+				new Notice(
+					`Plaud importer: backfill failed: ${classification.message}`,
+				);
 			}
 		} finally {
 			// Always release the gate so a failed or empty backfill never leaves
@@ -3025,8 +3139,8 @@ export default class PlaudImporterPlugin extends Plugin {
 		}
 		this.ribbonIconEl = this.addRibbonIcon(
 			desiredId,
-			"Plaud importer: Import recordings",
-			() => this.launchImportModal("ribbon"),
+			'Plaud importer: Import recordings',
+			() => this.launchImportModal('ribbon'),
 		);
 		this.ribbonIconId = desiredId;
 	}
@@ -3038,16 +3152,16 @@ export default class PlaudImporterPlugin extends Plugin {
 	 * one place. The `source` tag differentiates the two trigger paths
 	 * in the debug log when it's enabled.
 	 */
-	private launchImportModal(source: "command" | "ribbon"): void {
+	private launchImportModal(source: 'command' | 'ribbon'): void {
 		if (!this.client) {
 			new Notice(
-				"Plaud importer: Still initializing. Try again in a moment.",
+				'Plaud importer: Still initializing. Try again in a moment.',
 			);
 			return;
 		}
 		if (this.debugLogger.enabled) {
 			this.debugLogger.log({
-				kind: "note",
+				kind: 'note',
 				message: `user invoked 'Import recent recordings' via ${source}`,
 			});
 		}
@@ -3055,11 +3169,13 @@ export default class PlaudImporterPlugin extends Plugin {
 		// modal opened over an in-flight auto-sync/backfill, would clobber the
 		// shared single-flight gate (importModalOpen / autoSyncTickInFlight).
 		if (this.importModalOpen) {
-			new Notice("Plaud importer: an import window is already open.");
+			new Notice('Plaud importer: an import window is already open.');
 			return;
 		}
 		if (this.autoSyncTickInFlight) {
-			new Notice("Plaud importer: auto-sync is running. Try again shortly.");
+			new Notice(
+				'Plaud importer: auto-sync is running. Try again shortly.',
+			);
 			return;
 		}
 		// Mark the modal open for its whole lifetime so a background auto-sync
@@ -3081,7 +3197,8 @@ export default class PlaudImporterPlugin extends Plugin {
 				onReauth: async () => {
 					// The modal only needs to know whether to carry on, and
 					// reauthenticate has already explained any failure it can.
-					const captured = (await this.reauthenticate()) === "captured";
+					const captured =
+						(await this.reauthenticate()) === 'captured';
 					if (captured) this.resumeAutoSyncIfPaused();
 					return captured;
 				},
@@ -3120,7 +3237,8 @@ export default class PlaudImporterPlugin extends Plugin {
 	}
 
 	async loadSettings() {
-		const stored = (await this.loadData()) as Partial<PlaudImporterSettings> | null;
+		const stored =
+			(await this.loadData()) as Partial<PlaudImporterSettings> | null;
 		// Read the stored version BEFORE the merge: an existing pre-0.21.0
 		// data.json has no settingsVersion field, and Object.assign would fill it
 		// from DEFAULT_SETTINGS (1), hiding that a migration is due. An absent
@@ -3131,7 +3249,7 @@ export default class PlaudImporterPlugin extends Plugin {
 		// misrender under Moment. JSON parsing cannot itself produce NaN, but a
 		// hand-edited file could carry a bad type; this is defense-in-depth.
 		const storedVersion =
-			typeof rawVersion === "number" && Number.isFinite(rawVersion)
+			typeof rawVersion === 'number' && Number.isFinite(rawVersion)
 				? rawVersion
 				: 0;
 		// 0.32.0 removed the keepSessionAlive setting with the refresh
@@ -3145,10 +3263,10 @@ export default class PlaudImporterPlugin extends Plugin {
 		// declarative control can persist an empty string; consumers expect a
 		// non-empty folder name.
 		if (
-			typeof this.settings.outputFolder !== "string" ||
+			typeof this.settings.outputFolder !== 'string' ||
 			this.settings.outputFolder.trim().length === 0
 		) {
-			this.settings.outputFolder = "Plaud";
+			this.settings.outputFolder = 'Plaud';
 		}
 		// Repair a hand-edited or malformed replacement character back to the
 		// default dash, so every consumer (imports and the rename command) gets a
@@ -3156,10 +3274,10 @@ export default class PlaudImporterPlugin extends Plugin {
 		// could carry anything; an unsafe value (e.g. "/") would otherwise let
 		// sanitizing produce a path separator. NoteWriter also guards defensively.
 		if (
-			typeof this.settings.forbiddenCharReplacement !== "string" ||
+			typeof this.settings.forbiddenCharReplacement !== 'string' ||
 			!isValidReplacementChar(this.settings.forbiddenCharReplacement)
 		) {
-			this.settings.forbiddenCharReplacement = "-";
+			this.settings.forbiddenCharReplacement = '-';
 		}
 		// v1 (issue #30): the date-template engine moved from bespoke lowercase
 		// tokens to real Moment. Rewrite the two stored templates once, output-
@@ -3192,7 +3310,7 @@ export default class PlaudImporterPlugin extends Plugin {
 		// render a Notice.
 		if (stored !== null && storedVersion < 2) {
 			this.perVaultSignInNoticePending =
-				this.settings.signInMethod === "window" &&
+				this.settings.signInMethod === 'window' &&
 				this.settings.secretId.length > 0;
 		}
 		// One write covers every migration above, so an install arriving from
@@ -3242,12 +3360,15 @@ export default class PlaudImporterPlugin extends Plugin {
 	 * set. Stores a fresh plain-string array for the ignore set so the module-
 	 * level DEFAULT_SETTINGS array is never mutated by reference.
 	 */
-	private async applyImportViewState(patch: ImportViewStatePatch): Promise<void> {
+	private async applyImportViewState(
+		patch: ImportViewStatePatch,
+	): Promise<void> {
 		if (patch.showTrashedRecordings !== undefined) {
 			this.settings.showTrashedRecordings = patch.showTrashedRecordings;
 		}
 		if (patch.hideProcessedRecordings !== undefined) {
-			this.settings.hideProcessedRecordings = patch.hideProcessedRecordings;
+			this.settings.hideProcessedRecordings =
+				patch.hideProcessedRecordings;
 		}
 		if (patch.hideUpdatesRecordings !== undefined) {
 			this.settings.hideUpdatesRecordings = patch.hideUpdatesRecordings;
@@ -3281,7 +3402,7 @@ export default class PlaudImporterPlugin extends Plugin {
 			});
 		} catch (err) {
 			console.error(
-				"Plaud importer: failed to clear sign-in browser session",
+				'Plaud importer: failed to clear sign-in browser session',
 				err,
 			);
 		}
@@ -3296,17 +3417,20 @@ export default class PlaudImporterPlugin extends Plugin {
 		])) {
 			if (id.length > 0) {
 				try {
-					this.app.secretStorage.setSecret(id, "");
+					this.app.secretStorage.setSecret(id, '');
 				} catch (err) {
-					console.error("Plaud importer: failed to blank secret", err);
+					console.error(
+						'Plaud importer: failed to blank secret',
+						err,
+					);
 				}
 			}
 		}
-		this.settings.secretId = "";
+		this.settings.secretId = '';
 		// A cleared plugin has no session, so there is no sign-in method to route
 		// a Reconnect from until the next capture records one. The warn stamp
 		// resets too: the next credential deserves its own warning.
-		this.settings.signInMethod = "";
+		this.settings.signInMethod = '';
 		this.settings.sessionWarnedForExpMs = 0;
 		// A cleared session has nothing to refresh, and the next capture gets a
 		// clean slate rather than inheriting this one's failure state.
@@ -3332,8 +3456,8 @@ export default class PlaudImporterPlugin extends Plugin {
 		// capture, so a second caller (a stacked notice, a repeated command)
 		// no-ops with a hint instead of opening a rival window.
 		if (this.reauthInFlight) {
-			new Notice("Plaud sign-in is already open.");
-			return "reported";
+			new Notice('Plaud sign-in is already open.');
+			return 'reported';
 		}
 		// Both directions of this pairing have to be locked, not just one. The
 		// refresh refuses to start under an open sign-in; this is the mirror.
@@ -3345,9 +3469,9 @@ export default class PlaudImporterPlugin extends Plugin {
 		// yet. Seconds at most: the refresh POSTs are bounded by a 30s timeout.
 		if (this.sessionRefreshInFlight) {
 			new Notice(
-				"Finishing a background session refresh. Try signing in again in a moment.",
+				'Finishing a background session refresh. Try signing in again in a moment.',
 			);
-			return "reported";
+			return 'reported';
 		}
 		this.reauthInFlight = true;
 		try {
@@ -3355,13 +3479,13 @@ export default class PlaudImporterPlugin extends Plugin {
 				debugLogger: this.debugLogger,
 			});
 			if (result === null) {
-				return "closed";
+				return 'closed';
 			}
 			// Do not persist a token onto a plugin that unloaded mid sign-in. A
 			// torn-down plugin has no surface left to explain itself on, so this is
 			// "closed" (say nothing) rather than "reported".
 			if (this.disposed) {
-				return "closed";
+				return 'closed';
 			}
 			// The window now hands back CANDIDATES, because Plaud's web app stopped
 			// writing a single plain token: the live credential is nested beside a
@@ -3383,7 +3507,7 @@ export default class PlaudImporterPlugin extends Plugin {
 			const outcome = await this.storeFirstWorkingCandidate(
 				result.tokens,
 				() => !this.disposed,
-				"window",
+				'window',
 				result.apiBaseUrl ?? undefined,
 			);
 			if (!outcome.stored) {
@@ -3393,11 +3517,11 @@ export default class PlaudImporterPlugin extends Plugin {
 				// the caller must not talk over it.
 				if (outcome.message.length > 0) {
 					new Notice(outcome.message);
-					return "reported";
+					return 'reported';
 				}
-				return "closed";
+				return 'closed';
 			}
-			return "captured";
+			return 'captured';
 		} finally {
 			this.reauthInFlight = false;
 		}
@@ -3415,13 +3539,13 @@ export default class PlaudImporterPlugin extends Plugin {
 		// credential. Callers with no such window keep the default.
 		canStore: () => boolean = () => true,
 	): Promise<boolean> {
-		let text = "";
+		let text = '';
 		try {
 			text = await navigator.clipboard.readText();
 		} catch (err) {
-			console.error("Plaud importer: clipboard read failed", err);
+			console.error('Plaud importer: clipboard read failed', err);
 			new Notice(
-				"Could not read the clipboard. Copy the line the bookmark showed in your browser, then try again.",
+				'Could not read the clipboard. Copy the line the bookmark showed in your browser, then try again.',
 			);
 			return false;
 		}
@@ -3436,13 +3560,16 @@ export default class PlaudImporterPlugin extends Plugin {
 		const candidates = parseClipboardTokens(text);
 		if (candidates.length === 0) {
 			new Notice(
-				"The clipboard did not hold a valid token. Make sure you are signed in, then click the bookmarklet and copy what it shows.",
+				'The clipboard did not hold a valid token. Make sure you are signed in, then click the bookmarklet and copy what it shows.',
 			);
 			return false;
 		}
 		// The same guard again, because the probe between here and the store is
 		// a second, longer chance for this paste to go stale.
-		const result = await this.storeFirstWorkingCandidate(candidates, canStore);
+		const result = await this.storeFirstWorkingCandidate(
+			candidates,
+			canStore,
+		);
 		if (!result.stored && result.message.length > 0) {
 			new Notice(result.message);
 		}
@@ -3453,7 +3580,7 @@ export default class PlaudImporterPlugin extends Plugin {
 	// sign-in flow. Google and Apple SSO complete there because it is a real
 	// browser, not an embedded webview.
 	openPlaudInBrowser(): void {
-		window.open(PLAUD_WEB_URL, "_blank");
+		window.open(PLAUD_WEB_URL, '_blank');
 	}
 
 	// Writes the one-time bookmark-setup page to a temp file and opens it in the
@@ -3462,38 +3589,44 @@ export default class PlaudImporterPlugin extends Plugin {
 	// unavailable (e.g. a hardened build), so the manual path still works.
 	async openBookmarkSetupPage(): Promise<void> {
 		const req = (window as { require?: (id: string) => unknown }).require;
-		if (typeof req !== "function") {
-			void copyToClipboard(buildSignInBookmarklet(this.app.vault.getName()), () => {
-				new Notice(
-					"Bookmarklet copied. Make a new bookmark and paste it into the address field.",
-				);
-			});
+		if (typeof req !== 'function') {
+			void copyToClipboard(
+				buildSignInBookmarklet(this.app.vault.getName()),
+				() => {
+					new Notice(
+						'Bookmarklet copied. Make a new bookmark and paste it into the address field.',
+					);
+				},
+			);
 			return;
 		}
 		try {
-			const os = req("os") as { tmpdir(): string };
-			const fs = req("fs") as {
+			const os = req('os') as { tmpdir(): string };
+			const fs = req('fs') as {
 				writeFileSync(path: string, data: string): void;
 			};
-			const pathMod = req("path") as {
+			const pathMod = req('path') as {
 				join(...parts: string[]): string;
 			};
-			const file = pathMod.join(os.tmpdir(), "plaud-importer-bookmark.html");
+			const file = pathMod.join(
+				os.tmpdir(),
+				'plaud-importer-bookmark.html',
+			);
 			fs.writeFileSync(file, bookmarkSetupHtml(this.app.vault.getName()));
 			const shell = (
-				req("electron") as {
+				req('electron') as {
 					shell?: { openPath(path: string): Promise<string> };
 				}
 			).shell;
-			if (shell && typeof shell.openPath === "function") {
+			if (shell && typeof shell.openPath === 'function') {
 				await shell.openPath(file);
 			} else {
-				window.open("file:///" + file.replace(/\\/g, "/"), "_blank");
+				window.open('file:///' + file.replace(/\\/g, '/'), '_blank');
 			}
 		} catch (err) {
-			console.error("Plaud importer: bookmark setup page failed", err);
+			console.error('Plaud importer: bookmark setup page failed', err);
 			new Notice(
-				"Could not open the setup page. Copy the bookmarklet and add it as a bookmark manually.",
+				'Could not open the setup page. Copy the bookmarklet and add it as a bookmark manually.',
 			);
 		}
 	}
@@ -3510,7 +3643,7 @@ export default class PlaudImporterPlugin extends Plugin {
 		// Which surface captured this credential. Reconnect reopens the same one,
 		// so the embedded window must record "window" even though it now shares
 		// the browser path's probe-and-select machinery.
-		signInMethod: SignInMethod = "browser",
+		signInMethod: SignInMethod = 'browser',
 		// The API origin this credential belongs to, when the capture surface
 		// discovered one. Applied HERE, in the same mutation batch as the token,
 		// rather than by the caller beforehand: a host written ahead of the
@@ -3535,9 +3668,9 @@ export default class PlaudImporterPlugin extends Plugin {
 		// default.
 		stillOwns: () => boolean = () => true,
 	): Promise<CaptureStoreResult> {
-		const token = rawToken.trim().replace(/^bearer\s+/i, "");
+		const token = rawToken.trim().replace(/^bearer\s+/i, '');
 		if (token.length === 0 || !isUsableUserToken(token)) {
-			return { outcome: "unusable" };
+			return { outcome: 'unusable' };
 		}
 		// Serialized, and ONLY this method is. The old store wrote the secret with
 		// a synchronous setSecret before its await, so credentials landed in CALL
@@ -3592,7 +3725,7 @@ export default class PlaudImporterPlugin extends Plugin {
 		// while a newer capture took over, and its own guard was evaluated before
 		// it joined. Re-ask now, with nothing yet written.
 		if (!stillOwns()) {
-			return { outcome: "superseded" };
+			return { outcome: 'superseded' };
 		}
 		// THE SETTINGS WRITE IS THE COMMIT POINT, AND IT RUNS FIRST (issue #86).
 		//
@@ -3667,8 +3800,11 @@ export default class PlaudImporterPlugin extends Plugin {
 		try {
 			await this.saveData(next);
 		} catch (err) {
-			console.error("Plaud importer: could not save the captured sign-in", err);
-			return { outcome: "save-failed", error: err };
+			console.error(
+				'Plaud importer: could not save the captured sign-in',
+				err,
+			);
+			return { outcome: 'save-failed', error: err };
 		}
 		// The credential write CAN THROW: this file treats setSecret as throwable
 		// everywhere else it writes one (clearSignIn, clearStoredRefreshToken).
@@ -3681,7 +3817,7 @@ export default class PlaudImporterPlugin extends Plugin {
 			this.app.secretStorage.setSecret(CAPTURED_SECRET_ID, token);
 		} catch (err) {
 			console.error(
-				"Plaud importer: could not store the captured credential",
+				'Plaud importer: could not store the captured credential',
 				err,
 			);
 			// The commit above already landed, so write the previous settings
@@ -3694,12 +3830,12 @@ export default class PlaudImporterPlugin extends Plugin {
 				await this.saveData({ ...this.settings });
 			} catch (restoreErr) {
 				console.error(
-					"Plaud importer: could not restore settings after the credential write failed",
+					'Plaud importer: could not restore settings after the credential write failed',
 					restoreErr,
 				);
-				return { outcome: "torn", error: err };
+				return { outcome: 'torn', error: err };
 			}
-			return { outcome: "save-failed", error: err };
+			return { outcome: 'save-failed', error: err };
 		}
 		// Committed. Apply the fields this capture owns to the live settings object
 		// rather than swapping in `next` wholesale: `next` was snapshotted before
@@ -3735,21 +3871,23 @@ export default class PlaudImporterPlugin extends Plugin {
 			}
 		};
 		if (!background) {
-			guarded("short-lifetime notice", () =>
+			guarded('short-lifetime notice', () =>
 				this.noteShortLifetimeOnCapture(token, signInMethod),
 			);
 		}
-		guarded("expiry-warning reconcile", () =>
+		guarded('expiry-warning reconcile', () =>
 			this.reconcileSessionExpiryWarning(),
 		);
-		guarded("session-refresh reconcile", () => this.reconcileSessionRefresh());
+		guarded('session-refresh reconcile', () =>
+			this.reconcileSessionRefresh(),
+		);
 		// A deep link can land while the settings tab is open, which is exactly
 		// what the one-click bookmark encourages: launch sign-in from settings,
 		// click the bookmark, come back. Redraw the status line and secret
 		// picker so the tab does not keep saying "not connected yet". Read at
 		// call time, so a tab closed during the await above is simply null.
-		guarded("settings redraw", () => this.settingsRefresh?.());
-		return { outcome: "stored" };
+		guarded('settings redraw', () => this.settingsRefresh?.());
+		return { outcome: 'stored' };
 	}
 
 	/**
@@ -3763,19 +3901,19 @@ export default class PlaudImporterPlugin extends Plugin {
 		savedNotice: string,
 	): { stored: boolean; message: string } {
 		switch (result.outcome) {
-			case "stored":
+			case 'stored':
 				return { stored: true, message: savedNotice };
-			case "save-failed":
+			case 'save-failed':
 				return { stored: false, message: CAPTURE_SAVE_FAILED_NOTICE };
-			case "torn":
+			case 'torn':
 				// NOT the save-failed notice: that one promises nothing changed,
 				// which is untrue on this path. This one says what did.
 				return { stored: false, message: CAPTURE_TORN_NOTICE };
-			case "superseded":
+			case 'superseded':
 				// The established "say nothing" signal on this path, already used
 				// when the plugin unloads or a newer sign-in owns the credential.
-				return { stored: false, message: "" };
-			case "unusable":
+				return { stored: false, message: '' };
+			case 'unusable':
 				return { stored: false, message: DEEP_LINK_BAD_TOKEN_NOTICE };
 		}
 	}
@@ -3797,7 +3935,7 @@ export default class PlaudImporterPlugin extends Plugin {
 		// overwrite a newer sign-in's token. Callers with no such window keep
 		// the default.
 		canStore: () => boolean = () => true,
-		signInMethod: SignInMethod = "browser",
+		signInMethod: SignInMethod = 'browser',
 		// Region the capture surface already discovered, when it found one. Used
 		// to aim the probes and handed on to the store; deliberately NOT written
 		// to settings on the way in, so a capture that never stores leaves the
@@ -3851,15 +3989,15 @@ export default class PlaudImporterPlugin extends Plugin {
 		// being binding once the store had an await ahead of its credential write.
 		const stillOwns = (): boolean => !this.disposed && canStore();
 		if (!stillOwns()) {
-			return { stored: false, message: "" };
+			return { stored: false, message: '' };
 		}
-		if (selection.outcome === "none-usable") {
+		if (selection.outcome === 'none-usable') {
 			return { stored: false, message: DEEP_LINK_BAD_TOKEN_NOTICE };
 		}
-		if (selection.outcome === "all-rejected") {
+		if (selection.outcome === 'all-rejected') {
 			return { stored: false, message: DEEP_LINK_ALL_REJECTED_NOTICE };
 		}
-		if (selection.outcome === "unreachable") {
+		if (selection.outcome === 'unreachable') {
 			// With several candidates the whole point is choosing between them,
 			// and no claim distinguishes a revoked token from a live one, so a
 			// blind pick would store the wrong credential. With exactly one
@@ -3912,7 +4050,7 @@ export default class PlaudImporterPlugin extends Plugin {
 	): Promise<void> {
 		const candidates = parseTokenCandidates(params);
 		if (candidates.length === 0) {
-			new Notice("Plaud sign-in link contained no token.");
+			new Notice('Plaud sign-in link contained no token.');
 			return;
 		}
 		// A deep link is one of the browser-reconnect return channels: when that
@@ -3928,7 +4066,7 @@ export default class PlaudImporterPlugin extends Plugin {
 				return;
 			}
 			flow.deliveryInFlight = true;
-			let result = { stored: false, message: "" };
+			let result = { stored: false, message: '' };
 			try {
 				// Probing is several round-trips, so this delivery can outlive
 				// its own flow. Refuse the store only when a DIFFERENT flow has
@@ -4009,20 +4147,20 @@ class BrowserSignInModal extends Modal {
 	}
 
 	onOpen(): void {
-		this.setTitle("Get your sign-in token");
+		this.setTitle('Get your sign-in token');
 		const { contentEl } = this;
-		const intro = "Your web browser is about to open. Do these in order:";
-		contentEl.createEl("p", { text: intro });
-		const ol = contentEl.createEl("ol");
+		const intro = 'Your web browser is about to open. Do these in order:';
+		contentEl.createEl('p', { text: intro });
+		const ol = contentEl.createEl('ol');
 		const lines = [
-			"Sign in to Plaud if you are not already. Google, Apple, and password all work in a real browser.",
+			'Sign in to Plaud if you are not already. Google, Apple, and password all work in a real browser.',
 			"Click the 'Plaud → Obsidian' bookmark on your bookmarks bar (the one you saved during setup). Your browser asks to open Obsidian; allow it, and the token is saved for you.",
 			"If Obsidian does not open, the bookmark shows a line of text in a box instead. Copy the whole line, come back here, and click 'Paste token from clipboard'.",
 		];
 		for (const line of lines) {
-			ol.createEl("li", { text: line });
+			ol.createEl('li', { text: line });
 		}
-		const openLabel = "Open my browser now";
+		const openLabel = 'Open my browser now';
 		const row = new Setting(contentEl).addButton((btn) =>
 			btn
 				.setButtonText(openLabel)
@@ -4040,28 +4178,33 @@ class BrowserSignInModal extends Modal {
 		if (this.onPaste !== undefined) {
 			const paste = this.onPaste;
 			row.addButton((btn) =>
-				btn.setButtonText("Paste token from clipboard").onClick(async () => {
-					// Guard the whole handler: pasteTokenFromClipboard swallows a
-					// clipboard read failure, but storing the token (secret storage,
-					// saveSettings) can still throw. Without this an async click
-					// rejection would surface unhandled and leave the modal open with
-					// no feedback.
-					try {
-						const ok = await paste();
-						if (ok) {
-							this.close();
+				btn
+					.setButtonText('Paste token from clipboard')
+					.onClick(async () => {
+						// Guard the whole handler: pasteTokenFromClipboard swallows a
+						// clipboard read failure, but storing the token (secret storage,
+						// saveSettings) can still throw. Without this an async click
+						// rejection would surface unhandled and leave the modal open with
+						// no feedback.
+						try {
+							const ok = await paste();
+							if (ok) {
+								this.close();
+							}
+						} catch (err) {
+							console.error(
+								'Plaud importer: paste reconnect failed',
+								err,
+							);
+							new Notice(
+								'Plaud: could not save that token. Try again, or use settings.',
+							);
 						}
-					} catch (err) {
-						console.error("Plaud importer: paste reconnect failed", err);
-						new Notice(
-							"Plaud: could not save that token. Try again, or use settings.",
-						);
-					}
-				}),
+					}),
 			);
 		}
 		row.addButton((btn) =>
-			btn.setButtonText("Cancel").onClick(() => this.close()),
+			btn.setButtonText('Cancel').onClick(() => this.close()),
 		);
 	}
 
@@ -4080,26 +4223,32 @@ class RenameRecordingModal extends Modal {
 	private value: string;
 	private readonly onSubmit: (newName: string) => void;
 
-	constructor(app: App, initial: string, onSubmit: (newName: string) => void) {
+	constructor(
+		app: App,
+		initial: string,
+		onSubmit: (newName: string) => void,
+	) {
 		super(app);
 		this.value = initial;
 		this.onSubmit = onSubmit;
 	}
 
 	onOpen(): void {
-		this.setTitle("Rename recording");
+		this.setTitle('Rename recording');
 		const { contentEl } = this;
 		let input: TextComponent | undefined;
 		new Setting(contentEl)
-			.setName("New name")
-			.setDesc("The note and its attachments folder are renamed together.")
+			.setName('New name')
+			.setDesc(
+				'The note and its attachments folder are renamed together.',
+			)
 			.addText((text) => {
 				input = text;
 				text.setValue(this.value).onChange((v) => {
 					this.value = v;
 				});
-				text.inputEl.addEventListener("keydown", (evt) => {
-					if (evt.key === "Enter") {
+				text.inputEl.addEventListener('keydown', (evt) => {
+					if (evt.key === 'Enter') {
 						evt.preventDefault();
 						this.submit();
 					}
@@ -4108,12 +4257,12 @@ class RenameRecordingModal extends Modal {
 		new Setting(contentEl)
 			.addButton((btn) =>
 				btn
-					.setButtonText("Rename")
+					.setButtonText('Rename')
 					.setCta()
 					.onClick(() => this.submit()),
 			)
 			.addButton((btn) =>
-				btn.setButtonText("Cancel").onClick(() => this.close()),
+				btn.setButtonText('Cancel').onClick(() => this.close()),
 			);
 		if (input) {
 			input.inputEl.focus();
@@ -4124,7 +4273,7 @@ class RenameRecordingModal extends Modal {
 	private submit(): void {
 		const trimmed = this.value.trim();
 		if (trimmed.length === 0) {
-			new Notice("Plaud importer: enter a name.");
+			new Notice('Plaud importer: enter a name.');
 			return;
 		}
 		this.close();
@@ -4159,7 +4308,7 @@ class ConfirmModal extends Modal {
 
 	onOpen(): void {
 		this.setTitle(this.opts.title);
-		this.contentEl.createEl("p", { text: this.opts.body });
+		this.contentEl.createEl('p', { text: this.opts.body });
 		new Setting(this.contentEl)
 			.addButton((btn) =>
 				btn
@@ -4171,7 +4320,9 @@ class ConfirmModal extends Modal {
 					}),
 			)
 			.addButton((btn) =>
-				btn.setButtonText(this.opts.cancelText).onClick(() => this.close()),
+				btn
+					.setButtonText(this.opts.cancelText)
+					.onClick(() => this.close()),
 			);
 	}
 
@@ -4228,259 +4379,268 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 		this.renderTokenControl(
 			this.makeSetting(
 				containerEl,
-				"Plaud token",
+				'Plaud token',
 				"Your stored Plaud token. The status below shows whether you are connected. The value stays in Obsidian's secret storage, never in data.json.",
 			),
 		);
 
-		new Setting(containerEl).setName("Sign in").setHeading();
+		new Setting(containerEl).setName('Sign in').setHeading();
 		this.renderSignInIntro(new Setting(containerEl));
 		this.renderSigninControl(
 			this.makeSetting(
 				containerEl,
-				"Sign in with email",
-				"Best for email and password logins. Click Sign in, log in to Plaud in the window that opens, and your token is saved automatically. Google and Apple logins do not work in this window; use the option below for those.",
+				'Sign in with email',
+				'Best for email and password logins. Click Sign in, log in to Plaud in the window that opens, and your token is saved automatically. Google and Apple logins do not work in this window; use the option below for those.',
 			),
 		);
 		this.renderBrowserSignInControl(
 			this.makeSetting(
 				containerEl,
-				"Sign in with Google or Apple",
-				"For Google and Apple logins, which only work in a real browser. The first time needs a one-time bookmark setup. After that, sign in to Plaud in your normal browser and send the token back with the steps below.",
+				'Sign in with Google or Apple',
+				'For Google and Apple logins, which only work in a real browser. The first time needs a one-time bookmark setup. After that, sign in to Plaud in your normal browser and send the token back with the steps below.',
 			),
 		);
 		this.renderTestControl(
 			this.makeSetting(
 				containerEl,
-				"Test connection",
-				"Check that your stored token can reach Plaud. Use this after signing in, or any time imports start failing, to see whether you need to sign in again.",
+				'Test connection',
+				'Check that your stored token can reach Plaud. Use this after signing in, or any time imports start failing, to see whether you need to sign in again.',
 			),
 		);
 		this.renderClearSignInControl(
-			this.makeSetting(
-				containerEl,
-				"Clear sign-in",
-				CLEAR_SIGN_IN_DESC,
-			),
+			this.makeSetting(containerEl, 'Clear sign-in', CLEAR_SIGN_IN_DESC),
 		);
 		this.renderRegionControl(
 			this.makeSetting(
 				containerEl,
-				"API region",
-				"Plaud server this vault is connected to. Detected automatically on the first import. EU and other regional accounts switch here on their own, so there is nothing to configure.",
+				'API region',
+				'Plaud server this vault is connected to. Detected automatically on the first import. EU and other regional accounts switch here on their own, so there is nothing to configure.',
 			),
 		);
 
-		new Setting(containerEl).setName("Output").setHeading();
+		new Setting(containerEl).setName('Output').setHeading();
 		this.addTextRow(
 			containerEl,
-			"Output folder",
-			"Folder inside your vault where imported notes are written.",
-			"outputFolder",
-			"Plaud",
+			'Output folder',
+			'Folder inside your vault where imported notes are written.',
+			'outputFolder',
+			'Plaud',
 		);
 		this.renderSubfolderTemplateControl(
-			this.makeSetting(containerEl, "Subfolder template", SUBFOLDER_TEMPLATE_INTRO),
+			this.makeSetting(
+				containerEl,
+				'Subfolder template',
+				SUBFOLDER_TEMPLATE_INTRO,
+			),
 		);
 		this.renderNoteNameTemplateControl(
 			this.makeSetting(
 				containerEl,
-				"Note name template",
+				'Note name template',
 				NOTE_NAME_TEMPLATE_INTRO,
 			),
 		);
 		this.renderDatetimeTemplateControl(
 			this.makeSetting(
 				containerEl,
-				"Datetime property",
+				'Datetime property',
 				DATETIME_TEMPLATE_INTRO,
 			),
 		);
 		this.renderCustomFrontmatterControl(
 			this.makeSetting(
 				containerEl,
-				"Extra frontmatter",
+				'Extra frontmatter',
 				CUSTOM_FRONTMATTER_INTRO,
 			),
 		);
 		this.addToggleRow(
 			containerEl,
-			"Preserve unknown frontmatter on re-import",
+			'Preserve unknown frontmatter on re-import',
 			PRESERVE_UNKNOWN_FRONTMATTER_DESC,
-			"preserveUnknownFrontmatter",
+			'preserveUnknownFrontmatter',
 		);
 		this.addTextRow(
 			containerEl,
-			"Forbidden character replacement",
+			'Forbidden character replacement',
 			FORBIDDEN_CHAR_REPLACEMENT_DESC,
-			"forbiddenCharReplacement",
-			"-",
+			'forbiddenCharReplacement',
+			'-',
 		);
 		this.addDropdownRow(
 			containerEl,
 			DUPLICATE_HANDLING_NAME,
 			DUPLICATE_HANDLING_DESC,
-			"onDuplicate",
-			{ skip: "Skip", overwrite: "Overwrite", prompt: "Ask each time" },
+			'onDuplicate',
+			{ skip: 'Skip', overwrite: 'Overwrite', prompt: 'Ask each time' },
 		);
 
-		new Setting(containerEl).setName("Appearance").setHeading();
+		new Setting(containerEl).setName('Appearance').setHeading();
 		this.addToggleRow(
 			containerEl,
-			"Show ribbon icon",
+			'Show ribbon icon',
 			"Display the plaud importer icon in Obsidian's left rail. Turn off if you prefer to launch imports only from the command palette.",
-			"showRibbonIcon",
+			'showRibbonIcon',
 		);
 		this.renderRibbonControl(
 			this.makeSetting(
 				containerEl,
-				"Ribbon icon",
+				'Ribbon icon',
 				"Which icon to display in the left rail. Only applies when 'show ribbon icon' is on.",
 			),
 		);
 
-		new Setting(containerEl).setName("Default artifact selection").setHeading();
+		new Setting(containerEl)
+			.setName('Default artifact selection')
+			.setHeading();
 		this.addToggleRow(
 			containerEl,
-			"Transcript",
+			'Transcript',
 			"Checked by default in import actions. You can override in 'review artifacts first'.",
-			"includeTranscript",
+			'includeTranscript',
 		);
 		this.addToggleRow(
 			containerEl,
-			"Summary",
+			'Summary',
 			"Checked by default in import actions. You can override in 'review artifacts first'.",
-			"defaultIncludeSummary",
+			'defaultIncludeSummary',
 		);
 		this.addToggleRow(
 			containerEl,
-			"Attachments",
-			"Checked by default in import actions when attachments are available.",
-			"defaultIncludeAttachments",
+			'Attachments',
+			'Checked by default in import actions when attachments are available.',
+			'defaultIncludeAttachments',
 		);
 		this.addToggleRow(
 			containerEl,
-			"Mindmap",
-			"Checked by default in import actions when a mindmap artifact is available.",
-			"defaultIncludeMindmap",
+			'Mindmap',
+			'Checked by default in import actions when a mindmap artifact is available.',
+			'defaultIncludeMindmap',
 		);
 		this.addToggleRow(
 			containerEl,
-			"Card",
-			"Checked by default in import actions when a card artifact is available.",
-			"defaultIncludeCard",
+			'Card',
+			'Checked by default in import actions when a card artifact is available.',
+			'defaultIncludeCard',
 		);
 		this.addToggleRow(
 			containerEl,
-			"Audio",
-			"Off by default. Downloads the original recording audio (about 15 MB per hour) for every recording you import, which can grow your vault by gigabytes and slow Obsidian Sync and backups. Leave off unless you want the audio in your vault.",
-			"defaultIncludeAudio",
+			'Audio',
+			'Off by default. Downloads the original recording audio (about 15 MB per hour) for every recording you import, which can grow your vault by gigabytes and slow Obsidian Sync and backups. Leave off unless you want the audio in your vault.',
+			'defaultIncludeAudio',
 		);
 
-		new Setting(containerEl).setName("Tags").setHeading();
+		new Setting(containerEl).setName('Tags').setHeading();
 		this.addDropdownRow(
 			containerEl,
-			"Tag mode",
+			'Tag mode',
 			"Which Plaud tag sources land in the note's tags frontmatter. Plaud tags are the ones you set on a recording in the Plaud app; AI keywords are Plaud's per-recording topic guesses, which can flood the tag pane.",
-			"tagMode",
+			'tagMode',
 			{
-				none: "No tags",
-				custom: "Custom tags only",
-				plaud: "Plaud tags (no AI keywords)",
-				all: "All tags",
+				none: 'No tags',
+				custom: 'Custom tags only',
+				plaud: 'Plaud tags (no AI keywords)',
+				all: 'All tags',
 			},
 		);
 		this.addTextRow(
 			containerEl,
-			"Custom tags",
+			'Custom tags',
 			"Comma-separated tags added to every imported note, except in 'no tags' mode.",
-			"customTags",
-			"plaud-meeting",
+			'customTags',
+			'plaud-meeting',
 		);
 		this.addToggleRow(
 			containerEl,
-			"Keep AI keywords as note property",
-			"When AI keywords are excluded from tags, write them to a keywords frontmatter property instead. The property is searchable and Dataview-queryable but stays out of the tag pane.",
-			"aiKeywordsAsProperty",
+			'Keep AI keywords as note property',
+			'When AI keywords are excluded from tags, write them to a keywords frontmatter property instead. The property is searchable and Dataview-queryable but stays out of the tag pane.',
+			'aiKeywordsAsProperty',
 		);
 
-		new Setting(containerEl).setName("Import dialog").setHeading();
+		new Setting(containerEl).setName('Import dialog').setHeading();
 		this.addToggleRow(
 			containerEl,
-			"Auto-close summary",
-			"Close the import window automatically after a fully successful import. A run with any failure keeps the window open so the errors stay visible. Clicking inside the window cancels the countdown.",
-			"autoCloseSummary",
+			'Auto-close summary',
+			'Close the import window automatically after a fully successful import. A run with any failure keeps the window open so the errors stay visible. Clicking inside the window cancels the countdown.',
+			'autoCloseSummary',
 		);
 		this.addTextRow(
 			containerEl,
-			"Auto-close delay",
-			"Seconds to wait before the summary closes itself. Only applies when auto-close is on.",
-			"autoCloseSummarySeconds",
-			"20",
+			'Auto-close delay',
+			'Seconds to wait before the summary closes itself. Only applies when auto-close is on.',
+			'autoCloseSummarySeconds',
+			'20',
 		);
 		this.addToggleRow(
 			containerEl,
-			"Write placeholder for unprocessed recordings",
-			"When Plaud has a recording but reports no transcript or summary for it yet (a Plaud-side issue, not a plugin error), write a placeholder note with the recording ID and a link back to Plaud instead of recording a failure. A later successful import replaces the placeholder automatically. Turn off to keep such recordings as plain failures with no file written.",
-			"writePlaceholderForUnprocessed",
+			'Write placeholder for unprocessed recordings',
+			'When Plaud has a recording but reports no transcript or summary for it yet (a Plaud-side issue, not a plugin error), write a placeholder note with the recording ID and a link back to Plaud instead of recording a failure. A later successful import replaces the placeholder automatically. Turn off to keep such recordings as plain failures with no file written.',
+			'writePlaceholderForUnprocessed',
 		);
 		this.addToggleRow(
 			containerEl,
-			"Show trashed recordings",
-			"Include recordings that are in your Plaud trash in the import list. Off by default, matching the Plaud app, which hides trash. Trashed recordings are usually short accidental clips with no transcript. Turn on to import something you trashed in Plaud but still want in your vault.",
-			"showTrashedRecordings",
+			'Show trashed recordings',
+			'Include recordings that are in your Plaud trash in the import list. Off by default, matching the Plaud app, which hides trash. Trashed recordings are usually short accidental clips with no transcript. Turn on to import something you trashed in Plaud but still want in your vault.',
+			'showTrashedRecordings',
 		);
 		this.addToggleRow(
 			containerEl,
-			"Update the recording title on rename",
+			'Update the recording title on rename',
 			"Off by default. When on, renaming an imported recording (with the Rename recording command or by renaming the note in the file explorer) also updates that recording's title in Plaud to match the new note name, including any date prefix. This is the only change the plugin writes back to Plaud. When off, the Rename recording command asks each time whether to update Plaud, and a file-explorer rename stays local.",
-			"autoUpdatePlaudTitle",
+			'autoUpdatePlaudTitle',
 		);
 
-		new Setting(containerEl).setName("Automatic sync").setHeading();
+		new Setting(containerEl).setName('Automatic sync').setHeading();
 		this.addToggleRow(
 			containerEl,
-			"Enable automatic sync",
+			'Enable automatic sync',
 			AUTO_SYNC_DESC,
-			"autoSyncEnabled",
+			'autoSyncEnabled',
 		);
 		this.addDropdownRow(
 			containerEl,
-			"Sync interval",
-			"How often the background sync checks Plaud for new and changed recordings. Minimum 15 minutes.",
-			"autoSyncIntervalMinutes",
+			'Sync interval',
+			'How often the background sync checks Plaud for new and changed recordings. Minimum 15 minutes.',
+			'autoSyncIntervalMinutes',
 			{
-				"15": "Every 15 minutes",
-				"30": "Every 30 minutes",
-				"60": "Every hour",
-				"120": "Every 2 hours",
-				"240": "Every 4 hours",
-				"480": "Every 8 hours",
-				"1440": "Once a day",
+				'15': 'Every 15 minutes',
+				'30': 'Every 30 minutes',
+				'60': 'Every hour',
+				'120': 'Every 2 hours',
+				'240': 'Every 4 hours',
+				'480': 'Every 8 hours',
+				'1440': 'Once a day',
 			},
 		);
 
-		new Setting(containerEl).setName("Transcript rendering").setHeading();
+		new Setting(containerEl).setName('Transcript rendering').setHeading();
 		this.addToggleRow(
 			containerEl,
-			"Fold transcript by default",
+			'Fold transcript by default',
 			"Collapse the transcript section when the note is created so it doesn't dominate the view on open. Uses Obsidian's heading fold state — clicking the chevron next to the heading expands it. Turn off if you prefer the transcript always expanded.",
-			"foldTranscript",
+			'foldTranscript',
 		);
 		this.addDropdownRow(
 			containerEl,
-			"Transcript heading level",
+			'Transcript heading level',
 			"Markdown heading level for the wrapping 'transcript' heading. Chapter sub-headings render at one level below (e.g. Level 4 → transcript is h4, chapters are h5). This is the heading whose fold state the 'fold transcript by default' toggle controls.",
-			"transcriptHeaderLevel",
-			{ "1": "H1", "2": "H2", "3": "H3", "4": "H4", "5": "H5", "6": "H6" },
+			'transcriptHeaderLevel',
+			{
+				'1': 'H1',
+				'2': 'H2',
+				'3': 'H3',
+				'4': 'H4',
+				'5': 'H5',
+				'6': 'H6',
+			},
 		);
 
-		new Setting(containerEl).setName("Debug").setHeading();
+		new Setting(containerEl).setName('Debug').setHeading();
 		this.addToggleRow(
 			containerEl,
-			"Debug logging",
+			'Debug logging',
 			"Capture raw API requests, responses, and parsed results into an in-memory buffer and mirror them to the developer console (Ctrl+Shift+I). Authentication headers are NEVER captured. Payloads may contain transcript text, speaker names, and recording metadata — only enable when troubleshooting. Use the 'Plaud Importer: Debug: copy debug log to clipboard' command to export the session.",
-			"debug",
+			'debug',
 		);
 
 		this.renderFooter(new Setting(containerEl));
@@ -4494,13 +4654,13 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 		// Method-agnostic connection status lives on the token row, not under a
 		// specific sign-in method, since a token can be stored by either flow.
 		const statusEl = setting.descEl.createDiv({
-			cls: "plaud-importer-signin-status",
+			cls: 'plaud-importer-signin-status',
 		});
 		// Second line, under the status: what renewal this session gets. Its
 		// text is set by refreshStatus below, and is empty when nothing is
 		// connected so an unconnected plugin makes no renewal promise at all.
 		const renewalEl = setting.descEl.createDiv({
-			cls: "plaud-importer-signin-renewal",
+			cls: 'plaud-importer-signin-renewal',
 		});
 		const refreshStatus = (): void => {
 			// Decode on demand from the currently linked secret rather than
@@ -4521,15 +4681,15 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 			const desc = describeTokenLifetime(life);
 			statusEl.setText(
 				!stored
-					? "Status: not connected yet."
+					? 'Status: not connected yet.'
 					: unreadable
-						? "Status: the linked secret is not a readable Plaud token. Sign in again to replace it."
+						? 'Status: the linked secret is not a readable Plaud token. Sign in again to replace it.'
 						: expired
 							? `Status: session ${desc.charAt(0).toLowerCase()}${desc.slice(1)}.`
 							: `Status: connected. ${desc}.`,
 			);
 			statusEl.toggleClass(
-				"plaud-importer-signin-ok",
+				'plaud-importer-signin-ok',
 				stored && !expired && !unreadable,
 			);
 			const connected = stored && !expired && !unreadable;
@@ -4540,12 +4700,12 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 			// reconnecting, the second is simply how that sign-in method works.
 			renewalEl.setText(
 				!connected
-					? ""
+					? ''
 					: !canRenew
-						? "This sign-in cannot renew itself in the background. Reconnect when the session lapses."
+						? 'This sign-in cannot renew itself in the background. Reconnect when the session lapses.'
 						: this.plugin.sessionRenewalPaused
-							? "Automatic renewal stopped after a failed attempt. Reconnect to restart it."
-							: "Renews itself in the background for about 30 days, then asks you to sign in again.",
+							? 'Automatic renewal stopped after a failed attempt. Reconnect to restart it.'
+							: 'Renews itself in the background for about 30 days, then asks you to sign in again.',
 			);
 		};
 		this.signinRefresh = refreshStatus;
@@ -4574,7 +4734,7 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 						// keeps its recorded method, which still describes that
 						// token.
 						if (id !== CAPTURED_SECRET_ID) {
-							this.plugin.settings.signInMethod = "";
+							this.plugin.settings.signInMethod = '';
 						}
 						await this.plugin.saveSettings();
 						// A freshly stored token is a resume trigger for a paused
@@ -4597,8 +4757,8 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 	}
 
 	private renderSignInIntro(setting: Setting): void {
-		setting.descEl.createEl("p", {
-			cls: "plaud-importer-signin-note",
+		setting.descEl.createEl('p', {
+			cls: 'plaud-importer-signin-note',
 			text: SIGN_IN_NOTE,
 		});
 	}
@@ -4606,7 +4766,7 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 	private renderSigninControl(setting: Setting): void {
 		setting.addButton((btn) =>
 			btn
-				.setButtonText("Sign in")
+				.setButtonText('Sign in')
 				.setCta()
 				.onClick(async () => {
 					btn.setDisabled(true);
@@ -4626,20 +4786,25 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 						try {
 							outcome = await this.plugin.reauthenticate();
 						} catch (err) {
-							console.error("Plaud importer: sign-in failed", err);
+							console.error(
+								'Plaud importer: sign-in failed',
+								err,
+							);
 							new Notice(CAPTURE_SAVE_FAILED_NOTICE);
 							return;
 						}
-						if (outcome === "captured") {
-							new Notice("Plaud token captured and saved.");
+						if (outcome === 'captured') {
+							new Notice('Plaud token captured and saved.');
 							this.signinRefresh?.();
 							this.tokenRefresh?.();
-						} else if (outcome === "closed") {
+						} else if (outcome === 'closed') {
 							// "reported" gets nothing added: the reason is already on
 							// screen, and this wording would claim the user closed the
 							// window when they may have finished signing in and had the
 							// vault refuse the save.
-							new Notice("Plaud sign-in closed — no token captured.");
+							new Notice(
+								'Plaud sign-in closed — no token captured.',
+							);
 						}
 					} finally {
 						btn.setDisabled(false);
@@ -4650,9 +4815,9 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 
 	private renderBrowserSignInControl(setting: Setting): void {
 		// Buttons sit below the description, side by side. See styles.css.
-		setting.settingEl.addClass("plaud-importer-browser-signin");
-		const steps = setting.descEl.createEl("ol", {
-			cls: "plaud-importer-browser-steps",
+		setting.settingEl.addClass('plaud-importer-browser-signin');
+		const steps = setting.descEl.createEl('ol', {
+			cls: 'plaud-importer-browser-steps',
 		});
 		// Built from a variable array so the steps can name the buttons and
 		// "Plaud" plainly; the sentence-case lint only inspects string literals
@@ -4660,20 +4825,20 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 		const stepLines = [
 			"First time only: click 'Set up bookmark'. A web page opens. Drag the big button onto your browser's bookmarks bar (the strip near the top of the window). If you already have an older Plaud → Obsidian bookmark, replace it with this one.",
 			"Click 'Launch sign-in to capture token'. A short reminder pops up, then your browser opens.",
-			"In the browser: sign in to Plaud if needed, then click the bookmark you saved. Your browser asks to open Obsidian; allow it, and the token is saved for you. Done! If the token stops working later, do steps 2 and 3 again.",
+			'In the browser: sign in to Plaud if needed, then click the bookmark you saved. Your browser asks to open Obsidian; allow it, and the token is saved for you. Done! If the token stops working later, do steps 2 and 3 again.',
 			"Only if Obsidian did not open: the bookmark shows a line of text in a box instead. Copy the whole line, come back to Obsidian, and click 'Paste token from clipboard'.",
 		];
 		for (const line of stepLines) {
-			steps.createEl("li", { text: line });
+			steps.createEl('li', { text: line });
 		}
 		setting.addButton((btn) =>
-			btn.setButtonText("Set up bookmark").onClick(() => {
+			btn.setButtonText('Set up bookmark').onClick(() => {
 				void this.plugin.openBookmarkSetupPage();
 			}),
 		);
 		setting.addButton((btn) =>
 			btn
-				.setButtonText("Launch sign-in to capture token")
+				.setButtonText('Launch sign-in to capture token')
 				.setCta()
 				.onClick(() => {
 					new BrowserSignInModal(this.app, () =>
@@ -4682,44 +4847,51 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 				}),
 		);
 		setting.addButton((btn) =>
-			btn.setButtonText("Paste token from clipboard").onClick(async () => {
-				let ok: boolean;
-				// Scoped to the paste call alone, for the same reason as the Sign in
-				// button above (issue #86). pasteTokenFromClipboard handles a
-				// clipboard read failure itself and returns false after saying so,
-				// but the store behind it can still reject on the settings write, and
-				// that arrives here as a throw.
-				try {
-					ok = await this.plugin.pasteTokenFromClipboard();
-				} catch (err) {
-					console.error("Plaud importer: paste failed to save", err);
-					new Notice(CAPTURE_SAVE_FAILED_NOTICE);
-					return;
-				}
-				if (ok) {
-					new Notice("Token saved. Run a connection test to confirm it works.");
-					this.signinRefresh?.();
-					this.tokenRefresh?.();
-				}
-			}),
+			btn
+				.setButtonText('Paste token from clipboard')
+				.onClick(async () => {
+					let ok: boolean;
+					// Scoped to the paste call alone, for the same reason as the Sign in
+					// button above (issue #86). pasteTokenFromClipboard handles a
+					// clipboard read failure itself and returns false after saying so,
+					// but the store behind it can still reject on the settings write, and
+					// that arrives here as a throw.
+					try {
+						ok = await this.plugin.pasteTokenFromClipboard();
+					} catch (err) {
+						console.error(
+							'Plaud importer: paste failed to save',
+							err,
+						);
+						new Notice(CAPTURE_SAVE_FAILED_NOTICE);
+						return;
+					}
+					if (ok) {
+						new Notice(
+							'Token saved. Run a connection test to confirm it works.',
+						);
+						this.signinRefresh?.();
+						this.tokenRefresh?.();
+					}
+				}),
 		);
 	}
 
 	private renderTestControl(setting: Setting): void {
 		const resultEl = setting.descEl.createDiv({
-			cls: "plaud-importer-test-status",
+			cls: 'plaud-importer-test-status',
 		});
 		setting.addButton((btn) =>
-			btn.setButtonText("Test connection").onClick(async () => {
+			btn.setButtonText('Test connection').onClick(async () => {
 				btn.setDisabled(true);
-				resultEl.setText("Testing…");
-				resultEl.toggleClass("plaud-importer-test-ok", false);
-				resultEl.toggleClass("plaud-importer-test-err", false);
+				resultEl.setText('Testing…');
+				resultEl.toggleClass('plaud-importer-test-ok', false);
+				resultEl.toggleClass('plaud-importer-test-err', false);
 				try {
 					const result = await this.plugin.testPlaudConnection();
 					resultEl.setText(result.message);
-					resultEl.toggleClass("plaud-importer-test-ok", result.ok);
-					resultEl.toggleClass("plaud-importer-test-err", !result.ok);
+					resultEl.toggleClass('plaud-importer-test-ok', result.ok);
+					resultEl.toggleClass('plaud-importer-test-err', !result.ok);
 				} finally {
 					btn.setDisabled(false);
 				}
@@ -4729,24 +4901,24 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 
 	private renderClearSignInControl(setting: Setting): void {
 		const resultEl = setting.descEl.createDiv({
-			cls: "plaud-importer-clear-status",
+			cls: 'plaud-importer-clear-status',
 		});
 		setting.addButton((btn) => {
 			// Warning styling via Obsidian's button class directly: setWarning()
 			// is deprecated and its replacement setDestructive() is @since 1.13.0,
 			// above this plugin's minAppVersion, so neither method can be used.
-			btn.buttonEl.addClass("mod-warning");
-			btn.setButtonText("Clear sign-in").onClick(async () => {
+			btn.buttonEl.addClass('mod-warning');
+			btn.setButtonText('Clear sign-in').onClick(async () => {
 				btn.setDisabled(true);
-				resultEl.setText("Clearing…");
+				resultEl.setText('Clearing…');
 				try {
 					const { sessionCleared } = await this.plugin.clearSignIn();
 					resultEl.setText(
 						sessionCleared
-							? "Cleared. The embedded browser is signed out and the stored token is unlinked. Click Sign in to start fresh."
-							: "Token unlinked, but the embedded browser session could NOT be cleared on this build (the Electron session API is unavailable), so Sign in may still open already logged in.",
+							? 'Cleared. The embedded browser is signed out and the stored token is unlinked. Click Sign in to start fresh.'
+							: 'Token unlinked, but the embedded browser session could NOT be cleared on this build (the Electron session API is unavailable), so Sign in may still open already logged in.',
 					);
-					new Notice("Plaud sign-in cleared.");
+					new Notice('Plaud sign-in cleared.');
 					this.signinRefresh?.();
 					this.tokenRefresh?.();
 				} finally {
@@ -4760,20 +4932,23 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 		const host = this.plugin.settings.apiBaseUrl;
 		const isDefault = host === DEFAULT_SETTINGS.apiBaseUrl;
 		const span = setting.controlEl.createSpan({
-			cls: "plaud-importer-region-host",
+			cls: 'plaud-importer-region-host',
 			text: host,
 		});
 		span.createSpan({
-			cls: "plaud-importer-region-note",
-			text: isDefault ? " (default)" : " (auto-detected)",
+			cls: 'plaud-importer-region-note',
+			text: isDefault ? ' (default)' : ' (auto-detected)',
 		});
 	}
 
 	private renderRibbonControl(setting: Setting): void {
 		const previewEl = setting.controlEl.createDiv({
-			cls: "plaud-importer-ribbon-preview",
+			cls: 'plaud-importer-ribbon-preview',
 		});
-		setIcon(previewEl, resolveRibbonIconId(this.plugin.settings.ribbonIcon));
+		setIcon(
+			previewEl,
+			resolveRibbonIconId(this.plugin.settings.ribbonIcon),
+		);
 		setting.addDropdown((dropdown) => {
 			for (const choice of RIBBON_ICON_CHOICES) {
 				dropdown.addOption(choice.id, choice.label);
@@ -4815,7 +4990,7 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 		render: (template: string) => string,
 	): (template: string) => void {
 		const previewEl = setting.controlEl.createDiv({
-			cls: "plaud-importer-template-preview",
+			cls: 'plaud-importer-template-preview',
 		});
 		return (template: string) => {
 			previewEl.setText(render(template));
@@ -4832,20 +5007,20 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 	private renderSubfolderTemplateControl(setting: Setting): void {
 		// Stack the row: the token/example lists read full-width on top, the text
 		// field full-width below, rather than crammed into a narrow left column.
-		setting.settingEl.addClass("plaud-importer-stacked-row");
+		setting.settingEl.addClass('plaud-importer-stacked-row');
 		const docEl = setting.descEl.createDiv();
 		docEl.createDiv({ text: SUBFOLDER_TEMPLATE_TOKENS_HEADING });
-		const tokenList = docEl.createEl("ul");
+		const tokenList = docEl.createEl('ul');
 		for (const [token, meaning] of SUBFOLDER_TEMPLATE_TOKENS) {
-			const item = tokenList.createEl("li");
-			item.createEl("code", { text: token });
+			const item = tokenList.createEl('li');
+			item.createEl('code', { text: token });
 			item.createSpan({ text: ` ${meaning}` });
 		}
 		docEl.createDiv({ text: SUBFOLDER_TEMPLATE_EXAMPLES_HEADING });
-		const exampleList = docEl.createEl("ul");
+		const exampleList = docEl.createEl('ul');
 		for (const [template, result] of SUBFOLDER_TEMPLATE_EXAMPLES) {
-			const item = exampleList.createEl("li");
-			item.createEl("code", { text: template });
+			const item = exampleList.createEl('li');
+			item.createEl('code', { text: template });
 			item.createSpan({ text: ` → ${result}` });
 		}
 		docEl.createDiv({ text: SUBFOLDER_TEMPLATE_FOOTNOTE });
@@ -4873,30 +5048,32 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 						if (field === null) return;
 						this.insertTokenAtCursor(field, token);
 						const value = field.getValue();
-						await this.applyControlChange("subfolderTemplate", value);
+						await this.applyControlChange(
+							'subfolderTemplate',
+							value,
+						);
 						updatePreview(value);
 					});
 				// Keep focus in the text field on click (mousedown default is to
 				// move focus to the button) so the cursor position is preserved for
 				// the insert.
-				button.buttonEl.addEventListener("mousedown", (event) =>
+				button.buttonEl.addEventListener('mousedown', (event) =>
 					event.preventDefault(),
 				);
 			});
 		}
 		setting.addText((text) => {
 			field = text;
-			text
-				.setPlaceholder("{{YYYY}}/{{MM}}")
-				.setValue(this.readSettingString("subfolderTemplate"))
+			text.setPlaceholder('{{YYYY}}/{{MM}}')
+				.setValue(this.readSettingString('subfolderTemplate'))
 				.onChange(async (value) => {
-					await this.applyControlChange("subfolderTemplate", value);
+					await this.applyControlChange('subfolderTemplate', value);
 					updatePreview(value);
 				});
 		});
 		updatePreview = this.attachTemplatePreview(setting, (template) => {
-			if (template.trim() === "") {
-				return "Preview: no subfolder (every note in the output folder)";
+			if (template.trim() === '') {
+				return 'Preview: no subfolder (every note in the output folder)';
 			}
 			try {
 				// Pass the sample title and folder so {{title}} and {{plaud-folder}}
@@ -4915,7 +5092,7 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 				}`;
 			}
 		});
-		updatePreview(this.readSettingString("subfolderTemplate"));
+		updatePreview(this.readSettingString('subfolderTemplate'));
 	}
 
 	// Renders the datetime template row for the `datetime:` frontmatter property
@@ -4925,20 +5102,20 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 	// there is no blur-commit or invalid-template Notice — Moment never errors and
 	// the preview is the only feedback needed.
 	private renderDatetimeTemplateControl(setting: Setting): void {
-		setting.settingEl.addClass("plaud-importer-stacked-row");
+		setting.settingEl.addClass('plaud-importer-stacked-row');
 		const docEl = setting.descEl.createDiv();
 		docEl.createDiv({ text: DATETIME_TEMPLATE_TOKENS_HEADING });
-		const tokenList = docEl.createEl("ul");
+		const tokenList = docEl.createEl('ul');
 		for (const [token, meaning] of DATETIME_TEMPLATE_TOKENS) {
-			const item = tokenList.createEl("li");
-			item.createEl("code", { text: token });
+			const item = tokenList.createEl('li');
+			item.createEl('code', { text: token });
 			item.createSpan({ text: ` ${meaning}` });
 		}
 		docEl.createDiv({ text: DATETIME_TEMPLATE_EXAMPLES_HEADING });
-		const exampleList = docEl.createEl("ul");
+		const exampleList = docEl.createEl('ul');
 		for (const [template, result] of DATETIME_TEMPLATE_EXAMPLES) {
-			const item = exampleList.createEl("li");
-			item.createEl("code", { text: template });
+			const item = exampleList.createEl('li');
+			item.createEl('code', { text: template });
 			item.createSpan({ text: ` → ${result}` });
 		}
 		docEl.createDiv({ text: DATETIME_TEMPLATE_FOOTNOTE });
@@ -4954,31 +5131,33 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 						if (field === null) return;
 						this.insertTokenAtCursor(field, token);
 						const value = field.getValue();
-						await this.applyControlChange("datetimeTemplate", value);
+						await this.applyControlChange(
+							'datetimeTemplate',
+							value,
+						);
 						updatePreview(value);
 					});
-				button.buttonEl.addEventListener("mousedown", (event) =>
+				button.buttonEl.addEventListener('mousedown', (event) =>
 					event.preventDefault(),
 				);
 			});
 		}
 		setting.addText((text) => {
 			field = text;
-			text
-				.setPlaceholder("{{YYYY-MM-DD HH:mm}}")
-				.setValue(this.readSettingString("datetimeTemplate"))
+			text.setPlaceholder('{{YYYY-MM-DD HH:mm}}')
+				.setValue(this.readSettingString('datetimeTemplate'))
 				.onChange(async (value) => {
-					await this.applyControlChange("datetimeTemplate", value);
+					await this.applyControlChange('datetimeTemplate', value);
 					updatePreview(value);
 				});
 		});
 		updatePreview = this.attachTemplatePreview(setting, (template) => {
-			if (template.trim() === "") {
-				return "Preview: no datetime property";
+			if (template.trim() === '') {
+				return 'Preview: no datetime property';
 			}
 			return `Preview datetime: ${formatDatetime(template, TEMPLATE_PREVIEW_DATETIME)}`;
 		});
-		updatePreview(this.readSettingString("datetimeTemplate"));
+		updatePreview(this.readSettingString('datetimeTemplate'));
 	}
 
 	// Renders the "Extra frontmatter" row: the token/example reference in the
@@ -4987,20 +5166,20 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 	// output. Structured (not a template string), so it persists directly to
 	// settings.customFrontmatter rather than through applyControlChange.
 	private renderCustomFrontmatterControl(setting: Setting): void {
-		setting.settingEl.addClass("plaud-importer-stacked-row");
+		setting.settingEl.addClass('plaud-importer-stacked-row');
 		const docEl = setting.descEl.createDiv();
 		docEl.createDiv({ text: CUSTOM_FRONTMATTER_TOKENS_HEADING });
-		const tokenList = docEl.createEl("ul");
+		const tokenList = docEl.createEl('ul');
 		for (const [token, meaning] of CUSTOM_FRONTMATTER_TOKENS) {
-			const item = tokenList.createEl("li");
-			item.createEl("code", { text: token });
+			const item = tokenList.createEl('li');
+			item.createEl('code', { text: token });
 			item.createSpan({ text: ` ${meaning}` });
 		}
 		docEl.createDiv({ text: CUSTOM_FRONTMATTER_EXAMPLES_HEADING });
-		const exampleList = docEl.createEl("ul");
+		const exampleList = docEl.createEl('ul');
 		for (const [template, result] of CUSTOM_FRONTMATTER_EXAMPLES) {
-			const item = exampleList.createEl("li");
-			item.createEl("code", { text: template });
+			const item = exampleList.createEl('li');
+			item.createEl('code', { text: template });
 			item.createSpan({ text: ` → ${result}` });
 		}
 		docEl.createDiv({ text: CUSTOM_FRONTMATTER_FOOTNOTE });
@@ -5014,22 +5193,22 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 			(r) => ({ key: r.key, value: r.value, preserve: r.preserve }),
 		);
 		if (rows.length === 0) {
-			rows.push({ key: "", value: "", preserve: true });
+			rows.push({ key: '', value: '', preserve: true });
 		}
 
 		// Regions in fixed visual order: the property rows, the add-row button, the
 		// token palette, then the live preview.
 		const rowsEl = setting.controlEl.createDiv({
-			cls: "plaud-importer-frontmatter-rows",
+			cls: 'plaud-importer-frontmatter-rows',
 		});
 		const actionsEl = setting.controlEl.createDiv({
-			cls: "plaud-importer-frontmatter-actions",
+			cls: 'plaud-importer-frontmatter-actions',
 		});
 		const paletteEl = setting.controlEl.createDiv({
-			cls: "plaud-importer-frontmatter-controls",
+			cls: 'plaud-importer-frontmatter-controls',
 		});
 		const previewEl = setting.controlEl.createDiv({
-			cls: "plaud-importer-template-preview",
+			cls: 'plaud-importer-template-preview',
 		});
 
 		let lastFocusedValue: HTMLInputElement | null = null;
@@ -5038,15 +5217,19 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 			const lines = renderCustomFrontmatterPreview(rows);
 			previewEl.setText(
 				lines.length > 0
-					? `Preview:\n${lines.join("\n")}`
-					: "Preview: no extra frontmatter properties",
+					? `Preview:\n${lines.join('\n')}`
+					: 'Preview: no extra frontmatter properties',
 			);
 		};
 		const persist = async (): Promise<void> => {
 			// Store only rows that name a property; the blank starter row is not saved.
 			this.plugin.settings.customFrontmatter = rows
-				.filter((r) => r.key.trim() !== "")
-				.map((r) => ({ key: r.key, value: r.value, preserve: r.preserve }));
+				.filter((r) => r.key.trim() !== '')
+				.map((r) => ({
+					key: r.key,
+					value: r.value,
+					preserve: r.preserve,
+				}));
 			await this.plugin.saveSettings();
 			updatePreview();
 		};
@@ -5062,67 +5245,70 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 			// sits left-aligned over its column. Four cells per line; the header adds
 			// an empty cell over the Remove column so auto-flow stays on the grid.
 			rowsEl.createSpan({
-				cls: "plaud-importer-frontmatter-heading",
-				text: "Property",
+				cls: 'plaud-importer-frontmatter-heading',
+				text: 'Property',
 			});
 			rowsEl.createSpan({
-				cls: "plaud-importer-frontmatter-heading",
-				text: "Value",
+				cls: 'plaud-importer-frontmatter-heading',
+				text: 'Value',
 			});
 			rowsEl.createSpan({
-				cls: "plaud-importer-frontmatter-heading",
-				text: "Preserve",
+				cls: 'plaud-importer-frontmatter-heading',
+				text: 'Preserve',
 			});
-			rowsEl.createSpan({ cls: "plaud-importer-frontmatter-heading" });
+			rowsEl.createSpan({ cls: 'plaud-importer-frontmatter-heading' });
 
 			rows.forEach((row, index) => {
-				const keyInput = rowsEl.createEl("input", {
-					cls: "plaud-importer-frontmatter-key",
-					attr: { type: "text", "aria-label": "Property name" },
+				const keyInput = rowsEl.createEl('input', {
+					cls: 'plaud-importer-frontmatter-key',
+					attr: { type: 'text', 'aria-label': 'Property name' },
 				});
 				keyInput.value = row.key;
-				keyInput.addEventListener("input", () => {
+				keyInput.addEventListener('input', () => {
 					row.key = keyInput.value;
 					void persist();
 				});
 
-				const valueInput = rowsEl.createEl("input", {
-					cls: "plaud-importer-frontmatter-value",
-					attr: { type: "text", "aria-label": "Property value" },
+				const valueInput = rowsEl.createEl('input', {
+					cls: 'plaud-importer-frontmatter-value',
+					attr: { type: 'text', 'aria-label': 'Property value' },
 				});
 				valueInput.value = row.value;
-				valueInput.addEventListener("focus", () => {
+				valueInput.addEventListener('focus', () => {
 					lastFocusedValue = valueInput;
 				});
-				valueInput.addEventListener("input", () => {
+				valueInput.addEventListener('input', () => {
 					row.value = valueInput.value;
 					void persist();
 				});
 
 				// Checkbox only; the "Preserve" column heading labels it.
-				const preserveLabel = rowsEl.createEl("label", {
-					cls: "plaud-importer-frontmatter-preserve",
-					attr: { "aria-label": "Preserve on re-import" },
+				const preserveLabel = rowsEl.createEl('label', {
+					cls: 'plaud-importer-frontmatter-preserve',
+					attr: { 'aria-label': 'Preserve on re-import' },
 				});
-				const preserveInput = preserveLabel.createEl("input", {
-					attr: { type: "checkbox", "aria-label": "Preserve on re-import" },
+				const preserveInput = preserveLabel.createEl('input', {
+					attr: {
+						type: 'checkbox',
+						'aria-label': 'Preserve on re-import',
+					},
 				});
 				preserveInput.checked = row.preserve;
-				preserveInput.addEventListener("change", () => {
+				preserveInput.addEventListener('change', () => {
 					row.preserve = preserveInput.checked;
 					void persist();
 				});
 
-				const removeButton = rowsEl.createEl("button", {
-					cls: "plaud-importer-frontmatter-remove",
-					text: "Remove",
-					attr: { type: "button", "aria-label": "Remove property" },
+				const removeButton = rowsEl.createEl('button', {
+					cls: 'plaud-importer-frontmatter-remove',
+					text: 'Remove',
+					attr: { type: 'button', 'aria-label': 'Remove property' },
 				});
-				removeButton.addEventListener("click", () => {
+				removeButton.addEventListener('click', () => {
 					rows.splice(index, 1);
 					if (rows.length === 0) {
 						// Always leave one editable row so the control is never empty.
-						rows.push({ key: "", value: "", preserve: true });
+						rows.push({ key: '', value: '', preserve: true });
 					}
 					renderRows();
 					void persist();
@@ -5130,13 +5316,13 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 			});
 		};
 
-		const addButton = actionsEl.createEl("button", {
-			cls: "plaud-importer-frontmatter-add mod-cta",
-			text: "Add property",
-			attr: { type: "button" },
+		const addButton = actionsEl.createEl('button', {
+			cls: 'plaud-importer-frontmatter-add mod-cta',
+			text: 'Add property',
+			attr: { type: 'button' },
 		});
-		addButton.addEventListener("click", () => {
-			rows.push({ key: "", value: "", preserve: true });
+		addButton.addEventListener('click', () => {
+			rows.push({ key: '', value: '', preserve: true });
 			renderRows();
 			void persist();
 		});
@@ -5148,16 +5334,17 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 			}
 			const start = input.selectionStart ?? input.value.length;
 			const end = input.selectionEnd ?? input.value.length;
-			input.value = input.value.slice(0, start) + token + input.value.slice(end);
+			input.value =
+				input.value.slice(0, start) + token + input.value.slice(end);
 			const caret = start + token.length;
 			input.focus();
 			input.setSelectionRange(caret, caret);
 			// Route the edit through the input handler so the row updates and saves.
-			input.dispatchEvent(new Event("input"));
+			input.dispatchEvent(new Event('input'));
 		};
 		paletteEl.createDiv({
-			cls: "plaud-importer-frontmatter-palette-label",
-			text: "Insert a token into the value field you last clicked in:",
+			cls: 'plaud-importer-frontmatter-palette-label',
+			text: 'Insert a token into the value field you last clicked in:',
 		});
 		for (const [label, token] of [
 			...DATE_INSERT_TOKENS,
@@ -5165,16 +5352,16 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 			FOLDER_INSERT_TOKEN,
 			...CONTENT_INSERT_TOKENS,
 		]) {
-			const tokenButton = paletteEl.createEl("button", {
-				cls: "plaud-importer-frontmatter-token",
+			const tokenButton = paletteEl.createEl('button', {
+				cls: 'plaud-importer-frontmatter-token',
 				text: label,
-				attr: { type: "button", title: `Insert ${token}` },
+				attr: { type: 'button', title: `Insert ${token}` },
 			});
 			// Keep the caret in the focused value field when a token button is clicked.
-			tokenButton.addEventListener("mousedown", (event) =>
+			tokenButton.addEventListener('mousedown', (event) =>
 				event.preventDefault(),
 			);
-			tokenButton.addEventListener("click", () => insertToken(token));
+			tokenButton.addEventListener('click', () => insertToken(token));
 		}
 
 		renderRows();
@@ -5188,20 +5375,20 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 	// and controls are not squeezed into narrow columns. Shared by the declarative
 	// path and the imperative display() fallback so both show identical docs.
 	private renderNoteNameTemplateControl(setting: Setting): void {
-		setting.settingEl.addClass("plaud-importer-stacked-row");
+		setting.settingEl.addClass('plaud-importer-stacked-row');
 		const docEl = setting.descEl.createDiv();
 		docEl.createDiv({ text: NOTE_NAME_TEMPLATE_TOKENS_HEADING });
-		const tokenList = docEl.createEl("ul");
+		const tokenList = docEl.createEl('ul');
 		for (const [token, meaning] of NOTE_NAME_TEMPLATE_TOKENS) {
-			const item = tokenList.createEl("li");
-			item.createEl("code", { text: token });
+			const item = tokenList.createEl('li');
+			item.createEl('code', { text: token });
 			item.createSpan({ text: ` ${meaning}` });
 		}
 		docEl.createDiv({ text: NOTE_NAME_TEMPLATE_EXAMPLES_HEADING });
-		const exampleList = docEl.createEl("ul");
+		const exampleList = docEl.createEl('ul');
 		for (const [template, result] of NOTE_NAME_TEMPLATE_EXAMPLES) {
-			const item = exampleList.createEl("li");
-			item.createEl("code", { text: template });
+			const item = exampleList.createEl('li');
+			item.createEl('code', { text: template });
 			item.createSpan({ text: ` → ${result}` });
 		}
 		docEl.createDiv({ text: NOTE_NAME_TEMPLATE_FOOTNOTE });
@@ -5220,7 +5407,10 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 		// the field to the saved value AFTER the insert runs, discarding the token.
 		// Keeping focus in the field means no blur fires, so the inserted tokens
 		// accumulate and the eventual real blur (clicking away) commits them.
-		for (const [label, token] of [...DATE_INSERT_TOKENS, TITLE_INSERT_TOKEN]) {
+		for (const [label, token] of [
+			...DATE_INSERT_TOKENS,
+			TITLE_INSERT_TOKEN,
+		]) {
 			setting.addButton((button) => {
 				button
 					.setButtonText(label)
@@ -5230,16 +5420,16 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 						this.insertTokenAtCursor(field, token);
 						updatePreview(field.getValue());
 					});
-				button.buttonEl.addEventListener("mousedown", (event) =>
+				button.buttonEl.addEventListener('mousedown', (event) =>
 					event.preventDefault(),
 				);
 			});
 		}
 		setting.addText((text) => {
 			field = text;
-			text
-				.setPlaceholder(DEFAULT_NOTE_NAME_TEMPLATE)
-				.setValue(this.readSettingString("noteNameTemplate"));
+			text.setPlaceholder(DEFAULT_NOTE_NAME_TEMPLATE).setValue(
+				this.readSettingString('noteNameTemplate'),
+			);
 			// Validate and persist on BLUR, not on every keystroke. Editing inside a
 			// {{...}} token passes through invalid intermediate states (a half-typed
 			// {{YYYY}}), and validating per keystroke would flash a Notice on each one.
@@ -5247,10 +5437,10 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 			// saved value, so a rejected or emptied entry does not linger as stale
 			// text. Preset buttons remain an explicit commit. The preview updates
 			// live on every keystroke, independent of when the value is persisted.
-			text.inputEl.addEventListener("input", () => {
+			text.inputEl.addEventListener('input', () => {
 				updatePreview(text.getValue());
 			});
-			text.inputEl.addEventListener("blur", () => {
+			text.inputEl.addEventListener('blur', () => {
 				void this.commitNoteNameTemplate(text, updatePreview);
 			});
 		});
@@ -5258,7 +5448,7 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 			setting.addButton((button) =>
 				button.setButtonText(label).onClick(async () => {
 					field?.setValue(template);
-					await this.applyControlChange("noteNameTemplate", template);
+					await this.applyControlChange('noteNameTemplate', template);
 					updatePreview(template);
 				}),
 			);
@@ -5272,12 +5462,12 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 				TEMPLATE_PREVIEW_DATE,
 				template,
 			);
-			if (template.trim() !== "" && !isValidNoteNameTemplate(template)) {
+			if (template.trim() !== '' && !isValidNoteNameTemplate(template)) {
 				return `Preview: ${name} (not a valid note name, so it will not be saved; a file name cannot contain a slash, colon, square bracket, or a character like * ? < > | ", cannot be a reserved name such as CON, cannot start or end with a dot or space, and cannot be over 200 characters)`;
 			}
 			return `Preview: ${name}`;
 		});
-		updatePreview(this.readSettingString("noteNameTemplate"));
+		updatePreview(this.readSettingString('noteNameTemplate'));
 	}
 
 	// Validates and persists the note-name template field on blur (see
@@ -5288,8 +5478,8 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 		text: TextComponent,
 		updatePreview: (template: string) => void,
 	): Promise<void> {
-		await this.applyControlChange("noteNameTemplate", text.getValue());
-		text.setValue(this.readSettingString("noteNameTemplate"));
+		await this.applyControlChange('noteNameTemplate', text.getValue());
+		text.setValue(this.readSettingString('noteNameTemplate'));
 		updatePreview(text.getValue());
 	}
 
@@ -5318,9 +5508,11 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 			.setName(name)
 			.setDesc(desc)
 			.addToggle((toggle) =>
-				toggle.setValue(this.readSettingBool(key)).onChange(async (value) => {
-					await this.applyControlChange(key, value);
-				}),
+				toggle
+					.setValue(this.readSettingBool(key))
+					.onChange(async (value) => {
+						await this.applyControlChange(key, value);
+					}),
 			);
 	}
 
@@ -5376,28 +5568,28 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 	// Reads a settings value as a display string for text/dropdown rows. Mirrors
 	// getControlValue()'s number-to-string handling for the two numeric keys.
 	private readSettingString(key: string): string {
-		if (key === "transcriptHeaderLevel") {
+		if (key === 'transcriptHeaderLevel') {
 			return String(this.plugin.settings.transcriptHeaderLevel);
 		}
-		if (key === "autoCloseSummarySeconds") {
+		if (key === 'autoCloseSummarySeconds') {
 			return String(this.plugin.settings.autoCloseSummarySeconds);
 		}
-		const value = (this.plugin.settings as unknown as Record<string, unknown>)[
-			key
-		];
-		if (typeof value === "string") {
+		const value = (
+			this.plugin.settings as unknown as Record<string, unknown>
+		)[key];
+		if (typeof value === 'string') {
 			return value;
 		}
-		if (typeof value === "number" || typeof value === "boolean") {
+		if (typeof value === 'number' || typeof value === 'boolean') {
 			return String(value);
 		}
-		return "";
+		return '';
 	}
 
 	getSettingDefinitions(): SettingDefinitionItem[] {
 		return [
 			{
-				name: "Plaud token",
+				name: 'Plaud token',
 				desc: "Your stored Plaud token. The status below shows whether you are connected. The value stays in Obsidian's secret storage, never in data.json.",
 				// SecretComponent needs an App instance and is added via
 				// Setting#addComponent, so it lives in a render callback rather
@@ -5406,59 +5598,67 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 				render: (setting: Setting) => this.renderTokenControl(setting),
 			},
 			{
-				type: "group",
-				heading: "Sign in",
+				type: 'group',
+				heading: 'Sign in',
 				items: [
 					{
-						name: "",
+						name: '',
 						searchable: false,
-						render: (setting: Setting) => this.renderSignInIntro(setting),
+						render: (setting: Setting) =>
+							this.renderSignInIntro(setting),
 					},
 					{
-						name: "Sign in with email",
-						desc: "Best for email and password logins. Click Sign in, log in to Plaud in the window that opens, and your token is saved automatically. Google and Apple logins do not work in this window; use the option below for those.",
+						name: 'Sign in with email',
+						desc: 'Best for email and password logins. Click Sign in, log in to Plaud in the window that opens, and your token is saved automatically. Google and Apple logins do not work in this window; use the option below for those.',
 						searchable: false,
-						render: (setting: Setting) => this.renderSigninControl(setting),
+						render: (setting: Setting) =>
+							this.renderSigninControl(setting),
 					},
 					{
-						name: "Sign in with Google or Apple",
-						desc: "For Google and Apple logins, which only work in a real browser. The first time needs a one-time bookmark setup. After that, sign in to Plaud in your normal browser and send the token back with the steps below.",
+						name: 'Sign in with Google or Apple',
+						desc: 'For Google and Apple logins, which only work in a real browser. The first time needs a one-time bookmark setup. After that, sign in to Plaud in your normal browser and send the token back with the steps below.',
 						searchable: false,
 						render: (setting: Setting) =>
 							this.renderBrowserSignInControl(setting),
 					},
 					{
-						name: "Test connection",
-						desc: "Check that your stored token can reach Plaud. Use this after signing in, or any time imports start failing, to see whether you need to sign in again.",
+						name: 'Test connection',
+						desc: 'Check that your stored token can reach Plaud. Use this after signing in, or any time imports start failing, to see whether you need to sign in again.',
 						searchable: false,
-						render: (setting: Setting) => this.renderTestControl(setting),
+						render: (setting: Setting) =>
+							this.renderTestControl(setting),
 					},
 					{
-						name: "Clear sign-in",
+						name: 'Clear sign-in',
 						desc: CLEAR_SIGN_IN_DESC,
 						searchable: false,
 						render: (setting: Setting) =>
 							this.renderClearSignInControl(setting),
 					},
 					{
-						name: "API region",
-						desc: "Plaud server this vault is connected to. Detected automatically on the first import. EU and other regional accounts switch here on their own, so there is nothing to configure.",
+						name: 'API region',
+						desc: 'Plaud server this vault is connected to. Detected automatically on the first import. EU and other regional accounts switch here on their own, so there is nothing to configure.',
 						searchable: false,
-						render: (setting: Setting) => this.renderRegionControl(setting),
+						render: (setting: Setting) =>
+							this.renderRegionControl(setting),
 					},
 				],
 			},
 			{
-				type: "group",
-				heading: "Output",
+				type: 'group',
+				heading: 'Output',
 				items: [
 					{
-						name: "Output folder",
-						desc: "Folder inside your vault where imported notes are written.",
-						control: { type: "text", key: "outputFolder", placeholder: "Plaud" },
+						name: 'Output folder',
+						desc: 'Folder inside your vault where imported notes are written.',
+						control: {
+							type: 'text',
+							key: 'outputFolder',
+							placeholder: 'Plaud',
+						},
 					},
 					{
-						name: "Subfolder template",
+						name: 'Subfolder template',
 						desc: SUBFOLDER_TEMPLATE_INTRO,
 						// Rendered imperatively so the token reference (a list,
 						// not a one-line string) appears in the description. Not
@@ -5468,7 +5668,7 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 							this.renderSubfolderTemplateControl(setting),
 					},
 					{
-						name: "Note name template",
+						name: 'Note name template',
 						desc: NOTE_NAME_TEMPLATE_INTRO,
 						// Rendered imperatively for the token + examples lists plus
 						// the preset buttons. Not search-indexable, like the
@@ -5478,7 +5678,7 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 							this.renderNoteNameTemplateControl(setting),
 					},
 					{
-						name: "Datetime property",
+						name: 'Datetime property',
 						desc: DATETIME_TEMPLATE_INTRO,
 						// Rendered imperatively for the token + examples lists, like
 						// the two template rows above.
@@ -5487,7 +5687,7 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 							this.renderDatetimeTemplateControl(setting),
 					},
 					{
-						name: "Extra frontmatter",
+						name: 'Extra frontmatter',
 						desc: CUSTOM_FRONTMATTER_INTRO,
 						// Rendered imperatively for the token/example lists and the
 						// dynamic key/value/preserve rowset.
@@ -5496,208 +5696,249 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 							this.renderCustomFrontmatterControl(setting),
 					},
 					{
-						name: "Preserve unknown frontmatter on re-import",
+						name: 'Preserve unknown frontmatter on re-import',
 						desc: PRESERVE_UNKNOWN_FRONTMATTER_DESC,
 						control: {
-							type: "toggle",
-							key: "preserveUnknownFrontmatter",
+							type: 'toggle',
+							key: 'preserveUnknownFrontmatter',
 						},
 					},
 					{
-						name: "Forbidden character replacement",
+						name: 'Forbidden character replacement',
 						desc: FORBIDDEN_CHAR_REPLACEMENT_DESC,
 						control: {
-							type: "text",
-							key: "forbiddenCharReplacement",
-							placeholder: "-",
+							type: 'text',
+							key: 'forbiddenCharReplacement',
+							placeholder: '-',
 						},
 					},
 					{
 						name: DUPLICATE_HANDLING_NAME,
 						desc: DUPLICATE_HANDLING_DESC,
 						control: {
-							type: "dropdown",
-							key: "onDuplicate",
-							options: { skip: "Skip", overwrite: "Overwrite", prompt: "Ask each time" },
+							type: 'dropdown',
+							key: 'onDuplicate',
+							options: {
+								skip: 'Skip',
+								overwrite: 'Overwrite',
+								prompt: 'Ask each time',
+							},
 						},
 					},
 				],
 			},
 			{
-				type: "group",
-				heading: "Appearance",
+				type: 'group',
+				heading: 'Appearance',
 				items: [
 					{
-						name: "Show ribbon icon",
+						name: 'Show ribbon icon',
 						desc: "Display the plaud importer icon in Obsidian's left rail. Turn off if you prefer to launch imports only from the command palette.",
-						control: { type: "toggle", key: "showRibbonIcon" },
+						control: { type: 'toggle', key: 'showRibbonIcon' },
 					},
 					{
-						name: "Ribbon icon",
+						name: 'Ribbon icon',
 						desc: "Which icon to display in the left rail. Only applies when 'show ribbon icon' is on.",
 						searchable: false,
-						render: (setting: Setting) => this.renderRibbonControl(setting),
+						render: (setting: Setting) =>
+							this.renderRibbonControl(setting),
 					},
 				],
 			},
 			{
-				type: "group",
-				heading: "Default artifact selection",
+				type: 'group',
+				heading: 'Default artifact selection',
 				items: [
 					{
-						name: "Transcript",
+						name: 'Transcript',
 						desc: "Checked by default in import actions. You can override in 'review artifacts first'.",
-						control: { type: "toggle", key: "includeTranscript" },
+						control: { type: 'toggle', key: 'includeTranscript' },
 					},
 					{
-						name: "Summary",
+						name: 'Summary',
 						desc: "Checked by default in import actions. You can override in 'review artifacts first'.",
-						control: { type: "toggle", key: "defaultIncludeSummary" },
+						control: {
+							type: 'toggle',
+							key: 'defaultIncludeSummary',
+						},
 					},
 					{
-						name: "Attachments",
-						desc: "Checked by default in import actions when attachments are available.",
-						control: { type: "toggle", key: "defaultIncludeAttachments" },
+						name: 'Attachments',
+						desc: 'Checked by default in import actions when attachments are available.',
+						control: {
+							type: 'toggle',
+							key: 'defaultIncludeAttachments',
+						},
 					},
 					{
-						name: "Mindmap",
-						desc: "Checked by default in import actions when a mindmap artifact is available.",
-						control: { type: "toggle", key: "defaultIncludeMindmap" },
+						name: 'Mindmap',
+						desc: 'Checked by default in import actions when a mindmap artifact is available.',
+						control: {
+							type: 'toggle',
+							key: 'defaultIncludeMindmap',
+						},
 					},
 					{
-						name: "Card",
-						desc: "Checked by default in import actions when a card artifact is available.",
-						control: { type: "toggle", key: "defaultIncludeCard" },
+						name: 'Card',
+						desc: 'Checked by default in import actions when a card artifact is available.',
+						control: { type: 'toggle', key: 'defaultIncludeCard' },
 					},
 					{
-						name: "Audio",
-						desc: "Off by default. Downloads the original recording audio (about 15 MB per hour) for every recording you import, which can grow your vault by gigabytes and slow Obsidian Sync and backups. Leave off unless you want the audio in your vault.",
-						control: { type: "toggle", key: "defaultIncludeAudio" },
+						name: 'Audio',
+						desc: 'Off by default. Downloads the original recording audio (about 15 MB per hour) for every recording you import, which can grow your vault by gigabytes and slow Obsidian Sync and backups. Leave off unless you want the audio in your vault.',
+						control: { type: 'toggle', key: 'defaultIncludeAudio' },
 					},
 				],
 			},
 			{
-				type: "group",
-				heading: "Tags",
+				type: 'group',
+				heading: 'Tags',
 				items: [
 					{
-						name: "Tag mode",
+						name: 'Tag mode',
 						desc: "Which Plaud tag sources land in the note's tags frontmatter. Plaud tags are the ones you set on a recording in the Plaud app; AI keywords are Plaud's per-recording topic guesses, which can flood the tag pane.",
 						control: {
-							type: "dropdown",
-							key: "tagMode",
+							type: 'dropdown',
+							key: 'tagMode',
 							options: {
-								none: "No tags",
-								custom: "Custom tags only",
-								plaud: "Plaud tags (no AI keywords)",
-								all: "All tags",
+								none: 'No tags',
+								custom: 'Custom tags only',
+								plaud: 'Plaud tags (no AI keywords)',
+								all: 'All tags',
 							},
 						},
 					},
 					{
-						name: "Custom tags",
+						name: 'Custom tags',
 						desc: "Comma-separated tags added to every imported note, except in 'no tags' mode.",
-						control: { type: "text", key: "customTags", placeholder: "plaud-meeting" },
-					},
-					{
-						name: "Keep AI keywords as note property",
-						desc: "When AI keywords are excluded from tags, write them to a keywords frontmatter property instead. Plaud's keyword list can run to hundreds of low-value entries per recording, so this is off by default. The property is searchable and Dataview-queryable but stays out of the tag pane.",
-						control: { type: "toggle", key: "aiKeywordsAsProperty" },
-					},
-				],
-			},
-			{
-				type: "group",
-				heading: "Import dialog",
-				items: [
-					{
-						name: "Auto-close summary",
-						desc: "Close the import window automatically after a fully successful import. A run with any failure keeps the window open so the errors stay visible. Clicking inside the window cancels the countdown.",
-						control: { type: "toggle", key: "autoCloseSummary" },
-					},
-					{
-						name: "Auto-close delay",
-						desc: "Seconds to wait before the summary closes itself. Only applies when auto-close is on.",
-						control: { type: "text", key: "autoCloseSummarySeconds", placeholder: "20" },
-					},
-					{
-						name: "Write placeholder for unprocessed recordings",
-						desc: "When Plaud has a recording but reports no transcript or summary for it yet (a Plaud-side issue, not a plugin error), write a placeholder note with the recording ID and a link back to Plaud instead of recording a failure. A later successful import replaces the placeholder automatically. Turn off to keep such recordings as plain failures with no file written.",
-						control: { type: "toggle", key: "writePlaceholderForUnprocessed" },
-					},
-					{
-						name: "Show trashed recordings",
-						desc: "Include recordings that are in your Plaud trash in the import list. Off by default, matching the Plaud app, which hides trash. Trashed recordings are usually short accidental clips with no transcript. Turn on to import something you trashed in Plaud but still want in your vault.",
-						control: { type: "toggle", key: "showTrashedRecordings" },
-					},
-					{
-						name: "Update the recording title on rename",
-						desc: "Off by default. When on, renaming an imported recording (with the Rename recording command or by renaming the note in the file explorer) also updates that recording's title in Plaud to match the new note name, including any date prefix. This is the only change the plugin writes back to Plaud. When off, the Rename recording command asks each time whether to update Plaud, and a file-explorer rename stays local.",
-						control: { type: "toggle", key: "autoUpdatePlaudTitle" },
-					},
-				],
-			},
-			{
-				type: "group",
-				heading: "Automatic sync",
-				items: [
-					{
-						name: "Enable automatic sync",
-						desc: AUTO_SYNC_DESC,
-						control: { type: "toggle", key: "autoSyncEnabled" },
-					},
-					{
-						name: "Sync interval",
-						desc: "How often the background sync checks Plaud for new and changed recordings. Minimum 15 minutes.",
 						control: {
-							type: "dropdown",
-							key: "autoSyncIntervalMinutes",
+							type: 'text',
+							key: 'customTags',
+							placeholder: 'plaud-meeting',
+						},
+					},
+					{
+						name: 'Keep AI keywords as note property',
+						desc: "When AI keywords are excluded from tags, write them to a keywords frontmatter property instead. Plaud's keyword list can run to hundreds of low-value entries per recording, so this is off by default. The property is searchable and Dataview-queryable but stays out of the tag pane.",
+						control: {
+							type: 'toggle',
+							key: 'aiKeywordsAsProperty',
+						},
+					},
+				],
+			},
+			{
+				type: 'group',
+				heading: 'Import dialog',
+				items: [
+					{
+						name: 'Auto-close summary',
+						desc: 'Close the import window automatically after a fully successful import. A run with any failure keeps the window open so the errors stay visible. Clicking inside the window cancels the countdown.',
+						control: { type: 'toggle', key: 'autoCloseSummary' },
+					},
+					{
+						name: 'Auto-close delay',
+						desc: 'Seconds to wait before the summary closes itself. Only applies when auto-close is on.',
+						control: {
+							type: 'text',
+							key: 'autoCloseSummarySeconds',
+							placeholder: '20',
+						},
+					},
+					{
+						name: 'Write placeholder for unprocessed recordings',
+						desc: 'When Plaud has a recording but reports no transcript or summary for it yet (a Plaud-side issue, not a plugin error), write a placeholder note with the recording ID and a link back to Plaud instead of recording a failure. A later successful import replaces the placeholder automatically. Turn off to keep such recordings as plain failures with no file written.',
+						control: {
+							type: 'toggle',
+							key: 'writePlaceholderForUnprocessed',
+						},
+					},
+					{
+						name: 'Show trashed recordings',
+						desc: 'Include recordings that are in your Plaud trash in the import list. Off by default, matching the Plaud app, which hides trash. Trashed recordings are usually short accidental clips with no transcript. Turn on to import something you trashed in Plaud but still want in your vault.',
+						control: {
+							type: 'toggle',
+							key: 'showTrashedRecordings',
+						},
+					},
+					{
+						name: 'Update the recording title on rename',
+						desc: "Off by default. When on, renaming an imported recording (with the Rename recording command or by renaming the note in the file explorer) also updates that recording's title in Plaud to match the new note name, including any date prefix. This is the only change the plugin writes back to Plaud. When off, the Rename recording command asks each time whether to update Plaud, and a file-explorer rename stays local.",
+						control: {
+							type: 'toggle',
+							key: 'autoUpdatePlaudTitle',
+						},
+					},
+				],
+			},
+			{
+				type: 'group',
+				heading: 'Automatic sync',
+				items: [
+					{
+						name: 'Enable automatic sync',
+						desc: AUTO_SYNC_DESC,
+						control: { type: 'toggle', key: 'autoSyncEnabled' },
+					},
+					{
+						name: 'Sync interval',
+						desc: 'How often the background sync checks Plaud for new and changed recordings. Minimum 15 minutes.',
+						control: {
+							type: 'dropdown',
+							key: 'autoSyncIntervalMinutes',
 							options: {
-								"15": "Every 15 minutes",
-								"30": "Every 30 minutes",
-								"60": "Every hour",
-								"120": "Every 2 hours",
-								"240": "Every 4 hours",
-								"480": "Every 8 hours",
-								"1440": "Once a day",
+								'15': 'Every 15 minutes',
+								'30': 'Every 30 minutes',
+								'60': 'Every hour',
+								'120': 'Every 2 hours',
+								'240': 'Every 4 hours',
+								'480': 'Every 8 hours',
+								'1440': 'Once a day',
 							},
 						},
 					},
 				],
 			},
 			{
-				type: "group",
-				heading: "Transcript rendering",
+				type: 'group',
+				heading: 'Transcript rendering',
 				items: [
 					{
-						name: "Fold transcript by default",
+						name: 'Fold transcript by default',
 						desc: "Collapse the transcript section when the note is created so it doesn't dominate the view on open. Uses Obsidian's heading fold state — clicking the chevron next to the heading expands it. Turn off if you prefer the transcript always expanded.",
-						control: { type: "toggle", key: "foldTranscript" },
+						control: { type: 'toggle', key: 'foldTranscript' },
 					},
 					{
-						name: "Transcript heading level",
+						name: 'Transcript heading level',
 						desc: "Markdown heading level for the wrapping 'transcript' heading. Chapter sub-headings render at one level below (e.g. Level 4 → transcript is h4, chapters are h5). This is the heading whose fold state the 'fold transcript by default' toggle controls.",
 						control: {
-							type: "dropdown",
-							key: "transcriptHeaderLevel",
-							options: { "1": "H1", "2": "H2", "3": "H3", "4": "H4", "5": "H5", "6": "H6" },
+							type: 'dropdown',
+							key: 'transcriptHeaderLevel',
+							options: {
+								'1': 'H1',
+								'2': 'H2',
+								'3': 'H3',
+								'4': 'H4',
+								'5': 'H5',
+								'6': 'H6',
+							},
 						},
 					},
 				],
 			},
 			{
-				type: "group",
-				heading: "Debug",
+				type: 'group',
+				heading: 'Debug',
 				items: [
 					{
-						name: "Debug logging",
+						name: 'Debug logging',
 						desc: "Capture raw API requests, responses, and parsed results into an in-memory buffer and mirror them to the developer console (Ctrl+Shift+I). Authentication headers are NEVER captured. Payloads may contain transcript text, speaker names, and recording metadata — only enable when troubleshooting. Use the 'Plaud Importer: Debug: copy debug log to clipboard' command to export the session.",
-						control: { type: "toggle", key: "debug" },
+						control: { type: 'toggle', key: 'debug' },
 					},
 				],
 			},
 			{
-				name: "",
+				name: '',
 				searchable: false,
 				render: (setting: Setting) => {
 					this.renderFooter(setting);
@@ -5712,13 +5953,15 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 	// the boundary. outputFolder snaps an empty value back to the "Plaud" default,
 	// matching the previous imperative onChange behavior.
 	getControlValue(key: string): unknown {
-		if (key === "transcriptHeaderLevel") {
+		if (key === 'transcriptHeaderLevel') {
 			return String(this.plugin.settings.transcriptHeaderLevel);
 		}
-		if (key === "autoCloseSummarySeconds") {
+		if (key === 'autoCloseSummarySeconds') {
 			return String(this.plugin.settings.autoCloseSummarySeconds);
 		}
-		return (this.plugin.settings as unknown as Record<string, unknown>)[key];
+		return (this.plugin.settings as unknown as Record<string, unknown>)[
+			key
+		];
 	}
 
 	async setControlValue(key: string, value: unknown): Promise<void> {
@@ -5728,12 +5971,15 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 	// Coerces and persists a single settings change, then runs any side effect.
 	// Shared by the declarative setControlValue() (1.13+) and the imperative
 	// row helpers in display() (1.12), so neither path can drift on validation.
-	private async applyControlChange(key: string, value: unknown): Promise<void> {
-		if (key === "outputFolder") {
+	private async applyControlChange(
+		key: string,
+		value: unknown,
+	): Promise<void> {
+		if (key === 'outputFolder') {
 			this.plugin.settings.outputFolder =
-				(typeof value === "string" ? value.trim() : "") || "Plaud";
-		} else if (key === "subfolderTemplate") {
-			const next = typeof value === "string" ? value : "";
+				(typeof value === 'string' ? value.trim() : '') || 'Plaud';
+		} else if (key === 'subfolderTemplate') {
+			const next = typeof value === 'string' ? value : '';
 			try {
 				// Rendering against a sample date surfaces the only case that throws
 				// at import time, a ".." vault-escape (normalizeFolderPath's traversal
@@ -5752,96 +5998,113 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 			} catch {
 				return;
 			}
-		} else if (key === "forbiddenCharReplacement") {
+		} else if (key === 'forbiddenCharReplacement') {
 			// Coerce to a single safe character. Cleared field falls back to the
 			// default dash; an unsafe entry (a forbidden char, a separator, a dot or
 			// space, or more than one character) is refused with a Notice and the
 			// previous value is kept, so sanitizing can never reintroduce a
 			// forbidden character.
-			const next = typeof value === "string" ? value.trim() : "";
-			if (next === "") {
-				this.plugin.settings.forbiddenCharReplacement = "-";
+			const next = typeof value === 'string' ? value.trim() : '';
+			if (next === '') {
+				this.plugin.settings.forbiddenCharReplacement = '-';
 			} else if (isValidReplacementChar(next)) {
 				this.plugin.settings.forbiddenCharReplacement = next;
 			} else {
 				new Notice(
-					"Plaud importer: The replacement must be a single character and cannot be a slash, backslash, colon, square bracket, asterisk, question mark, angle bracket, pipe, double quote, dot, space, or control character. Keeping the previous value.",
+					'Plaud importer: The replacement must be a single character and cannot be a slash, backslash, colon, square bracket, asterisk, question mark, angle bracket, pipe, double quote, dot, space, or control character. Keeping the previous value.',
 				);
 				return;
 			}
-		} else if (key === "noteNameTemplate") {
-			const next = typeof value === "string" ? value.trim() : "";
+		} else if (key === 'noteNameTemplate') {
+			const next = typeof value === 'string' ? value.trim() : '';
 			if (next.length === 0) {
 				// Never persist an empty template: every note name would render
 				// blank. Snap back to the default template.
-				this.plugin.settings.noteNameTemplate = DEFAULT_NOTE_NAME_TEMPLATE;
+				this.plugin.settings.noteNameTemplate =
+					DEFAULT_NOTE_NAME_TEMPLATE;
 			} else if (isValidNoteNameTemplate(next)) {
 				this.plugin.settings.noteNameTemplate = next;
-			} else if (!isValidNoteNameTemplate(this.plugin.settings.noteNameTemplate)) {
+			} else if (
+				!isValidNoteNameTemplate(this.plugin.settings.noteNameTemplate)
+			) {
 				// The entered template is invalid AND the stored one is too (for
 				// example a hand-edited data.json). Heal to the default so the UI
 				// matches the writer, which already falls back to the default for an
 				// invalid stored template, instead of looping the notice on blur.
-				this.plugin.settings.noteNameTemplate = DEFAULT_NOTE_NAME_TEMPLATE;
+				this.plugin.settings.noteNameTemplate =
+					DEFAULT_NOTE_NAME_TEMPLATE;
 			} else {
 				// The stored template is still valid: keep it and say why the entry
 				// was not applied, rather than saving one that would break imports or
 				// write a mangled name.
 				new Notice(
-					"Plaud importer: That note name template is not valid, so it was not changed. A file name cannot contain a slash, colon, square bracket, asterisk, question mark, angle bracket, pipe, or double quote, cannot be a reserved device name, cannot start or end with a dot or space, and cannot be over 200 characters.",
+					'Plaud importer: That note name template is not valid, so it was not changed. A file name cannot contain a slash, colon, square bracket, asterisk, question mark, angle bracket, pipe, or double quote, cannot be a reserved device name, cannot start or end with a dot or space, and cannot be over 200 characters.',
 				);
 				return;
 			}
-		} else if (key === "datetimeTemplate") {
+		} else if (key === 'datetimeTemplate') {
 			// Any {{ }} Moment template is accepted, empty included (which writes no
 			// datetime property). Moment never throws on an unknown token, and there
 			// is no path or filename safety concern here, so there is nothing to
 			// reject and the live preview is the only feedback. Persisted as typed.
 			this.plugin.settings.datetimeTemplate =
-				typeof value === "string" ? value : "";
-		} else if (key === "transcriptHeaderLevel") {
+				typeof value === 'string' ? value : '';
+		} else if (key === 'transcriptHeaderLevel') {
 			const level = Number(value);
 			if (level >= 1 && level <= 6) {
-				this.plugin.settings.transcriptHeaderLevel = level as 1 | 2 | 3 | 4 | 5 | 6;
+				this.plugin.settings.transcriptHeaderLevel = level as
+					1 | 2 | 3 | 4 | 5 | 6;
 			}
-		} else if (key === "autoCloseSummarySeconds") {
+		} else if (key === 'autoCloseSummarySeconds') {
 			// Text control delivers a string; store a sane integer. Blank or
 			// non-numeric input snaps back to the 20s default; out-of-range
 			// values clamp to 1..600 so a typo cannot park the modal open
 			// for hours or close it instantly.
-			const parsed = Number(typeof value === "string" ? value.trim() : value);
-			this.plugin.settings.autoCloseSummarySeconds = Number.isFinite(parsed)
+			const parsed = Number(
+				typeof value === 'string' ? value.trim() : value,
+			);
+			this.plugin.settings.autoCloseSummarySeconds = Number.isFinite(
+				parsed,
+			)
 				? Math.min(600, Math.max(1, Math.floor(parsed)))
 				: 20;
-		} else if (key === "autoSyncIntervalMinutes") {
+		} else if (key === 'autoSyncIntervalMinutes') {
 			// Dropdown delivers a string; coerce to a valid interval [15, 1440].
-			this.plugin.settings.autoSyncIntervalMinutes = coerceIntervalMinutes(value);
+			this.plugin.settings.autoSyncIntervalMinutes =
+				coerceIntervalMinutes(value);
 		} else {
-			(this.plugin.settings as unknown as Record<string, unknown>)[key] = value;
+			(this.plugin.settings as unknown as Record<string, unknown>)[key] =
+				value;
 		}
 		await this.plugin.saveSettings();
 
 		// Side effects that the imperative onChange handlers used to run inline.
-		if (key === "showRibbonIcon") {
+		if (key === 'showRibbonIcon') {
 			this.plugin.updateRibbonIcon();
-		} else if (key === "autoSyncEnabled" || key === "autoSyncIntervalMinutes") {
+		} else if (
+			key === 'autoSyncEnabled' ||
+			key === 'autoSyncIntervalMinutes'
+		) {
 			// Start/stop/reschedule the timer to match the new setting. Enabling
 			// is a deliberate action, so also clear any prior auth pause.
 			this.plugin.reconcileAutoSync();
-			if (key === "autoSyncEnabled" && this.plugin.settings.autoSyncEnabled) {
+			if (
+				key === 'autoSyncEnabled' &&
+				this.plugin.settings.autoSyncEnabled
+			) {
 				this.plugin.resumeAutoSyncIfPaused();
 			}
-		} else if (key === "debug") {
+		} else if (key === 'debug') {
 			// Update the live logger's enabled flag in place so the change takes
 			// effect on the next API call without reinstantiating the client.
 			this.plugin.debugLogger.setEnabled(this.plugin.settings.debug);
 			if (this.plugin.settings.debug) {
 				new Notice(
-					"Plaud importer: Debug logging enabled. Run a command to capture events.",
+					'Plaud importer: Debug logging enabled. Run a command to capture events.',
 				);
 			} else {
 				new Notice(
-					"Plaud importer: Debug logging disabled. The buffer is preserved — use the clear command to wipe it.",
+					'Plaud importer: Debug logging disabled. The buffer is preserved — use the clear command to wipe it.',
 				);
 			}
 		}
@@ -5852,23 +6115,29 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 	private renderFooter(setting: Setting): void {
 		const el = setting.settingEl;
 		el.empty();
-		el.addClass("plaud-importer-footer");
+		el.addClass('plaud-importer-footer');
 
-		const manifestVersion = this.plugin.manifest.version || "0.0.0";
+		const manifestVersion = this.plugin.manifest.version || '0.0.0';
 		el.createSpan({ text: `Version ${manifestVersion} | ` });
 
-		const createExternalLink = (text: string, url: string): HTMLAnchorElement =>
-			el.createEl("a", {
+		const createExternalLink = (
+			text: string,
+			url: string,
+		): HTMLAnchorElement =>
+			el.createEl('a', {
 				text,
 				href: url,
-				attr: { target: "_blank", rel: "noopener" },
+				attr: { target: '_blank', rel: 'noopener' },
 			});
 
-		createExternalLink("GitHub", "https://github.com/ckelsoe/obsidian-plaud-importer");
-		el.createSpan({ text: " | " });
 		createExternalLink(
-			"Report Issues",
-			"https://github.com/ckelsoe/obsidian-plaud-importer/issues",
+			'GitHub',
+			'https://github.com/ckelsoe/obsidian-plaud-importer',
+		);
+		el.createSpan({ text: ' | ' });
+		createExternalLink(
+			'Report Issues',
+			'https://github.com/ckelsoe/obsidian-plaud-importer/issues',
 		);
 	}
 }

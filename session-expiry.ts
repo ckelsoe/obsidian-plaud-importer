@@ -73,7 +73,12 @@ export function sessionExpiryDecision(
 	warnedForExpMs: number,
 ): SessionExpiryDecision {
 	if (life === null) {
-		return { action: 'none', expMs: null, expired: false, armDelayMs: null };
+		return {
+			action: 'none',
+			expMs: null,
+			expired: false,
+			armDelayMs: null,
+		};
 	}
 	const lead = warnLeadMs(life.lifetimeHours);
 	const remainingMs = life.expMs - nowMs;
@@ -89,7 +94,12 @@ export function sessionExpiryDecision(
 		};
 	}
 	if (warnedForExpMs === life.expMs) {
-		return { action: 'quiet', expMs: life.expMs, expired, armDelayMs: null };
+		return {
+			action: 'quiet',
+			expMs: life.expMs,
+			expired,
+			armDelayMs: null,
+		};
 	}
 	return { action: 'warn', expMs: life.expMs, expired, armDelayMs: null };
 }

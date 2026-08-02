@@ -19,15 +19,20 @@ interface FakeFrontmatter {
 	readonly [key: string]: unknown;
 }
 
-function makeApp(entries: ReadonlyArray<readonly [string, FakeFrontmatter | null]>): App {
+function makeApp(
+	entries: ReadonlyArray<readonly [string, FakeFrontmatter | null]>,
+): App {
 	const files: FakeFile[] = entries.map(([path]) => ({ path }));
 	const fmByPath = new Map<string, FakeFrontmatter | null>(entries);
 	const app = {
 		vault: {
-			getMarkdownFiles: (): readonly TFile[] => files as unknown as TFile[],
+			getMarkdownFiles: (): readonly TFile[] =>
+				files as unknown as TFile[],
 		},
 		metadataCache: {
-			getFileCache: (file: TFile): { frontmatter?: FakeFrontmatter } | null => {
+			getFileCache: (
+				file: TFile,
+			): { frontmatter?: FakeFrontmatter } | null => {
 				const fm = fmByPath.get(file.path);
 				if (fm === null || fm === undefined) return null;
 				return { frontmatter: fm };
@@ -45,8 +50,12 @@ describe('buildPlaudIdIndex', () => {
 		]);
 		const index = buildPlaudIdIndex(app, 'Plaud');
 		expect(index.size).toBe(2);
-		expect(index.get('rec-a' as PlaudRecordingId)?.path).toBe('Plaud/note-a.md');
-		expect(index.get('rec-b' as PlaudRecordingId)?.path).toBe('Plaud/note-b.md');
+		expect(index.get('rec-a' as PlaudRecordingId)?.path).toBe(
+			'Plaud/note-a.md',
+		);
+		expect(index.get('rec-b' as PlaudRecordingId)?.path).toBe(
+			'Plaud/note-b.md',
+		);
 	});
 
 	it('skips notes outside the output folder', () => {
@@ -88,16 +97,33 @@ describe('buildPlaudIdIndex', () => {
 
 	it('reads plaud-version-ms into versionMs; absent or malformed stays undefined', () => {
 		const app = makeApp([
-			['Plaud/num.md', { 'plaud-id': 'rec-num', 'plaud-version-ms': 1782918853105 }],
-			['Plaud/str.md', { 'plaud-id': 'rec-str', 'plaud-version-ms': '1744628400000' }],
+			[
+				'Plaud/num.md',
+				{ 'plaud-id': 'rec-num', 'plaud-version-ms': 1782918853105 },
+			],
+			[
+				'Plaud/str.md',
+				{ 'plaud-id': 'rec-str', 'plaud-version-ms': '1744628400000' },
+			],
 			['Plaud/none.md', { 'plaud-id': 'rec-none' }],
-			['Plaud/bad.md', { 'plaud-id': 'rec-bad', 'plaud-version-ms': 'not-a-number' }],
+			[
+				'Plaud/bad.md',
+				{ 'plaud-id': 'rec-bad', 'plaud-version-ms': 'not-a-number' },
+			],
 		]);
 		const index = buildPlaudIdIndex(app, 'Plaud');
-		expect(index.get('rec-num' as PlaudRecordingId)?.versionMs).toBe(1782918853105);
-		expect(index.get('rec-str' as PlaudRecordingId)?.versionMs).toBe(1744628400000);
-		expect(index.get('rec-none' as PlaudRecordingId)?.versionMs).toBeUndefined();
-		expect(index.get('rec-bad' as PlaudRecordingId)?.versionMs).toBeUndefined();
+		expect(index.get('rec-num' as PlaudRecordingId)?.versionMs).toBe(
+			1782918853105,
+		);
+		expect(index.get('rec-str' as PlaudRecordingId)?.versionMs).toBe(
+			1744628400000,
+		);
+		expect(
+			index.get('rec-none' as PlaudRecordingId)?.versionMs,
+		).toBeUndefined();
+		expect(
+			index.get('rec-bad' as PlaudRecordingId)?.versionMs,
+		).toBeUndefined();
 	});
 
 	it('normalizes Windows-style backslash outputFolder before matching', () => {
@@ -142,7 +168,9 @@ describe('buildPlaudIdIndex', () => {
 		]);
 		const index = buildPlaudIdIndex(app, 'Plaud');
 		expect(index.size).toBe(1);
-		expect(index.get('rec-ok' as PlaudRecordingId)?.path).toBe('Plaud/ok.md');
+		expect(index.get('rec-ok' as PlaudRecordingId)?.path).toBe(
+			'Plaud/ok.md',
+		);
 	});
 
 	it('captures summary version and id from frontmatter when present', () => {
@@ -156,16 +184,18 @@ describe('buildPlaudIdIndex', () => {
 				},
 			],
 		]);
-		const entry = buildPlaudIdIndex(app, 'Plaud').get('rec-rich' as PlaudRecordingId);
+		const entry = buildPlaudIdIndex(app, 'Plaud').get(
+			'rec-rich' as PlaudRecordingId,
+		);
 		expect(entry?.summaryVersion).toBe('3');
 		expect(entry?.summaryId).toBe('sum-xyz');
 	});
 
 	it('leaves summary version and id undefined when those fields are absent', () => {
-		const app = makeApp([
-			['Plaud/lean.md', { 'plaud-id': 'rec-lean' }],
-		]);
-		const entry = buildPlaudIdIndex(app, 'Plaud').get('rec-lean' as PlaudRecordingId);
+		const app = makeApp([['Plaud/lean.md', { 'plaud-id': 'rec-lean' }]]);
+		const entry = buildPlaudIdIndex(app, 'Plaud').get(
+			'rec-lean' as PlaudRecordingId,
+		);
 		expect(entry?.summaryVersion).toBeUndefined();
 		expect(entry?.summaryId).toBeUndefined();
 	});
@@ -179,7 +209,9 @@ describe('buildPlaudIdIndex', () => {
 		]);
 		const index = buildPlaudIdIndex(app, 'Plaud');
 		expect(index.size).toBe(1);
-		expect(index.get('rec-dup' as PlaudRecordingId)?.path).toBe('Plaud/second.md');
+		expect(index.get('rec-dup' as PlaudRecordingId)?.path).toBe(
+			'Plaud/second.md',
+		);
 	});
 
 	it('returns an empty map when no files match', () => {
@@ -208,7 +240,9 @@ describe('outputFolderCacheIsCold', () => {
 	it('is NOT cold when the folder has no notes (nothing to be cold about)', () => {
 		expect(outputFolderCacheIsCold(makeApp([]), 'Plaud')).toBe(false);
 		// a cold note OUTSIDE the folder does not make the folder cold
-		expect(outputFolderCacheIsCold(makeApp([['Other/x.md', null]]), 'Plaud')).toBe(false);
+		expect(
+			outputFolderCacheIsCold(makeApp([['Other/x.md', null]]), 'Plaud'),
+		).toBe(false);
 	});
 
 	it('normalizes Windows backslashes like the index does', () => {
@@ -241,7 +275,9 @@ describe('buildPlaudIdIndexWithColdCheck', () => {
 		if (state.isCold) return; // narrow the union for the assertions below
 		const reference = buildPlaudIdIndex(app, 'Plaud');
 		expect([...state.index.entries()]).toEqual([...reference.entries()]);
-		expect(state.index.get('rec-a' as PlaudRecordingId)?.versionMs).toBe(111);
+		expect(state.index.get('rec-a' as PlaudRecordingId)?.versionMs).toBe(
+			111,
+		);
 		expect(state.index.has('rec-outside' as PlaudRecordingId)).toBe(false);
 	});
 

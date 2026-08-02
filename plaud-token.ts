@@ -51,7 +51,10 @@ function jwtSegments(value: string): [string, string, string] | null {
 	// in plaud-login.ts, main.ts storeAccessToken, and plaud-client-re.ts: a
 	// manually linked secret can carry leading whitespace ahead of "bearer",
 	// and the API accepts that value, so the helpers here must read it too.
-	const token = value.trim().replace(/^bearer\s+/i, '').trim();
+	const token = value
+		.trim()
+		.replace(/^bearer\s+/i, '')
+		.trim();
 	const parts = token.split('.');
 	if (parts.length !== 3) {
 		return null;
@@ -63,7 +66,9 @@ function jwtSegments(value: string): [string, string, string] | null {
 }
 
 /** Decodes the JWT payload, or null when the value is not a decodable JWT. */
-export function decodeJwtPayload(value: string): Record<string, unknown> | null {
+export function decodeJwtPayload(
+	value: string,
+): Record<string, unknown> | null {
 	const parts = jwtSegments(value);
 	if (parts === null) {
 		return null;
@@ -83,7 +88,9 @@ export function decodeJwtHeader(value: string): Record<string, unknown> | null {
 /** Reads the JWT header `typ`, or null when the value is not a decodable JWT. */
 function jwtHeaderTyp(value: string): string | null {
 	const header = decodeJwtHeader(value);
-	return header !== null && typeof header.typ === 'string' ? header.typ : null;
+	return header !== null && typeof header.typ === 'string'
+		? header.typ
+		: null;
 }
 
 /** Header `typ` of Plaud's v2 workspace token, the credential the data API takes. */
@@ -202,7 +209,10 @@ export function readTokenLifetime(
  *
  * Validate the claims, never the key name.
  */
-export function isUsableUserToken(value: string, nowMs: number = Date.now()): boolean {
+export function isUsableUserToken(
+	value: string,
+	nowMs: number = Date.now(),
+): boolean {
 	if (jwtHeaderTyp(value) === REFRESH_TOKEN_TYP) {
 		return false;
 	}
@@ -309,7 +319,9 @@ export function formatSessionStatus(input: SessionStatusInput): string {
 		// A decodable JWT without a numeric exp is a realistic mis-link (the
 		// neighboring profile JWT). The claim names above identify it; say why
 		// there is no lifetime to report.
-		lines.push('token: has no numeric exp claim (not a Plaud session token)');
+		lines.push(
+			'token: has no numeric exp claim (not a Plaud session token)',
+		);
 		return lines.join('\n');
 	}
 	lines.push(

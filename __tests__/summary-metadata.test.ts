@@ -94,7 +94,11 @@ describe('findSummaryMetadata (issue #61 — newer summary path)', () => {
 				content_list: [
 					{
 						data_type: 'auto_sum_note',
-						extra: { used_template: { template_name: 'Deep Summary Transcript' } },
+						extra: {
+							used_template: {
+								template_name: 'Deep Summary Transcript',
+							},
+						},
 					},
 				],
 				extra_data: {
@@ -116,7 +120,10 @@ describe('findSummaryMetadata (issue #61 — newer summary path)', () => {
 		const noIndustry = {
 			data: {
 				content_list: [
-					{ data_type: 'auto_sum_note', extra: { summ_type: 'meeting' } },
+					{
+						data_type: 'auto_sum_note',
+						extra: { summ_type: 'meeting' },
+					},
 				],
 				extra_data: {
 					model: 'gpt-5.5',
@@ -124,14 +131,19 @@ describe('findSummaryMetadata (issue #61 — newer summary path)', () => {
 				},
 			},
 		};
-		expect(findSummaryMetadata(noIndustry, endpoint).industry).toBeUndefined();
+		expect(
+			findSummaryMetadata(noIndustry, endpoint).industry,
+		).toBeUndefined();
 	});
 
 	it('does not bleed category into a nested per-question category when the header lacks a direct one', () => {
 		const noDirectCategory = {
 			data: {
 				content_list: [
-					{ data_type: 'auto_sum_note', extra: { summ_type: 'meeting' } },
+					{
+						data_type: 'auto_sum_note',
+						extra: { summ_type: 'meeting' },
+					},
 				],
 				extra_data: {
 					model: 'gpt-5.5',
@@ -155,7 +167,10 @@ describe('findSummaryMetadata (issue #61 — newer summary path)', () => {
 		const noTemplateName = {
 			data: {
 				content_list: [
-					{ data_type: 'auto_sum_note', extra: { summ_type: 'meeting' } },
+					{
+						data_type: 'auto_sum_note',
+						extra: { summ_type: 'meeting' },
+					},
 				],
 				extra_data: { model: 'gpt-5.5' },
 			},

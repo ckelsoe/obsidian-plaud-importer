@@ -17,7 +17,11 @@ function asset(overrides: Partial<AttachmentAsset> = {}): AttachmentAsset {
 describe('inferAssetExtension', () => {
 	it('maps a non-JSON text/plain response to .md instead of falling through to .bin', () => {
 		expect(
-			inferAssetExtension(asset(), '# Heading\n\nbody', 'text/plain; charset=utf-8'),
+			inferAssetExtension(
+				asset(),
+				'# Heading\n\nbody',
+				'text/plain; charset=utf-8',
+			),
 		).toBe('md');
 	});
 
@@ -34,9 +38,13 @@ describe('inferAssetExtension', () => {
 	});
 
 	it('maps a Markdown mime hint to .md', () => {
-		expect(inferAssetExtension(asset({ mimeType: 'text/markdown' }), 'body', '')).toBe(
-			'md',
-		);
+		expect(
+			inferAssetExtension(
+				asset({ mimeType: 'text/markdown' }),
+				'body',
+				'',
+			),
+		).toBe('md');
 	});
 
 	it('still classifies known binary mimes ahead of the text branch', () => {
@@ -46,19 +54,31 @@ describe('inferAssetExtension', () => {
 
 	it('uses a real file extension on the URL when no mime is decisive', () => {
 		expect(
-			inferAssetExtension(asset({ url: 'https://s3.test/file.webp?sig=x' }), '', ''),
+			inferAssetExtension(
+				asset({ url: 'https://s3.test/file.webp?sig=x' }),
+				'',
+				'',
+			),
 		).toBe('webp');
 	});
 
 	it('sniffs a JSON body when nothing else matches', () => {
 		expect(
-			inferAssetExtension(asset({ url: 'https://s3.test/blob?sig=x' }), '[1,2,3]', ''),
+			inferAssetExtension(
+				asset({ url: 'https://s3.test/blob?sig=x' }),
+				'[1,2,3]',
+				'',
+			),
 		).toBe('json');
 	});
 
 	it('falls back to bin for an opaque binary body', () => {
 		expect(
-			inferAssetExtension(asset({ url: 'https://s3.test/blob?sig=x' }), '\x00\x01', ''),
+			inferAssetExtension(
+				asset({ url: 'https://s3.test/blob?sig=x' }),
+				'\x00\x01',
+				'',
+			),
 		).toBe('bin');
 	});
 });
@@ -73,7 +93,9 @@ describe('rewriteInlineSummaryEmbeds', () => {
 		const plaudUrl =
 			'permanent/e2506c1e4048400f8dfecacc50bc3028/abc/summary_poster/card_20260706192510-v2@1024';
 		const body =
-			'## Summary\n\nMeeting recap.\n\n![PLAUD NOTE](' + plaudUrl + ')\n\nEnd.\n';
+			'## Summary\n\nMeeting recap.\n\n![PLAUD NOTE](' +
+			plaudUrl +
+			')\n\nEnd.\n';
 		const out = rewriteInlineSummaryEmbeds(
 			body,
 			new Map([[plaudUrl, 'Meetings/Standup-assets/00ec8400-card.png']]),
@@ -98,7 +120,8 @@ describe('rewriteInlineSummaryEmbeds', () => {
 	});
 
 	it('does not disturb existing `![[...]]` wikilink embeds in the managed section', () => {
-		const body = '## Images and Attachments\n\n![[note-assets/00ec8400-card.png]]\n';
+		const body =
+			'## Images and Attachments\n\n![[note-assets/00ec8400-card.png]]\n';
 		const out = rewriteInlineSummaryEmbeds(
 			body,
 			new Map([['permanent/x/card_y', 'note-assets/00ec8400-card.png']]),
@@ -125,13 +148,19 @@ describe('rewriteInlineSummaryEmbeds', () => {
 		const url = 'permanent/x/summary_poster/card_z?v=abc';
 		const body = '![PLAUD NOTE](' + url + ')\n';
 		expect(
-			rewriteInlineSummaryEmbeds(body, new Map([[url, 'n-assets/card.png']])),
+			rewriteInlineSummaryEmbeds(
+				body,
+				new Map([[url, 'n-assets/card.png']]),
+			),
 		).toContain('![[n-assets/card.png]]');
 		expect(
 			rewriteInlineSummaryEmbeds(
 				body,
 				new Map([
-					['permanent/x/summary_poster/card_z?v=OTHER', 'n-assets/card.png'],
+					[
+						'permanent/x/summary_poster/card_z?v=OTHER',
+						'n-assets/card.png',
+					],
 				]),
 			),
 		).toBe(body);

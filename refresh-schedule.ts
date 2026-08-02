@@ -44,7 +44,8 @@ export const REFRESH_LEAD_MS = 2 * WARN_LEAD_SHORT_MS;
  * is always derived from the real `exp`, never from this constant, because the
  * issued lifetime is measured and never assumed.
  */
-export const NOMINAL_REFRESH_INTERVAL_MS = 24 * 60 * 60 * 1000 - REFRESH_LEAD_MS;
+export const NOMINAL_REFRESH_INTERVAL_MS =
+	24 * 60 * 60 * 1000 - REFRESH_LEAD_MS;
 
 /**
  * Delay until the next refresh attempt, or null when the stored value carries

@@ -7,7 +7,9 @@ import { isPlaudOrigin } from '../plaud-login';
 describe('isPlaudOrigin', () => {
 	it('accepts https plaud.ai and subdomains', () => {
 		expect(isPlaudOrigin('https://plaud.ai/')).toBe(true);
-		expect(isPlaudOrigin('https://web.plaud.ai/login?from_url=%2F')).toBe(true);
+		expect(isPlaudOrigin('https://web.plaud.ai/login?from_url=%2F')).toBe(
+			true,
+		);
 		expect(isPlaudOrigin('https://api-euc1.plaud.ai/some/path')).toBe(true);
 		// Trailing-dot FQDN normalizes to the same host.
 		expect(isPlaudOrigin('https://web.plaud.ai./')).toBe(true);

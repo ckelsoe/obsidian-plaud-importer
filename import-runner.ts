@@ -106,7 +106,9 @@ export interface ImportRunDeps {
 	 * injects its warm `ensureArtifactsForRecording` so a prior "review
 	 * artifacts" preflight is not re-fetched.
 	 */
-	fetchArtifacts(recordingId: PlaudRecordingId): Promise<TranscriptAndSummary>;
+	fetchArtifacts(
+		recordingId: PlaudRecordingId,
+	): Promise<TranscriptAndSummary>;
 	/**
 	 * Resolves the account's flat folder/tag catalog, called ONCE per run to
 	 * turn each recording's `filetag_id_list` into folder names (issue #16).
@@ -143,7 +145,8 @@ export interface ImportRunDeps {
  * condition a headless caller (auto-sync, Phase 2) can use to drive an
  * auth-pause state machine.
  */
-export type ImportRunStop = 'completed' | 'aborted' | 'cancelled' | 'auth-failed';
+export type ImportRunStop =
+	'completed' | 'aborted' | 'cancelled' | 'auth-failed';
 
 export interface ImportRunOutcome {
 	readonly results: ImportResult[];
@@ -180,7 +183,9 @@ function emitImportDebug(
  * not stop the batch — the "partial success" semantic a multi-select import
  * users expect.
  */
-export async function runImport(deps: ImportRunDeps): Promise<ImportRunOutcome> {
+export async function runImport(
+	deps: ImportRunDeps,
+): Promise<ImportRunOutcome> {
 	const { recordings, selection, writer, options } = deps;
 	const observer = deps.observer;
 	const total = recordings.length;
@@ -197,9 +202,13 @@ export async function runImport(deps: ImportRunDeps): Promise<ImportRunOutcome> 
 		try {
 			folderNameMap = buildFolderNameMap(await deps.fetchFolderCatalog());
 		} catch (err) {
-			emitImportDebug(options, 'folder catalog fetch failed; folders unresolved', {
-				reason: err instanceof Error ? err.message : String(err),
-			});
+			emitImportDebug(
+				options,
+				'folder catalog fetch failed; folders unresolved',
+				{
+					reason: err instanceof Error ? err.message : String(err),
+				},
+			);
 		}
 	}
 
@@ -220,10 +229,14 @@ export async function runImport(deps: ImportRunDeps): Promise<ImportRunOutcome> 
 		// nothing to write, so record a benign "no content" skip rather
 		// than letting the error path classify it as a failure.
 		if (!recording.transcriptAvailable && !recording.summaryAvailable) {
-			emitImportDebug(options, 'skipped recording with no content in Plaud', {
-				recordingId: recording.id,
-				recordingTitle: recording.title,
-			});
+			emitImportDebug(
+				options,
+				'skipped recording with no content in Plaud',
+				{
+					recordingId: recording.id,
+					recordingTitle: recording.title,
+				},
+			);
 			results.push({ kind: 'skipped-no-content', recording });
 			continue;
 		}
@@ -237,9 +250,10 @@ export async function runImport(deps: ImportRunDeps): Promise<ImportRunOutcome> 
 				nestedAssetLinks,
 				consumerNotes,
 			} = await deps.fetchArtifacts(recording.id);
-			const summaryLinkedAttachments = deps.attachments.extractAttachmentAssetsFromSummaryMarkdown(
-				summary?.text ?? null,
-			);
+			const summaryLinkedAttachments =
+				deps.attachments.extractAttachmentAssetsFromSummaryMarkdown(
+					summary?.text ?? null,
+				);
 			const mergedAttachments = deps.attachments.mergeAttachmentAssets(
 				attachments ?? [],
 				summaryLinkedAttachments,
@@ -250,15 +264,17 @@ export async function runImport(deps: ImportRunDeps): Promise<ImportRunOutcome> 
 			// slugified names become the base for `tags:` (replacing the ids that
 			// leaked before). An id with no catalog entry is dropped, not shown
 			// raw. Empty-after-slug names (a punctuation-only folder) are filtered.
-			const { names: folderNames, missing: missingFolderIds } = resolveFolderNames(
-				recording.tags,
-				folderNameMap,
-			);
+			const { names: folderNames, missing: missingFolderIds } =
+				resolveFolderNames(recording.tags, folderNameMap);
 			if (missingFolderIds.length > 0) {
-				emitImportDebug(options, 'folder ids not in catalog; dropped from tags/plaud-folder', {
-					recordingId: recording.id,
-					missing: missingFolderIds,
-				});
+				emitImportDebug(
+					options,
+					'folder ids not in catalog; dropped from tags/plaud-folder',
+					{
+						recordingId: recording.id,
+						missing: missingFolderIds,
+					},
+				);
 			}
 			const folderTags = folderNames
 				.map(folderNameToTag)
@@ -307,15 +323,16 @@ export async function runImport(deps: ImportRunDeps): Promise<ImportRunOutcome> 
 			// note (created or overwritten). 'skipped' means the file
 			// already existed and we honored the duplicate policy —
 			// the badge is already there, no work to do.
-			if (writeOutcome.status === 'created' || writeOutcome.status === 'overwritten') {
+			if (
+				writeOutcome.status === 'created' ||
+				writeOutcome.status === 'overwritten'
+			) {
 				observer?.onRecordingWritten?.(recording);
 			}
 			if (
-				(
-					selection.includeAttachments ||
+				(selection.includeAttachments ||
 					selection.includeMindmap ||
-					selection.includeCard
-				) &&
+					selection.includeCard) &&
 				writeOutcome.status !== 'skipped' &&
 				mergedAttachments.length > 0
 			) {
@@ -332,15 +349,15 @@ export async function runImport(deps: ImportRunDeps): Promise<ImportRunOutcome> 
 					recordingId: recording.id,
 					noteStatus: writeOutcome.status,
 					attachmentCount: mergedAttachments.length,
-					summaryLinkedAttachmentCount: summaryLinkedAttachments.length,
-					reason:
-						!(
-							selection.includeAttachments ||
-							selection.includeMindmap ||
-							selection.includeCard
-						)
-							? 'attachments disabled by artifact selection'
-							: writeOutcome.status === 'skipped'
+					summaryLinkedAttachmentCount:
+						summaryLinkedAttachments.length,
+					reason: !(
+						selection.includeAttachments ||
+						selection.includeMindmap ||
+						selection.includeCard
+					)
+						? 'attachments disabled by artifact selection'
+						: writeOutcome.status === 'skipped'
 							? 'note skipped by duplicate policy'
 							: 'no attachments in transcript bundle',
 				});
@@ -358,19 +375,24 @@ export async function runImport(deps: ImportRunDeps): Promise<ImportRunOutcome> 
 				try {
 					const audioUrl = await deps.fetchAudioUrl(recording.id);
 					if (audioUrl !== null) {
-						const audioBytes = await deps.attachments.importAudioForNote(
-							writeOutcome.path,
-							audioUrl,
-							recording.id,
-						);
+						const audioBytes =
+							await deps.attachments.importAudioForNote(
+								writeOutcome.path,
+								audioUrl,
+								recording.id,
+							);
 						emitImportDebug(options, 'audio import outcome', {
 							recordingId: recording.id,
 							bytesWritten: audioBytes,
 						});
 					} else {
-						emitImportDebug(options, 'audio import skipped: no temp-url', {
-							recordingId: recording.id,
-						});
+						emitImportDebug(
+							options,
+							'audio import skipped: no temp-url',
+							{
+								recordingId: recording.id,
+							},
+						);
 					}
 				} catch (audioErr) {
 					// Audio is best-effort: the note and transcript already
@@ -379,7 +401,9 @@ export async function runImport(deps: ImportRunDeps): Promise<ImportRunOutcome> 
 					// (every later recording fails the same way), so rethrow
 					// those to the outer handler that stops the batch and
 					// offers inline re-auth.
-					if (categoryAllowsReauth(classifyError(audioErr).category)) {
+					if (
+						categoryAllowsReauth(classifyError(audioErr).category)
+					) {
 						throw audioErr;
 					}
 					// Log into the debug session (not just the DevTools console)
@@ -460,7 +484,9 @@ export async function runImport(deps: ImportRunDeps): Promise<ImportRunOutcome> 
 					// already carries the plain-English explanation.
 					const outcome = await writer.writePlaceholderNote(
 						recording,
-						err instanceof Error ? err.message : classification.message,
+						err instanceof Error
+							? err.message
+							: classification.message,
 					);
 					emitImportDebug(options, 'placeholder note outcome', {
 						recordingId: recording.id,
@@ -474,7 +500,10 @@ export async function runImport(deps: ImportRunDeps): Promise<ImportRunOutcome> 
 						results.push({
 							kind: 'written',
 							recording,
-							writeOutcome: { status: 'skipped', path: outcome.path },
+							writeOutcome: {
+								status: 'skipped',
+								path: outcome.path,
+							},
 						});
 					} else {
 						observer?.onRecordingWritten?.(recording);

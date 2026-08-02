@@ -29,7 +29,8 @@
  * client. `note` is a free-form developer marker the plugin can use to
  * annotate the timeline ("user clicked Import", "modal closed").
  */
-export type DebugEventKind = 'request' | 'response' | 'parsed' | 'error' | 'note';
+export type DebugEventKind =
+	'request' | 'response' | 'parsed' | 'error' | 'note';
 
 /**
  * Shape of an event as logged by a caller. The timestamp is filled in by
@@ -218,7 +219,11 @@ function describeNonString(value: unknown): string {
 	if (value === null) return 'null';
 	if (value === undefined) return 'undefined';
 	if (typeof value === 'string') return value;
-	if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'bigint') {
+	if (
+		typeof value === 'number' ||
+		typeof value === 'boolean' ||
+		typeof value === 'bigint'
+	) {
 		return String(value);
 	}
 	try {
@@ -227,7 +232,8 @@ function describeNonString(value: unknown): string {
 	} catch {
 		// Fall through to the constructor-name fallback below.
 	}
-	const ctor = (value as { constructor?: { name?: string } })?.constructor?.name;
+	const ctor = (value as { constructor?: { name?: string } })?.constructor
+		?.name;
 	return ctor ? `[object ${ctor}]` : 'unknown value';
 }
 

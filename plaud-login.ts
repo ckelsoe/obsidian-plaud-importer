@@ -55,7 +55,6 @@ const PLAUD_LOGIN_URL = 'https://web.plaud.ai';
 // why, including why plaud-refresh-net.ts must derive it the same way.
 const POLL_INTERVAL_MS = 1000;
 
-
 // Reads the long-lived user token and the regional API host from the page's
 // own localStorage. `getItem` returns the raw stored string (no JSON-quote
 // stripping needed), which the plugin then validates with the capture guard.
@@ -334,7 +333,10 @@ export async function clearPlaudLoginSession(
 	const remote = requireElectron()?.remote;
 	const partition = plaudPartition(app.appId);
 	const session = remote?.session?.fromPartition(partition);
-	if (session === undefined || typeof session.clearStorageData !== 'function') {
+	if (
+		session === undefined ||
+		typeof session.clearStorageData !== 'function'
+	) {
 		return false;
 	}
 	await clearOneSession(session);
@@ -360,7 +362,9 @@ export async function clearPlaudLoginSession(
 	// is the vault's own session and was already cleared above.
 	if (options.includeLegacyShared === true && !isLegacyPartition(partition)) {
 		try {
-			const legacy = remote?.session?.fromPartition(LEGACY_PLAUD_PARTITION);
+			const legacy = remote?.session?.fromPartition(
+				LEGACY_PLAUD_PARTITION,
+			);
 			if (legacy !== undefined) {
 				await clearOneSession(legacy);
 			}
@@ -432,7 +436,10 @@ class PlaudLoginSession {
 		const remote = requireElectron()?.remote;
 		const BrowserWindow = remote?.BrowserWindow;
 		if (BrowserWindow === undefined) {
-			this.note('BrowserWindow unavailable; sign-in window cannot open', 'error');
+			this.note(
+				'BrowserWindow unavailable; sign-in window cannot open',
+				'error',
+			);
 			this.settle(null);
 			return;
 		}
@@ -475,12 +482,20 @@ class PlaudLoginSession {
 			const before = contents.listenerCount?.('will-navigate') ?? null;
 			contents.removeAllListeners('will-navigate');
 			const after = contents.listenerCount?.('will-navigate') ?? null;
-			this.note('host navigation guard removed', 'note', { before, after });
+			this.note('host navigation guard removed', 'note', {
+				before,
+				after,
+			});
 			if (after !== null && after !== 0) {
-				throw new Error(`removal incomplete, ${String(after)} listener(s) remain`);
+				throw new Error(
+					`removal incomplete, ${String(after)} listener(s) remain`,
+				);
 			}
 		} catch (err) {
-			this.note(`could not remove host navigation guard: ${String(err)}`, 'error');
+			this.note(
+				`could not remove host navigation guard: ${String(err)}`,
+				'error',
+			);
 			// Fail closed: loading the page with the guard attached would spray
 			// sign-in URLs into the user's default browser. settle() closes the
 			// window.
@@ -506,11 +521,17 @@ class PlaudLoginSession {
 						makeSyncReturn({ action: 'deny' as const }),
 					);
 				} else {
-					this.note('createFunctionWithReturnValue unavailable; popup deny may not hold', 'error');
+					this.note(
+						'createFunctionWithReturnValue unavailable; popup deny may not hold',
+						'error',
+					);
 					contents.setWindowOpenHandler(() => ({ action: 'deny' }));
 				}
 			} catch (err) {
-				this.note(`could not install window-open handler: ${String(err)}`, 'error');
+				this.note(
+					`could not install window-open handler: ${String(err)}`,
+					'error',
+				);
 			}
 		}
 
@@ -548,7 +569,9 @@ class PlaudLoginSession {
 			}
 			let probe: ProbeResult | null = null;
 			try {
-				probe = this.parseProbe(await contents.executeJavaScript(PROBE_JS));
+				probe = this.parseProbe(
+					await contents.executeJavaScript(PROBE_JS),
+				);
 			} catch {
 				// Page mid-navigation; try again next tick.
 			}
@@ -556,7 +579,12 @@ class PlaudLoginSession {
 			const candidates = Array.isArray(probe?.tokens)
 				? (probe.tokens as unknown[])
 						.filter((v): v is string => typeof v === 'string')
-						.map((v) => v.trim().replace(/^bearer\s+/i, '').trim())
+						.map((v) =>
+							v
+								.trim()
+								.replace(/^bearer\s+/i, '')
+								.trim(),
+						)
 						.filter((v) => v.length > 0)
 				: [];
 			const apiBaseUrl = normalizeApiDomain(probe?.domain);
@@ -586,10 +614,16 @@ class PlaudLoginSession {
 			}
 		};
 		void poll();
-		this.pollHandle = window.setInterval(() => void poll(), POLL_INTERVAL_MS);
+		this.pollHandle = window.setInterval(
+			() => void poll(),
+			POLL_INTERVAL_MS,
+		);
 	}
 
-	private captureToken(tokens: readonly string[], apiBaseUrl: string | null): void {
+	private captureToken(
+		tokens: readonly string[],
+		apiBaseUrl: string | null,
+	): void {
 		// Values arrive already trimmed and bearer-stripped by the caller.
 		const values = tokens.filter((value) => value.length > 0);
 		if (values.length === 0) {
@@ -628,7 +662,9 @@ class PlaudLoginSession {
 			this.partition,
 		);
 		if (session === undefined) {
-			this.note('session unavailable; relying on localStorage poll, host user-agent');
+			this.note(
+				'session unavailable; relying on localStorage poll, host user-agent',
+			);
 			return;
 		}
 		if (typeof session.setUserAgent === 'function') {
@@ -676,7 +712,11 @@ class PlaudLoginSession {
 		payload?: unknown,
 	): void {
 		if (this.debugLogger.enabled) {
-			this.debugLogger.log({ kind, message: `plaud-login: ${message}`, payload });
+			this.debugLogger.log({
+				kind,
+				message: `plaud-login: ${message}`,
+				payload,
+			});
 		}
 	}
 }
@@ -711,14 +751,20 @@ function normalizeApiDomain(domain: string | null | undefined): string | null {
 	if (typeof domain !== 'string' || domain.trim().length === 0) {
 		return null;
 	}
-	const candidate = /^https?:\/\//i.test(domain) ? domain : `https://${domain}`;
+	const candidate = /^https?:\/\//i.test(domain)
+		? domain
+		: `https://${domain}`;
 	let parsed: URL;
 	try {
 		parsed = new URL(candidate);
 	} catch {
 		return null;
 	}
-	if (parsed.protocol !== 'https:' || parsed.username !== '' || parsed.password !== '') {
+	if (
+		parsed.protocol !== 'https:' ||
+		parsed.username !== '' ||
+		parsed.password !== ''
+	) {
 		return null;
 	}
 	const host = parsed.hostname.toLowerCase().replace(/\.$/, '');

@@ -27,7 +27,9 @@ function silentSink(): (message: string, payload?: unknown) => void {
 
 describe('BufferedDebugLogger', () => {
 	it('is a no-op when constructed with enabled=false', () => {
-		const logger = new BufferedDebugLogger(false, { consoleSink: silentSink() });
+		const logger = new BufferedDebugLogger(false, {
+			consoleSink: silentSink(),
+		});
 		logger.log({ kind: 'request', message: 'GET /foo' });
 		expect(logger.snapshot()).toEqual([]);
 		expect(logger.enabled).toBe(false);
@@ -42,7 +44,10 @@ describe('BufferedDebugLogger', () => {
 			kind: 'request',
 			endpoint: '/file/simple/web',
 			message: 'GET /file/simple/web',
-			payload: { url: 'https://api.plaud.ai/file/simple/web', method: 'GET' },
+			payload: {
+				url: 'https://api.plaud.ai/file/simple/web',
+				method: 'GET',
+			},
 		});
 		logger.log({
 			kind: 'response',
@@ -69,11 +74,17 @@ describe('BufferedDebugLogger', () => {
 		const events = logger.snapshot();
 		expect(events).toHaveLength(3);
 		// Oldest two (0 and 1) should have been dropped.
-		expect(events.map((e) => e.message)).toEqual(['event 2', 'event 3', 'event 4']);
+		expect(events.map((e) => e.message)).toEqual([
+			'event 2',
+			'event 3',
+			'event 4',
+		]);
 	});
 
 	it('defaults to DEFAULT_MAX_EVENTS when maxEvents is not passed', () => {
-		const logger = new BufferedDebugLogger(true, { consoleSink: silentSink() });
+		const logger = new BufferedDebugLogger(true, {
+			consoleSink: silentSink(),
+		});
 		for (let i = 0; i < DEFAULT_MAX_EVENTS + 10; i++) {
 			logger.log({ kind: 'note', message: `n${i}` });
 		}
@@ -81,18 +92,25 @@ describe('BufferedDebugLogger', () => {
 	});
 
 	it('setEnabled toggles capture on and off mid-session without clearing the buffer', () => {
-		const logger = new BufferedDebugLogger(true, { consoleSink: silentSink() });
+		const logger = new BufferedDebugLogger(true, {
+			consoleSink: silentSink(),
+		});
 		logger.log({ kind: 'note', message: 'first' });
 		logger.setEnabled(false);
 		logger.log({ kind: 'note', message: 'second (should be dropped)' });
 		expect(logger.snapshot()).toHaveLength(1);
 		logger.setEnabled(true);
 		logger.log({ kind: 'note', message: 'third' });
-		expect(logger.snapshot().map((e) => e.message)).toEqual(['first', 'third']);
+		expect(logger.snapshot().map((e) => e.message)).toEqual([
+			'first',
+			'third',
+		]);
 	});
 
 	it('clear() empties the buffer without affecting future capture', () => {
-		const logger = new BufferedDebugLogger(true, { consoleSink: silentSink() });
+		const logger = new BufferedDebugLogger(true, {
+			consoleSink: silentSink(),
+		});
 		logger.log({ kind: 'note', message: 'one' });
 		logger.log({ kind: 'note', message: 'two' });
 		logger.clear();
@@ -117,7 +135,9 @@ describe('BufferedDebugLogger', () => {
 		expect(calls[0].message).toBe(
 			'[Plaud Debug] request /file/simple/web: GET /file/simple/web',
 		);
-		expect(calls[0].payload).toEqual({ url: 'https://api.plaud.ai/file/simple/web' });
+		expect(calls[0].payload).toEqual({
+			url: 'https://api.plaud.ai/file/simple/web',
+		});
 	});
 
 	it('does not call the console sink when disabled', () => {
@@ -168,7 +188,9 @@ describe('BufferedDebugLogger.format', () => {
 			/\[1\] 2026-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z REQUEST \/file\/simple\/web: GET \/file\/simple\/web/,
 		);
 		expect(out).toContain('"url": "https://api.plaud.ai/file/simple/web"');
-		expect(out).toMatch(/\[2\] .* RESPONSE \/file\/simple\/web: 200 from \/file\/simple\/web/);
+		expect(out).toMatch(
+			/\[2\] .* RESPONSE \/file\/simple\/web: 200 from \/file\/simple\/web/,
+		);
 		expect(out).toContain('"status": 200');
 	});
 
@@ -194,7 +216,11 @@ describe('BufferedDebugLogger.format', () => {
 		});
 		const cyclic: Record<string, unknown> = { name: 'cyclic' };
 		cyclic.self = cyclic;
-		logger.log({ kind: 'response', message: 'bad payload', payload: cyclic });
+		logger.log({
+			kind: 'response',
+			message: 'bad payload',
+			payload: cyclic,
+		});
 		// format() must not throw, and must indicate the serialization failure.
 		const out = logger.format();
 		expect(out).toContain('RESPONSE');
@@ -222,7 +248,9 @@ describe('BufferedDebugLogger.format', () => {
 	});
 
 	it('produces a snapshot that is a defensive copy (mutating it does not affect future snapshots)', () => {
-		const logger = new BufferedDebugLogger(true, { consoleSink: silentSink() });
+		const logger = new BufferedDebugLogger(true, {
+			consoleSink: silentSink(),
+		});
 		logger.log({ kind: 'note', message: 'one' });
 		const snap = logger.snapshot() as DebugEvent[];
 		snap.push({

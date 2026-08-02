@@ -40,14 +40,18 @@ const HOUR = 60 * 60 * 1000;
 describe('computeRefreshDelayMs', () => {
 	it('lands one lead time before expiry', () => {
 		const token = tokenExpiringAt(NOW + 24 * HOUR);
-		expect(computeRefreshDelayMs(token, NOW)).toBe(24 * HOUR - REFRESH_LEAD_MS);
+		expect(computeRefreshDelayMs(token, NOW)).toBe(
+			24 * HOUR - REFRESH_LEAD_MS,
+		);
 	});
 
 	it('produces the nominal cadence on Plaud 24 hour token', () => {
 		// The cadence is derived from the real exp, never from the constant, so
 		// this pins that the two actually agree on the shape Plaud issues.
 		const token = tokenExpiringAt(NOW + 24 * HOUR);
-		expect(computeRefreshDelayMs(token, NOW)).toBe(NOMINAL_REFRESH_INTERVAL_MS);
+		expect(computeRefreshDelayMs(token, NOW)).toBe(
+			NOMINAL_REFRESH_INTERVAL_MS,
+		);
 	});
 
 	it('runs a clear margin BEFORE the pre-expiry warning would fire', () => {

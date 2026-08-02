@@ -17,7 +17,9 @@ describe('preferWindowForReconnect', () => {
 	it('routes a recorded browser session to the browser flow', () => {
 		expect(preferWindowForReconnect('browser', noLegacy)).toBe(false);
 		// The recorded method wins even if a legacy WRT is still stored.
-		expect(preferWindowForReconnect('browser', () => 'legacy-wrt')).toBe(false);
+		expect(preferWindowForReconnect('browser', () => 'legacy-wrt')).toBe(
+			false,
+		);
 	});
 
 	describe('legacy sessions (no recorded method)', () => {

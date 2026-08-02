@@ -71,7 +71,9 @@ export function buildPlaudIdIndex(
 		if (id === undefined) continue;
 		const record: ImportedRecord = {
 			path: file.path,
-			summaryVersion: pickFrontmatterString(rawFm['plaud-summary-version']),
+			summaryVersion: pickFrontmatterString(
+				rawFm['plaud-summary-version'],
+			),
 			summaryId: pickFrontmatterString(rawFm['plaud-summary-id']),
 			versionMs: pickFrontmatterNumber(rawFm['plaud-version-ms']),
 		};
@@ -113,7 +115,9 @@ export function buildPlaudIdIndexWithColdCheck(
 		if (id === undefined) continue;
 		index.set(id as PlaudRecordingId, {
 			path: file.path,
-			summaryVersion: pickFrontmatterString(rawFm['plaud-summary-version']),
+			summaryVersion: pickFrontmatterString(
+				rawFm['plaud-summary-version'],
+			),
 			summaryId: pickFrontmatterString(rawFm['plaud-summary-id']),
 			versionMs: pickFrontmatterNumber(rawFm['plaud-version-ms']),
 		});
@@ -158,7 +162,10 @@ function fileIsUnder(file: TFile, folder: string): boolean {
  * disable sync. Uses the SAME folder normalization + matching as the index
  * (Windows backslashes included). Returns false when the folder has no notes.
  */
-export function outputFolderCacheIsCold(app: App, outputFolder: string): boolean {
+export function outputFolderCacheIsCold(
+	app: App,
+	outputFolder: string,
+): boolean {
 	const normalized = normalizeFolder(outputFolder);
 	// Single pass: this runs every auto-sync tick and, for a root output folder,
 	// scans the whole vault. Return as soon as an in-scope note has a null cache;

@@ -8,7 +8,9 @@
  * summary, audio), so one brand covers the whole entity tree. Consumers must
  * receive instances from the parser — there is no public constructor.
  */
-export type PlaudRecordingId = string & { readonly __brand: 'PlaudRecordingId' };
+export type PlaudRecordingId = string & {
+	readonly __brand: 'PlaudRecordingId';
+};
 
 /**
  * Bundle of derived artifacts for a single recording. Plaud returns the
@@ -146,7 +148,9 @@ export interface PlaudFolder {
 
 export interface PlaudClient {
 	listRecordings(filter?: RecordingFilter): Promise<readonly Recording[]>;
-	getTranscriptAndSummary(id: PlaudRecordingId): Promise<TranscriptAndSummary>;
+	getTranscriptAndSummary(
+		id: PlaudRecordingId,
+	): Promise<TranscriptAndSummary>;
 	/**
 	 * Fetch the account's flat folder/tag catalog (`GET /filetag/`) so import
 	 * can resolve a recording's `filetag_id_list` (opaque ids) into human folder

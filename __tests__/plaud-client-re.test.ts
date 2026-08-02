@@ -15,10 +15,7 @@ import {
 	type PlaudHttpRequest,
 	type PlaudHttpResponse,
 } from '../plaud-client-re';
-import {
-	BufferedDebugLogger,
-	type DebugEvent,
-} from '../debug-logger';
+import { BufferedDebugLogger, type DebugEvent } from '../debug-logger';
 
 // Helpers -------------------------------------------------------------------
 
@@ -30,7 +27,9 @@ function status(code: number): PlaudHttpResponse {
 	return { status: code, json: null, text: '' };
 }
 
-function record(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+function record(
+	overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
 	return {
 		id: 'abc123',
 		filename: 'Morning standup',
@@ -97,36 +96,53 @@ describe('token provider semantics', () => {
 		const fetcher: PlaudHttpFetcher = async () => ok(listEnvelope([]));
 		// None of these should throw — construction is always legal. The
 		// provider is only called when an API call is made.
-		expect(() => new ReverseEngineeredPlaudClient(() => null, fetcher)).not.toThrow();
-		expect(() => new ReverseEngineeredPlaudClient(() => '', fetcher)).not.toThrow();
-		expect(() => new ReverseEngineeredPlaudClient(() => '   ', fetcher)).not.toThrow();
+		expect(
+			() => new ReverseEngineeredPlaudClient(() => null, fetcher),
+		).not.toThrow();
+		expect(
+			() => new ReverseEngineeredPlaudClient(() => '', fetcher),
+		).not.toThrow();
+		expect(
+			() => new ReverseEngineeredPlaudClient(() => '   ', fetcher),
+		).not.toThrow();
 	});
 
 	it('throws PlaudAuthError with a "token configured" message when provider returns null', async () => {
 		const { fetcher } = captureFetcher(ok(listEnvelope([])));
 		const client = new ReverseEngineeredPlaudClient(() => null, fetcher);
 
-		await expect(client.listRecordings()).rejects.toBeInstanceOf(PlaudAuthError);
-		await expect(client.listRecordings()).rejects.toThrow(/no plaud token configured/i);
+		await expect(client.listRecordings()).rejects.toBeInstanceOf(
+			PlaudAuthError,
+		);
+		await expect(client.listRecordings()).rejects.toThrow(
+			/no plaud token configured/i,
+		);
 	});
 
 	it('throws PlaudAuthError when provider returns an empty string', async () => {
 		const { fetcher } = captureFetcher(ok(listEnvelope([])));
 		const client = new ReverseEngineeredPlaudClient(() => '', fetcher);
 
-		await expect(client.listRecordings()).rejects.toBeInstanceOf(PlaudAuthError);
+		await expect(client.listRecordings()).rejects.toBeInstanceOf(
+			PlaudAuthError,
+		);
 	});
 
 	it('throws PlaudAuthError when provider returns whitespace-only', async () => {
 		const { fetcher } = captureFetcher(ok(listEnvelope([])));
 		const client = new ReverseEngineeredPlaudClient(() => '   ', fetcher);
 
-		await expect(client.listRecordings()).rejects.toBeInstanceOf(PlaudAuthError);
+		await expect(client.listRecordings()).rejects.toBeInstanceOf(
+			PlaudAuthError,
+		);
 	});
 
 	it('trims surrounding whitespace before sending the Authorization header', async () => {
 		const { fetcher, lastRequest } = captureFetcher(ok(listEnvelope([])));
-		const client = new ReverseEngineeredPlaudClient(() => '  my-jwt  ', fetcher);
+		const client = new ReverseEngineeredPlaudClient(
+			() => '  my-jwt  ',
+			fetcher,
+		);
 
 		await client.listRecordings();
 
@@ -136,7 +152,10 @@ describe('token provider semantics', () => {
 	it('calls the provider on every request (settings changes take effect immediately)', async () => {
 		const { fetcher } = captureFetcher(ok(listEnvelope([])));
 		let currentToken: string | null = 'first-token';
-		const client = new ReverseEngineeredPlaudClient(() => currentToken, fetcher);
+		const client = new ReverseEngineeredPlaudClient(
+			() => currentToken,
+			fetcher,
+		);
 
 		await client.listRecordings();
 		// Simulate the user updating their token in settings.
@@ -144,7 +163,9 @@ describe('token provider semantics', () => {
 		await client.listRecordings();
 		// And revoking it entirely.
 		currentToken = null;
-		await expect(client.listRecordings()).rejects.toBeInstanceOf(PlaudAuthError);
+		await expect(client.listRecordings()).rejects.toBeInstanceOf(
+			PlaudAuthError,
+		);
 	});
 });
 
@@ -217,7 +238,10 @@ describe('listRecordings happy path', () => {
 			const { fetcher } = captureFetcher(
 				ok(listEnvelope([record({ is_trash: value })])),
 			);
-			const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+			const client = new ReverseEngineeredPlaudClient(
+				() => 'tok',
+				fetcher,
+			);
 			const [r] = await client.listRecordings();
 			expect(r.isTrashed).toBe(true);
 		}
@@ -228,7 +252,10 @@ describe('listRecordings happy path', () => {
 			const { fetcher } = captureFetcher(
 				ok(listEnvelope([record({ is_trash: value })])),
 			);
-			const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+			const client = new ReverseEngineeredPlaudClient(
+				() => 'tok',
+				fetcher,
+			);
 			const [r] = await client.listRecordings();
 			expect(r.isTrashed).toBe(false);
 		}
@@ -247,7 +274,11 @@ describe('listRecordings happy path', () => {
 
 	it('maps version_ms to versionMs and wait_pull===1 to waitPull (the auto-sync fields)', async () => {
 		const { fetcher } = captureFetcher(
-			ok(listEnvelope([record({ version_ms: 1744628400123, wait_pull: 1 })])),
+			ok(
+				listEnvelope([
+					record({ version_ms: 1744628400123, wait_pull: 1 }),
+				]),
+			),
 		);
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
@@ -280,7 +311,9 @@ describe('listRecordings request shape', () => {
 		await client.listRecordings();
 
 		const req = lastRequest();
-		expect(req?.url).toMatch(/^https:\/\/api\.plaud\.ai\/file\/simple\/web\?/);
+		expect(req?.url).toMatch(
+			/^https:\/\/api\.plaud\.ai\/file\/simple\/web\?/,
+		);
 	});
 
 	it('respects a custom baseUrl for region overrides', async () => {
@@ -296,7 +329,10 @@ describe('listRecordings request shape', () => {
 
 	it('sends Authorization: Bearer and standard headers', async () => {
 		const { fetcher, lastRequest } = captureFetcher(ok(listEnvelope([])));
-		const client = new ReverseEngineeredPlaudClient(() => 'my-jwt', fetcher);
+		const client = new ReverseEngineeredPlaudClient(
+			() => 'my-jwt',
+			fetcher,
+		);
 
 		await client.listRecordings();
 
@@ -312,13 +348,17 @@ describe('listRecordings request shape', () => {
 	// the client derives the header from the token. Verified against a live
 	// web.plaud.ai token (client_id 'web').
 	const jwt = (payload: Record<string, unknown>): string => {
-		const enc = (o: unknown): string => Buffer.from(JSON.stringify(o)).toString('base64url');
+		const enc = (o: unknown): string =>
+			Buffer.from(JSON.stringify(o)).toString('base64url');
 		return `${enc({ alg: 'HS256', typ: 'WT' })}.${enc(payload)}.sig`;
 	};
 
 	it("derives app-platform from a web token's client_id", async () => {
 		const { fetcher, lastRequest } = captureFetcher(ok(listEnvelope([])));
-		const client = new ReverseEngineeredPlaudClient(() => jwt({ client_id: 'web' }), fetcher);
+		const client = new ReverseEngineeredPlaudClient(
+			() => jwt({ client_id: 'web' }),
+			fetcher,
+		);
 
 		await client.listRecordings();
 
@@ -329,7 +369,10 @@ describe('listRecordings request shape', () => {
 
 	it("derives app-platform from an app token's client_id (no forced mismatch)", async () => {
 		const { fetcher, lastRequest } = captureFetcher(ok(listEnvelope([])));
-		const client = new ReverseEngineeredPlaudClient(() => jwt({ client_id: 'app' }), fetcher);
+		const client = new ReverseEngineeredPlaudClient(
+			() => jwt({ client_id: 'app' }),
+			fetcher,
+		);
 
 		await client.listRecordings();
 
@@ -340,7 +383,10 @@ describe('listRecordings request shape', () => {
 
 	it('falls back to web when the token carries no client_id claim', async () => {
 		const { fetcher, lastRequest } = captureFetcher(ok(listEnvelope([])));
-		const client = new ReverseEngineeredPlaudClient(() => 'opaque-token', fetcher);
+		const client = new ReverseEngineeredPlaudClient(
+			() => 'opaque-token',
+			fetcher,
+		);
 
 		await client.listRecordings();
 
@@ -441,7 +487,9 @@ describe('regional endpoint auto-detection', () => {
 		const requests = allRequests();
 		expect(requests).toHaveLength(2);
 		expect(requests[0]?.url).toMatch(/^https:\/\/api\.plaud\.ai\//);
-		expect(requests[1]?.url).toMatch(/^https:\/\/api-euc1\.plaud\.ai\/file\/simple\/web\?/);
+		expect(requests[1]?.url).toMatch(
+			/^https:\/\/api-euc1\.plaud\.ai\/file\/simple\/web\?/,
+		);
 		// The retry preserves the original path and query verbatim.
 		expect(requests[1]?.url).toContain('sort_by=start_time');
 	});
@@ -493,22 +541,32 @@ describe('regional endpoint auto-detection', () => {
 		};
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
-		await expect(client.listRecordings()).rejects.toBeInstanceOf(PlaudApiError);
-		await expect(client.listRecordings()).rejects.toThrow(/refusing to loop/i);
+		await expect(client.listRecordings()).rejects.toBeInstanceOf(
+			PlaudApiError,
+		);
+		await expect(client.listRecordings()).rejects.toThrow(
+			/refusing to loop/i,
+		);
 	});
 
 	it('ignores a -302 whose api domain is missing or not https', async () => {
 		// A malformed redirect must not hijack the base URL; it should fall
 		// through to the normal parser, which rejects the shape.
 		const { fetcher } = sequenceFetcher([
-			ok({ status: -302, msg: 'user region mismatch', data: { domains: {} } }),
+			ok({
+				status: -302,
+				msg: 'user region mismatch',
+				data: { domains: {} },
+			}),
 		]);
 		const changes: string[] = [];
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher, {
 			onBaseUrlChanged: (url) => changes.push(url),
 		});
 
-		await expect(client.listRecordings()).rejects.toBeInstanceOf(PlaudParseError);
+		await expect(client.listRecordings()).rejects.toBeInstanceOf(
+			PlaudParseError,
+		);
 		expect(changes).toEqual([]);
 	});
 
@@ -521,22 +579,35 @@ describe('regional endpoint auto-detection', () => {
 		['a suffix-without-dot host', 'https://notplaud.ai'],
 		['a userinfo bypass', 'https://api.plaud.ai@evil.example'],
 		['a non-https scheme', 'http://api-euc1.plaud.ai'],
-	])('rejects a region redirect to %s without changing the base URL', async (_label, host) => {
-		const { fetcher, allRequests } = sequenceFetcher([regionRedirect(host)]);
-		const changes: string[] = [];
-		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher, {
-			onBaseUrlChanged: (url) => changes.push(url),
-		});
+	])(
+		'rejects a region redirect to %s without changing the base URL',
+		async (_label, host) => {
+			const { fetcher, allRequests } = sequenceFetcher([
+				regionRedirect(host),
+			]);
+			const changes: string[] = [];
+			const client = new ReverseEngineeredPlaudClient(
+				() => 'tok',
+				fetcher,
+				{
+					onBaseUrlChanged: (url) => changes.push(url),
+				},
+			);
 
-		// The poisoned -302 is not a valid list payload, so the parser
-		// rejects it — but crucially the host is never adopted and the token
-		// is never re-sent anywhere.
-		await expect(client.listRecordings()).rejects.toBeInstanceOf(PlaudParseError);
-		expect(changes).toEqual([]);
-		// Only the original request to the US host was made — no retry.
-		expect(allRequests()).toHaveLength(1);
-		expect(allRequests()[0]?.url).toMatch(/^https:\/\/api\.plaud\.ai\//);
-	});
+			// The poisoned -302 is not a valid list payload, so the parser
+			// rejects it — but crucially the host is never adopted and the token
+			// is never re-sent anywhere.
+			await expect(client.listRecordings()).rejects.toBeInstanceOf(
+				PlaudParseError,
+			);
+			expect(changes).toEqual([]);
+			// Only the original request to the US host was made — no retry.
+			expect(allRequests()).toHaveLength(1);
+			expect(allRequests()[0]?.url).toMatch(
+				/^https:\/\/api\.plaud\.ai\//,
+			);
+		},
+	);
 
 	it('strips any path or query an attacker appends to an otherwise-valid host', async () => {
 		const { fetcher, allRequests } = sequenceFetcher([
@@ -585,7 +656,9 @@ describe('listRecordings filter behavior', () => {
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
 		// 1720000000000 unix ms = 2024-07-03 11:46:40 UTC (same as r2)
-		const result = await client.listRecordings({ since: new Date(1720000000000) });
+		const result = await client.listRecordings({
+			since: new Date(1720000000000),
+		});
 
 		expect(result.map((r) => r.id)).toEqual(['r2', 'r3']);
 	});
@@ -594,7 +667,9 @@ describe('listRecordings filter behavior', () => {
 		const { fetcher } = captureFetcher(ok(listEnvelope(threeRecords())));
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
-		const result = await client.listRecordings({ until: new Date(1720000000000) });
+		const result = await client.listRecordings({
+			until: new Date(1720000000000),
+		});
 
 		expect(result.map((r) => r.id)).toEqual(['r1', 'r2']);
 	});
@@ -607,7 +682,9 @@ describe('listRecordings HTTP status handling', () => {
 		const { fetcher } = captureFetcher(status(401));
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
-		await expect(client.listRecordings()).rejects.toBeInstanceOf(PlaudAuthError);
+		await expect(client.listRecordings()).rejects.toBeInstanceOf(
+			PlaudAuthError,
+		);
 	});
 
 	it('throws PlaudApiError with status 500 on HTTP 500', async () => {
@@ -636,7 +713,11 @@ describe('listRecordings HTTP status handling', () => {
 	});
 
 	it('treats HTTP 204 as an empty list', async () => {
-		const { fetcher } = captureFetcher({ status: 204, json: null, text: '' });
+		const { fetcher } = captureFetcher({
+			status: 204,
+			json: null,
+			text: '',
+		});
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
 		const result = await client.listRecordings();
@@ -651,7 +732,9 @@ describe('listRecordings HTTP status handling', () => {
 		});
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
-		await expect(client.listRecordings()).rejects.toBeInstanceOf(PlaudParseError);
+		await expect(client.listRecordings()).rejects.toBeInstanceOf(
+			PlaudParseError,
+		);
 	});
 
 	it('wraps a fetcher-thrown network error in PlaudApiError', async () => {
@@ -660,7 +743,9 @@ describe('listRecordings HTTP status handling', () => {
 		};
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
-		await expect(client.listRecordings()).rejects.toBeInstanceOf(PlaudApiError);
+		await expect(client.listRecordings()).rejects.toBeInstanceOf(
+			PlaudApiError,
+		);
 	});
 });
 
@@ -671,23 +756,33 @@ describe('listRecordings parse errors', () => {
 		const { fetcher } = captureFetcher(ok({ status: 0, msg: 'ok' }));
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
-		await expect(client.listRecordings()).rejects.toBeInstanceOf(PlaudParseError);
+		await expect(client.listRecordings()).rejects.toBeInstanceOf(
+			PlaudParseError,
+		);
 	});
 
 	it('throws PlaudParseError when envelope is an array (not an object)', async () => {
 		const { fetcher } = captureFetcher(ok([]));
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
-		await expect(client.listRecordings()).rejects.toBeInstanceOf(PlaudParseError);
+		await expect(client.listRecordings()).rejects.toBeInstanceOf(
+			PlaudParseError,
+		);
 	});
 
 	it('throws PlaudParseError when a record is missing required fields', async () => {
 		const { fetcher } = captureFetcher(
-			ok(listEnvelope([{ id: 'abc', filename: 'broken' /* missing rest */ }])),
+			ok(
+				listEnvelope([
+					{ id: 'abc', filename: 'broken' /* missing rest */ },
+				]),
+			),
 		);
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
-		await expect(client.listRecordings()).rejects.toBeInstanceOf(PlaudParseError);
+		await expect(client.listRecordings()).rejects.toBeInstanceOf(
+			PlaudParseError,
+		);
 	});
 
 	it.each([
@@ -704,10 +799,14 @@ describe('listRecordings parse errors', () => {
 		['empty id', { id: '' }],
 		['empty filename', { filename: '' }],
 	])('rejects records with %s', async (_label, overrides) => {
-		const { fetcher } = captureFetcher(ok(listEnvelope([record(overrides)])));
+		const { fetcher } = captureFetcher(
+			ok(listEnvelope([record(overrides)])),
+		);
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
-		await expect(client.listRecordings()).rejects.toBeInstanceOf(PlaudParseError);
+		await expect(client.listRecordings()).rejects.toBeInstanceOf(
+			PlaudParseError,
+		);
 	});
 
 	it('converts the real-API duration (ms) to seconds — regression test for 2026-04-14 unit-confusion bug', async () => {
@@ -717,7 +816,11 @@ describe('listRecordings parse errors', () => {
 		// object), a 21-minute meeting shows as "361h 57m" in the
 		// generated note frontmatter.
 		const { fetcher } = captureFetcher(
-			ok(listEnvelope([record({ id: 'real-sample', duration: 1303000 })])),
+			ok(
+				listEnvelope([
+					record({ id: 'real-sample', duration: 1303000 }),
+				]),
+			),
 		);
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
@@ -785,7 +888,9 @@ describe('listRecordings parse errors', () => {
 		);
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
-		await expect(client.listRecordings()).rejects.toBeInstanceOf(PlaudParseError);
+		await expect(client.listRecordings()).rejects.toBeInstanceOf(
+			PlaudParseError,
+		);
 	});
 
 	it('tolerates extra unknown fields in the response (forward-compat with Plaud)', async () => {
@@ -793,7 +898,11 @@ describe('listRecordings parse errors', () => {
 		// already allow this; this test pins the decision so nobody adds a
 		// too-strict whitelist later.
 		const { fetcher } = captureFetcher(
-			ok(listEnvelope([record({ some_new_field_from_plaud: 'whatever' })])),
+			ok(
+				listEnvelope([
+					record({ some_new_field_from_plaud: 'whatever' }),
+				]),
+			),
 		);
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
@@ -895,7 +1004,9 @@ describe('listRecordings filter validation', () => {
 
 import type { PlaudRecordingId } from '../plaud-client';
 
-function transsummEnvelope(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+function transsummEnvelope(
+	overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
 	return {
 		status: 0,
 		msg: 'success',
@@ -935,7 +1046,9 @@ describe('getTranscriptAndSummary request shape', () => {
 	// transsumm call (the FIRST request), so they use firstRequest() rather
 	// than lastRequest() which would now return the /file/detail/ request.
 	it('issues POST against /ai/transsumm/{id} with empty JSON body', async () => {
-		const { fetcher, firstRequest } = captureFetcher(ok(transsummEnvelope()));
+		const { fetcher, firstRequest } = captureFetcher(
+			ok(transsummEnvelope()),
+		);
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
 		await client.getTranscriptAndSummary(ID);
@@ -947,17 +1060,26 @@ describe('getTranscriptAndSummary request shape', () => {
 	});
 
 	it('sends Content-Type: application/json when a body is present', async () => {
-		const { fetcher, firstRequest } = captureFetcher(ok(transsummEnvelope()));
+		const { fetcher, firstRequest } = captureFetcher(
+			ok(transsummEnvelope()),
+		);
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
 		await client.getTranscriptAndSummary(ID);
 
-		expect(firstRequest()?.headers['Content-Type']).toBe('application/json');
+		expect(firstRequest()?.headers['Content-Type']).toBe(
+			'application/json',
+		);
 	});
 
 	it('still sends Authorization Bearer header', async () => {
-		const { fetcher, firstRequest } = captureFetcher(ok(transsummEnvelope()));
-		const client = new ReverseEngineeredPlaudClient(() => 'my-jwt', fetcher);
+		const { fetcher, firstRequest } = captureFetcher(
+			ok(transsummEnvelope()),
+		);
+		const client = new ReverseEngineeredPlaudClient(
+			() => 'my-jwt',
+			fetcher,
+		);
 
 		await client.getTranscriptAndSummary(ID);
 
@@ -965,10 +1087,14 @@ describe('getTranscriptAndSummary request shape', () => {
 	});
 
 	it('URL-encodes the recording id', async () => {
-		const { fetcher, firstRequest } = captureFetcher(ok(transsummEnvelope()));
+		const { fetcher, firstRequest } = captureFetcher(
+			ok(transsummEnvelope()),
+		);
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
-		await client.getTranscriptAndSummary('id with/slash' as PlaudRecordingId);
+		await client.getTranscriptAndSummary(
+			'id with/slash' as PlaudRecordingId,
+		);
 
 		expect(firstRequest()?.url).toBe(
 			'https://api.plaud.ai/ai/transsumm/id%20with%2Fslash',
@@ -1028,7 +1154,8 @@ describe('getTranscriptAndSummary legacy-transsumm -12 fallback', () => {
 			pre_download_content_list: [
 				{
 					data_id: 'auto_sum:owner:fileid',
-					data_content: '## Key points\n- Recovered from /file/detail',
+					data_content:
+						'## Key points\n- Recovered from /file/detail',
 				},
 			],
 		},
@@ -1106,11 +1233,19 @@ describe('getTranscriptAndSummary happy path', () => {
 		// while `speaker` holds the label the user assigned in Plaud's UI
 		// (e.g., "Charles", "Mary"). Prefer the user-edited name.
 		const { fetcher } = captureFetcher(
-			ok(transsummEnvelope({
-				data_result: [
-					{ start_time: 0, end_time: 1000, content: 'foo', speaker: 'Charles', original_speaker: 'Speaker 1' },
-				],
-			})),
+			ok(
+				transsummEnvelope({
+					data_result: [
+						{
+							start_time: 0,
+							end_time: 1000,
+							content: 'foo',
+							speaker: 'Charles',
+							original_speaker: 'Speaker 1',
+						},
+					],
+				}),
+			),
 		);
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
@@ -1121,11 +1256,19 @@ describe('getTranscriptAndSummary happy path', () => {
 
 	it('falls back to original_speaker when speaker is empty', async () => {
 		const { fetcher } = captureFetcher(
-			ok(transsummEnvelope({
-				data_result: [
-					{ start_time: 0, end_time: 1000, content: 'foo', speaker: '', original_speaker: 'Speaker 1' },
-				],
-			})),
+			ok(
+				transsummEnvelope({
+					data_result: [
+						{
+							start_time: 0,
+							end_time: 1000,
+							content: 'foo',
+							speaker: '',
+							original_speaker: 'Speaker 1',
+						},
+					],
+				}),
+			),
 		);
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
@@ -1136,11 +1279,19 @@ describe('getTranscriptAndSummary happy path', () => {
 
 	it('leaves speaker undefined when both speaker and original_speaker are empty', async () => {
 		const { fetcher } = captureFetcher(
-			ok(transsummEnvelope({
-				data_result: [
-					{ start_time: 0, end_time: 1000, content: 'anonymous', speaker: '', original_speaker: '' },
-				],
-			})),
+			ok(
+				transsummEnvelope({
+					data_result: [
+						{
+							start_time: 0,
+							end_time: 1000,
+							content: 'anonymous',
+							speaker: '',
+							original_speaker: '',
+						},
+					],
+				}),
+			),
 		);
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
@@ -1155,7 +1306,9 @@ describe('getTranscriptAndSummary happy path', () => {
 
 		const { transcript } = await client.getTranscriptAndSummary(ID);
 
-		expect(transcript?.rawText).toBe('Hello there. How are you doing today?');
+		expect(transcript?.rawText).toBe(
+			'Hello there. How are you doing today?',
+		);
 	});
 });
 
@@ -1164,11 +1317,13 @@ describe('getTranscriptAndSummary happy path', () => {
 describe('getTranscriptAndSummary summary normalization', () => {
 	it('handles JSON-encoded string with content.markdown (typical case)', async () => {
 		const { fetcher } = captureFetcher(
-			ok(transsummEnvelope({
-				data_result_summ: JSON.stringify({
-					content: { markdown: '## Headline\n- bullet' },
+			ok(
+				transsummEnvelope({
+					data_result_summ: JSON.stringify({
+						content: { markdown: '## Headline\n- bullet' },
+					}),
 				}),
-			})),
+			),
 		);
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
@@ -1179,11 +1334,13 @@ describe('getTranscriptAndSummary summary normalization', () => {
 
 	it('handles structured object with content.markdown', async () => {
 		const { fetcher } = captureFetcher(
-			ok(transsummEnvelope({
-				data_result_summ: {
-					content: { markdown: 'Short recording summary' },
-				},
-			})),
+			ok(
+				transsummEnvelope({
+					data_result_summ: {
+						content: { markdown: 'Short recording summary' },
+					},
+				}),
+			),
 		);
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
@@ -1194,9 +1351,11 @@ describe('getTranscriptAndSummary summary normalization', () => {
 
 	it('handles structured object with content as a direct string', async () => {
 		const { fetcher } = captureFetcher(
-			ok(transsummEnvelope({
-				data_result_summ: { content: 'Direct string content' },
-			})),
+			ok(
+				transsummEnvelope({
+					data_result_summ: { content: 'Direct string content' },
+				}),
+			),
 		);
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
@@ -1207,9 +1366,11 @@ describe('getTranscriptAndSummary summary normalization', () => {
 
 	it('handles malformed JSON string by treating it as raw markdown', async () => {
 		const { fetcher } = captureFetcher(
-			ok(transsummEnvelope({
-				data_result_summ: 'this is not JSON, just plain markdown',
-			})),
+			ok(
+				transsummEnvelope({
+					data_result_summ: 'this is not JSON, just plain markdown',
+				}),
+			),
 		);
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
@@ -1231,9 +1392,11 @@ describe('getTranscriptAndSummary summary normalization', () => {
 
 	it('returns null summary when content.markdown is empty after trim', async () => {
 		const { fetcher } = captureFetcher(
-			ok(transsummEnvelope({
-				data_result_summ: { content: { markdown: '   \n\t   ' } },
-			})),
+			ok(
+				transsummEnvelope({
+					data_result_summ: { content: { markdown: '   \n\t   ' } },
+				}),
+			),
 		);
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
@@ -1255,9 +1418,13 @@ describe('getTranscriptAndSummary summary normalization', () => {
 
 	it('trims surrounding whitespace from extracted markdown', async () => {
 		const { fetcher } = captureFetcher(
-			ok(transsummEnvelope({
-				data_result_summ: { content: { markdown: '   ## title\n- a   ' } },
-			})),
+			ok(
+				transsummEnvelope({
+					data_result_summ: {
+						content: { markdown: '   ## title\n- a   ' },
+					},
+				}),
+			),
 		);
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
@@ -1272,15 +1439,17 @@ describe('getTranscriptAndSummary summary normalization', () => {
 
 	it('handles flat GPT-5 schema with top-level markdown', async () => {
 		const { fetcher } = captureFetcher(
-			ok(transsummEnvelope({
-				data_result_summ: {
-					markdown: '## Action items\n- ship it',
-					summary: '## Action items\n- ship it',
-					first_summary: 'pre-edit raw',
-					endpoint: 'azure-sweden-central-gpt-5',
-					header: { category: 'ai-meeting', headline: 'Test' },
-				},
-			})),
+			ok(
+				transsummEnvelope({
+					data_result_summ: {
+						markdown: '## Action items\n- ship it',
+						summary: '## Action items\n- ship it',
+						first_summary: 'pre-edit raw',
+						endpoint: 'azure-sweden-central-gpt-5',
+						header: { category: 'ai-meeting', headline: 'Test' },
+					},
+				}),
+			),
 		);
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
@@ -1291,13 +1460,15 @@ describe('getTranscriptAndSummary summary normalization', () => {
 
 	it('falls back to flat top-level summary when markdown is absent', async () => {
 		const { fetcher } = captureFetcher(
-			ok(transsummEnvelope({
-				data_result_summ: {
-					summary: '## Fallback path',
-					first_summary: 'noisy raw output',
-					endpoint: 'azure-sweden-central-gpt-5',
-				},
-			})),
+			ok(
+				transsummEnvelope({
+					data_result_summ: {
+						summary: '## Fallback path',
+						first_summary: 'noisy raw output',
+						endpoint: 'azure-sweden-central-gpt-5',
+					},
+				}),
+			),
 		);
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
@@ -1308,12 +1479,14 @@ describe('getTranscriptAndSummary summary normalization', () => {
 
 	it('returns null when flat markdown is empty after trim', async () => {
 		const { fetcher } = captureFetcher(
-			ok(transsummEnvelope({
-				data_result_summ: {
-					markdown: '   \n\t   ',
-					endpoint: 'azure-sweden-central-gpt-5',
-				},
-			})),
+			ok(
+				transsummEnvelope({
+					data_result_summ: {
+						markdown: '   \n\t   ',
+						endpoint: 'azure-sweden-central-gpt-5',
+					},
+				}),
+			),
 		);
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
@@ -1326,13 +1499,15 @@ describe('getTranscriptAndSummary summary normalization', () => {
 		// first_summary is the pre-persona-edit raw output; markdown is the
 		// canonical post-processed rendering. We must NOT pick first_summary.
 		const { fetcher } = captureFetcher(
-			ok(transsummEnvelope({
-				data_result_summ: {
-					first_summary: 'RAW — DO NOT USE',
-					markdown: 'CANONICAL',
-					summary: 'CANONICAL',
-				},
-			})),
+			ok(
+				transsummEnvelope({
+					data_result_summ: {
+						first_summary: 'RAW — DO NOT USE',
+						markdown: 'CANONICAL',
+						summary: 'CANONICAL',
+					},
+				}),
+			),
 		);
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
@@ -1349,30 +1524,38 @@ describe('getTranscriptAndSummary summary normalization', () => {
 describe('getTranscriptAndSummary summary extras (flat schema)', () => {
 	it('extracts all known extras from a complete flat envelope', async () => {
 		const { fetcher } = captureFetcher(
-			ok(transsummEnvelope({
-				data_result_summ: {
-					markdown: '## body',
-					summary: '## body',
-					first_summary: 'raw',
-					ai_suggestion: 'Consider following up with the team on action items.',
-					endpoint: 'azure-sweden-central-gpt-5',
-					model: 'gpt-5-2025-08',
-					language: 'en',
-					note_id: 'note-abc',
-					summary_id: 'sum-xyz',
-					version: 3,
-					summ_type: 'ai-meeting',
-					select_prompt_type: 'meeting',
-					header: { category: 'ai-meeting', headline: 'Q2 Planning' },
-				},
-			})),
+			ok(
+				transsummEnvelope({
+					data_result_summ: {
+						markdown: '## body',
+						summary: '## body',
+						first_summary: 'raw',
+						ai_suggestion:
+							'Consider following up with the team on action items.',
+						endpoint: 'azure-sweden-central-gpt-5',
+						model: 'gpt-5-2025-08',
+						language: 'en',
+						note_id: 'note-abc',
+						summary_id: 'sum-xyz',
+						version: 3,
+						summ_type: 'ai-meeting',
+						select_prompt_type: 'meeting',
+						header: {
+							category: 'ai-meeting',
+							headline: 'Q2 Planning',
+						},
+					},
+				}),
+			),
 		);
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
 		const { summary } = await client.getTranscriptAndSummary(ID);
 
 		expect(summary?.text).toBe('## body');
-		expect(summary?.aiSuggestion).toBe('Consider following up with the team on action items.');
+		expect(summary?.aiSuggestion).toBe(
+			'Consider following up with the team on action items.',
+		);
 		expect(summary?.language).toBe('en');
 		expect(summary?.template).toBe('ai-meeting');
 		expect(summary?.model).toBe('gpt-5-2025-08');
@@ -1385,12 +1568,14 @@ describe('getTranscriptAndSummary summary extras (flat schema)', () => {
 
 	it('falls back to endpoint when model field is absent', async () => {
 		const { fetcher } = captureFetcher(
-			ok(transsummEnvelope({
-				data_result_summ: {
-					markdown: '## body',
-					endpoint: 'azure-sweden-central-gpt-5',
-				},
-			})),
+			ok(
+				transsummEnvelope({
+					data_result_summ: {
+						markdown: '## body',
+						endpoint: 'azure-sweden-central-gpt-5',
+					},
+				}),
+			),
 		);
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
@@ -1401,12 +1586,14 @@ describe('getTranscriptAndSummary summary extras (flat schema)', () => {
 
 	it('falls back to select_prompt_type when summ_type is absent', async () => {
 		const { fetcher } = captureFetcher(
-			ok(transsummEnvelope({
-				data_result_summ: {
-					markdown: '## body',
-					select_prompt_type: 'lecture',
-				},
-			})),
+			ok(
+				transsummEnvelope({
+					data_result_summ: {
+						markdown: '## body',
+						select_prompt_type: 'lecture',
+					},
+				}),
+			),
 		);
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
@@ -1417,9 +1604,11 @@ describe('getTranscriptAndSummary summary extras (flat schema)', () => {
 
 	it('returns Summary with only id+text when no extras are present', async () => {
 		const { fetcher } = captureFetcher(
-			ok(transsummEnvelope({
-				data_result_summ: { markdown: '## just the body' },
-			})),
+			ok(
+				transsummEnvelope({
+					data_result_summ: { markdown: '## just the body' },
+				}),
+			),
 		);
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
@@ -1442,16 +1631,18 @@ describe('getTranscriptAndSummary summary extras (flat schema)', () => {
 		// where we expect a string. The parser must NOT throw — it must
 		// just leave that field undefined and continue.
 		const { fetcher } = captureFetcher(
-			ok(transsummEnvelope({
-				data_result_summ: {
-					markdown: '## body',
-					ai_suggestion: 42,
-					language: null,
-					summ_type: ['array', 'not', 'string'],
-					note_id: { nested: 'object' },
-					header: 'string-not-object',
-				},
-			})),
+			ok(
+				transsummEnvelope({
+					data_result_summ: {
+						markdown: '## body',
+						ai_suggestion: 42,
+						language: null,
+						summ_type: ['array', 'not', 'string'],
+						note_id: { nested: 'object' },
+						header: 'string-not-object',
+					},
+				}),
+			),
 		);
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
@@ -1468,13 +1659,15 @@ describe('getTranscriptAndSummary summary extras (flat schema)', () => {
 
 	it('silently drops empty-string extras after trim', async () => {
 		const { fetcher } = captureFetcher(
-			ok(transsummEnvelope({
-				data_result_summ: {
-					markdown: '## body',
-					ai_suggestion: '   \n\t   ',
-					language: '',
-				},
-			})),
+			ok(
+				transsummEnvelope({
+					data_result_summ: {
+						markdown: '## body',
+						ai_suggestion: '   \n\t   ',
+						language: '',
+					},
+				}),
+			),
 		);
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
@@ -1488,14 +1681,16 @@ describe('getTranscriptAndSummary summary extras (flat schema)', () => {
 		// Forward-compatibility: a future Plaud release that adds a brand
 		// new top-level field must not break the parser.
 		const { fetcher } = captureFetcher(
-			ok(transsummEnvelope({
-				data_result_summ: {
-					markdown: '## body',
-					ai_suggestion: 'do the thing',
-					some_future_field: 'whatever',
-					another_new_thing: { deeply: { nested: true } },
-				},
-			})),
+			ok(
+				transsummEnvelope({
+					data_result_summ: {
+						markdown: '## body',
+						ai_suggestion: 'do the thing',
+						some_future_field: 'whatever',
+						another_new_thing: { deeply: { nested: true } },
+					},
+				}),
+			),
 		);
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
@@ -1509,9 +1704,13 @@ describe('getTranscriptAndSummary summary extras (flat schema)', () => {
 		// Shape 2 envelopes have no peer fields alongside `content`, so
 		// extras stay undefined — but the parser must still not blow up.
 		const { fetcher } = captureFetcher(
-			ok(transsummEnvelope({
-				data_result_summ: { content: { markdown: '## legacy body' } },
-			})),
+			ok(
+				transsummEnvelope({
+					data_result_summ: {
+						content: { markdown: '## legacy body' },
+					},
+				}),
+			),
 		);
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
@@ -1532,9 +1731,11 @@ describe('getTranscriptAndSummary summary shape-drift detection', () => {
 		// data — don't silently treat it as markdown because the note
 		// would render as literal JSON gibberish.
 		const { fetcher } = captureFetcher(
-			ok(transsummEnvelope({
-				data_result_summ: '{broken: no close brace',
-			})),
+			ok(
+				transsummEnvelope({
+					data_result_summ: '{broken: no close brace',
+				}),
+			),
 		);
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
@@ -1545,7 +1746,11 @@ describe('getTranscriptAndSummary summary shape-drift detection', () => {
 
 	it('throws PlaudParseError when JSON-parsed value is not an object', async () => {
 		const { fetcher } = captureFetcher(
-			ok(transsummEnvelope({ data_result_summ: JSON.stringify([1, 2, 3]) })),
+			ok(
+				transsummEnvelope({
+					data_result_summ: JSON.stringify([1, 2, 3]),
+				}),
+			),
 		);
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
@@ -1556,9 +1761,13 @@ describe('getTranscriptAndSummary summary shape-drift detection', () => {
 
 	it('throws PlaudParseError when content is an object but has no markdown field', async () => {
 		const { fetcher } = captureFetcher(
-			ok(transsummEnvelope({
-				data_result_summ: { content: { html: '<p>unexpected</p>' } },
-			})),
+			ok(
+				transsummEnvelope({
+					data_result_summ: {
+						content: { html: '<p>unexpected</p>' },
+					},
+				}),
+			),
 		);
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
@@ -1580,9 +1789,11 @@ describe('getTranscriptAndSummary summary shape-drift detection', () => {
 
 	it('throws PlaudParseError when the outer object has no content field at all', async () => {
 		const { fetcher } = captureFetcher(
-			ok(transsummEnvelope({
-				data_result_summ: { notes: 'wrong-shape', title: 'nope' },
-			})),
+			ok(
+				transsummEnvelope({
+					data_result_summ: { notes: 'wrong-shape', title: 'nope' },
+				}),
+			),
 		);
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
@@ -1602,11 +1813,18 @@ describe('getTranscriptAndSummary segment validation', () => {
 		// whole transcript for that one boundary; now it keeps the segment
 		// and clamps the end to the (authoritative) start.
 		const { fetcher } = captureFetcher(
-			ok(transsummEnvelope({
-				data_result: [
-					{ start_time: 1610440, end_time: 1596940, content: 'backwards', speaker: '' },
-				],
-			})),
+			ok(
+				transsummEnvelope({
+					data_result: [
+						{
+							start_time: 1610440,
+							end_time: 1596940,
+							content: 'backwards',
+							speaker: '',
+						},
+					],
+				}),
+			),
 		);
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
@@ -1618,11 +1836,18 @@ describe('getTranscriptAndSummary segment validation', () => {
 
 	it('allows end_time equal to start_time (zero-length segment)', async () => {
 		const { fetcher } = captureFetcher(
-			ok(transsummEnvelope({
-				data_result: [
-					{ start_time: 1000, end_time: 1000, content: 'blip', speaker: '' },
-				],
-			})),
+			ok(
+				transsummEnvelope({
+					data_result: [
+						{
+							start_time: 1000,
+							end_time: 1000,
+							content: 'blip',
+							speaker: '',
+						},
+					],
+				}),
+			),
 		);
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
@@ -1644,16 +1869,18 @@ describe('getTranscriptAndSummary segment validation', () => {
 		// they confused units and sent something like 1744628400000
 		// (a unix millis timestamp, not a segment offset).
 		const { fetcher } = captureFetcher(
-			ok(transsummEnvelope({
-				data_result: [
-					{
-						start_time: 1744628400000, // unix millis masquerading as segment offset
-						end_time: 1744628500000,
-						content: 'confused units',
-						speaker: '',
-					},
-				],
-			})),
+			ok(
+				transsummEnvelope({
+					data_result: [
+						{
+							start_time: 1744628400000, // unix millis masquerading as segment offset
+							end_time: 1744628500000,
+							content: 'confused units',
+							speaker: '',
+						},
+					],
+				}),
+			),
 		);
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
@@ -1665,16 +1892,18 @@ describe('getTranscriptAndSummary segment validation', () => {
 	it('accepts segments up to 24h that are merely long', async () => {
 		// A 23h58m segment is valid even if unlikely.
 		const { fetcher } = captureFetcher(
-			ok(transsummEnvelope({
-				data_result: [
-					{
-						start_time: 86_000_000,
-						end_time: 86_100_000,
-						content: 'late in the day',
-						speaker: '',
-					},
-				],
-			})),
+			ok(
+				transsummEnvelope({
+					data_result: [
+						{
+							start_time: 86_000_000,
+							end_time: 86_100_000,
+							content: 'late in the day',
+							speaker: '',
+						},
+					],
+				}),
+			),
 		);
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
@@ -1717,7 +1946,12 @@ describe('getTranscriptAndSummary missing data', () => {
 
 	it('returns both null when neither transcript nor summary is present', async () => {
 		const { fetcher } = captureFetcher(
-			ok(transsummEnvelope({ data_result: null, data_result_summ: null })),
+			ok(
+				transsummEnvelope({
+					data_result: null,
+					data_result_summ: null,
+				}),
+			),
 		);
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
@@ -1735,7 +1969,9 @@ describe('getTranscriptAndSummary parse errors', () => {
 		const { fetcher } = captureFetcher(ok(['not', 'an', 'envelope']));
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
-		await expect(client.getTranscriptAndSummary(ID)).rejects.toBeInstanceOf(PlaudParseError);
+		await expect(client.getTranscriptAndSummary(ID)).rejects.toBeInstanceOf(
+			PlaudParseError,
+		);
 	});
 
 	it('throws PlaudParseError when data_result is not an array', async () => {
@@ -1744,58 +1980,96 @@ describe('getTranscriptAndSummary parse errors', () => {
 		);
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
-		await expect(client.getTranscriptAndSummary(ID)).rejects.toBeInstanceOf(PlaudParseError);
+		await expect(client.getTranscriptAndSummary(ID)).rejects.toBeInstanceOf(
+			PlaudParseError,
+		);
 	});
 
 	it('throws PlaudParseError when a segment is missing required fields', async () => {
 		const { fetcher } = captureFetcher(
-			ok(transsummEnvelope({
-				data_result: [{ start_time: 0, end_time: 1000 /* no content */ }],
-			})),
+			ok(
+				transsummEnvelope({
+					data_result: [
+						{ start_time: 0, end_time: 1000 /* no content */ },
+					],
+				}),
+			),
 		);
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
-		await expect(client.getTranscriptAndSummary(ID)).rejects.toBeInstanceOf(PlaudParseError);
+		await expect(client.getTranscriptAndSummary(ID)).rejects.toBeInstanceOf(
+			PlaudParseError,
+		);
 	});
 
 	it('throws PlaudParseError when a segment has negative start_time', async () => {
 		const { fetcher } = captureFetcher(
-			ok(transsummEnvelope({
-				data_result: [
-					{ start_time: -1, end_time: 1000, content: 'x', speaker: '' },
-				],
-			})),
+			ok(
+				transsummEnvelope({
+					data_result: [
+						{
+							start_time: -1,
+							end_time: 1000,
+							content: 'x',
+							speaker: '',
+						},
+					],
+				}),
+			),
 		);
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
-		await expect(client.getTranscriptAndSummary(ID)).rejects.toBeInstanceOf(PlaudParseError);
+		await expect(client.getTranscriptAndSummary(ID)).rejects.toBeInstanceOf(
+			PlaudParseError,
+		);
 	});
 
 	it('throws PlaudParseError when a segment has NaN end_time', async () => {
 		const { fetcher } = captureFetcher(
-			ok(transsummEnvelope({
-				data_result: [
-					{ start_time: 0, end_time: Number.NaN, content: 'x', speaker: '' },
-				],
-			})),
+			ok(
+				transsummEnvelope({
+					data_result: [
+						{
+							start_time: 0,
+							end_time: Number.NaN,
+							content: 'x',
+							speaker: '',
+						},
+					],
+				}),
+			),
 		);
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
-		await expect(client.getTranscriptAndSummary(ID)).rejects.toBeInstanceOf(PlaudParseError);
+		await expect(client.getTranscriptAndSummary(ID)).rejects.toBeInstanceOf(
+			PlaudParseError,
+		);
 	});
 
 	it('includes the segment index in the parse error message', async () => {
 		const { fetcher } = captureFetcher(
-			ok(transsummEnvelope({
-				data_result: [
-					{ start_time: 0, end_time: 1000, content: 'ok', speaker: 'A' },
-					{ start_time: 1000, end_time: 2000 /* missing content */ },
-				],
-			})),
+			ok(
+				transsummEnvelope({
+					data_result: [
+						{
+							start_time: 0,
+							end_time: 1000,
+							content: 'ok',
+							speaker: 'A',
+						},
+						{
+							start_time: 1000,
+							end_time: 2000 /* missing content */,
+						},
+					],
+				}),
+			),
 		);
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
-		await expect(client.getTranscriptAndSummary(ID)).rejects.toThrow(/\[1\]/);
+		await expect(client.getTranscriptAndSummary(ID)).rejects.toThrow(
+			/\[1\]/,
+		);
 	});
 });
 
@@ -1804,10 +2078,12 @@ describe('getTranscriptAndSummary parse errors', () => {
 describe('getTranscriptAndSummary error mapping', () => {
 	it('throws PlaudApiError when response has string err_code set', async () => {
 		const { fetcher } = captureFetcher(
-			ok(transsummEnvelope({
-				err_code: 'ai_pipeline_failed',
-				err_msg: 'transcription pipeline returned no data',
-			})),
+			ok(
+				transsummEnvelope({
+					err_code: 'ai_pipeline_failed',
+					err_msg: 'transcription pipeline returned no data',
+				}),
+			),
 		);
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
@@ -1821,14 +2097,18 @@ describe('getTranscriptAndSummary error mapping', () => {
 		// implementation only matched strings and silently dropped
 		// numeric error codes.
 		const { fetcher } = captureFetcher(
-			ok(transsummEnvelope({
-				err_code: 4001,
-				err_msg: 'quota exceeded',
-			})),
+			ok(
+				transsummEnvelope({
+					err_code: 4001,
+					err_msg: 'quota exceeded',
+				}),
+			),
 		);
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
-		await expect(client.getTranscriptAndSummary(ID)).rejects.toThrow(/4001/);
+		await expect(client.getTranscriptAndSummary(ID)).rejects.toThrow(
+			/4001/,
+		);
 	});
 
 	it('accepts non-zero status values when err_code is empty (real-API observation)', async () => {
@@ -1863,7 +2143,9 @@ describe('getTranscriptAndSummary error mapping', () => {
 		const { fetcher } = captureFetcher(status(401));
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
-		await expect(client.getTranscriptAndSummary(ID)).rejects.toBeInstanceOf(PlaudAuthError);
+		await expect(client.getTranscriptAndSummary(ID)).rejects.toBeInstanceOf(
+			PlaudAuthError,
+		);
 	});
 
 	it('throws PlaudApiError with status 500 on HTTP 500', async () => {
@@ -1881,7 +2163,9 @@ describe('getTranscriptAndSummary error mapping', () => {
 		};
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
-		await expect(client.getTranscriptAndSummary(ID)).rejects.toBeInstanceOf(PlaudApiError);
+		await expect(client.getTranscriptAndSummary(ID)).rejects.toBeInstanceOf(
+			PlaudApiError,
+		);
 	});
 });
 
@@ -1900,7 +2184,9 @@ function silentSink(): (message: string, payload?: unknown) => void {
 describe('debug logger integration', () => {
 	it('emits request and response events with the endpoint path when a logger is attached', async () => {
 		const { fetcher } = captureFetcher(ok(listEnvelope([])));
-		const logger = new BufferedDebugLogger(true, { consoleSink: silentSink() });
+		const logger = new BufferedDebugLogger(true, {
+			consoleSink: silentSink(),
+		});
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher, {
 			debugLogger: logger,
 		});
@@ -1924,10 +2210,16 @@ describe('debug logger integration', () => {
 
 	it('never includes Authorization or any header in the request event payload', async () => {
 		const { fetcher } = captureFetcher(ok(listEnvelope([])));
-		const logger = new BufferedDebugLogger(true, { consoleSink: silentSink() });
-		const client = new ReverseEngineeredPlaudClient(() => 'super-secret-jwt', fetcher, {
-			debugLogger: logger,
+		const logger = new BufferedDebugLogger(true, {
+			consoleSink: silentSink(),
 		});
+		const client = new ReverseEngineeredPlaudClient(
+			() => 'super-secret-jwt',
+			fetcher,
+			{
+				debugLogger: logger,
+			},
+		);
 
 		await client.listRecordings();
 
@@ -1940,15 +2232,21 @@ describe('debug logger integration', () => {
 	});
 
 	it('emits a parsed event with a summarized recording list after successful listRecordings', async () => {
-		const { fetcher } = captureFetcher(ok(listEnvelope([record({ id: 'r1' })])));
-		const logger = new BufferedDebugLogger(true, { consoleSink: silentSink() });
+		const { fetcher } = captureFetcher(
+			ok(listEnvelope([record({ id: 'r1' })])),
+		);
+		const logger = new BufferedDebugLogger(true, {
+			consoleSink: silentSink(),
+		});
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher, {
 			debugLogger: logger,
 		});
 
 		await client.listRecordings();
 
-		const parsed = logger.snapshot().find((e: DebugEvent) => e.kind === 'parsed');
+		const parsed = logger
+			.snapshot()
+			.find((e: DebugEvent) => e.kind === 'parsed');
 		expect(parsed).toBeDefined();
 		expect(parsed?.endpoint).toBe('/file/simple/web');
 		expect(parsed?.message).toMatch(/parsed 1 recordings/);
@@ -1969,17 +2267,30 @@ describe('debug logger integration', () => {
 				err_code: '',
 				status: 0,
 				data_result: [
-					{ start_time: 0, end_time: 1000, content: 'hello', speaker: 'Charles' },
+					{
+						start_time: 0,
+						end_time: 1000,
+						content: 'hello',
+						speaker: 'Charles',
+					},
 				],
-				data_result_summ: JSON.stringify({ content: { markdown: 'Meeting summary.' } }),
+				data_result_summ: JSON.stringify({
+					content: { markdown: 'Meeting summary.' },
+				}),
 			}),
 		);
-		const logger = new BufferedDebugLogger(true, { consoleSink: silentSink() });
+		const logger = new BufferedDebugLogger(true, {
+			consoleSink: silentSink(),
+		});
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher, {
 			debugLogger: logger,
 		});
 
-		await client.getTranscriptAndSummary('rec-abc-123' as unknown as Parameters<typeof client.getTranscriptAndSummary>[0]);
+		await client.getTranscriptAndSummary(
+			'rec-abc-123' as unknown as Parameters<
+				typeof client.getTranscriptAndSummary
+			>[0],
+		);
 
 		// After the 2026-04-14 polished-transcript work, the parsed event
 		// is emitted by the higher-level getTranscriptAndSummary wrapper
@@ -1991,7 +2302,9 @@ describe('debug logger integration', () => {
 			.snapshot()
 			.find(
 				(e: DebugEvent) =>
-					e.kind === 'parsed' && typeof e.message === 'string' && e.message.includes('segments'),
+					e.kind === 'parsed' &&
+					typeof e.message === 'string' &&
+					e.message.includes('segments'),
 			);
 		expect(parsed).toBeDefined();
 		expect(parsed?.message).toMatch(/raw fallback \(1 segments\)/);
@@ -2001,14 +2314,20 @@ describe('debug logger integration', () => {
 		const fetcher: PlaudHttpFetcher = async () => {
 			throw new Error('ETIMEDOUT');
 		};
-		const logger = new BufferedDebugLogger(true, { consoleSink: silentSink() });
+		const logger = new BufferedDebugLogger(true, {
+			consoleSink: silentSink(),
+		});
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher, {
 			debugLogger: logger,
 		});
 
-		await expect(client.listRecordings()).rejects.toBeInstanceOf(PlaudApiError);
+		await expect(client.listRecordings()).rejects.toBeInstanceOf(
+			PlaudApiError,
+		);
 
-		const errorEvent = logger.snapshot().find((e: DebugEvent) => e.kind === 'error');
+		const errorEvent = logger
+			.snapshot()
+			.find((e: DebugEvent) => e.kind === 'error');
 		expect(errorEvent).toBeDefined();
 		expect(errorEvent?.message).toMatch(/ETIMEDOUT/);
 	});
@@ -2025,7 +2344,9 @@ describe('debug logger integration', () => {
 
 	it('does not emit events when a logger is attached but enabled=false', async () => {
 		const { fetcher } = captureFetcher(ok(listEnvelope([])));
-		const logger = new BufferedDebugLogger(false, { consoleSink: silentSink() });
+		const logger = new BufferedDebugLogger(false, {
+			consoleSink: silentSink(),
+		});
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher, {
 			debugLogger: logger,
 		});
@@ -2056,14 +2377,17 @@ describe('findTransactionPolishLink', () => {
 		};
 	}
 
-	function polishItem(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+	function polishItem(
+		overrides: Record<string, unknown> = {},
+	): Record<string, unknown> {
 		return {
 			data_id: 'source_transaction_polish:xxx:abc123',
 			data_type: 'transaction_polish',
 			task_status: 1,
 			err_code: '',
 			err_msg: '',
-			data_link: 'https://s3.amazonaws.com/polished.json?X-Amz-Signature=fake',
+			data_link:
+				'https://s3.amazonaws.com/polished.json?X-Amz-Signature=fake',
 			extra: {},
 			...overrides,
 		};
@@ -2074,14 +2398,17 @@ describe('findTransactionPolishLink', () => {
 			data_id: 'source_transaction:xxx:abc123',
 			data_type: 'transaction',
 			task_status: 1,
-			data_link: 'https://s3.amazonaws.com/raw.json.gz?X-Amz-Signature=fake',
+			data_link:
+				'https://s3.amazonaws.com/raw.json.gz?X-Amz-Signature=fake',
 		};
 	}
 
 	it('returns the polish data_link when a successful transaction_polish entry exists', () => {
 		const raw = fileDetail([transactionItem(), polishItem()]);
 		const link = findTransactionPolishLink(raw, '/file/detail/abc123');
-		expect(link).toBe('https://s3.amazonaws.com/polished.json?X-Amz-Signature=fake');
+		expect(link).toBe(
+			'https://s3.amazonaws.com/polished.json?X-Amz-Signature=fake',
+		);
 	});
 
 	it('returns null when content_list has no transaction_polish entry', () => {
@@ -2145,9 +2472,17 @@ describe('findTransactionPolishLink', () => {
 		// must scan by data_type rather than relying on position.
 		const raw = fileDetail([
 			transactionItem(),
-			{ data_type: 'outline', task_status: 1, data_link: 'https://s3/outline' },
+			{
+				data_type: 'outline',
+				task_status: 1,
+				data_link: 'https://s3/outline',
+			},
 			polishItem({ data_link: 'https://s3/polish-at-idx-2' }),
-			{ data_type: 'auto_sum_note', task_status: 1, data_link: 'https://s3/sum' },
+			{
+				data_type: 'auto_sum_note',
+				task_status: 1,
+				data_link: 'https://s3/sum',
+			},
 		]);
 		const link = findTransactionPolishLink(raw, '/file/detail/abc123');
 		expect(link).toBe('https://s3/polish-at-idx-2');
@@ -2156,7 +2491,9 @@ describe('findTransactionPolishLink', () => {
 	it('skips non-object items in content_list gracefully', () => {
 		const raw = fileDetail([null, 'string', 42, polishItem()]);
 		const link = findTransactionPolishLink(raw, '/file/detail/abc123');
-		expect(link).toBe('https://s3.amazonaws.com/polished.json?X-Amz-Signature=fake');
+		expect(link).toBe(
+			'https://s3.amazonaws.com/polished.json?X-Amz-Signature=fake',
+		);
 	});
 });
 
@@ -2181,25 +2518,34 @@ function routeFetcher(routes: {
 	requests: () => readonly PlaudHttpRequest[];
 } {
 	const captured: PlaudHttpRequest[] = [];
-	const defaultResponse: PlaudHttpResponse = { status: 404, json: null, text: '' };
+	const defaultResponse: PlaudHttpResponse = {
+		status: 404,
+		json: null,
+		text: '',
+	};
 	const fetcher: PlaudHttpFetcher = async (req) => {
 		captured.push(req);
 		if (req.url.includes('/ai/transsumm/')) {
-			if (routes.throwOn === 'transsumm') throw new Error('synthetic transsumm failure');
+			if (routes.throwOn === 'transsumm')
+				throw new Error('synthetic transsumm failure');
 			return routes.transsumm ?? defaultResponse;
 		}
 		if (req.url.includes('/file/detail/')) {
-			if (routes.throwOn === 'detail') throw new Error('synthetic detail failure');
+			if (routes.throwOn === 'detail')
+				throw new Error('synthetic detail failure');
 			return routes.detail ?? defaultResponse;
 		}
 		// Anything else is assumed to be the S3 pre-signed polish URL.
-		if (routes.throwOn === 'polish') throw new Error('synthetic polish failure');
+		if (routes.throwOn === 'polish')
+			throw new Error('synthetic polish failure');
 		return routes.polish ?? defaultResponse;
 	};
 	return { fetcher, requests: () => captured };
 }
 
-function polishedSegment(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+function polishedSegment(
+	overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
 	return {
 		start_time: 0,
 		end_time: 1000,
@@ -2268,7 +2614,8 @@ describe('getTranscriptAndSummary polished-transcript path', () => {
 		});
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
-		const { transcript, summary } = await client.getTranscriptAndSummary(ID);
+		const { transcript, summary } =
+			await client.getTranscriptAndSummary(ID);
 
 		// Polished path must be used — speaker names come from the
 		// polish file, NOT the raw transsumm response.
@@ -2335,7 +2682,9 @@ describe('getTranscriptAndSummary polished-transcript path', () => {
 		expect(transcript?.segments).toHaveLength(2);
 		expect(transcript?.segments[0].text).toContain('Raw line one');
 		// The raw S3 link was fetched without the Bearer token.
-		const rawReq = requests().find((r) => r.url.includes('/raw-transcript'));
+		const rawReq = requests().find((r) =>
+			r.url.includes('/raw-transcript'),
+		);
 		expect(rawReq?.headers.Authorization).toBeUndefined();
 	});
 
@@ -2345,7 +2694,10 @@ describe('getTranscriptAndSummary polished-transcript path', () => {
 			detail: ok(fileDetailWithPolishUrl('https://s3/polish?sig=x')),
 			polish: ok([polishedSegment()]),
 		});
-		const client = new ReverseEngineeredPlaudClient(() => 'super-secret-jwt', fetcher);
+		const client = new ReverseEngineeredPlaudClient(
+			() => 'super-secret-jwt',
+			fetcher,
+		);
 
 		await client.getTranscriptAndSummary(ID);
 
@@ -2376,7 +2728,10 @@ describe('getTranscriptAndSummary polished-transcript path', () => {
 
 		const { transcript } = await client.getTranscriptAndSummary(ID);
 
-		expect(transcript?.segments.map((s) => s.speaker)).toEqual(['Speaker 1', 'Speaker 2']);
+		expect(transcript?.segments.map((s) => s.speaker)).toEqual([
+			'Speaker 1',
+			'Speaker 2',
+		]);
 	});
 
 	it('falls back to the raw transcript when /file/detail/ itself fails', async () => {
@@ -2390,7 +2745,10 @@ describe('getTranscriptAndSummary polished-transcript path', () => {
 		// overall call. Raw transcript becomes the result.
 		const { transcript } = await client.getTranscriptAndSummary(ID);
 		expect(transcript).not.toBeNull();
-		expect(transcript?.segments.map((s) => s.speaker)).toEqual(['Speaker 1', 'Speaker 2']);
+		expect(transcript?.segments.map((s) => s.speaker)).toEqual([
+			'Speaker 1',
+			'Speaker 2',
+		]);
 	});
 
 	it('falls back to the raw transcript when the S3 polish fetch fails', async () => {
@@ -2402,7 +2760,10 @@ describe('getTranscriptAndSummary polished-transcript path', () => {
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
 		const { transcript } = await client.getTranscriptAndSummary(ID);
-		expect(transcript?.segments.map((s) => s.speaker)).toEqual(['Speaker 1', 'Speaker 2']);
+		expect(transcript?.segments.map((s) => s.speaker)).toEqual([
+			'Speaker 1',
+			'Speaker 2',
+		]);
 	});
 
 	it('propagates a raw /ai/transsumm/ failure (legacy errors are still fatal)', async () => {
@@ -2416,7 +2777,9 @@ describe('getTranscriptAndSummary polished-transcript path', () => {
 		});
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
-		await expect(client.getTranscriptAndSummary(ID)).rejects.toBeInstanceOf(PlaudApiError);
+		await expect(client.getTranscriptAndSummary(ID)).rejects.toBeInstanceOf(
+			PlaudApiError,
+		);
 	});
 
 	it('regression test: real-data 2026-04-14 case (3 raw voices collapsed to 2 real people)', async () => {
@@ -2451,8 +2814,12 @@ describe('getTranscriptAndSummary polished-transcript path', () => {
 
 		const { transcript } = await client.getTranscriptAndSummary(ID);
 
-		const distinctSpeakers = new Set(transcript?.segments.map((s) => s.speaker));
-		expect(distinctSpeakers).toEqual(new Set(['Charles Kelsoe', 'Vijay Muniswamy']));
+		const distinctSpeakers = new Set(
+			transcript?.segments.map((s) => s.speaker),
+		);
+		expect(distinctSpeakers).toEqual(
+			new Set(['Charles Kelsoe', 'Vijay Muniswamy']),
+		);
 		expect(transcript?.segments).toHaveLength(3);
 	});
 });
@@ -2499,7 +2866,9 @@ describe('findNewerSummaryMarkdown', () => {
 	});
 
 	it('trims leading and trailing whitespace', () => {
-		const raw = fileDetailWithSummary([autoSumNoteItem('   # Summary  \n  ')]);
+		const raw = fileDetailWithSummary([
+			autoSumNoteItem('   # Summary  \n  '),
+		]);
 		const result = findNewerSummaryMarkdown(raw, '/file/detail/abc123');
 		expect(result).toBe('# Summary');
 	});
@@ -2523,7 +2892,10 @@ describe('findNewerSummaryMarkdown', () => {
 		// carry only a data_id like "auto_sum:<owner>:<fileId>" and no
 		// data_type, so the finder must key on data_id.
 		const raw = fileDetailWithSummary([
-			{ data_id: 'auto_sum:owner:abc123', data_content: '## Real summary' },
+			{
+				data_id: 'auto_sum:owner:abc123',
+				data_content: '## Real summary',
+			},
 		]);
 		expect(findNewerSummaryMarkdown(raw, '/file/detail/abc123')).toBe(
 			'## Real summary',
@@ -2596,7 +2968,9 @@ describe('findNewerSummaryMarkdown', () => {
 			42,
 			autoSumNoteItem('real content'),
 		]);
-		expect(findNewerSummaryMarkdown(raw, '/file/detail/abc')).toBe('real content');
+		expect(findNewerSummaryMarkdown(raw, '/file/detail/abc')).toBe(
+			'real content',
+		);
 	});
 
 	it('throws PlaudParseError when response body is not an object', () => {
@@ -2616,9 +2990,9 @@ describe('findNewerSummaryMarkdown', () => {
 			status: 0,
 			data: { pre_download_content_list: 'bogus' },
 		};
-		expect(() =>
-			findNewerSummaryMarkdown(raw, '/file/detail/abc'),
-		).toThrow(PlaudParseError);
+		expect(() => findNewerSummaryMarkdown(raw, '/file/detail/abc')).toThrow(
+			PlaudParseError,
+		);
 	});
 });
 
@@ -2745,8 +3119,16 @@ describe('findAttachmentAssets', () => {
 
 	it('returns unknown data_type entries with data_link URLs', () => {
 		const raw = fileDetailWithAssets([
-			{ data_type: 'transaction', task_status: 1, data_link: 'https://s3/raw' },
-			{ data_type: 'transaction_polish', task_status: 1, data_link: 'https://s3/polish' },
+			{
+				data_type: 'transaction',
+				task_status: 1,
+				data_link: 'https://s3/raw',
+			},
+			{
+				data_type: 'transaction_polish',
+				task_status: 1,
+				data_link: 'https://s3/polish',
+			},
 			{
 				data_type: 'screenshot',
 				task_status: 1,
@@ -2768,36 +3150,84 @@ describe('findAttachmentAssets', () => {
 	it('collects from both content_list and pre_download_content_list', () => {
 		const raw = fileDetailWithAssets(
 			[
-				{ data_type: 'slide_image', task_status: 1, data_link: 'https://s3/a.png' },
+				{
+					data_type: 'slide_image',
+					task_status: 1,
+					data_link: 'https://s3/a.png',
+				},
 			],
 			[
-				{ data_type: 'screen_capture', task_status: 1, data_link: 'https://s3/b.png' },
+				{
+					data_type: 'screen_capture',
+					task_status: 1,
+					data_link: 'https://s3/b.png',
+				},
 			],
 		);
 		expect(findAttachmentAssets(raw, '/file/detail/abc')).toEqual([
-			{ dataType: 'slide_image', url: 'https://s3/a.png', name: undefined, mimeType: undefined },
-			{ dataType: 'screen_capture', url: 'https://s3/b.png', name: undefined, mimeType: undefined },
+			{
+				dataType: 'slide_image',
+				url: 'https://s3/a.png',
+				name: undefined,
+				mimeType: undefined,
+			},
+			{
+				dataType: 'screen_capture',
+				url: 'https://s3/b.png',
+				name: undefined,
+				mimeType: undefined,
+			},
 		]);
 	});
 
 	it('drops entries that are not task_status=1 when task_status is present', () => {
 		const raw = fileDetailWithAssets([
-			{ data_type: 'screenshot', task_status: 0, data_link: 'https://s3/not-ready' },
-			{ data_type: 'screenshot', task_status: 2, data_link: 'https://s3/failed' },
-			{ data_type: 'screenshot', task_status: 1, data_link: 'https://s3/ready' },
+			{
+				data_type: 'screenshot',
+				task_status: 0,
+				data_link: 'https://s3/not-ready',
+			},
+			{
+				data_type: 'screenshot',
+				task_status: 2,
+				data_link: 'https://s3/failed',
+			},
+			{
+				data_type: 'screenshot',
+				task_status: 1,
+				data_link: 'https://s3/ready',
+			},
 		]);
 		expect(findAttachmentAssets(raw, '/file/detail/abc')).toEqual([
-			{ dataType: 'screenshot', url: 'https://s3/ready', name: undefined, mimeType: undefined },
+			{
+				dataType: 'screenshot',
+				url: 'https://s3/ready',
+				name: undefined,
+				mimeType: undefined,
+			},
 		]);
 	});
 
 	it('deduplicates repeated URLs', () => {
 		const raw = fileDetailWithAssets([
-			{ data_type: 'screenshot', task_status: 1, data_link: 'https://s3/a' },
-			{ data_type: 'screen_capture', task_status: 1, data_link: 'https://s3/a' },
+			{
+				data_type: 'screenshot',
+				task_status: 1,
+				data_link: 'https://s3/a',
+			},
+			{
+				data_type: 'screen_capture',
+				task_status: 1,
+				data_link: 'https://s3/a',
+			},
 		]);
 		expect(findAttachmentAssets(raw, '/file/detail/abc')).toEqual([
-			{ dataType: 'screenshot', url: 'https://s3/a', name: undefined, mimeType: undefined },
+			{
+				dataType: 'screenshot',
+				url: 'https://s3/a',
+				name: undefined,
+				mimeType: undefined,
+			},
 		]);
 	});
 
@@ -2865,8 +3295,10 @@ describe('findAttachmentAssets', () => {
 				content_list: [],
 				pre_download_content_list: [],
 				download_link_map: {
-					'permanent/abc/mindmap/result.png': 'https://cdn.example.com/mindmap.png?sig=x',
-					'permanent/abc/card/result.png': 'https://cdn.example.com/card.png?sig=x',
+					'permanent/abc/mindmap/result.png':
+						'https://cdn.example.com/mindmap.png?sig=x',
+					'permanent/abc/card/result.png':
+						'https://cdn.example.com/card.png?sig=x',
 				},
 			},
 		};
@@ -2905,7 +3337,8 @@ describe('findAttachmentAssets', () => {
 						'https://cdn.example.com/outline.json.gz?sig=x',
 					'permanent/abc/file_summary/abc/ai_content.md.gz':
 						'https://cdn.example.com/ai_content.md.gz?sig=x',
-					'permanent/abc/card/result.png': 'https://cdn.example.com/card.png?sig=x',
+					'permanent/abc/card/result.png':
+						'https://cdn.example.com/card.png?sig=x',
 				},
 			},
 		};
@@ -2940,9 +3373,9 @@ describe('findAttachmentAssets', () => {
 	});
 
 	it('throws PlaudParseError when response.data is missing', () => {
-		expect(() => findAttachmentAssets({ status: 0 }, '/file/detail/abc')).toThrow(
-			PlaudParseError,
-		);
+		expect(() =>
+			findAttachmentAssets({ status: 0 }, '/file/detail/abc'),
+		).toThrow(PlaudParseError);
 	});
 });
 
@@ -3063,7 +3496,8 @@ describe('getTranscriptAndSummary DD-004 paths', () => {
 					newerSummary: JSON.stringify({
 						category: 'Meeting Minutes',
 						summary_id: 'sid-1',
-						ai_content: '**Participants:** Charles, Vijay\n\nEnvelope body.',
+						ai_content:
+							'**Participants:** Charles, Vijay\n\nEnvelope body.',
 					}),
 				}),
 			),
@@ -3092,11 +3526,14 @@ describe('getTranscriptAndSummary DD-004 paths', () => {
 					newerSummary: '{ "ai_content": broken',
 				}),
 			),
-			polish: ok([polishedSegment({ speaker: 'Charles Kelsoe', content: 'Hi.' })]),
+			polish: ok([
+				polishedSegment({ speaker: 'Charles Kelsoe', content: 'Hi.' }),
+			]),
 		});
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
-		const { transcript, summary } = await client.getTranscriptAndSummary(ID);
+		const { transcript, summary } =
+			await client.getTranscriptAndSummary(ID);
 
 		expect(transcript?.segments.map((s) => s.speaker)).toEqual([
 			'Charles Kelsoe',
@@ -3151,7 +3588,9 @@ describe('getTranscriptAndSummary DD-004 paths', () => {
 	it('propagates chapters on the result when /file/detail/ has an outline link and the parser recognizes the body', async () => {
 		const { fetcher } = routeFetcher({
 			transsumm: ok(transsummEnvelope()),
-			detail: ok(fileDetailFull({ outlineUrl: 'https://s3/outline?sig=x' })),
+			detail: ok(
+				fileDetailFull({ outlineUrl: 'https://s3/outline?sig=x' }),
+			),
 		});
 		// Override the routeFetcher default for the outline hop by passing
 		// through polish route (it's a catch-all for "anything else").
@@ -3163,14 +3602,28 @@ describe('getTranscriptAndSummary DD-004 paths', () => {
 				}
 				if (req.url.includes('/file/detail/')) {
 					return ok(
-						fileDetailFull({ outlineUrl: 'https://s3/outline?sig=x' }),
+						fileDetailFull({
+							outlineUrl: 'https://s3/outline?sig=x',
+						}),
 					);
 				}
 				if (req.url.includes('outline')) {
 					return ok([
-						{ title: 'Introduction', start_time: 0, end_time: 60000 },
-						{ title: 'Main topic', start_time: 60000, end_time: 180000 },
-						{ title: 'Wrap up', start_time: 180000, end_time: 240000 },
+						{
+							title: 'Introduction',
+							start_time: 0,
+							end_time: 60000,
+						},
+						{
+							title: 'Main topic',
+							start_time: 60000,
+							end_time: 180000,
+						},
+						{
+							title: 'Wrap up',
+							start_time: 180000,
+							end_time: 240000,
+						},
 					]);
 				}
 				return fetcher(req);
@@ -3260,7 +3713,8 @@ describe('getTranscriptAndSummary DD-004 paths', () => {
 			detail: ok(
 				fileDetailFull({
 					polishUrl: 'https://s3/polish?sig=x',
-					newerSummary: '**Participants:** Charles, Vijay\n\nNew body.',
+					newerSummary:
+						'**Participants:** Charles, Vijay\n\nNew body.',
 					keywords: ['Topic A', 'Topic B'],
 				}),
 			),
@@ -3295,35 +3749,54 @@ describe('getTranscriptAndSummary DD-004 paths', () => {
 // =============================================================================
 
 describe('findOutlineLink', () => {
-	function fileDetailOutline(contentList: unknown[]): Record<string, unknown> {
+	function fileDetailOutline(
+		contentList: unknown[],
+	): Record<string, unknown> {
 		return {
 			status: 0,
 			msg: 'success',
-			data: { file_id: 'abc123', content_list: contentList, extra_data: {} },
+			data: {
+				file_id: 'abc123',
+				content_list: contentList,
+				extra_data: {},
+			},
 		};
 	}
 
-	function outlineItem(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+	function outlineItem(
+		overrides: Record<string, unknown> = {},
+	): Record<string, unknown> {
 		return {
 			data_type: 'outline',
 			task_status: 1,
-			data_link: 'https://s3.amazonaws.com/outline.json?X-Amz-Signature=fake',
+			data_link:
+				'https://s3.amazonaws.com/outline.json?X-Amz-Signature=fake',
 			...overrides,
 		};
 	}
 
 	it('returns the outline data_link when a successful outline entry exists', () => {
 		const raw = fileDetailOutline([
-			{ data_type: 'transaction', task_status: 1, data_link: 'https://s3/raw' },
+			{
+				data_type: 'transaction',
+				task_status: 1,
+				data_link: 'https://s3/raw',
+			},
 			outlineItem(),
 		]);
 		const link = findOutlineLink(raw, '/file/detail/abc123');
-		expect(link).toBe('https://s3.amazonaws.com/outline.json?X-Amz-Signature=fake');
+		expect(link).toBe(
+			'https://s3.amazonaws.com/outline.json?X-Amz-Signature=fake',
+		);
 	});
 
 	it('returns null when content_list has no outline entry', () => {
 		const raw = fileDetailOutline([
-			{ data_type: 'transaction', task_status: 1, data_link: 'https://s3/raw' },
+			{
+				data_type: 'transaction',
+				task_status: 1,
+				data_link: 'https://s3/raw',
+			},
 		]);
 		expect(findOutlineLink(raw, '/file/detail/abc')).toBeNull();
 	});
@@ -3405,7 +3878,9 @@ describe('parseOutlineBody', () => {
 
 	it('accepts string-encoded numeric timestamps', () => {
 		expect(
-			parseOutlineBody([{ title: 'A', start_time: '5000', end_time: '10000' }]),
+			parseOutlineBody([
+				{ title: 'A', start_time: '5000', end_time: '10000' },
+			]),
 		).toEqual([{ title: 'A', startSeconds: 5, endSeconds: 10 }]);
 	});
 
@@ -3517,14 +3992,18 @@ describe('findConsumerNoteEntries', () => {
 			data_title: 'Key Points for the meeting',
 			data_link: KEY_POINTS_LINK,
 			extra: {
-				used_template: { template_name: 'Key Points', template_type: 'official' },
+				used_template: {
+					template_name: 'Key Points',
+					template_type: 'official',
+				},
 			},
 			...overrides,
 		};
 	}
 
 	it('returns the template name and link for each ready entry, in order', () => {
-		const journalLink = 'https://s3.amazonaws.com/journal.md?X-Amz-Signature=fake';
+		const journalLink =
+			'https://s3.amazonaws.com/journal.md?X-Amz-Signature=fake';
 		const raw = fileDetail([
 			consumerNoteItem(),
 			consumerNoteItem({
@@ -3565,7 +4044,8 @@ describe('findConsumerNoteEntries', () => {
 			{
 				data_type: 'transaction',
 				task_status: 1,
-				data_link: 'https://s3.amazonaws.com/raw.json?X-Amz-Signature=fake',
+				data_link:
+					'https://s3.amazonaws.com/raw.json?X-Amz-Signature=fake',
 			},
 			consumerNoteItem(),
 		]);
@@ -3581,7 +4061,11 @@ describe('findConsumerNoteEntries', () => {
 			// No used_template -> fall back to the tab label.
 			consumerNoteItem({ extra: {} }),
 			// No template name and no tab label -> fall back to the entry title.
-			consumerNoteItem({ extra: {}, data_tab_name: undefined, data_link: link2 }),
+			consumerNoteItem({
+				extra: {},
+				data_tab_name: undefined,
+				data_link: link2,
+			}),
 			// Nothing usable -> generic label.
 			consumerNoteItem({
 				extra: {},
@@ -3599,7 +4083,9 @@ describe('findConsumerNoteEntries', () => {
 
 	it('de-duplicates entries that share a data_link', () => {
 		const raw = fileDetail([consumerNoteItem(), consumerNoteItem()]);
-		expect(findConsumerNoteEntries(raw, '/file/detail/abc123')).toHaveLength(1);
+		expect(
+			findConsumerNoteEntries(raw, '/file/detail/abc123'),
+		).toHaveLength(1);
 	});
 
 	it('returns [] when content_list is absent', () => {
@@ -3613,7 +4099,8 @@ describe('findConsumerNoteEntries', () => {
 			{
 				data_type: 'screenshot',
 				task_status: 1,
-				data_link: 'https://s3.amazonaws.com/shot.png?X-Amz-Signature=fake',
+				data_link:
+					'https://s3.amazonaws.com/shot.png?X-Amz-Signature=fake',
 			},
 		]);
 		const dataTypes = findAttachmentAssets(raw, '/file/detail/abc123').map(
@@ -3650,7 +4137,11 @@ describe('getTranscriptAndSummary consumer_note template outputs', () => {
 			detail,
 			// The consumer_note body is the only non-transsumm/non-detail fetch,
 			// so it routes here; served as raw text/plain Markdown, not JSON.
-			polish: { status: 200, json: null, text: '- Point one\n- Point two' },
+			polish: {
+				status: 200,
+				json: null,
+				text: '- Point one\n- Point two',
+			},
 		});
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
@@ -3664,7 +4155,10 @@ describe('getTranscriptAndSummary consumer_note template outputs', () => {
 	it('omits consumerNotes when the recording has none', async () => {
 		const { fetcher } = routeFetcher({
 			transsumm: ok(transsummEnvelope()),
-			detail: ok({ status: 0, data: { file_id: 'abc123', content_list: [] } }),
+			detail: ok({
+				status: 0,
+				data: { file_id: 'abc123', content_list: [] },
+			}),
 		});
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
@@ -3685,7 +4179,8 @@ function audioTempUrlEnvelope(
 ): Record<string, unknown> {
 	return {
 		status: 0,
-		temp_url: 'https://plaud-bucket.s3.amazonaws.com/audiofiles/rec.ogg?AWSAccessKeyId=x&Signature=y%3D&Expires=1',
+		temp_url:
+			'https://plaud-bucket.s3.amazonaws.com/audiofiles/rec.ogg?AWSAccessKeyId=x&Signature=y%3D&Expires=1',
 		temp_url_opus: null,
 		...overrides,
 	};
@@ -3693,8 +4188,13 @@ function audioTempUrlEnvelope(
 
 describe('getAudioTempUrl request shape', () => {
 	it('issues an authenticated GET against /file/temp-url/{id}', async () => {
-		const { fetcher, lastRequest } = captureFetcher(ok(audioTempUrlEnvelope()));
-		const client = new ReverseEngineeredPlaudClient(() => 'my-jwt', fetcher);
+		const { fetcher, lastRequest } = captureFetcher(
+			ok(audioTempUrlEnvelope()),
+		);
+		const client = new ReverseEngineeredPlaudClient(
+			() => 'my-jwt',
+			fetcher,
+		);
 
 		await client.getAudioTempUrl(ID);
 
@@ -3705,7 +4205,9 @@ describe('getAudioTempUrl request shape', () => {
 	});
 
 	it('URL-encodes the recording id', async () => {
-		const { fetcher, lastRequest } = captureFetcher(ok(audioTempUrlEnvelope()));
+		const { fetcher, lastRequest } = captureFetcher(
+			ok(audioTempUrlEnvelope()),
+		);
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
 		await client.getAudioTempUrl('id with/slash' as PlaudRecordingId);
@@ -3727,7 +4229,9 @@ describe('getAudioTempUrl request shape', () => {
 	});
 
 	it('returns null when temp_url is missing or empty', async () => {
-		const { fetcher } = captureFetcher(ok(audioTempUrlEnvelope({ temp_url: '' })));
+		const { fetcher } = captureFetcher(
+			ok(audioTempUrlEnvelope({ temp_url: '' })),
+		);
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
 		expect(await client.getAudioTempUrl(ID)).toBeNull();
@@ -3737,25 +4241,39 @@ describe('getAudioTempUrl request shape', () => {
 describe('parseAudioTempUrl', () => {
 	it('extracts temp_url from the top level of the response', () => {
 		expect(
-			parseAudioTempUrl({ status: 0, temp_url: 'https://s3/audio.ogg' }, '/file/temp-url/x'),
+			parseAudioTempUrl(
+				{ status: 0, temp_url: 'https://s3/audio.ogg' },
+				'/file/temp-url/x',
+			),
 		).toBe('https://s3/audio.ogg');
 	});
 
 	it('falls back to a data-wrapped temp_url defensively', () => {
 		expect(
-			parseAudioTempUrl({ data: { temp_url: 'https://s3/audio.ogg' } }, '/file/temp-url/x'),
+			parseAudioTempUrl(
+				{ data: { temp_url: 'https://s3/audio.ogg' } },
+				'/file/temp-url/x',
+			),
 		).toBe('https://s3/audio.ogg');
 	});
 
 	it('returns null for a missing, empty, or non-string temp_url', () => {
 		expect(parseAudioTempUrl({ status: 0 }, '/file/temp-url/x')).toBeNull();
-		expect(parseAudioTempUrl({ temp_url: '   ' }, '/file/temp-url/x')).toBeNull();
-		expect(parseAudioTempUrl({ temp_url: 42 }, '/file/temp-url/x')).toBeNull();
+		expect(
+			parseAudioTempUrl({ temp_url: '   ' }, '/file/temp-url/x'),
+		).toBeNull();
+		expect(
+			parseAudioTempUrl({ temp_url: 42 }, '/file/temp-url/x'),
+		).toBeNull();
 	});
 
 	it('throws PlaudParseError only when the body is not an object', () => {
-		expect(() => parseAudioTempUrl(null, '/file/temp-url/x')).toThrow(PlaudParseError);
-		expect(() => parseAudioTempUrl('nope', '/file/temp-url/x')).toThrow(PlaudParseError);
+		expect(() => parseAudioTempUrl(null, '/file/temp-url/x')).toThrow(
+			PlaudParseError,
+		);
+		expect(() => parseAudioTempUrl('nope', '/file/temp-url/x')).toThrow(
+			PlaudParseError,
+		);
 	});
 });
 
@@ -3780,7 +4298,12 @@ describe('getFolderCatalog', () => {
 		);
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 		const catalog = await client.getFolderCatalog();
-		expect(catalog[0]).toEqual({ id: 'a', name: 'Work', icon: 'e644', color: '#fff' });
+		expect(catalog[0]).toEqual({
+			id: 'a',
+			name: 'Work',
+			icon: 'e644',
+			color: '#fff',
+		});
 		expect(catalog[1].id).toBe('b');
 		expect(catalog[1].name).toBe('B&B');
 		expect(lastRequest()?.url).toContain('/filetag/');
@@ -3799,7 +4322,11 @@ describe('getFolderCatalog', () => {
 
 	it('keeps a filetag whose icon/color are null (no custom styling)', async () => {
 		const { fetcher } = captureFetcher(
-			ok(filetagEnvelope([{ id: 'a', name: 'Work', icon: null, color: null }])),
+			ok(
+				filetagEnvelope([
+					{ id: 'a', name: 'Work', icon: null, color: null },
+				]),
+			),
 		);
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 		const catalog = await client.getFolderCatalog();
@@ -3829,7 +4356,9 @@ describe('getFolderCatalog', () => {
 	it('throws a parse error when data_filetag_list is missing', async () => {
 		const { fetcher } = captureFetcher(ok({ status: 0, msg: 'x' }));
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
-		await expect(client.getFolderCatalog()).rejects.toBeInstanceOf(PlaudParseError);
+		await expect(client.getFolderCatalog()).rejects.toBeInstanceOf(
+			PlaudParseError,
+		);
 	});
 });
 
@@ -3840,7 +4369,10 @@ describe('updateTitle', () => {
 		const { fetcher, lastRequest } = captureFetcher(ok({ status: 0 }));
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
-		await client.updateTitle('abc123' as PlaudRecordingId, '2026-07-02 New name');
+		await client.updateTitle(
+			'abc123' as PlaudRecordingId,
+			'2026-07-02 New name',
+		);
 
 		const req = lastRequest();
 		expect(req?.method).toBe('PATCH');
@@ -3860,7 +4392,11 @@ describe('updateTitle', () => {
 	});
 
 	it('treats a 2xx with an empty body as success (allowEmptyBody)', async () => {
-		const { fetcher } = captureFetcher({ status: 200, json: null, text: '' });
+		const { fetcher } = captureFetcher({
+			status: 200,
+			json: null,
+			text: '',
+		});
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
 		await expect(
@@ -3899,7 +4435,9 @@ describe('updateTitle', () => {
 
 		await client.updateTitle('abc123' as PlaudRecordingId, '  Name  ');
 
-		expect(JSON.parse(lastRequest()?.body ?? '{}')).toEqual({ filename: 'Name' });
+		expect(JSON.parse(lastRequest()?.body ?? '{}')).toEqual({
+			filename: 'Name',
+		});
 	});
 
 	it('throws PlaudAuthError on HTTP 401', async () => {
@@ -3912,7 +4450,9 @@ describe('updateTitle', () => {
 	});
 
 	it('surfaces an in-band negative status as a PlaudApiError', async () => {
-		const { fetcher } = captureFetcher(ok({ status: -1, msg: 'bad request' }));
+		const { fetcher } = captureFetcher(
+			ok({ status: -1, msg: 'bad request' }),
+		);
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
 		await expect(

@@ -1,11 +1,4 @@
-import {
-	App,
-	MarkdownView,
-	Modal,
-	Notice,
-	setIcon,
-	TFile,
-} from 'obsidian';
+import { App, MarkdownView, Modal, Notice, setIcon, TFile } from 'obsidian';
 import type {
 	PlaudRecordingId,
 	PlaudClient,
@@ -157,19 +150,46 @@ class ArtifactSelectionModal extends Modal {
 			text: 'Transcript includes chapters automatically when available.',
 			cls: 'plaud-importer-intro',
 		});
-		this.renderOption(contentEl, 'Summary', 'includeSummary', this.availability.summaryCount);
-		this.renderOption(contentEl, 'Transcript', 'includeTranscript', this.availability.transcriptCount);
-		this.renderOption(contentEl, 'Mindmap', 'includeMindmap', this.availability.mindmapCount);
-		this.renderOption(contentEl, 'Card', 'includeCard', this.availability.cardCount);
+		this.renderOption(
+			contentEl,
+			'Summary',
+			'includeSummary',
+			this.availability.summaryCount,
+		);
+		this.renderOption(
+			contentEl,
+			'Transcript',
+			'includeTranscript',
+			this.availability.transcriptCount,
+		);
+		this.renderOption(
+			contentEl,
+			'Mindmap',
+			'includeMindmap',
+			this.availability.mindmapCount,
+		);
+		this.renderOption(
+			contentEl,
+			'Card',
+			'includeCard',
+			this.availability.cardCount,
+		);
 		this.renderOption(
 			contentEl,
 			'Other attachments',
 			'includeAttachments',
 			this.availability.attachmentsCount,
 		);
-		this.renderOption(contentEl, 'Audio (large)', 'includeAudio', this.availability.audioCount);
+		this.renderOption(
+			contentEl,
+			'Audio (large)',
+			'includeAudio',
+			this.availability.audioCount,
+		);
 
-		const buttonRow = contentEl.createDiv({ cls: 'plaud-importer-buttons' });
+		const buttonRow = contentEl.createDiv({
+			cls: 'plaud-importer-buttons',
+		});
 		const importButton = buttonRow.createEl('button', {
 			text: 'Import selected',
 			cls: 'mod-cta',
@@ -257,7 +277,9 @@ class OverwriteConfirmationModal extends Modal {
 		contentEl.createEl('p', {
 			text: 'Choose how to continue:',
 		});
-		const buttonRow = contentEl.createDiv({ cls: 'plaud-importer-buttons' });
+		const buttonRow = contentEl.createDiv({
+			cls: 'plaud-importer-buttons',
+		});
 		const overwriteButton = buttonRow.createEl('button', {
 			text: 'Continue with overwrite',
 			cls: 'mod-warning',
@@ -276,7 +298,9 @@ class OverwriteConfirmationModal extends Modal {
 			this.onDone('skip');
 			this.close();
 		});
-		const cancelButton = buttonRow.createEl('button', { text: 'Cancel import' });
+		const cancelButton = buttonRow.createEl('button', {
+			text: 'Cancel import',
+		});
 		cancelButton.addEventListener('click', () => {
 			this.resolved = true;
 			this.onDone('cancel');
@@ -320,7 +344,10 @@ class DuplicateDecisionModal extends Modal {
 		contentEl.createEl('p', {
 			text: `A note for "${this.recordingTitle}" already exists at:`,
 		});
-		contentEl.createEl('p', { text: this.targetPath, cls: 'plaud-importer-mono' });
+		contentEl.createEl('p', {
+			text: this.targetPath,
+			cls: 'plaud-importer-mono',
+		});
 		const warning = contentEl.createEl('p', { cls: 'mod-warning' });
 		warning.createEl('strong', { text: 'Warning: ' });
 		warning.appendText(
@@ -328,8 +355,14 @@ class DuplicateDecisionModal extends Modal {
 		);
 		contentEl.createEl('p', { text: 'Choose how to handle this note:' });
 
-		const buttonRow = contentEl.createDiv({ cls: 'plaud-importer-buttons' });
-		const addButton = (text: string, cls: string, choice: DuplicateDecisionChoice): void => {
+		const buttonRow = contentEl.createDiv({
+			cls: 'plaud-importer-buttons',
+		});
+		const addButton = (
+			text: string,
+			cls: string,
+			choice: DuplicateDecisionChoice,
+		): void => {
 			const btn = buttonRow.createEl('button', { text, cls });
 			btn.addEventListener('click', () => {
 				this.resolved = true;
@@ -345,7 +378,11 @@ class DuplicateDecisionModal extends Modal {
 		// (both leave the existing note untouched), so rendering both
 		// is user-hostile — hide the escalation set entirely.
 		if (this.showBatchOptions) {
-			addButton('Overwrite all remaining', 'mod-warning', 'overwrite-all');
+			addButton(
+				'Overwrite all remaining',
+				'mod-warning',
+				'overwrite-all',
+			);
 			addButton('Skip all remaining', '', 'skip-all');
 			addButton('Cancel import', '', 'cancel');
 		}
@@ -493,14 +530,19 @@ export class ImportModal extends Modal {
 	private hideIgnored: boolean;
 	private readonly ignoredIds: Set<PlaudRecordingId>;
 
-	constructor(app: App, client: PlaudClient, noteWriterOptions: ImportModalOptions) {
+	constructor(
+		app: App,
+		client: PlaudClient,
+		noteWriterOptions: ImportModalOptions,
+	) {
 		super(app);
 		this.client = client;
 		this.noteWriterOptions = noteWriterOptions;
 		this.showTrashed = noteWriterOptions.showTrashedRecordings === true;
 		// The two hide-prefs default ON when the host omits them (a fresh install
 		// or a pre-0.26.0 data.json), matching DEFAULT_SETTINGS.
-		this.hideProcessed = noteWriterOptions.hideProcessedRecordings !== false;
+		this.hideProcessed =
+			noteWriterOptions.hideProcessedRecordings !== false;
 		// Updates default to SHOWN (hide off): an update is actionable work.
 		this.hideUpdates = noteWriterOptions.hideUpdatesRecordings === true;
 		this.hideIgnored = noteWriterOptions.hideIgnoredRecordings !== false;
@@ -521,7 +563,10 @@ export class ImportModal extends Modal {
 			// calls renderError internally. This outer catch is purely
 			// defense-in-depth against a future bug that throws outside the
 			// fetch try/catch (e.g., a render function throwing).
-			console.error('Plaud importer: unexpected error in onOpen/refresh', err);
+			console.error(
+				'Plaud importer: unexpected error in onOpen/refresh',
+				err,
+			);
 			this.renderError(classifyError(err));
 		});
 	}
@@ -629,7 +674,11 @@ export class ImportModal extends Modal {
 				// stale result on the floor.
 				return;
 			}
-			const { merged, hasMore } = mergeRecordings([], recordings, PAGE_SIZE);
+			const { merged, hasMore } = mergeRecordings(
+				[],
+				recordings,
+				PAGE_SIZE,
+			);
 			this.currentRecordings = [...merged];
 			this.hasMore = hasMore;
 			if (this.currentRecordings.length === 0) {
@@ -654,7 +703,11 @@ export class ImportModal extends Modal {
 		if (this.loadingMore || !this.hasMore) {
 			return;
 		}
-		if (trigger === 'auto' && this.prefetchInFlight && this.prefetchedRecordings === null) {
+		if (
+			trigger === 'auto' &&
+			this.prefetchInFlight &&
+			this.prefetchedRecordings === null
+		) {
 			return;
 		}
 		if (trigger === 'auto' && this.loadMoreErrorMessage !== null) {
@@ -695,7 +748,9 @@ export class ImportModal extends Modal {
 			// against the pre-merge accumulator — this is correct regardless
 			// of how mergeRecordings handles dedupe, because we're comparing
 			// the post-merge list to what was on screen before.
-			const existingIds = new Set(this.currentRecordings.map((r) => r.id));
+			const existingIds = new Set(
+				this.currentRecordings.map((r) => r.id),
+			);
 			const newRows = merged.filter((r) => !existingIds.has(r.id));
 			this.currentRecordings = [...merged];
 			this.hasMore = hasMore;
@@ -706,7 +761,10 @@ export class ImportModal extends Modal {
 				// filtered-out rows are not shown. Same predicate as the full
 				// render via filterListView, so incremental append and a full
 				// re-render agree on visibility.
-				const visibleNew = filterListView(newRows, this.listViewFilter());
+				const visibleNew = filterListView(
+					newRows,
+					this.listViewFilter(),
+				);
 				for (const rec of visibleNew) {
 					this.renderRow(this.listEl, rec);
 				}
@@ -731,7 +789,9 @@ export class ImportModal extends Modal {
 			// still has their selections and their already-loaded pages,
 			// and losing them on a transient network blip would be rude.
 			const classification = classifyError(err);
-			new Notice(`Plaud importer: could not load more — ${classification.message}`);
+			new Notice(
+				`Plaud importer: could not load more — ${classification.message}`,
+			);
 			this.loadMoreErrorMessage = classification.message;
 			this.logScrollDebug('loadMore error', {
 				trigger,
@@ -820,7 +880,9 @@ export class ImportModal extends Modal {
 			text: 'No recordings found in your Plaud.AI account.',
 			cls: 'plaud-importer-empty',
 		});
-		const buttonRow = contentEl.createDiv({ cls: 'plaud-importer-buttons' });
+		const buttonRow = contentEl.createDiv({
+			cls: 'plaud-importer-buttons',
+		});
 		const closeButton = buttonRow.createEl('button', { text: 'Close' });
 		closeButton.addEventListener('click', () => this.close());
 	}
@@ -833,7 +895,9 @@ export class ImportModal extends Modal {
 			text: classification.message,
 			cls: 'plaud-importer-error-message',
 		});
-		const buttonRow = contentEl.createDiv({ cls: 'plaud-importer-buttons' });
+		const buttonRow = contentEl.createDiv({
+			cls: 'plaud-importer-buttons',
+		});
 
 		// An expired/revoked token or one never configured is otherwise a dead
 		// end here: those categories are canRetry:false, so without inline
@@ -934,7 +998,9 @@ export class ImportModal extends Modal {
 		details.createEl('summary', { text: OTHER_SIGNIN_LABEL });
 		const row = details.createDiv({ cls: 'plaud-importer-buttons' });
 
-		const setupButton = row.createEl('button', { text: SETUP_BOOKMARK_LABEL });
+		const setupButton = row.createEl('button', {
+			text: SETUP_BOOKMARK_LABEL,
+		});
 		setupButton.addEventListener('click', () => sso.setupBookmark());
 
 		const browserButton = row.createEl('button', {
@@ -986,7 +1052,9 @@ export class ImportModal extends Modal {
 	// explained. A thrown error (a saveSettings or refresh failure) is routed
 	// through renderError like the inline re-auth and retry paths, since the
 	// click handler fires this with `void` and would otherwise drop the rejection.
-	private async handleSsoPaste(onSuccess: () => Promise<void>): Promise<void> {
+	private async handleSsoPaste(
+		onSuccess: () => Promise<void>,
+	): Promise<void> {
 		const sso = this.noteWriterOptions.onReauthSso;
 		if (!sso) {
 			return;
@@ -1078,7 +1146,9 @@ export class ImportModal extends Modal {
 		// on). No-op when a row is already visible or nothing more can be fetched.
 		void this.pageUntilVisibleOrCapped();
 
-		const buttonRow = contentEl.createDiv({ cls: 'plaud-importer-buttons' });
+		const buttonRow = contentEl.createDiv({
+			cls: 'plaud-importer-buttons',
+		});
 		this.importButton = buttonRow.createEl('button', {
 			text: IMPORT_BUTTON_LABEL,
 			cls: 'mod-cta',
@@ -1091,7 +1161,10 @@ export class ImportModal extends Modal {
 				// write and the writer construction — this outer catch is
 				// defense-in-depth against a future bug that throws outside
 				// those try/catch blocks.
-				console.error('Plaud importer: unexpected error in onImportClick', err);
+				console.error(
+					'Plaud importer: unexpected error in onImportClick',
+					err,
+				);
 				this.renderError(classifyError(err));
 			});
 		});
@@ -1099,10 +1172,14 @@ export class ImportModal extends Modal {
 			text: 'Review artifacts first',
 		});
 		this.reviewArtifactsButton = customizeButton;
-		customizeButton.disabled = this.selectedIds.size === 0 || this.preparingCustomization;
+		customizeButton.disabled =
+			this.selectedIds.size === 0 || this.preparingCustomization;
 		customizeButton.addEventListener('click', () => {
 			this.beginCustomizationFlow().catch((err) => {
-				console.error('Plaud importer: customization preflight failed', err);
+				console.error(
+					'Plaud importer: customization preflight failed',
+					err,
+				);
 				new Notice('Plaud importer: could not inspect artifacts.');
 			});
 		});
@@ -1246,7 +1323,9 @@ export class ImportModal extends Modal {
 		});
 
 		const labelWrap = row.createDiv({ cls: 'plaud-importer-label' });
-		const titleRow = labelWrap.createDiv({ cls: 'plaud-importer-title-row' });
+		const titleRow = labelWrap.createDiv({
+			cls: 'plaud-importer-title-row',
+		});
 		titleRow.createDiv({ text: rec.title, cls: 'plaud-importer-title' });
 
 		const existing = this.importedIndex.get(rec.id);
@@ -1288,10 +1367,15 @@ export class ImportModal extends Modal {
 	// state. `eye-off` means "click to ignore"; `eye` means "click to unignore"
 	// (shown on an already-ignored row when "Hide ignored" is off). Both are real
 	// Lucide ids so scripts/check-icons.mjs passes.
-	private decorateIgnoreButton(button: HTMLElement, recId: PlaudRecordingId): void {
+	private decorateIgnoreButton(
+		button: HTMLElement,
+		recId: PlaudRecordingId,
+	): void {
 		const ignored = this.ignoredIds.has(recId);
 		setIcon(button, ignored ? 'eye' : 'eye-off');
-		const label = ignored ? 'Unignore this recording' : 'Ignore this recording';
+		const label = ignored
+			? 'Unignore this recording'
+			: 'Ignore this recording';
 		button.setAttribute('aria-label', label);
 		button.setAttribute('title', label);
 	}
@@ -1329,12 +1413,17 @@ export class ImportModal extends Modal {
 		// The note was just written, so it is current: drop any stale
 		// "update available" badge.
 		titleRow.querySelector('.plaud-importer-update-badge')?.remove();
-		const existingBadge = titleRow.querySelector('.plaud-importer-imported-badge');
+		const existingBadge = titleRow.querySelector(
+			'.plaud-importer-imported-badge',
+		);
 		if (existingBadge !== null) return;
 		this.renderImportedBadge(titleRow as HTMLElement, existing);
 	}
 
-	private renderImportedBadge(parent: HTMLElement, record: ImportedRecord): void {
+	private renderImportedBadge(
+		parent: HTMLElement,
+		record: ImportedRecord,
+	): void {
 		const badge = parent.createEl('a', {
 			cls: 'plaud-importer-imported-badge',
 			text: 'Imported',
@@ -1355,12 +1444,14 @@ export class ImportModal extends Modal {
 	// the recording changed in Plaud since import. Re-importing overwrites the
 	// note with Plaud's current version.
 	private renderUpdateAvailableBadge(parent: HTMLElement): void {
-		if (parent.querySelector('.plaud-importer-update-badge') !== null) return;
+		if (parent.querySelector('.plaud-importer-update-badge') !== null)
+			return;
 		parent.createSpan({
 			cls: 'plaud-importer-update-badge',
 			text: 'Update available',
 			attr: {
-				'aria-label': 'This recording changed in Plaud since it was imported',
+				'aria-label':
+					'This recording changed in Plaud since it was imported',
 				title: 'Changed in Plaud since import — re-importing overwrites this note',
 			},
 		});
@@ -1369,20 +1460,22 @@ export class ImportModal extends Modal {
 	// A "Trashed" badge on a recording that is in Plaud's trash. Only rendered
 	// when the row is visible at all, which is only when "Hide trashed" is off.
 	private renderTrashedBadge(parent: HTMLElement): void {
-		if (parent.querySelector('.plaud-importer-trashed-badge') !== null) return;
+		if (parent.querySelector('.plaud-importer-trashed-badge') !== null)
+			return;
 		parent.createSpan({
 			cls: 'plaud-importer-trashed-badge',
 			text: 'Trashed',
 			attr: {
 				'aria-label': "This recording is in Plaud's trash",
-				title: "In Plaud's trash — showing because \"Hide trashed\" is off",
+				title: 'In Plaud\'s trash — showing because "Hide trashed" is off',
 			},
 		});
 	}
 
 	private updateImportButtonState(): void {
 		if (this.importButton) {
-			this.importButton.disabled = this.selectedIds.size === 0 || this.preparingCustomization;
+			this.importButton.disabled =
+				this.selectedIds.size === 0 || this.preparingCustomization;
 		}
 		if (this.reviewArtifactsButton) {
 			this.reviewArtifactsButton.disabled =
@@ -1392,10 +1485,14 @@ export class ImportModal extends Modal {
 
 	private getDefaultArtifactSelection(): ArtifactSelection {
 		return {
-			includeSummary: this.noteWriterOptions.defaultIncludeSummary !== false,
-			includeTranscript: this.noteWriterOptions.includeTranscript !== false,
-			includeAttachments: this.noteWriterOptions.defaultIncludeAttachments !== false,
-			includeMindmap: this.noteWriterOptions.defaultIncludeMindmap !== false,
+			includeSummary:
+				this.noteWriterOptions.defaultIncludeSummary !== false,
+			includeTranscript:
+				this.noteWriterOptions.includeTranscript !== false,
+			includeAttachments:
+				this.noteWriterOptions.defaultIncludeAttachments !== false,
+			includeMindmap:
+				this.noteWriterOptions.defaultIncludeMindmap !== false,
 			includeCard: this.noteWriterOptions.defaultIncludeCard !== false,
 			// Opt-in: audio defaults OFF unless the user turned the setting on,
 			// so use === true rather than the "on unless false" idiom above.
@@ -1418,29 +1515,42 @@ export class ImportModal extends Modal {
 		this.updateImportButtonState();
 		new Notice('Plaud importer: checking available artifacts...');
 		try {
-			const selected = this.currentRecordings.filter((r) => this.selectedIds.has(r.id));
+			const selected = this.currentRecordings.filter((r) =>
+				this.selectedIds.has(r.id),
+			);
 			for (const recording of selected) {
 				await this.ensureArtifactsForRecording(recording.id);
 			}
 			const availability = this.computeArtifactAvailability(selected);
 			const defaults = this.getDefaultArtifactSelection();
 			const initialSelection: ArtifactSelection = {
-				includeSummary: defaults.includeSummary && availability.summaryCount > 0,
-				includeTranscript: defaults.includeTranscript && availability.transcriptCount > 0,
+				includeSummary:
+					defaults.includeSummary && availability.summaryCount > 0,
+				includeTranscript:
+					defaults.includeTranscript &&
+					availability.transcriptCount > 0,
 				includeAttachments:
-					defaults.includeAttachments && availability.attachmentsCount > 0,
-				includeMindmap: defaults.includeMindmap && availability.mindmapCount > 0,
+					defaults.includeAttachments &&
+					availability.attachmentsCount > 0,
+				includeMindmap:
+					defaults.includeMindmap && availability.mindmapCount > 0,
 				includeCard: defaults.includeCard && availability.cardCount > 0,
-				includeAudio: defaults.includeAudio && availability.audioCount > 0,
+				includeAudio:
+					defaults.includeAudio && availability.audioCount > 0,
 			};
-			const selection = await this.promptArtifactSelection(availability, initialSelection);
+			const selection = await this.promptArtifactSelection(
+				availability,
+				initialSelection,
+			);
 			if (selection === null) {
 				return;
 			}
 			await this.onImportClick(selection);
 		} catch (err) {
 			const classification = classifyError(err);
-			new Notice(`Plaud importer: could not inspect artifacts — ${classification.message}`);
+			new Notice(
+				`Plaud importer: could not inspect artifacts — ${classification.message}`,
+			);
 		} finally {
 			this.preparingCustomization = false;
 			this.updateImportButtonState();
@@ -1459,7 +1569,9 @@ export class ImportModal extends Modal {
 		return bundle;
 	}
 
-	private computeArtifactAvailability(selected: readonly Recording[]): ArtifactAvailability {
+	private computeArtifactAvailability(
+		selected: readonly Recording[],
+	): ArtifactAvailability {
 		let summaryCount = 0;
 		let transcriptCount = 0;
 		let attachmentsCount = 0;
@@ -1474,13 +1586,30 @@ export class ImportModal extends Modal {
 			if (bundle.summary !== null) summaryCount += 1;
 			if (bundle.transcript !== null) transcriptCount += 1;
 			const assets = bundle.attachments ?? [];
-			if (assets.some((a) => this.attachments.classifyAttachmentKind(a) === 'generic')) {
+			if (
+				assets.some(
+					(a) =>
+						this.attachments.classifyAttachmentKind(a) ===
+						'generic',
+				)
+			) {
 				attachmentsCount += 1;
 			}
-			if (assets.some((a) => this.attachments.classifyAttachmentKind(a) === 'mindmap')) {
+			if (
+				assets.some(
+					(a) =>
+						this.attachments.classifyAttachmentKind(a) ===
+						'mindmap',
+				)
+			) {
 				mindmapCount += 1;
 			}
-			if (assets.some((a) => this.attachments.classifyAttachmentKind(a) === 'card')) {
+			if (
+				assets.some(
+					(a) =>
+						this.attachments.classifyAttachmentKind(a) === 'card',
+				)
+			) {
 				cardCount += 1;
 			}
 			if (this.noteWriterOptions.debugLogger?.enabled === true) {
@@ -1499,7 +1628,10 @@ export class ImportModal extends Modal {
 			}
 		}
 		if (diagnostics.length > 0) {
-			this.logImportDebug('artifact availability diagnostics', diagnostics);
+			this.logImportDebug(
+				'artifact availability diagnostics',
+				diagnostics,
+			);
 		}
 		return {
 			selectedCount: selected.length,
@@ -1575,11 +1707,15 @@ export class ImportModal extends Modal {
 		// "loading more" state reads as active work, not a frozen list, while
 		// a page is fetched mid-scroll. The spinner stays hidden until a fetch
 		// is in flight.
-		const statusEl = progressEl.createDiv({ cls: 'plaud-importer-progress-status' });
+		const statusEl = progressEl.createDiv({
+			cls: 'plaud-importer-progress-status',
+		});
 		this.progressSpinnerEl = statusEl.createDiv({
 			cls: 'plaud-importer-spinner plaud-importer-hidden',
 		});
-		this.progressTextEl = statusEl.createDiv({ cls: 'plaud-importer-progress-text' });
+		this.progressTextEl = statusEl.createDiv({
+			cls: 'plaud-importer-progress-text',
+		});
 		this.progressActionButton = progressEl.createEl('button', {
 			cls: 'plaud-importer-progress-action plaud-importer-hidden',
 		});
@@ -1587,7 +1723,9 @@ export class ImportModal extends Modal {
 		this.progressActionButton.addEventListener('click', () => {
 			this.onProgressActionClick();
 		});
-		this.autoLoadSentinelEl = this.listEl.createDiv({ cls: 'plaud-importer-sentinel' });
+		this.autoLoadSentinelEl = this.listEl.createDiv({
+			cls: 'plaud-importer-sentinel',
+		});
 	}
 
 	private onProgressActionClick(): void {
@@ -1601,8 +1739,13 @@ export class ImportModal extends Modal {
 		void this.loadMore(trigger)
 			.then(() => this.pageUntilVisibleOrCapped())
 			.catch((err) => {
-				console.error('Plaud importer: unexpected error in loadMore', err);
-				new Notice('Plaud importer: could not load more — see the developer console.');
+				console.error(
+					'Plaud importer: unexpected error in loadMore',
+					err,
+				);
+				new Notice(
+					'Plaud importer: could not load more — see the developer console.',
+				);
 			});
 	}
 
@@ -1622,21 +1765,28 @@ export class ImportModal extends Modal {
 		// Spinner shows the moment a page fetch starts — including the
 		// background prefetch and an auto-advance burst, which is where the real
 		// network wait happens.
-		const fetching = this.loadingMore || this.prefetchInFlight || this.autoAdvancing;
+		const fetching =
+			this.loadingMore || this.prefetchInFlight || this.autoAdvancing;
 		this.progressSpinnerEl?.toggleClass('plaud-importer-hidden', !fetching);
 		if (this.loadMoreErrorMessage !== null) {
-			this.progressTextEl.setText(`Could not load more: ${this.loadMoreErrorMessage}`);
+			this.progressTextEl.setText(
+				`Could not load more: ${this.loadMoreErrorMessage}`,
+			);
 			this.setProgressActionButton('Retry loading');
 			return;
 		}
 		if (this.loadingMore || this.autoAdvancing) {
 			// While auto-advancing past hidden pages the empty-state block carries
 			// the "looking..." message, so keep the footer text out of the way.
-			this.progressTextEl.setText(shown === 0 ? '' : 'Loading more recordings...');
+			this.progressTextEl.setText(
+				shown === 0 ? '' : 'Loading more recordings...',
+			);
 			return;
 		}
 		if (!this.hasMore) {
-			this.progressTextEl.setText(shown === 0 ? '' : 'You are all caught up.');
+			this.progressTextEl.setText(
+				shown === 0 ? '' : 'You are all caught up.',
+			);
 			return;
 		}
 		// More recordings exist and nothing is visible: an auto-advance burst hit
@@ -1652,7 +1802,9 @@ export class ImportModal extends Modal {
 			return;
 		}
 		if (this.prefetchedRecordings !== null) {
-			this.progressTextEl.setText('Next recordings cached. Keep scrolling.');
+			this.progressTextEl.setText(
+				'Next recordings cached. Keep scrolling.',
+			);
 			return;
 		}
 		this.progressTextEl.setText('Scroll to load more recordings.');
@@ -1708,7 +1860,10 @@ export class ImportModal extends Modal {
 			return;
 		}
 		if (label === null) {
-			this.progressActionButton.toggleClass('plaud-importer-hidden', true);
+			this.progressActionButton.toggleClass(
+				'plaud-importer-hidden',
+				true,
+			);
 			this.progressActionButton.disabled = false;
 			return;
 		}
@@ -1723,7 +1878,10 @@ export class ImportModal extends Modal {
 			this.userStartedScrolling = true;
 			this.startPrefetchIfNeeded();
 			this.updateProgressUi();
-			this.logScrollDebug('first list interaction', this.scrollStateSnapshot());
+			this.logScrollDebug(
+				'first list interaction',
+				this.scrollStateSnapshot(),
+			);
 		}
 		// Re-check near-bottom on every interaction, not just the first. The
 		// IntersectionObserver fires only on transitions, and once we page
@@ -1741,14 +1899,21 @@ export class ImportModal extends Modal {
 		if (!this.userStartedScrolling || !this.hasMore) {
 			return;
 		}
-		if (this.loadingMore || this.prefetchInFlight || this.prefetchedRecordings !== null) {
+		if (
+			this.loadingMore ||
+			this.prefetchInFlight ||
+			this.prefetchedRecordings !== null
+		) {
 			return;
 		}
 		const generation = this.fetchGeneration;
 		const skip = this.currentRecordings.length;
 		this.prefetchInFlight = true;
 		this.updateProgressUi();
-		this.logScrollDebug('prefetch start', { skip, ...this.scrollStateSnapshot() });
+		this.logScrollDebug('prefetch start', {
+			skip,
+			...this.scrollStateSnapshot(),
+		});
 		void this.client
 			.listRecordings({
 				skip,
@@ -1756,7 +1921,9 @@ export class ImportModal extends Modal {
 			})
 			.then((incoming) => {
 				if (generation !== this.fetchGeneration) {
-					this.logScrollDebug('prefetch resolved (stale, dropped)', { skip });
+					this.logScrollDebug('prefetch resolved (stale, dropped)', {
+						skip,
+					});
 					return;
 				}
 				this.prefetchedRecordings = incoming;
@@ -1795,7 +1962,9 @@ export class ImportModal extends Modal {
 			return;
 		}
 		this.listInteractionHandler = () => this.handleListInteraction();
-		this.listEl.addEventListener('wheel', this.listInteractionHandler, { passive: true });
+		this.listEl.addEventListener('wheel', this.listInteractionHandler, {
+			passive: true,
+		});
 		this.listEl.addEventListener('touchmove', this.listInteractionHandler, {
 			passive: true,
 		});
@@ -1805,7 +1974,9 @@ export class ImportModal extends Modal {
 		if (typeof IntersectionObserver !== 'undefined') {
 			this.autoLoadObserver = new IntersectionObserver(
 				(entries) => {
-					const intersecting = entries.some((entry) => entry.isIntersecting);
+					const intersecting = entries.some(
+						(entry) => entry.isIntersecting,
+					);
 					this.logScrollDebug('sentinel observer fired', {
 						intersecting,
 						...this.scrollStateSnapshot(),
@@ -1840,13 +2011,25 @@ export class ImportModal extends Modal {
 			this.autoLoadObserver = null;
 		}
 		if (this.listEl !== null && this.listInteractionHandler !== null) {
-			this.listEl.removeEventListener('wheel', this.listInteractionHandler);
-			this.listEl.removeEventListener('touchmove', this.listInteractionHandler);
-			this.listEl.removeEventListener('scroll', this.listInteractionHandler);
+			this.listEl.removeEventListener(
+				'wheel',
+				this.listInteractionHandler,
+			);
+			this.listEl.removeEventListener(
+				'touchmove',
+				this.listInteractionHandler,
+			);
+			this.listEl.removeEventListener(
+				'scroll',
+				this.listInteractionHandler,
+			);
 		}
 		this.listInteractionHandler = null;
 		if (this.listEl !== null && this.scrollFallbackHandler !== null) {
-			this.listEl.removeEventListener('scroll', this.scrollFallbackHandler);
+			this.listEl.removeEventListener(
+				'scroll',
+				this.scrollFallbackHandler,
+			);
 		}
 		this.scrollFallbackHandler = null;
 	}
@@ -1858,7 +2041,10 @@ export class ImportModal extends Modal {
 			// them would bury the signal. Log every other block reason, but
 			// only once per distinct reason so a held state (e.g. a stuck
 			// prefetch) doesn't spam a line per scroll event.
-			if (reason !== 'throttle' && reason !== this.lastAutoLoadBlockReason) {
+			if (
+				reason !== 'throttle' &&
+				reason !== this.lastAutoLoadBlockReason
+			) {
 				this.lastAutoLoadBlockReason = reason;
 				this.logScrollDebug('auto-load blocked', {
 					source,
@@ -1911,7 +2097,9 @@ export class ImportModal extends Modal {
 			return false;
 		}
 		const remaining =
-			this.listEl.scrollHeight - this.listEl.scrollTop - this.listEl.clientHeight;
+			this.listEl.scrollHeight -
+			this.listEl.scrollTop -
+			this.listEl.clientHeight;
 		return remaining <= AUTO_LOAD_ROOT_MARGIN_PX;
 	}
 
@@ -1924,8 +2112,8 @@ export class ImportModal extends Modal {
 		const remainingPx =
 			this.listEl !== null
 				? this.listEl.scrollHeight -
-				  this.listEl.scrollTop -
-				  this.listEl.clientHeight
+					this.listEl.scrollTop -
+					this.listEl.clientHeight
 				: null;
 		return {
 			loaded: this.currentRecordings.length,
@@ -1999,7 +2187,9 @@ export class ImportModal extends Modal {
 		if (selected.length === 0) {
 			return;
 		}
-		const duplicatePolicy = await this.resolveDuplicatePolicyForImport(selected.length);
+		const duplicatePolicy = await this.resolveDuplicatePolicyForImport(
+			selected.length,
+		);
 		if (duplicatePolicy === null) {
 			return;
 		}
@@ -2108,7 +2298,12 @@ export class ImportModal extends Modal {
 			// were never attempted; carry that tail so a successful re-auth can
 			// resume exactly where the run stopped.
 			const tail = recordings.slice(outcome.processed);
-			this.renderAuthInterrupted(tail, selection, duplicatePolicy, combined);
+			this.renderAuthInterrupted(
+				tail,
+				selection,
+				duplicatePolicy,
+				combined,
+			);
 			return;
 		}
 
@@ -2159,24 +2354,32 @@ export class ImportModal extends Modal {
 	 * and a resumed batch so both wire the same duplicate policy, prompt
 	 * callback, and cross-folder dedup lookup.
 	 */
-	private buildImportWriter(duplicatePolicy: DuplicatePolicy): NoteWriter | null {
+	private buildImportWriter(
+		duplicatePolicy: DuplicatePolicy,
+	): NoteWriter | null {
 		try {
 			return new NoteWriter(this.app.vault, {
 				...this.noteWriterOptions,
 				onDuplicate: duplicatePolicy,
 				promptOnDuplicate:
-					duplicatePolicy === 'prompt' ? this.handleDuplicatePrompt : undefined,
+					duplicatePolicy === 'prompt'
+						? this.handleDuplicatePrompt
+						: undefined,
 				// Cross-folder dedup: let the writer find a prior import of the
 				// same recording that lives in a different subfolder (for example
 				// after the subfolder template changed) so it never writes a
 				// second copy. Backed by the vault index, read live so it reflects
 				// notes written earlier in this same run.
 				existingPathForPlaudId: (id) =>
-					this.importedIndex.get(id as PlaudRecordingId)?.path ?? null,
+					this.importedIndex.get(id as PlaudRecordingId)?.path ??
+					null,
 			});
 		} catch (err) {
 			if (err instanceof NoteWriterError) {
-				console.error('Plaud importer: NoteWriter construction failed', err);
+				console.error(
+					'Plaud importer: NoteWriter construction failed',
+					err,
+				);
 				this.renderError(classifyError(err));
 				return null;
 			}
@@ -2206,7 +2409,9 @@ export class ImportModal extends Modal {
 			text: `Plaud rejected your sign-in during the import. ${processed} of ${total} recordings were processed before it stopped. Sign in to resume the remaining ${tail.length}.`,
 			cls: 'plaud-importer-error-message',
 		});
-		const buttonRow = contentEl.createDiv({ cls: 'plaud-importer-buttons' });
+		const buttonRow = contentEl.createDiv({
+			cls: 'plaud-importer-buttons',
+		});
 
 		const onSuccess = (): Promise<void> => {
 			this.renderResumeReady(
@@ -2253,7 +2458,9 @@ export class ImportModal extends Modal {
 			text: `${headline} Resume the import, or go back to the list.`,
 			cls: 'plaud-importer-loading',
 		});
-		const buttonRow = contentEl.createDiv({ cls: 'plaud-importer-buttons' });
+		const buttonRow = contentEl.createDiv({
+			cls: 'plaud-importer-buttons',
+		});
 
 		const resumeButton = buttonRow.createEl('button', {
 			text: `Resume remaining (${tail.length})`,
@@ -2278,10 +2485,15 @@ export class ImportModal extends Modal {
 			});
 		});
 
-		const backButton = buttonRow.createEl('button', { text: 'Back to list' });
+		const backButton = buttonRow.createEl('button', {
+			text: 'Back to list',
+		});
 		backButton.addEventListener('click', () => {
 			this.refresh().catch((err) => {
-				console.error('Plaud importer: reload after re-auth failed', err);
+				console.error(
+					'Plaud importer: reload after re-auth failed',
+					err,
+				);
 				this.renderError(classifyError(err));
 			});
 		});
@@ -2315,7 +2527,9 @@ export class ImportModal extends Modal {
 			return null;
 		}
 		if (choice === 'skip') {
-			new Notice('Plaud importer: using "skip existing" for this import run.');
+			new Notice(
+				'Plaud importer: using "skip existing" for this import run.',
+			);
 			return 'skip';
 		}
 		return 'overwrite';
@@ -2328,7 +2542,9 @@ export class ImportModal extends Modal {
 	 * prompts in the same batch. Cancel bubbles back as 'cancel' which
 	 * the writer translates into NoteWriterCancelledError.
 	 */
-	private readonly handleDuplicatePrompt: DuplicatePromptCallback = async (ctx) => {
+	private readonly handleDuplicatePrompt: DuplicatePromptCallback = async (
+		ctx,
+	) => {
 		if (this.aborted) {
 			return 'cancel';
 		}
@@ -2347,11 +2563,15 @@ export class ImportModal extends Modal {
 				return 'skip';
 			case 'overwrite-all':
 				this.stickyDuplicateDecision = 'overwrite';
-				new Notice('Plaud importer: overwriting all remaining duplicates in this run.');
+				new Notice(
+					'Plaud importer: overwriting all remaining duplicates in this run.',
+				);
 				return 'overwrite';
 			case 'skip-all':
 				this.stickyDuplicateDecision = 'skip';
-				new Notice('Plaud importer: skipping all remaining duplicates in this run.');
+				new Notice(
+					'Plaud importer: skipping all remaining duplicates in this run.',
+				);
 				return 'skip';
 			case 'cancel':
 				return 'cancel';
@@ -2379,7 +2599,11 @@ export class ImportModal extends Modal {
 		selectedCount: number,
 	): Promise<'overwrite' | 'skip' | 'cancel'> {
 		return new Promise((resolve) => {
-			const modal = new OverwriteConfirmationModal(this.app, selectedCount, resolve);
+			const modal = new OverwriteConfirmationModal(
+				this.app,
+				selectedCount,
+				resolve,
+			);
 			modal.open();
 		});
 	}
@@ -2408,13 +2632,17 @@ export class ImportModal extends Modal {
 				return;
 			}
 			const body = await this.app.vault.read(file);
-			const headerLevel = this.noteWriterOptions.transcriptHeaderLevel ?? 4;
+			const headerLevel =
+				this.noteWriterOptions.transcriptHeaderLevel ?? 4;
 			// Fold the wrapping transcript heading so the chaptered transcript
 			// opens collapsed. The transcript is the final section, so this
 			// single heading-fold collapses it to end-of-note. Template outputs
 			// stay expanded (folding their shallower H2 would subsume the
 			// deeper transcript heading).
-			const transcriptHeadingLine = findTranscriptHeadingLine(body, headerLevel);
+			const transcriptHeadingLine = findTranscriptHeadingLine(
+				body,
+				headerLevel,
+			);
 			if (transcriptHeadingLine === null) {
 				return;
 			}
@@ -2429,7 +2657,10 @@ export class ImportModal extends Modal {
 			// Obsidian surface — guard its presence at runtime to stay
 			// compatible with future Obsidian versions that might move
 			// or rename it.
-			if (this.app.foldManager && typeof this.app.foldManager.save === 'function') {
+			if (
+				this.app.foldManager &&
+				typeof this.app.foldManager.save === 'function'
+			) {
 				await this.app.foldManager.save(file, foldInfo);
 			}
 			// Best-effort in-session apply: if the note is already open
@@ -2455,7 +2686,6 @@ export class ImportModal extends Modal {
 		}
 	}
 
-
 	private logImportDebug(message: string, payload?: unknown): void {
 		const logger = this.noteWriterOptions.debugLogger;
 		if (!logger || !logger.enabled) {
@@ -2468,7 +2698,6 @@ export class ImportModal extends Modal {
 			payload,
 		});
 	}
-
 
 	private renderSummary(tally: ImportTally): void {
 		// Fire the Notice FIRST so a DOM-render failure cannot eat the
@@ -2531,7 +2760,10 @@ export class ImportModal extends Modal {
 			});
 			copyAllFailures.addEventListener('click', () => {
 				const payload = tally.failures
-					.filter((f): f is ImportResult & { kind: 'failed' } => f.kind === 'failed')
+					.filter(
+						(f): f is ImportResult & { kind: 'failed' } =>
+							f.kind === 'failed',
+					)
 					.map((f) => {
 						return [
 							`Recording: ${f.recording.title} (${f.recording.id})`,
@@ -2609,7 +2841,9 @@ export class ImportModal extends Modal {
 			}
 		}
 
-		const buttonRow = contentEl.createDiv({ cls: 'plaud-importer-buttons' });
+		const buttonRow = contentEl.createDiv({
+			cls: 'plaud-importer-buttons',
+		});
 		const closeButton = buttonRow.createEl('button', {
 			text: 'Done',
 			cls: 'mod-cta',
@@ -2658,7 +2892,10 @@ export class ImportModal extends Modal {
 					return;
 				}
 				this.cancelAutoClose();
-				if (!(event.target instanceof Node) || !closeButton.contains(event.target)) {
+				if (
+					!(event.target instanceof Node) ||
+					!closeButton.contains(event.target)
+				) {
 					countdownEl.setText('Auto-close cancelled');
 				}
 			},

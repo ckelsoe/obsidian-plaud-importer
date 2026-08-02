@@ -48,7 +48,13 @@ const LONG_LIVED_TOKEN = makeJwt(
 // capture guard accepts it while live), plus the wid claim the guard ignores.
 const WORKSPACE_TOKEN = makeJwt(
 	{ alg: 'HS256', typ: 'WT' },
-	{ sub: 'user-123', exp: FUTURE_EXP, client_id: 'web', wid: 'ws-1', region: 'us' },
+	{
+		sub: 'user-123',
+		exp: FUTURE_EXP,
+		client_id: 'web',
+		wid: 'ws-1',
+		region: 'us',
+	},
 );
 
 // The neighboring profile/ID JWT in the same localStorage: payload is only
@@ -94,7 +100,9 @@ describe('isUsableUserToken (capture guard)', () => {
 	});
 
 	it('accepts a bearer-prefixed token (the localStorage value form)', () => {
-		expect(isUsableUserToken(`bearer ${LONG_LIVED_TOKEN}`, NOW_MS)).toBe(true);
+		expect(isUsableUserToken(`bearer ${LONG_LIVED_TOKEN}`, NOW_MS)).toBe(
+			true,
+		);
 	});
 
 	it('accepts a live workspace token too (it also carries exp and client_id)', () => {
@@ -138,7 +146,10 @@ describe('isUsableUserToken (capture guard)', () => {
 	});
 
 	it('rejects a token with a future exp but a missing client_id', () => {
-		const noClient = makeJwt({ alg: 'HS256', typ: 'JWT' }, { exp: FUTURE_EXP });
+		const noClient = makeJwt(
+			{ alg: 'HS256', typ: 'JWT' },
+			{ exp: FUTURE_EXP },
+		);
 		expect(isUsableUserToken(noClient, NOW_MS)).toBe(false);
 	});
 
@@ -152,9 +163,15 @@ describe('isUsableUserToken (capture guard)', () => {
 		// The parser splits on '.' and requires exactly three base64url segments,
 		// so a trailing suffix (or any non-base64url character) is rejected rather
 		// than having an inner JWT plucked out and stored.
-		expect(isUsableUserToken(`${LONG_LIVED_TOKEN} trailing`, NOW_MS)).toBe(false);
-		expect(isUsableUserToken(`prefix ${LONG_LIVED_TOKEN}`, NOW_MS)).toBe(false);
-		expect(isUsableUserToken(`${LONG_LIVED_TOKEN}.extra`, NOW_MS)).toBe(false);
+		expect(isUsableUserToken(`${LONG_LIVED_TOKEN} trailing`, NOW_MS)).toBe(
+			false,
+		);
+		expect(isUsableUserToken(`prefix ${LONG_LIVED_TOKEN}`, NOW_MS)).toBe(
+			false,
+		);
+		expect(isUsableUserToken(`${LONG_LIVED_TOKEN}.extra`, NOW_MS)).toBe(
+			false,
+		);
 	});
 
 	it('defaults nowMs to the current time when omitted', () => {
@@ -335,7 +352,9 @@ describe('readTokenLifetime', () => {
 // assertions match shapes, never exact dates.
 describe('describeTokenLifetime', () => {
 	it('describes a live short token by hours left and issued hours', () => {
-		const desc = describeTokenLifetime(readTokenLifetime(SHORT_TOKEN, NOW_MS));
+		const desc = describeTokenLifetime(
+			readTokenLifetime(SHORT_TOKEN, NOW_MS),
+		);
 		expect(desc).toMatch(/^About \d+ hours? left \(issued for 24 hours\)$/);
 	});
 
@@ -375,9 +394,9 @@ describe('describeTokenLifetime', () => {
 			{ alg: 'HS256', typ: 'JWT' },
 			{ exp: FUTURE_EXP, iat: FUTURE_EXP + 999_999, client_id: 'web' },
 		);
-		expect(
-			describeTokenLifetime(readTokenLifetime(bad, NOW_MS)),
-		).toContain('issued lifetime unknown');
+		expect(describeTokenLifetime(readTokenLifetime(bad, NOW_MS))).toContain(
+			'issued lifetime unknown',
+		);
 	});
 });
 
@@ -403,7 +422,10 @@ describe('formatSessionStatus', () => {
 	});
 
 	it('surfaces a workspace token by typ and hasWid, never the wid value', () => {
-		const out = formatSessionStatus({ ...base, tokenValue: WORKSPACE_TOKEN });
+		const out = formatSessionStatus({
+			...base,
+			tokenValue: WORKSPACE_TOKEN,
+		});
 		expect(out).toContain('token.header.typ: WT');
 		expect(out).toContain('token.hasWid: true');
 		expect(out).toContain('token.lifetimeHours: (no iat claim)');
@@ -424,9 +446,9 @@ describe('formatSessionStatus', () => {
 		expect(formatSessionStatus({ ...base, tokenValue: '' })).toContain(
 			'token: none stored',
 		);
-		expect(formatSessionStatus({ ...base, tokenValue: 'garbage' })).toContain(
-			'token: stored, but not a readable Plaud token',
-		);
+		expect(
+			formatSessionStatus({ ...base, tokenValue: 'garbage' }),
+		).toContain('token: stored, but not a readable Plaud token');
 		expect(
 			formatSessionStatus({ ...base, signInMethod: '', tokenValue: '' }),
 		).toContain('signInMethod: (not recorded)');

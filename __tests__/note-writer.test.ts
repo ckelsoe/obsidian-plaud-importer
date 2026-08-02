@@ -75,8 +75,18 @@ function makeTranscript(overrides: Partial<Transcript> = {}): Transcript {
 	return {
 		id: 'abc123' as PlaudRecordingId,
 		segments: [
-			{ startSeconds: 0, endSeconds: 14, speaker: 'Charles', text: 'Thanks for making time.' },
-			{ startSeconds: 14, endSeconds: 45, speaker: 'Mary', text: 'Of course, glad to be here.' },
+			{
+				startSeconds: 0,
+				endSeconds: 14,
+				speaker: 'Charles',
+				text: 'Thanks for making time.',
+			},
+			{
+				startSeconds: 14,
+				endSeconds: 45,
+				speaker: 'Mary',
+				text: 'Of course, glad to be here.',
+			},
 		],
 		rawText: 'Thanks for making time. Of course, glad to be here.',
 		...overrides,
@@ -113,7 +123,11 @@ describe('sanitizeFilename', () => {
 		['pipe', 'foo|bar', 'foo-bar'],
 		['question mark', 'Why?', 'Why-'],
 		['asterisk', 'important*', 'important-'],
-		['square brackets (wikilink collision)', 'Note [draft]', 'Note -draft-'],
+		[
+			'square brackets (wikilink collision)',
+			'Note [draft]',
+			'Note -draft-',
+		],
 	])('replaces %s with dashes', (_label, input, expected) => {
 		expect(sanitizeFilename(input)).toBe(expected);
 	});
@@ -161,8 +175,14 @@ describe('sanitizeFilename', () => {
 	});
 
 	it.each([
-		['CON'], ['PRN'], ['AUX'], ['NUL'],
-		['COM1'], ['COM9'], ['LPT1'], ['LPT9'],
+		['CON'],
+		['PRN'],
+		['AUX'],
+		['NUL'],
+		['COM1'],
+		['COM9'],
+		['LPT1'],
+		['LPT9'],
 	])('prefixes reserved Windows device name %s with underscore', (name) => {
 		expect(sanitizeFilename(name)).toBe(`_${name}`);
 	});
@@ -285,8 +305,18 @@ describe('extractSpeakers', () => {
 			segments: [
 				{ startSeconds: 0, endSeconds: 5, speaker: 'Alice', text: 'a' },
 				{ startSeconds: 5, endSeconds: 10, speaker: 'Bob', text: 'b' },
-				{ startSeconds: 10, endSeconds: 15, speaker: 'Alice', text: 'c' },
-				{ startSeconds: 15, endSeconds: 20, speaker: 'Charlie', text: 'd' },
+				{
+					startSeconds: 10,
+					endSeconds: 15,
+					speaker: 'Alice',
+					text: 'c',
+				},
+				{
+					startSeconds: 15,
+					endSeconds: 20,
+					speaker: 'Charlie',
+					text: 'd',
+				},
 			],
 		});
 		expect(extractSpeakers(t)).toEqual(['Alice', 'Bob', 'Charlie']);
@@ -295,8 +325,18 @@ describe('extractSpeakers', () => {
 	it('trims whitespace from speaker names before deduplicating', () => {
 		const t = makeTranscript({
 			segments: [
-				{ startSeconds: 0, endSeconds: 5, speaker: '  Alice ', text: 'a' },
-				{ startSeconds: 5, endSeconds: 10, speaker: 'Alice', text: 'b' },
+				{
+					startSeconds: 0,
+					endSeconds: 5,
+					speaker: '  Alice ',
+					text: 'a',
+				},
+				{
+					startSeconds: 5,
+					endSeconds: 10,
+					speaker: 'Alice',
+					text: 'b',
+				},
 			],
 		});
 		expect(extractSpeakers(t)).toEqual(['Alice']);
@@ -307,7 +347,12 @@ describe('extractSpeakers', () => {
 			segments: [
 				{ startSeconds: 0, endSeconds: 5, speaker: '', text: 'a' },
 				{ startSeconds: 5, endSeconds: 10, speaker: '   ', text: 'b' },
-				{ startSeconds: 10, endSeconds: 15, speaker: 'Alice', text: 'c' },
+				{
+					startSeconds: 10,
+					endSeconds: 15,
+					speaker: 'Alice',
+					text: 'c',
+				},
 			],
 		});
 		expect(extractSpeakers(t)).toEqual(['Alice']);
@@ -323,17 +368,17 @@ describe('formatDurationHoursMinutes', () => {
 		[45, '45s'],
 		[59, '59s'],
 		[60, '1m'],
-		[90, '2m'],        // rounds to nearest minute (1.5m → 2m)
+		[90, '2m'], // rounds to nearest minute (1.5m → 2m)
 		[119, '2m'],
 		[600, '10m'],
 		[1800, '30m'],
-		[3599, '1h'],      // 59m 59s rounds to 60m which pops into 1h
+		[3599, '1h'], // 59m 59s rounds to 60m which pops into 1h
 		[3600, '1h'],
-		[5430, '1h 31m'],  // 1h 30.5m rounds to 1h 31m
+		[5430, '1h 31m'], // 1h 30.5m rounds to 1h 31m
 		[7200, '2h'],
 		[7260, '2h 1m'],
 		[36000, '10h'],
-		[93600, '26h'],    // very long (26h)
+		[93600, '26h'], // very long (26h)
 	])('formats %d seconds as %s', (input, expected) => {
 		expect(formatDurationHoursMinutes(input)).toBe(expected);
 	});
@@ -384,21 +429,35 @@ describe('buildNoteName', () => {
 
 	it('replaces single-digit, slash, dot, year-first, US, and 2-digit-year dates', () => {
 		expect(buildNoteName('4-13 Meeting', apr14)).toBe('2026-04-14 Meeting');
-		expect(buildNoteName('04/13 Meeting', apr14)).toBe('2026-04-14 Meeting');
-		expect(buildNoteName('04.13 Standup', apr14)).toBe('2026-04-14 Standup');
-		expect(buildNoteName('2025-12-31 Party', apr14)).toBe('2026-04-14 Party');
+		expect(buildNoteName('04/13 Meeting', apr14)).toBe(
+			'2026-04-14 Meeting',
+		);
+		expect(buildNoteName('04.13 Standup', apr14)).toBe(
+			'2026-04-14 Standup',
+		);
+		expect(buildNoteName('2025-12-31 Party', apr14)).toBe(
+			'2026-04-14 Party',
+		);
 		expect(buildNoteName('2025/12/31 Gala', apr14)).toBe('2026-04-14 Gala');
-		expect(buildNoteName('12/31/2025 Recap', apr14)).toBe('2026-04-14 Recap');
+		expect(buildNoteName('12/31/2025 Recap', apr14)).toBe(
+			'2026-04-14 Recap',
+		);
 		expect(buildNoteName('2026-04-13 Done', apr14)).toBe('2026-04-14 Done');
-		expect(buildNoteName('04-13-26 Sprint', apr14)).toBe('2026-04-14 Sprint');
+		expect(buildNoteName('04-13-26 Sprint', apr14)).toBe(
+			'2026-04-14 Sprint',
+		);
 	});
 
 	it('strips a date glued to text (04/13-Meeting) too', () => {
-		expect(buildNoteName('04/13-Meeting', apr14)).toBe('2026-04-14 Meeting');
+		expect(buildNoteName('04/13-Meeting', apr14)).toBe(
+			'2026-04-14 Meeting',
+		);
 	});
 
 	it('trims leading whitespace before detecting the date', () => {
-		expect(buildNoteName('  04-13 Padded  ', apr14)).toBe('2026-04-14 Padded');
+		expect(buildNoteName('  04-13 Padded  ', apr14)).toBe(
+			'2026-04-14 Padded',
+		);
 	});
 
 	it('takes the day from the recording, not the title (day can shift)', () => {
@@ -432,7 +491,9 @@ describe('buildNoteName', () => {
 	});
 
 	it('keeps an out-of-range slash prefix', () => {
-		expect(buildNoteName('45/67 notes', apr14)).toBe('2026-04-14 45/67 notes');
+		expect(buildNoteName('45/67 notes', apr14)).toBe(
+			'2026-04-14 45/67 notes',
+		);
 	});
 
 	it('keeps a version-like prefix rather than reading it as a date', () => {
@@ -445,25 +506,41 @@ describe('buildNoteName', () => {
 
 	it('puts the date at the end when the template does', () => {
 		expect(
-			buildNoteName('04-13 Team sync', apr14, '{{title}} {{YYYY}}-{{MM}}-{{DD}}'),
+			buildNoteName(
+				'04-13 Team sync',
+				apr14,
+				'{{title}} {{YYYY}}-{{MM}}-{{DD}}',
+			),
 		).toBe('Team sync 2026-04-14');
 	});
 
 	it('applies a US-order template', () => {
 		expect(
-			buildNoteName('Team sync', apr14, '{{MM}}-{{DD}}-{{YYYY}} {{title}}'),
+			buildNoteName(
+				'Team sync',
+				apr14,
+				'{{MM}}-{{DD}}-{{YYYY}} {{title}}',
+			),
 		).toBe('04-14-2026 Team sync');
 	});
 
 	it('applies a EU-order template', () => {
 		expect(
-			buildNoteName('Team sync', apr14, '{{DD}}-{{MM}}-{{YYYY}} {{title}}'),
+			buildNoteName(
+				'Team sync',
+				apr14,
+				'{{DD}}-{{MM}}-{{YYYY}} {{title}}',
+			),
 		).toBe('14-04-2026 Team sync');
 	});
 
 	it('applies a named-month template', () => {
 		expect(
-			buildNoteName('Team sync', apr14, '{{MMM}} {{D}}, {{YYYY}} - {{title}}'),
+			buildNoteName(
+				'Team sync',
+				apr14,
+				'{{MMM}} {{D}}, {{YYYY}} - {{title}}',
+			),
 		).toBe('Apr 14, 2026 - Team sync');
 	});
 
@@ -495,20 +572,24 @@ describe('formatNoteName', () => {
 	const d = new Date(2026, 6, 3); // 2026-07-03 local (Jul 3)
 
 	it('renders the default ISO template with the title', () => {
-		expect(formatNoteName('{{YYYY}}-{{MM}}-{{DD}} {{title}}', d, 'Sync')).toBe(
-			'2026-07-03 Sync',
-		);
+		expect(
+			formatNoteName('{{YYYY}}-{{MM}}-{{DD}} {{title}}', d, 'Sync'),
+		).toBe('2026-07-03 Sync');
 	});
 
 	it('places the title wherever the template puts it', () => {
-		expect(formatNoteName('{{title}} {{YYYY}}-{{MM}}-{{DD}}', d, 'Sync')).toBe(
-			'Sync 2026-07-03',
-		);
+		expect(
+			formatNoteName('{{title}} {{YYYY}}-{{MM}}-{{DD}}', d, 'Sync'),
+		).toBe('Sync 2026-07-03');
 	});
 
 	it('renders US and EU orders', () => {
-		expect(formatNoteName('{{MM}}-{{DD}}-{{YYYY}}', d, '')).toBe('07-03-2026');
-		expect(formatNoteName('{{DD}}-{{MM}}-{{YYYY}}', d, '')).toBe('03-07-2026');
+		expect(formatNoteName('{{MM}}-{{DD}}-{{YYYY}}', d, '')).toBe(
+			'07-03-2026',
+		);
+		expect(formatNoteName('{{DD}}-{{MM}}-{{YYYY}}', d, '')).toBe(
+			'03-07-2026',
+		);
 	});
 
 	it('supports a 2-digit year and single-digit month/day', () => {
@@ -516,7 +597,9 @@ describe('formatNoteName', () => {
 	});
 
 	it('supports short and long month names and the weekday name', () => {
-		expect(formatNoteName('{{MMM}} {{D}}, {{YYYY}}', d, '')).toBe('Jul 3, 2026');
+		expect(formatNoteName('{{MMM}} {{D}}, {{YYYY}}', d, '')).toBe(
+			'Jul 3, 2026',
+		);
 		expect(formatNoteName('{{MMMM}} {{D}}', d, '')).toBe('July 3');
 		// dddd (weekday name) is new under Moment; the reporter asked for it.
 		expect(formatNoteName('{{dddd}}', d, '')).toBe('Friday');
@@ -536,7 +619,9 @@ describe('formatNoteName', () => {
 	});
 
 	it('leaves literal text and separators untouched', () => {
-		expect(formatNoteName('{{YYYY}}_{{MM}}_{{DD}}', d, '')).toBe('2026_07_03');
+		expect(formatNoteName('{{YYYY}}_{{MM}}_{{DD}}', d, '')).toBe(
+			'2026_07_03',
+		);
 	});
 
 	it('collapses whitespace and trims when the title is empty', () => {
@@ -568,28 +653,44 @@ describe('formatNoteName', () => {
 describe('isValidNoteNameTemplate', () => {
 	it('accepts the default and preset templates', () => {
 		expect(isValidNoteNameTemplate(DEFAULT_NOTE_NAME_TEMPLATE)).toBe(true);
-		expect(isValidNoteNameTemplate('{{MM}}-{{DD}}-{{YYYY}} {{title}}')).toBe(true);
-		expect(isValidNoteNameTemplate('{{title}} {{YYYY}}-{{MM}}-{{DD}}')).toBe(true);
+		expect(
+			isValidNoteNameTemplate('{{MM}}-{{DD}}-{{YYYY}} {{title}}'),
+		).toBe(true);
+		expect(
+			isValidNoteNameTemplate('{{title}} {{YYYY}}-{{MM}}-{{DD}}'),
+		).toBe(true);
 	});
 
 	it('accepts a comma, period, underscore, space, and parentheses', () => {
 		// A comma is filesystem-safe on all three OSes, so it is accepted.
-		expect(isValidNoteNameTemplate('{{MMM}} {{D}}, {{YYYY}} - {{title}}')).toBe(true);
-		expect(isValidNoteNameTemplate('{{YYYY}}.{{MM}}.{{DD}} ({{title}})')).toBe(true);
-		expect(isValidNoteNameTemplate('{{YYYY}}_{{MM}}_{{DD}}_{{title}}')).toBe(true);
+		expect(
+			isValidNoteNameTemplate('{{MMM}} {{D}}, {{YYYY}} - {{title}}'),
+		).toBe(true);
+		expect(
+			isValidNoteNameTemplate('{{YYYY}}.{{MM}}.{{DD}} ({{title}})'),
+		).toBe(true);
+		expect(
+			isValidNoteNameTemplate('{{YYYY}}_{{MM}}_{{DD}}_{{title}}'),
+		).toBe(true);
 	});
 
 	it('rejects a template whose render contains a path separator', () => {
 		expect(isValidNoteNameTemplate('{{YYYY}}/{{MM}}/{{DD}}')).toBe(false);
-		expect(isValidNoteNameTemplate('{{YYYY}}\\{{MM}} {{title}}')).toBe(false);
+		expect(isValidNoteNameTemplate('{{YYYY}}\\{{MM}} {{title}}')).toBe(
+			false,
+		);
 	});
 
 	it('rejects a colon, including one produced by a time token', () => {
 		// A literal colon and an HH:mm token both land a colon in the filename;
 		// real Moment happily renders the time token, so render-safety must catch it.
-		expect(isValidNoteNameTemplate('{{YYYY}}:{{MM}} {{title}}')).toBe(false);
+		expect(isValidNoteNameTemplate('{{YYYY}}:{{MM}} {{title}}')).toBe(
+			false,
+		);
 		expect(isValidNoteNameTemplate('{{HH:mm}}')).toBe(false);
-		expect(isValidNoteNameTemplate('{{YYYY}} {{HH:mm}} {{title}}')).toBe(false);
+		expect(isValidNoteNameTemplate('{{YYYY}} {{HH:mm}} {{title}}')).toBe(
+			false,
+		);
 	});
 
 	it('rejects the other Windows-forbidden filename characters', () => {
@@ -634,20 +735,26 @@ describe('resolveSubfolder', () => {
 	it('supports the named-month and weekday tokens (parity with note names)', () => {
 		// These worked only in note names before; issue #30 unifies the vocabulary.
 		expect(resolveSubfolder('{{MMMM}}', jun4)).toBe('June');
-		expect(resolveSubfolder('{{YYYY}}/{{MM MMMM}}', jun4)).toBe('2026/06 June');
+		expect(resolveSubfolder('{{YYYY}}/{{MM MMMM}}', jun4)).toBe(
+			'2026/06 June',
+		);
 		expect(resolveSubfolder('{{dddd}}', jun4)).toBe('Thursday');
 	});
 
 	it('supports nested tokens and literal path text', () => {
 		expect(resolveSubfolder('{{YYYY}}/{{MM}}', jun4)).toBe('2026/06');
-		expect(resolveSubfolder('meetings/{{YYYY-MM}}', jun4)).toBe('meetings/2026-06');
+		expect(resolveSubfolder('meetings/{{YYYY-MM}}', jun4)).toBe(
+			'meetings/2026-06',
+		);
 	});
 
 	it('keeps literal separators a user puts between tokens', () => {
 		// A dash between year and month.
 		expect(resolveSubfolder('{{YYYY}}-{{MM}}', jun4)).toBe('2026-06');
 		// Day-first ordering for non-US users, with their own separators.
-		expect(resolveSubfolder('{{DD}}-{{MM}}-{{YYYY}}', jun4)).toBe('04-06-2026');
+		expect(resolveSubfolder('{{DD}}-{{MM}}-{{YYYY}}', jun4)).toBe(
+			'04-06-2026',
+		);
 		// Literal text around a token.
 		expect(resolveSubfolder('Q{{Q}}-{{YYYY}}', jun4)).toBe('Q2-2026');
 	});
@@ -663,27 +770,39 @@ describe('resolveSubfolder', () => {
 	});
 
 	it('resolves to _undated when the recording date is missing or invalid', () => {
-		expect(resolveSubfolder('{{YYYY-MM}}', new Date(Number.NaN))).toBe('_undated');
+		expect(resolveSubfolder('{{YYYY-MM}}', new Date(Number.NaN))).toBe(
+			'_undated',
+		);
 	});
 
 	it('rejects a template that would escape the vault', () => {
-		expect(() => resolveSubfolder('../{{YYYY}}', jun4)).toThrow(NoteWriterError);
+		expect(() => resolveSubfolder('../{{YYYY}}', jun4)).toThrow(
+			NoteWriterError,
+		);
 	});
 
 	it('rejects a literal segment that is a reserved Windows device name', () => {
 		// These fail folder creation on Windows and can only come from literal text
 		// a user typed (no date token renders one), so the template is refused
 		// rather than a folder silently relocated. Case-insensitive.
-		expect(() => resolveSubfolder('CON/{{YYYY}}', jun4)).toThrow(NoteWriterError);
-		expect(() => resolveSubfolder('{{YYYY}}/nul', jun4)).toThrow(NoteWriterError);
+		expect(() => resolveSubfolder('CON/{{YYYY}}', jun4)).toThrow(
+			NoteWriterError,
+		);
+		expect(() => resolveSubfolder('{{YYYY}}/nul', jun4)).toThrow(
+			NoteWriterError,
+		);
 		expect(() => resolveSubfolder('lpt1', jun4)).toThrow(NoteWriterError);
 	});
 
 	it('rejects a reserved device name that carries an extension (CON.txt)', () => {
 		// Windows keys reserved names off the base before the first dot, so
 		// "CON.txt" and "NUL.md" are the device too, not just the bare name.
-		expect(() => resolveSubfolder('CON.txt/{{YYYY}}', jun4)).toThrow(NoteWriterError);
-		expect(() => resolveSubfolder('{{YYYY}}/nul.md', jun4)).toThrow(NoteWriterError);
+		expect(() => resolveSubfolder('CON.txt/{{YYYY}}', jun4)).toThrow(
+			NoteWriterError,
+		);
+		expect(() => resolveSubfolder('{{YYYY}}/nul.md', jun4)).toThrow(
+			NoteWriterError,
+		);
 		// A dotted segment whose base is NOT reserved stays legal.
 		expect(resolveSubfolder('2026.06/{{DD}}', jun4)).toBe('2026.06/04');
 	});
@@ -699,17 +818,25 @@ describe('resolveSubfolder', () => {
 		// The folder analogue of sanitizeFilename's length clamp: a single level
 		// over the 200-char limit fails folder creation, so the template is refused.
 		const tooLong = 'x'.repeat(201);
-		expect(() => resolveSubfolder(`${tooLong}/{{YYYY}}`, jun4)).toThrow(NoteWriterError);
+		expect(() => resolveSubfolder(`${tooLong}/{{YYYY}}`, jun4)).toThrow(
+			NoteWriterError,
+		);
 		// A 200-char segment is at the limit and still allowed.
-		expect(resolveSubfolder(`${'x'.repeat(200)}/{{MM}}`, jun4)).toBe(`${'x'.repeat(200)}/06`);
+		expect(resolveSubfolder(`${'x'.repeat(200)}/{{MM}}`, jun4)).toBe(
+			`${'x'.repeat(200)}/06`,
+		);
 	});
 
 	it('rejects a segment ending in a dot or space (Windows drops them)', () => {
 		// A trailing dot/space makes "2026 " and "2026" collide on Windows, which
 		// breaks the duplicate guard. A trailing token on a non-final segment is the
 		// reachable case; the whole-path ends are already trimmed by normalizeFolderPath.
-		expect(() => resolveSubfolder('{{YYYY}} /{{MM}}', jun4)).toThrow(NoteWriterError);
-		expect(() => resolveSubfolder('{{YYYY}}./{{MM}}', jun4)).toThrow(NoteWriterError);
+		expect(() => resolveSubfolder('{{YYYY}} /{{MM}}', jun4)).toThrow(
+			NoteWriterError,
+		);
+		expect(() => resolveSubfolder('{{YYYY}}./{{MM}}', jun4)).toThrow(
+			NoteWriterError,
+		);
 	});
 
 	it('does not reject ordinary date-token output that merely contains reserved letters', () => {
@@ -734,13 +861,17 @@ describe('resolveSubfolder', () => {
 		// an intentional nesting separator.
 		const withTime = new Date(2026, 5, 4, 14, 5); // 2026-06-04 14:05 local
 		expect(resolveSubfolder('{{HH:mm}}', withTime)).toBe('14-05');
-		expect(resolveSubfolder('{{YYYY}}/{{HH:mm}}', withTime)).toBe('2026/14-05');
+		expect(resolveSubfolder('{{YYYY}}/{{HH:mm}}', withTime)).toBe(
+			'2026/14-05',
+		);
 	});
 
 	it('uses local-time fields, matching the date: frontmatter basis', () => {
 		// A late-evening local time must not roll into the next UTC day.
 		const lateLocal = new Date(2026, 0, 31, 23, 30); // 2026-01-31 23:30 local
-		expect(resolveSubfolder('{{YYYY-MM}}/{{DD}}', lateLocal)).toBe('2026-01/31');
+		expect(resolveSubfolder('{{YYYY-MM}}/{{DD}}', lateLocal)).toBe(
+			'2026-01/31',
+		);
 	});
 
 	it('expands {{WW}} to a zero-padded ISO week number', () => {
@@ -751,7 +882,9 @@ describe('resolveSubfolder', () => {
 	});
 
 	it('pairs {{YYYY}} with {{WW}} for week-foldered layouts', () => {
-		expect(resolveSubfolder('{{YYYY}}/W{{WW}}', new Date(2026, 0, 4))).toBe('2026/W01');
+		expect(resolveSubfolder('{{YYYY}}/W{{WW}}', new Date(2026, 0, 4))).toBe(
+			'2026/W01',
+		);
 	});
 
 	it('expands {{Q}} to the calendar quarter', () => {
@@ -764,28 +897,36 @@ describe('resolveSubfolder', () => {
 
 	// {{title}} support (issue #30 follow-up) for folder-note layouts.
 	it('expands {{title}} to the recording title', () => {
-		expect(resolveSubfolder('{{title}}', jun4, 'Team sync')).toBe('Team sync');
+		expect(resolveSubfolder('{{title}}', jun4, 'Team sync')).toBe(
+			'Team sync',
+		);
 		expect(resolveSubfolder('{{YYYY}}/{{title}}', jun4, 'Team sync')).toBe(
 			'2026/Team sync',
 		);
 	});
 
 	it('strips a leading date from a {{title}} folder, matching the note name', () => {
-		expect(resolveSubfolder('{{title}}', jun4, '06-04 Team sync')).toBe('Team sync');
-		expect(resolveSubfolder('{{title}}', jun4, '2026-06-04 Team sync')).toBe(
+		expect(resolveSubfolder('{{title}}', jun4, '06-04 Team sync')).toBe(
 			'Team sync',
 		);
+		expect(
+			resolveSubfolder('{{title}}', jun4, '2026-06-04 Team sync'),
+		).toBe('Team sync');
 	});
 
 	it('flattens a slash or backslash in a title so it stays one folder', () => {
 		// A slash in a title must NOT create an extra nesting level; it is flattened
 		// to the replacement char before the path split.
-		expect(resolveSubfolder('{{title}}', jun4, 'Q3/Q4 sync')).toBe('Q3-Q4 sync');
+		expect(resolveSubfolder('{{title}}', jun4, 'Q3/Q4 sync')).toBe(
+			'Q3-Q4 sync',
+		);
 		// normalizeFolderPath turns a stray backslash into '/', so it is flattened
 		// too, before that conversion.
 		expect(resolveSubfolder('{{title}}', jun4, 'a\\b')).toBe('a-b');
 		// A literal '/' the user types between tokens still nests.
-		expect(resolveSubfolder('{{YYYY}}/{{title}}', jun4, 'A/B')).toBe('2026/A-B');
+		expect(resolveSubfolder('{{YYYY}}/{{title}}', jun4, 'A/B')).toBe(
+			'2026/A-B',
+		);
 	});
 
 	it('uses the configured replacement char for a flattened title separator', () => {
@@ -795,7 +936,9 @@ describe('resolveSubfolder', () => {
 	it('sanitizes other forbidden characters in a {{title}} folder per segment', () => {
 		// A colon in the title is not a path separator, so the per-segment folder
 		// sanitizer rewrites it (to the replacement char) after the split.
-		expect(resolveSubfolder('{{title}}', jun4, 'Q2: review')).toBe('Q2- review');
+		expect(resolveSubfolder('{{title}}', jun4, 'Q2: review')).toBe(
+			'Q2- review',
+		);
 	});
 
 	it('does not throw on a title that is unusable as a raw folder segment', () => {
@@ -803,8 +946,12 @@ describe('resolveSubfolder', () => {
 		// device name, a trailing dot/space, or an over-length title must sanitize
 		// (like a filename) rather than throw and abort the import.
 		expect(resolveSubfolder('{{title}}', jun4, 'CON')).toBe('_CON');
-		expect(resolveSubfolder('{{title}}', jun4, 'Team sync.')).toBe('Team sync');
-		expect(resolveSubfolder('{{title}}', jun4, 'Team sync ')).toBe('Team sync');
+		expect(resolveSubfolder('{{title}}', jun4, 'Team sync.')).toBe(
+			'Team sync',
+		);
+		expect(resolveSubfolder('{{title}}', jun4, 'Team sync ')).toBe(
+			'Team sync',
+		);
 		expect(resolveSubfolder('{{title}}', jun4, 'x'.repeat(201))).toBe(
 			'x'.repeat(200),
 		);
@@ -814,7 +961,9 @@ describe('resolveSubfolder', () => {
 		// A title that reduces to empty (only a date, blank, or only punctuation
 		// that sanitizes away) would otherwise resolve to '' and drop the note into
 		// the output root, or produce a folder literally named 'Untitled'.
-		expect(resolveSubfolder('{{title}}', jun4, '2026-06-04')).toBe('_untitled');
+		expect(resolveSubfolder('{{title}}', jun4, '2026-06-04')).toBe(
+			'_untitled',
+		);
 		expect(resolveSubfolder('{{title}}', jun4, '')).toBe('_untitled');
 		expect(resolveSubfolder('{{title}}', jun4, '   ')).toBe('_untitled');
 		expect(resolveSubfolder('{{title}}', jun4, '.')).toBe('_untitled');
@@ -828,42 +977,72 @@ describe('resolveSubfolder', () => {
 
 	// {{plaud-folder}} support (issue #16 follow-up): the 5th arg is the folder.
 	it('expands {{plaud-folder}} to the Plaud folder name', () => {
-		expect(resolveSubfolder('{{plaud-folder}}', jun4, undefined, '-', 'Meetings')).toBe(
-			'Meetings',
-		);
 		expect(
-			resolveSubfolder('{{plaud-folder}}/{{YYYY}}', jun4, undefined, '-', 'Meetings'),
+			resolveSubfolder(
+				'{{plaud-folder}}',
+				jun4,
+				undefined,
+				'-',
+				'Meetings',
+			),
+		).toBe('Meetings');
+		expect(
+			resolveSubfolder(
+				'{{plaud-folder}}/{{YYYY}}',
+				jun4,
+				undefined,
+				'-',
+				'Meetings',
+			),
 		).toBe('Meetings/2026');
 	});
 
 	it('flattens a slash in a folder name and sanitizes forbidden characters', () => {
 		// Plaud folders are flat, so a '/' in a name is literal text, flattened to
 		// the replacement rather than treated as a nesting level.
-		expect(resolveSubfolder('{{plaud-folder}}', jun4, undefined, '-', 'Q3/Q4')).toBe(
-			'Q3-Q4',
-		);
-		expect(resolveSubfolder('{{plaud-folder}}', jun4, undefined, '_', 'A:B')).toBe(
-			'A_B',
-		);
+		expect(
+			resolveSubfolder('{{plaud-folder}}', jun4, undefined, '-', 'Q3/Q4'),
+		).toBe('Q3-Q4');
+		expect(
+			resolveSubfolder('{{plaud-folder}}', jun4, undefined, '_', 'A:B'),
+		).toBe('A_B');
 	});
 
 	it('expands an unfiled recording (empty folder) to a literal _unfiled segment', () => {
-		expect(resolveSubfolder('{{plaud-folder}}', jun4, undefined, '-', '')).toBe(
-			'_unfiled',
-		);
+		expect(
+			resolveSubfolder('{{plaud-folder}}', jun4, undefined, '-', ''),
+		).toBe('_unfiled');
 		// _unfiled expands inline wherever the token sits, so unfiled recordings are
 		// visibly grouped instead of mixing into the sibling date level.
 		expect(
-			resolveSubfolder('{{YYYY}}/{{plaud-folder}}', jun4, undefined, '-', ''),
+			resolveSubfolder(
+				'{{YYYY}}/{{plaud-folder}}',
+				jun4,
+				undefined,
+				'-',
+				'',
+			),
 		).toBe('2026/_unfiled');
 		expect(
-			resolveSubfolder('{{plaud-folder}}/{{YYYY}}', jun4, undefined, '-', ''),
+			resolveSubfolder(
+				'{{plaud-folder}}/{{YYYY}}',
+				jun4,
+				undefined,
+				'-',
+				'',
+			),
 		).toBe('_unfiled/2026');
 	});
 
 	it('combines {{plaud-folder}} and {{title}} in one template', () => {
 		expect(
-			resolveSubfolder('{{plaud-folder}}/{{title}}', jun4, 'Team sync', '-', 'Meetings'),
+			resolveSubfolder(
+				'{{plaud-folder}}/{{title}}',
+				jun4,
+				'Team sync',
+				'-',
+				'Meetings',
+			),
 		).toBe('Meetings/Team sync');
 	});
 });
@@ -879,20 +1058,26 @@ describe('migrateLegacyDateTemplate', () => {
 	it('rewrites {{dd}} to {{DD}}, preserving the day-of-month output', () => {
 		expect(migrateLegacyDateTemplate('{{dd}}')).toBe('{{DD}}');
 		// Legacy dd = "03"; unmigrated Moment dd = "Fr" (weekday abbreviation).
-		expect(formatNoteName(migrateLegacyDateTemplate('{{dd}}'), jul3, '')).toBe('03');
+		expect(
+			formatNoteName(migrateLegacyDateTemplate('{{dd}}'), jul3, ''),
+		).toBe('03');
 	});
 
 	it('rewrites {{d}} to {{D}}, preserving the day-of-month output', () => {
 		expect(migrateLegacyDateTemplate('{{d}}')).toBe('{{D}}');
 		// Legacy d = "3"; unmigrated Moment d = "5" (day-of-week number).
-		expect(formatNoteName(migrateLegacyDateTemplate('{{d}}'), jul3, '')).toBe('3');
+		expect(
+			formatNoteName(migrateLegacyDateTemplate('{{d}}'), jul3, ''),
+		).toBe('3');
 	});
 
 	it('rewrites {{ww}} to {{WW}}, preserving the ISO week output', () => {
 		expect(migrateLegacyDateTemplate('{{ww}}')).toBe('{{WW}}');
 		// Jan 4 2026 is ISO week 01; unmigrated Moment ww = "02" (LOCALE week).
 		const jan4 = new Date(2026, 0, 4);
-		expect(formatNoteName(migrateLegacyDateTemplate('{{ww}}'), jan4, '')).toBe('01');
+		expect(
+			formatNoteName(migrateLegacyDateTemplate('{{ww}}'), jan4, ''),
+		).toBe('01');
 	});
 
 	it('recases the remaining year tokens, preserving output', () => {
@@ -900,23 +1085,32 @@ describe('migrateLegacyDateTemplate', () => {
 		expect(migrateLegacyDateTemplate('{{yy}}')).toBe('{{YY}}');
 		expect(migrateLegacyDateTemplate('{{yyyy-MM}}')).toBe('{{YYYY-MM}}');
 		// Legacy yy = "26"; unmigrated Moment yy = "2026" (full year).
-		expect(formatNoteName(migrateLegacyDateTemplate('{{yy}}'), jul3, '')).toBe('26');
+		expect(
+			formatNoteName(migrateLegacyDateTemplate('{{yy}}'), jul3, ''),
+		).toBe('26');
 	});
 
 	it('migrates the old default note-name template output-preservingly', () => {
 		const oldDefault = '{{yyyy}}-{{MM}}-{{dd}} {{title}}';
-		expect(migrateLegacyDateTemplate(oldDefault)).toBe(DEFAULT_NOTE_NAME_TEMPLATE);
-		// The migrated template renders the exact legacy note name.
-		expect(formatNoteName(migrateLegacyDateTemplate(oldDefault), jul3, 'Sync')).toBe(
-			'2026-07-03 Sync',
+		expect(migrateLegacyDateTemplate(oldDefault)).toBe(
+			DEFAULT_NOTE_NAME_TEMPLATE,
 		);
+		// The migrated template renders the exact legacy note name.
+		expect(
+			formatNoteName(migrateLegacyDateTemplate(oldDefault), jul3, 'Sync'),
+		).toBe('2026-07-03 Sync');
 	});
 
 	it('migrates a legacy subfolder template output-preservingly', () => {
 		const jun4 = new Date(2026, 5, 4);
-		expect(migrateLegacyDateTemplate('{{yyyy}}/W{{ww}}')).toBe('{{YYYY}}/W{{WW}}');
+		expect(migrateLegacyDateTemplate('{{yyyy}}/W{{ww}}')).toBe(
+			'{{YYYY}}/W{{WW}}',
+		);
 		expect(
-			resolveSubfolder(migrateLegacyDateTemplate('{{yyyy}}/W{{ww}}'), jun4),
+			resolveSubfolder(
+				migrateLegacyDateTemplate('{{yyyy}}/W{{ww}}'),
+				jun4,
+			),
 		).toBe('2026/W23');
 	});
 
@@ -924,13 +1118,15 @@ describe('migrateLegacyDateTemplate', () => {
 		expect(
 			migrateLegacyDateTemplate('{{YYYY}}-{{MM}}-{{DD}} {{title}}'),
 		).toBe('{{YYYY}}-{{MM}}-{{DD}} {{title}}');
-		expect(migrateLegacyDateTemplate('{{MMMM}} {{MM}} {{Q}} {{title}}')).toBe(
-			'{{MMMM}} {{MM}} {{Q}} {{title}}',
-		);
+		expect(
+			migrateLegacyDateTemplate('{{MMMM}} {{MM}} {{Q}} {{title}}'),
+		).toBe('{{MMMM}} {{MM}} {{Q}} {{title}}');
 	});
 
 	it('is idempotent: a second pass changes nothing', () => {
-		const once = migrateLegacyDateTemplate('{{yyyy}}-{{MM}}-{{dd}} {{title}}');
+		const once = migrateLegacyDateTemplate(
+			'{{yyyy}}-{{MM}}-{{dd}} {{title}}',
+		);
 		expect(migrateLegacyDateTemplate(once)).toBe(once);
 	});
 
@@ -952,7 +1148,9 @@ describe('English locale is pinned (issue #30 output-preservation)', () => {
 		// A synthetic non-English locale, so the test needs no extra locale package.
 		// defineLocale also switches the active locale to it as a side effect.
 		moment.defineLocale('xx-test', {
-			months: 'Mo1_Mo2_Mo3_Mo4_Mo5_Mo6_Mo7_Mo8_Mo9_Mo10_Mo11_Mo12'.split('_'),
+			months: 'Mo1_Mo2_Mo3_Mo4_Mo5_Mo6_Mo7_Mo8_Mo9_Mo10_Mo11_Mo12'.split(
+				'_',
+			),
 			weekdays: 'Dy0_Dy1_Dy2_Dy3_Dy4_Dy5_Dy6'.split('_'),
 		});
 		try {
@@ -975,9 +1173,9 @@ describe('settings live preview', () => {
 	it('renders the subfolder preview against the shared sample date', () => {
 		// The sample recording is 2026-07-05 (a Sunday); this is what the settings
 		// preview shows under the subfolder field.
-		expect(resolveSubfolder('{{YYYY}}/{{MM MMMM}}', TEMPLATE_PREVIEW_DATE)).toBe(
-			'2026/07 July',
-		);
+		expect(
+			resolveSubfolder('{{YYYY}}/{{MM MMMM}}', TEMPLATE_PREVIEW_DATE),
+		).toBe('2026/07 July');
 	});
 
 	it('renders the note-name preview against the shared sample recording', () => {
@@ -1018,7 +1216,9 @@ describe('formatPlaudWebUrl', () => {
 	});
 
 	it('passes through plain alphanumeric IDs without encoding', () => {
-		expect(formatPlaudWebUrl('abc123')).toBe('https://web.plaud.ai/file/abc123');
+		expect(formatPlaudWebUrl('abc123')).toBe(
+			'https://web.plaud.ai/file/abc123',
+		);
 	});
 });
 
@@ -1030,7 +1230,9 @@ describe('formatFrontmatter', () => {
 		const lines = fm.split('\n');
 		expect(lines[0]).toBe('---');
 		expect(lines).toContain('plaud-id: abc123');
-		expect(lines).toContain('plaud-url: "https://web.plaud.ai/file/abc123"');
+		expect(lines).toContain(
+			'plaud-url: "https://web.plaud.ai/file/abc123"',
+		);
 		expect(lines).toContain('date: 2026-04-14');
 		expect(lines).toContain('duration-seconds: 600');
 		// The human-readable duration starts with a digit so yamlScalar
@@ -1089,12 +1291,18 @@ describe('formatFrontmatter', () => {
 	});
 
 	it('emits plaud-version-ms as a raw number when versionMs is present (auto-sync cursor)', () => {
-		const fm = formatFrontmatter(makeRecording({ versionMs: 1782918853105 }), []);
+		const fm = formatFrontmatter(
+			makeRecording({ versionMs: 1782918853105 }),
+			[],
+		);
 		expect(fm).toContain('plaud-version-ms: 1782918853105');
 	});
 
 	it('omits plaud-version-ms when versionMs is absent', () => {
-		const fm = formatFrontmatter(makeRecording({ versionMs: undefined }), []);
+		const fm = formatFrontmatter(
+			makeRecording({ versionMs: undefined }),
+			[],
+		);
 		expect(fm).not.toMatch(/plaud-version-ms:/);
 	});
 
@@ -1107,7 +1315,10 @@ describe('formatFrontmatter', () => {
 	});
 
 	it('quotes YAML scalars with special characters', () => {
-		const fm = formatFrontmatter(makeRecording(), ['Ana: Chen', 'Bo "B" Li']);
+		const fm = formatFrontmatter(makeRecording(), [
+			'Ana: Chen',
+			'Bo "B" Li',
+		]);
 		expect(fm).toContain('speakers: ["Ana: Chen", "Bo \\"B\\" Li"]');
 	});
 
@@ -1161,7 +1372,9 @@ describe('formatFrontmatter', () => {
 	});
 
 	it('omits plaud-folder when folders is absent or empty', () => {
-		expect(formatFrontmatter(makeRecording(), [])).not.toMatch(/plaud-folder:/);
+		expect(formatFrontmatter(makeRecording(), [])).not.toMatch(
+			/plaud-folder:/,
+		);
 		expect(
 			formatFrontmatter(makeRecording(), [], null, undefined, []),
 		).not.toMatch(/plaud-folder:/);
@@ -1169,12 +1382,28 @@ describe('formatFrontmatter', () => {
 
 	// datetime property (issue #32). The recording is 2026-04-14 09:30 local.
 	it('omits the datetime line when the template is absent or empty', () => {
-		expect(formatFrontmatter(makeRecording(), [])).not.toMatch(/^datetime:/m);
+		expect(formatFrontmatter(makeRecording(), [])).not.toMatch(
+			/^datetime:/m,
+		);
 		expect(
-			formatFrontmatter(makeRecording(), [], null, undefined, undefined, ''),
+			formatFrontmatter(
+				makeRecording(),
+				[],
+				null,
+				undefined,
+				undefined,
+				'',
+			),
 		).not.toMatch(/^datetime:/m);
 		expect(
-			formatFrontmatter(makeRecording(), [], null, undefined, undefined, '   '),
+			formatFrontmatter(
+				makeRecording(),
+				[],
+				null,
+				undefined,
+				undefined,
+				'   ',
+			),
 		).not.toMatch(/^datetime:/m);
 	});
 
@@ -1326,7 +1555,10 @@ describe('formatFrontmatter', () => {
 		const fm = formatFrontmatter(
 			makeRecording(),
 			[],
-			makeSummary({ category: 'Legal', template: 'Deep Summary Transcript' }),
+			makeSummary({
+				category: 'Legal',
+				template: 'Deep Summary Transcript',
+			}),
 		);
 		expect(fm).toContain('plaud-category: Legal');
 		expect(fm).toContain('plaud-template: Deep Summary Transcript');
@@ -1367,7 +1599,11 @@ describe('customFrontmatterContext', () => {
 	it('maps recording and summary fields into the token context', () => {
 		const ctx = customFrontmatterContext(
 			makeRecording({ durationSeconds: 1830 }),
-			makeSummary({ category: 'Meeting', headline: 'Recap', model: 'gpt-5' }),
+			makeSummary({
+				category: 'Meeting',
+				headline: 'Recap',
+				model: 'gpt-5',
+			}),
 			'Meetings',
 		);
 		expect(ctx.title).toBe('Morning standup');
@@ -1401,16 +1637,24 @@ describe('expandCustomFrontmatterValue', () => {
 	});
 
 	it('passes plain text through unchanged', () => {
-		expect(expandCustomFrontmatterValue('unprocessed', ctx)).toBe('unprocessed');
+		expect(expandCustomFrontmatterValue('unprocessed', ctx)).toBe(
+			'unprocessed',
+		);
 	});
 
 	it('expands the Moment date set', () => {
-		expect(expandCustomFrontmatterValue('Q{{Q}}-{{YYYY}}', ctx)).toBe('Q2-2026');
+		expect(expandCustomFrontmatterValue('Q{{Q}}-{{YYYY}}', ctx)).toBe(
+			'Q2-2026',
+		);
 	});
 
 	it('expands the title and folder tokens', () => {
-		expect(expandCustomFrontmatterValue('{{title}}', ctx)).toBe('Morning standup');
-		expect(expandCustomFrontmatterValue('{{plaud-folder}}', ctx)).toBe('Meetings');
+		expect(expandCustomFrontmatterValue('{{title}}', ctx)).toBe(
+			'Morning standup',
+		);
+		expect(expandCustomFrontmatterValue('{{plaud-folder}}', ctx)).toBe(
+			'Meetings',
+		);
 	});
 
 	it('expands the duration content token', () => {
@@ -1420,12 +1664,16 @@ describe('expandCustomFrontmatterValue', () => {
 	});
 
 	it('expands a present summary content token', () => {
-		expect(expandCustomFrontmatterValue('{{category}}', ctx)).toBe('Meeting');
+		expect(expandCustomFrontmatterValue('{{category}}', ctx)).toBe(
+			'Meeting',
+		);
 	});
 
 	it('expands an absent summary content token to empty', () => {
 		const noSummary = customFrontmatterContext(makeRecording(), null, '');
-		expect(expandCustomFrontmatterValue('{{category}}', noSummary)).toBe('');
+		expect(expandCustomFrontmatterValue('{{category}}', noSummary)).toBe(
+			'',
+		);
 	});
 
 	it('does not re-expand braces inside a substituted value', () => {
@@ -1504,9 +1752,8 @@ describe('extractFrontmatterValues', () => {
 // formatFrontmatter custom rows + preserve ---------------------------------
 
 describe('formatFrontmatter custom rows', () => {
-	const rows = (
-		...items: CustomFrontmatterRow[]
-	): CustomFrontmatterRow[] => items;
+	const rows = (...items: CustomFrontmatterRow[]): CustomFrontmatterRow[] =>
+		items;
 
 	it('appends a custom property after the built-in fields', () => {
 		const fm = formatFrontmatter(
@@ -1821,7 +2068,11 @@ describe('renderCustomFrontmatterPreview', () => {
 
 describe('formatMarkdown', () => {
 	it('produces frontmatter, H1, open-in-plaud link, summary, and transcript callout in order', () => {
-		const md = formatMarkdown(makeRecording(), makeTranscript(), makeSummary());
+		const md = formatMarkdown(
+			makeRecording(),
+			makeTranscript(),
+			makeSummary(),
+		);
 		// Order assertions: find each anchor's index and verify monotonic.
 		const fmStart = md.indexOf('---');
 		const h1 = md.indexOf('# 2026-04-14 Morning standup');
@@ -1836,7 +2087,11 @@ describe('formatMarkdown', () => {
 	});
 
 	it('puts the Open in Plaud link on its own line directly after the H1 (blank line separator)', () => {
-		const md = formatMarkdown(makeRecording(), makeTranscript(), makeSummary());
+		const md = formatMarkdown(
+			makeRecording(),
+			makeTranscript(),
+			makeSummary(),
+		);
 		// A bare regex over the full body ensures the link is exactly on
 		// the line after the H1 with one blank line between them — if a
 		// future change accidentally wraps the link inside the summary
@@ -1850,7 +2105,9 @@ describe('formatMarkdown', () => {
 		const md = formatMarkdown(
 			makeRecording(),
 			makeTranscript(),
-			makeSummary({ aiSuggestion: 'Follow up with the team on action items.' }),
+			makeSummary({
+				aiSuggestion: 'Follow up with the team on action items.',
+			}),
 		);
 		const summaryH2 = md.indexOf('## Summary');
 		const aiSuggestionsH2 = md.indexOf('## AI Suggestions');
@@ -1861,13 +2118,19 @@ describe('formatMarkdown', () => {
 	});
 
 	it('omits the AI Suggestions section when summary lacks aiSuggestion', () => {
-		const md = formatMarkdown(makeRecording(), makeTranscript(), makeSummary());
+		const md = formatMarkdown(
+			makeRecording(),
+			makeTranscript(),
+			makeSummary(),
+		);
 		expect(md).not.toContain('## AI Suggestions');
 	});
 
 	it('builds the Open in Plaud link from formatPlaudWebUrl for the recording ID', () => {
 		const md = formatMarkdown(
-			makeRecording({ id: '4cba85e559d7f7c9058bf71c23d86d2d' as PlaudRecordingId }),
+			makeRecording({
+				id: '4cba85e559d7f7c9058bf71c23d86d2d' as PlaudRecordingId,
+			}),
 			makeTranscript(),
 			makeSummary(),
 		);
@@ -1899,7 +2162,11 @@ describe('formatMarkdown', () => {
 	});
 
 	it('renders transcript segments as one callout line each with [MM:SS] markers', () => {
-		const md = formatMarkdown(makeRecording(), makeTranscript(), makeSummary());
+		const md = formatMarkdown(
+			makeRecording(),
+			makeTranscript(),
+			makeSummary(),
+		);
 		expect(md).toContain('> **[00:00]** Charles: Thanks for making time.');
 		expect(md).toContain('> **[00:14]** Mary: Of course, glad to be here.');
 	});
@@ -1907,10 +2174,19 @@ describe('formatMarkdown', () => {
 	it('uses 1:MM:SS format for transcript segments past the one-hour mark', () => {
 		const longTranscript = makeTranscript({
 			segments: [
-				{ startSeconds: 3725, endSeconds: 3740, speaker: 'Charles', text: 'Late in the call.' },
+				{
+					startSeconds: 3725,
+					endSeconds: 3740,
+					speaker: 'Charles',
+					text: 'Late in the call.',
+				},
 			],
 		});
-		const md = formatMarkdown(makeRecording(), longTranscript, makeSummary());
+		const md = formatMarkdown(
+			makeRecording(),
+			longTranscript,
+			makeSummary(),
+		);
 		expect(md).toContain('> **[1:02:05]** Charles: Late in the call.');
 	});
 
@@ -1927,7 +2203,12 @@ describe('formatMarkdown', () => {
 	it('collapses newlines inside a transcript segment to single spaces', () => {
 		const t = makeTranscript({
 			segments: [
-				{ startSeconds: 0, endSeconds: 5, speaker: 'Charles', text: 'one\n two\n\n  three' },
+				{
+					startSeconds: 0,
+					endSeconds: 5,
+					speaker: 'Charles',
+					text: 'one\n two\n\n  three',
+				},
 			],
 		});
 		const md = formatMarkdown(makeRecording(), t, makeSummary());
@@ -1963,7 +2244,11 @@ describe('formatMarkdown', () => {
 	});
 
 	it('uses summary.text when sections is absent', () => {
-		const md = formatMarkdown(makeRecording(), makeTranscript(), makeSummary());
+		const md = formatMarkdown(
+			makeRecording(),
+			makeTranscript(),
+			makeSummary(),
+		);
 		expect(md).toContain('- Mary wants to revisit pricing');
 		expect(md).toContain('- Charles to draft three options');
 	});
@@ -2035,7 +2320,10 @@ function makeFakeVault(): FakeVault {
 		async read(file: FileLike): Promise<string> {
 			return files.get(file.path) ?? '';
 		},
-		async process(file: FileLike, fn: (data: string) => string): Promise<string> {
+		async process(
+			file: FileLike,
+			fn: (data: string) => string,
+		): Promise<string> {
 			const current = files.get(file.path) ?? '';
 			const next = fn(current);
 			files.set(file.path, next);
@@ -2087,7 +2375,10 @@ describe('renameRecordingNote', () => {
 			'Plaud/note.md',
 		);
 
-		expect(result).toEqual({ notePath: 'Plaud/note.md', assetsFolderRenamed: false });
+		expect(result).toEqual({
+			notePath: 'Plaud/note.md',
+			assetsFolderRenamed: false,
+		});
 		expect(calls).toEqual([]);
 	});
 
@@ -2169,7 +2460,10 @@ describe('renameRecordingNote', () => {
 		vault.files.set('Plaud/old.md', '---\nplaud-id: abc123\n---\n');
 		vault.folders.add('Plaud/old-assets');
 		const calls: Array<[string, string]> = [];
-		const rename = async (oldPath: string, newPath: string): Promise<void> => {
+		const rename = async (
+			oldPath: string,
+			newPath: string,
+		): Promise<void> => {
 			calls.push([oldPath, newPath]);
 			if (oldPath.endsWith('.md')) {
 				throw new Error('note rename boom');
@@ -2230,15 +2524,26 @@ describe('NoteWriter', () => {
 	it("throws when onDuplicate is 'prompt' without a promptOnDuplicate callback", () => {
 		const vault = makeFakeVault();
 		expect(
-			() => new NoteWriter(vault, { outputFolder: 'Plaud', onDuplicate: 'prompt' }),
-		).toThrow("a promptOnDuplicate callback is required");
+			() =>
+				new NoteWriter(vault, {
+					outputFolder: 'Plaud',
+					onDuplicate: 'prompt',
+				}),
+		).toThrow('a promptOnDuplicate callback is required');
 	});
 
 	it('creates the output folder if it does not exist', async () => {
 		const vault = makeFakeVault();
-		const writer = new NoteWriter(vault, { outputFolder: 'Plaud', onDuplicate: 'skip' });
+		const writer = new NoteWriter(vault, {
+			outputFolder: 'Plaud',
+			onDuplicate: 'skip',
+		});
 
-		await writer.writeNote(makeRecording(), makeTranscript(), makeSummary());
+		await writer.writeNote(
+			makeRecording(),
+			makeTranscript(),
+			makeSummary(),
+		);
 
 		expect(vault.folders.has('Plaud')).toBe(true);
 	});
@@ -2246,9 +2551,16 @@ describe('NoteWriter', () => {
 	it('does not recreate the output folder if it already exists', async () => {
 		const vault = makeFakeVault();
 		vault.folders.add('Plaud');
-		const writer = new NoteWriter(vault, { outputFolder: 'Plaud', onDuplicate: 'skip' });
+		const writer = new NoteWriter(vault, {
+			outputFolder: 'Plaud',
+			onDuplicate: 'skip',
+		});
 
-		await writer.writeNote(makeRecording(), makeTranscript(), makeSummary());
+		await writer.writeNote(
+			makeRecording(),
+			makeTranscript(),
+			makeSummary(),
+		);
 
 		// Folder is only in the set once (no double-creation).
 		expect(vault.folders.size).toBe(1);
@@ -2256,7 +2568,10 @@ describe('NoteWriter', () => {
 
 	it('writes to <outputFolder>/<sanitized-title>.md', async () => {
 		const vault = makeFakeVault();
-		const writer = new NoteWriter(vault, { outputFolder: 'Plaud', onDuplicate: 'skip' });
+		const writer = new NoteWriter(vault, {
+			outputFolder: 'Plaud',
+			onDuplicate: 'skip',
+		});
 
 		const outcome = await writer.writeNote(
 			makeRecording({ title: 'Meeting / notes : draft' }),
@@ -2265,13 +2580,20 @@ describe('NoteWriter', () => {
 		);
 
 		expect(outcome.status).toBe('created');
-		expect(outcome.path).toBe('Plaud/2026-04-14 Meeting - notes - draft.md');
-		expect(vault.files.has('Plaud/2026-04-14 Meeting - notes - draft.md')).toBe(true);
+		expect(outcome.path).toBe(
+			'Plaud/2026-04-14 Meeting - notes - draft.md',
+		);
+		expect(
+			vault.files.has('Plaud/2026-04-14 Meeting - notes - draft.md'),
+		).toBe(true);
 	});
 
 	it('puts the recording date in the filename so files sort chronologically', async () => {
 		const vault = makeFakeVault();
-		const writer = new NoteWriter(vault, { outputFolder: 'Plaud', onDuplicate: 'skip' });
+		const writer = new NoteWriter(vault, {
+			outputFolder: 'Plaud',
+			onDuplicate: 'skip',
+		});
 
 		const outcome = await writer.writeNote(
 			makeRecording({ title: '04-13 Client kickoff' }),
@@ -2285,7 +2607,10 @@ describe('NoteWriter', () => {
 
 	it('keeps the filename and H1 in sync when the date is applied', async () => {
 		const vault = makeFakeVault();
-		const writer = new NoteWriter(vault, { outputFolder: 'Plaud', onDuplicate: 'skip' });
+		const writer = new NoteWriter(vault, {
+			outputFolder: 'Plaud',
+			onDuplicate: 'skip',
+		});
 
 		await writer.writeNote(
 			makeRecording({ title: '04-13 Securing a data sandbox' }),
@@ -2293,7 +2618,9 @@ describe('NoteWriter', () => {
 			makeSummary(),
 		);
 
-		const body = vault.files.get('Plaud/2026-04-14 Securing a data sandbox.md') ?? '';
+		const body =
+			vault.files.get('Plaud/2026-04-14 Securing a data sandbox.md') ??
+			'';
 		expect(body).toContain('# 2026-04-14 Securing a data sandbox');
 	});
 
@@ -2314,7 +2641,8 @@ describe('NoteWriter', () => {
 		// The title's 04-13 is stripped; the recording date (04-14) fills the
 		// template. Filename and H1 stay identical.
 		expect(outcome.path).toBe('Plaud/04-14-2026 Client kickoff.md');
-		const body = vault.files.get('Plaud/04-14-2026 Client kickoff.md') ?? '';
+		const body =
+			vault.files.get('Plaud/04-14-2026 Client kickoff.md') ?? '';
 		expect(body).toContain('# 04-14-2026 Client kickoff');
 	});
 
@@ -2334,7 +2662,8 @@ describe('NoteWriter', () => {
 
 		// Date-at-end plus a named month with a comma (filesystem-safe).
 		expect(outcome.path).toBe('Plaud/Quarterly review Apr 14, 2026.md');
-		const body = vault.files.get('Plaud/Quarterly review Apr 14, 2026.md') ?? '';
+		const body =
+			vault.files.get('Plaud/Quarterly review Apr 14, 2026.md') ?? '';
 		expect(body).toContain('# Quarterly review Apr 14, 2026');
 	});
 
@@ -2358,15 +2687,23 @@ describe('NoteWriter', () => {
 		);
 
 		expect(outcome.path).toBe('Plaud/2026-04-14 Quarterly review.md');
-		const body = vault.files.get('Plaud/2026-04-14 Quarterly review.md') ?? '';
+		const body =
+			vault.files.get('Plaud/2026-04-14 Quarterly review.md') ?? '';
 		expect(body).toContain('# 2026-04-14 Quarterly review');
 	});
 
 	it('writes at vault root when outputFolder is empty', async () => {
 		const vault = makeFakeVault();
-		const writer = new NoteWriter(vault, { outputFolder: '', onDuplicate: 'skip' });
+		const writer = new NoteWriter(vault, {
+			outputFolder: '',
+			onDuplicate: 'skip',
+		});
 
-		const outcome = await writer.writeNote(makeRecording(), makeTranscript(), makeSummary());
+		const outcome = await writer.writeNote(
+			makeRecording(),
+			makeTranscript(),
+			makeSummary(),
+		);
 
 		expect(outcome.path).toBe('2026-04-14 Morning standup.md');
 		expect(vault.folders.size).toBe(0); // no folder created
@@ -2374,9 +2711,16 @@ describe('NoteWriter', () => {
 
 	it('normalizes a folder path with leading/trailing slashes', async () => {
 		const vault = makeFakeVault();
-		const writer = new NoteWriter(vault, { outputFolder: '/Plaud/', onDuplicate: 'skip' });
+		const writer = new NoteWriter(vault, {
+			outputFolder: '/Plaud/',
+			onDuplicate: 'skip',
+		});
 
-		const outcome = await writer.writeNote(makeRecording(), makeTranscript(), makeSummary());
+		const outcome = await writer.writeNote(
+			makeRecording(),
+			makeTranscript(),
+			makeSummary(),
+		);
 
 		expect(outcome.path).toBe('Plaud/2026-04-14 Morning standup.md');
 	});
@@ -2385,9 +2729,16 @@ describe('NoteWriter', () => {
 		// Regression for #7: a "\Inbox" output folder kept its backslash, so the
 		// path never matched what Obsidian's createFolder normalized it to.
 		const vault = makeFakeVault();
-		const writer = new NoteWriter(vault, { outputFolder: '\\Inbox', onDuplicate: 'skip' });
+		const writer = new NoteWriter(vault, {
+			outputFolder: '\\Inbox',
+			onDuplicate: 'skip',
+		});
 
-		const outcome = await writer.writeNote(makeRecording(), makeTranscript(), makeSummary());
+		const outcome = await writer.writeNote(
+			makeRecording(),
+			makeTranscript(),
+			makeSummary(),
+		);
 
 		expect(outcome.path).toBe('Inbox/2026-04-14 Morning standup.md');
 		expect(vault.createFolderCalls).toEqual(['Inbox']);
@@ -2403,9 +2754,16 @@ describe('NoteWriter', () => {
 			vault.createFolderCalls.push(path);
 			throw new Error(`Folder already exists.`);
 		};
-		const writer = new NoteWriter(vault, { outputFolder: 'Inbox', onDuplicate: 'skip' });
+		const writer = new NoteWriter(vault, {
+			outputFolder: 'Inbox',
+			onDuplicate: 'skip',
+		});
 
-		const outcome = await writer.writeNote(makeRecording(), makeTranscript(), makeSummary());
+		const outcome = await writer.writeNote(
+			makeRecording(),
+			makeTranscript(),
+			makeSummary(),
+		);
 
 		expect(outcome.status).toBe('created');
 		expect(outcome.path).toBe('Inbox/2026-04-14 Morning standup.md');
@@ -2426,34 +2784,65 @@ describe('NoteWriter', () => {
 
 	it('skips writing when file exists and onDuplicate is skip', async () => {
 		const vault = makeFakeVault();
-		vault.files.set('Plaud/2026-04-14 Morning standup.md', 'existing content');
-		const writer = new NoteWriter(vault, { outputFolder: 'Plaud', onDuplicate: 'skip' });
+		vault.files.set(
+			'Plaud/2026-04-14 Morning standup.md',
+			'existing content',
+		);
+		const writer = new NoteWriter(vault, {
+			outputFolder: 'Plaud',
+			onDuplicate: 'skip',
+		});
 
-		const outcome = await writer.writeNote(makeRecording(), makeTranscript(), makeSummary());
+		const outcome = await writer.writeNote(
+			makeRecording(),
+			makeTranscript(),
+			makeSummary(),
+		);
 
 		expect(outcome.status).toBe('skipped');
-		expect(vault.files.get('Plaud/2026-04-14 Morning standup.md')).toBe('existing content');
+		expect(vault.files.get('Plaud/2026-04-14 Morning standup.md')).toBe(
+			'existing content',
+		);
 		expect(vault.createdPaths).toEqual([]);
 		expect(vault.overwrittenPaths).toEqual([]);
 	});
 
 	it('overwrites via process() when file exists and onDuplicate is overwrite', async () => {
 		const vault = makeFakeVault();
-		vault.files.set('Plaud/2026-04-14 Morning standup.md', 'existing content');
-		const writer = new NoteWriter(vault, { outputFolder: 'Plaud', onDuplicate: 'overwrite' });
+		vault.files.set(
+			'Plaud/2026-04-14 Morning standup.md',
+			'existing content',
+		);
+		const writer = new NoteWriter(vault, {
+			outputFolder: 'Plaud',
+			onDuplicate: 'overwrite',
+		});
 
-		const outcome = await writer.writeNote(makeRecording(), makeTranscript(), makeSummary());
+		const outcome = await writer.writeNote(
+			makeRecording(),
+			makeTranscript(),
+			makeSummary(),
+		);
 
 		expect(outcome.status).toBe('overwritten');
-		expect(vault.overwrittenPaths).toContain('Plaud/2026-04-14 Morning standup.md');
-		expect(vault.files.get('Plaud/2026-04-14 Morning standup.md')).toContain('# 2026-04-14 Morning standup');
-		expect(vault.files.get('Plaud/2026-04-14 Morning standup.md')).not.toBe('existing content');
+		expect(vault.overwrittenPaths).toContain(
+			'Plaud/2026-04-14 Morning standup.md',
+		);
+		expect(
+			vault.files.get('Plaud/2026-04-14 Morning standup.md'),
+		).toContain('# 2026-04-14 Morning standup');
+		expect(vault.files.get('Plaud/2026-04-14 Morning standup.md')).not.toBe(
+			'existing content',
+		);
 	});
 
 	describe('prompt policy', () => {
 		it('invokes the callback with the target context when a same-id duplicate exists', async () => {
 			const vault = makeFakeVault();
-			vault.files.set('Plaud/2026-04-14 Morning standup.md', '---\nplaud-id: abc123\n---\n');
+			vault.files.set(
+				'Plaud/2026-04-14 Morning standup.md',
+				'---\nplaud-id: abc123\n---\n',
+			);
 			const received: Array<{
 				recordingId: string;
 				recordingTitle: string;
@@ -2472,7 +2861,11 @@ describe('NoteWriter', () => {
 				},
 			});
 
-			const outcome = await writer.writeNote(makeRecording(), makeTranscript(), makeSummary());
+			const outcome = await writer.writeNote(
+				makeRecording(),
+				makeTranscript(),
+				makeSummary(),
+			);
 
 			expect(outcome.status).toBe('overwritten');
 			expect(received).toEqual([
@@ -2486,14 +2879,21 @@ describe('NoteWriter', () => {
 
 		it('skips the write when the callback returns skip', async () => {
 			const vault = makeFakeVault();
-			vault.files.set('Plaud/2026-04-14 Morning standup.md', '---\nplaud-id: abc123\n---\noriginal');
+			vault.files.set(
+				'Plaud/2026-04-14 Morning standup.md',
+				'---\nplaud-id: abc123\n---\noriginal',
+			);
 			const writer = new NoteWriter(vault, {
 				outputFolder: 'Plaud',
 				onDuplicate: 'prompt',
 				promptOnDuplicate: async () => 'skip',
 			});
 
-			const outcome = await writer.writeNote(makeRecording(), makeTranscript(), makeSummary());
+			const outcome = await writer.writeNote(
+				makeRecording(),
+				makeTranscript(),
+				makeSummary(),
+			);
 
 			expect(outcome.status).toBe('skipped');
 			expect(vault.overwrittenPaths).toEqual([]);
@@ -2504,7 +2904,10 @@ describe('NoteWriter', () => {
 
 		it('throws NoteWriterCancelledError when the callback returns cancel', async () => {
 			const vault = makeFakeVault();
-			vault.files.set('Plaud/2026-04-14 Morning standup.md', '---\nplaud-id: abc123\n---\n');
+			vault.files.set(
+				'Plaud/2026-04-14 Morning standup.md',
+				'---\nplaud-id: abc123\n---\n',
+			);
 			const writer = new NoteWriter(vault, {
 				outputFolder: 'Plaud',
 				onDuplicate: 'prompt',
@@ -2512,7 +2915,11 @@ describe('NoteWriter', () => {
 			});
 
 			await expect(
-				writer.writeNote(makeRecording(), makeTranscript(), makeSummary()),
+				writer.writeNote(
+					makeRecording(),
+					makeTranscript(),
+					makeSummary(),
+				),
 			).rejects.toThrow(NoteWriterCancelledError);
 			expect(vault.overwrittenPaths).toEqual([]);
 		});
@@ -2526,7 +2933,11 @@ describe('NoteWriter', () => {
 				promptOnDuplicate: promptSpy,
 			});
 
-			const outcome = await writer.writeNote(makeRecording(), makeTranscript(), makeSummary());
+			const outcome = await writer.writeNote(
+				makeRecording(),
+				makeTranscript(),
+				makeSummary(),
+			);
 
 			expect(outcome.status).toBe('created');
 			expect(promptSpy).not.toHaveBeenCalled();
@@ -2535,22 +2946,40 @@ describe('NoteWriter', () => {
 
 	it('returns the created status when the file is new', async () => {
 		const vault = makeFakeVault();
-		const writer = new NoteWriter(vault, { outputFolder: 'Plaud', onDuplicate: 'skip' });
+		const writer = new NoteWriter(vault, {
+			outputFolder: 'Plaud',
+			onDuplicate: 'skip',
+		});
 
-		const outcome = await writer.writeNote(makeRecording(), makeTranscript(), makeSummary());
+		const outcome = await writer.writeNote(
+			makeRecording(),
+			makeTranscript(),
+			makeSummary(),
+		);
 
 		expect(outcome.status).toBe('created');
-		expect(vault.createdPaths).toEqual(['Plaud/2026-04-14 Morning standup.md']);
+		expect(vault.createdPaths).toEqual([
+			'Plaud/2026-04-14 Morning standup.md',
+		]);
 	});
 
 	describe('subfolder template', () => {
 		it('omitted template keeps the flat output-folder path', async () => {
 			const vault = makeFakeVault();
-			const writer = new NoteWriter(vault, { outputFolder: 'Plaud', onDuplicate: 'skip' });
+			const writer = new NoteWriter(vault, {
+				outputFolder: 'Plaud',
+				onDuplicate: 'skip',
+			});
 
-			await writer.writeNote(makeRecording(), makeTranscript(), makeSummary());
+			await writer.writeNote(
+				makeRecording(),
+				makeTranscript(),
+				makeSummary(),
+			);
 
-			expect(vault.createdPaths).toEqual(['Plaud/2026-04-14 Morning standup.md']);
+			expect(vault.createdPaths).toEqual([
+				'Plaud/2026-04-14 Morning standup.md',
+			]);
 		});
 
 		it('resolves {{YYYY-MM}} from the recording date and nests the note under it', async () => {
@@ -2561,11 +2990,19 @@ describe('NoteWriter', () => {
 				onDuplicate: 'skip',
 			});
 
-			const outcome = await writer.writeNote(makeRecording(), makeTranscript(), makeSummary());
+			const outcome = await writer.writeNote(
+				makeRecording(),
+				makeTranscript(),
+				makeSummary(),
+			);
 
 			// makeRecording().createdAt is 2026-04-14 local.
-			expect(outcome.path).toBe('Plaud/2026-04/2026-04-14 Morning standup.md');
-			expect(vault.createdPaths).toEqual(['Plaud/2026-04/2026-04-14 Morning standup.md']);
+			expect(outcome.path).toBe(
+				'Plaud/2026-04/2026-04-14 Morning standup.md',
+			);
+			expect(vault.createdPaths).toEqual([
+				'Plaud/2026-04/2026-04-14 Morning standup.md',
+			]);
 			expect(vault.folders.has('Plaud/2026-04')).toBe(true);
 		});
 
@@ -2577,7 +3014,11 @@ describe('NoteWriter', () => {
 				onDuplicate: 'skip',
 			});
 
-			const outcome = await writer.writeNote(makeRecording(), makeTranscript(), makeSummary());
+			const outcome = await writer.writeNote(
+				makeRecording(),
+				makeTranscript(),
+				makeSummary(),
+			);
 
 			expect(outcome.path).toBe('2026/04/2026-04-14 Morning standup.md');
 		});
@@ -2585,7 +3026,8 @@ describe('NoteWriter', () => {
 
 	describe('cross-folder dedup via existingPathForPlaudId', () => {
 		const PRIOR = 'Plaud/2026-04-14 Morning standup.md';
-		const priorContent = '---\nplaud-id: abc123\n---\n# 2026-04-14 Morning standup\n';
+		const priorContent =
+			'---\nplaud-id: abc123\n---\n# 2026-04-14 Morning standup\n';
 
 		function vaultWithPriorNote(): FakeVault {
 			const vault = makeFakeVault();
@@ -2600,15 +3042,22 @@ describe('NoteWriter', () => {
 				outputFolder: 'Plaud',
 				subfolderTemplate: '{{YYYY-MM}}',
 				onDuplicate: 'skip',
-				existingPathForPlaudId: (id) => (id === 'abc123' ? PRIOR : null),
+				existingPathForPlaudId: (id) =>
+					id === 'abc123' ? PRIOR : null,
 			});
 
-			const outcome = await writer.writeNote(makeRecording(), makeTranscript(), makeSummary());
+			const outcome = await writer.writeNote(
+				makeRecording(),
+				makeTranscript(),
+				makeSummary(),
+			);
 
 			expect(outcome.status).toBe('skipped');
 			expect(outcome.path).toBe(PRIOR);
 			expect(vault.createdPaths).toEqual([]);
-			expect(vault.files.has('Plaud/2026-04/2026-04-14 Morning standup.md')).toBe(false);
+			expect(
+				vault.files.has('Plaud/2026-04/2026-04-14 Morning standup.md'),
+			).toBe(false);
 		});
 
 		it('overwrites the existing note in place rather than creating a duplicate', async () => {
@@ -2617,10 +3066,15 @@ describe('NoteWriter', () => {
 				outputFolder: 'Plaud',
 				subfolderTemplate: '{{YYYY-MM}}',
 				onDuplicate: 'overwrite',
-				existingPathForPlaudId: (id) => (id === 'abc123' ? PRIOR : null),
+				existingPathForPlaudId: (id) =>
+					id === 'abc123' ? PRIOR : null,
 			});
 
-			const outcome = await writer.writeNote(makeRecording(), makeTranscript(), makeSummary());
+			const outcome = await writer.writeNote(
+				makeRecording(),
+				makeTranscript(),
+				makeSummary(),
+			);
 
 			expect(outcome.status).toBe('overwritten');
 			expect(outcome.path).toBe(PRIOR);
@@ -2637,10 +3091,16 @@ describe('NoteWriter', () => {
 				existingPathForPlaudId: () => null,
 			});
 
-			const outcome = await writer.writeNote(makeRecording(), makeTranscript(), makeSummary());
+			const outcome = await writer.writeNote(
+				makeRecording(),
+				makeTranscript(),
+				makeSummary(),
+			);
 
 			expect(outcome.status).toBe('created');
-			expect(vault.createdPaths).toEqual(['Plaud/2026-04/2026-04-14 Morning standup.md']);
+			expect(vault.createdPaths).toEqual([
+				'Plaud/2026-04/2026-04-14 Morning standup.md',
+			]);
 		});
 
 		it('falls through to create when the lookup returns a stale path with no file', async () => {
@@ -2652,10 +3112,16 @@ describe('NoteWriter', () => {
 				existingPathForPlaudId: () => 'Plaud/ghost.md',
 			});
 
-			const outcome = await writer.writeNote(makeRecording(), makeTranscript(), makeSummary());
+			const outcome = await writer.writeNote(
+				makeRecording(),
+				makeTranscript(),
+				makeSummary(),
+			);
 
 			expect(outcome.status).toBe('created');
-			expect(vault.createdPaths).toEqual(['Plaud/2026-04/2026-04-14 Morning standup.md']);
+			expect(vault.createdPaths).toEqual([
+				'Plaud/2026-04/2026-04-14 Morning standup.md',
+			]);
 		});
 	});
 
@@ -2766,7 +3232,11 @@ describe('NoteWriter', () => {
 			});
 
 			const err = await writer
-				.writeNote(makeRecording({ title: 'New title' }), makeTranscript(), makeSummary())
+				.writeNote(
+					makeRecording({ title: 'New title' }),
+					makeTranscript(),
+					makeSummary(),
+				)
 				.catch((e: unknown) => e);
 			expect(err).toBeInstanceOf(NoteWriterError);
 			expect((err as NoteWriterError).message).toMatch(
@@ -2816,9 +3286,9 @@ describe('NoteWriter', () => {
 				// the note for this recording currently lives.
 				existingPathForPlaudId: (id) =>
 					id === 'abc123'
-						? [...vault.files.keys()].find((p) =>
+						? ([...vault.files.keys()].find((p) =>
 								p.endsWith('Morning standup.md'),
-							) ?? null
+							) ?? null)
 						: null,
 				migrateExistingNote: async (oldPath, newPath) => {
 					migrateCalls.push([oldPath, newPath]);
@@ -2830,7 +3300,10 @@ describe('NoteWriter', () => {
 
 			// 1. Transcript/summary not ready: a placeholder is written. The error
 			// path resolves no folder names, so it lands in _unfiled.
-			const stub = await writer.writePlaceholderNote(makeRecording(), 'no content yet');
+			const stub = await writer.writePlaceholderNote(
+				makeRecording(),
+				'no content yet',
+			);
 			expect(stub.status).toBe('created');
 			expect(stub.path).toBe(unfiledPath);
 
@@ -2870,22 +3343,34 @@ describe('NoteWriter', () => {
 			// The first folder wins; the second is ignored (Plaud recordings are
 			// normally single-folder).
 			expect(outcome.path).toBe('Plaud/A/2026-04-14 Morning standup.md');
-			expect(vault.files.has('Plaud/A/2026-04-14 Morning standup.md')).toBe(true);
+			expect(
+				vault.files.has('Plaud/A/2026-04-14 Morning standup.md'),
+			).toBe(true);
 		});
 	});
 
 	it('writes the full markdown body including frontmatter, title, summary, and callout', async () => {
 		const vault = makeFakeVault();
-		const writer = new NoteWriter(vault, { outputFolder: 'Plaud', onDuplicate: 'skip' });
+		const writer = new NoteWriter(vault, {
+			outputFolder: 'Plaud',
+			onDuplicate: 'skip',
+		});
 
-		await writer.writeNote(makeRecording(), makeTranscript(), makeSummary());
+		await writer.writeNote(
+			makeRecording(),
+			makeTranscript(),
+			makeSummary(),
+		);
 
-		const body = vault.files.get('Plaud/2026-04-14 Morning standup.md') ?? '';
+		const body =
+			vault.files.get('Plaud/2026-04-14 Morning standup.md') ?? '';
 		expect(body).toContain('plaud-id: abc123');
 		expect(body).toContain('# 2026-04-14 Morning standup');
 		expect(body).toContain('## Summary');
 		expect(body).toContain('> [!note]- Transcript');
-		expect(body).toContain('> **[00:00]** Charles: Thanks for making time.');
+		expect(body).toContain(
+			'> **[00:00]** Charles: Thanks for making time.',
+		);
 	});
 
 	describe('nested output folders', () => {
@@ -2896,7 +3381,11 @@ describe('NoteWriter', () => {
 				onDuplicate: 'skip',
 			});
 
-			await writer.writeNote(makeRecording(), makeTranscript(), makeSummary());
+			await writer.writeNote(
+				makeRecording(),
+				makeTranscript(),
+				makeSummary(),
+			);
 
 			expect(vault.folders.has('Plaud')).toBe(true);
 			expect(vault.folders.has('Plaud/Archive')).toBe(true);
@@ -2917,7 +3406,11 @@ describe('NoteWriter', () => {
 				onDuplicate: 'skip',
 			});
 
-			await writer.writeNote(makeRecording(), makeTranscript(), makeSummary());
+			await writer.writeNote(
+				makeRecording(),
+				makeTranscript(),
+				makeSummary(),
+			);
 
 			// Only the missing leaf gets created.
 			expect(vault.createFolderCalls).toEqual(['Plaud/Archive/2026']);
@@ -2937,7 +3430,11 @@ describe('NoteWriter', () => {
 			});
 
 			await expect(
-				writer.writeNote(makeRecording(), makeTranscript(), makeSummary()),
+				writer.writeNote(
+					makeRecording(),
+					makeTranscript(),
+					makeSummary(),
+				),
 			).rejects.toBeInstanceOf(NoteWriterError);
 		});
 
@@ -2953,7 +3450,11 @@ describe('NoteWriter', () => {
 			});
 
 			await expect(
-				writer.writeNote(makeRecording({ id: 'NEW_ID_99' as never }), makeTranscript(), makeSummary()),
+				writer.writeNote(
+					makeRecording({ id: 'NEW_ID_99' as never }),
+					makeTranscript(),
+					makeSummary(),
+				),
 			).rejects.toThrow(/OLD_ID_42.*NEW_ID_99/);
 		});
 
@@ -2968,10 +3469,16 @@ describe('NoteWriter', () => {
 				onDuplicate: 'overwrite',
 			});
 
-			const outcome = await writer.writeNote(makeRecording(), makeTranscript(), makeSummary());
+			const outcome = await writer.writeNote(
+				makeRecording(),
+				makeTranscript(),
+				makeSummary(),
+			);
 
 			expect(outcome.status).toBe('overwritten');
-			expect(vault.files.get('Plaud/2026-04-14 Morning standup.md')).toContain('# 2026-04-14 Morning standup');
+			expect(
+				vault.files.get('Plaud/2026-04-14 Morning standup.md'),
+			).toContain('# 2026-04-14 Morning standup');
 		});
 
 		it('allows skip when existing note has the SAME plaud-id (idempotent re-import)', async () => {
@@ -2985,7 +3492,11 @@ describe('NoteWriter', () => {
 				onDuplicate: 'skip',
 			});
 
-			const outcome = await writer.writeNote(makeRecording(), makeTranscript(), makeSummary());
+			const outcome = await writer.writeNote(
+				makeRecording(),
+				makeTranscript(),
+				makeSummary(),
+			);
 
 			expect(outcome.status).toBe('skipped');
 		});
@@ -2995,13 +3506,20 @@ describe('NoteWriter', () => {
 			// Collision detection returns null, so we fall through to the
 			// duplicate policy — which is the pragmatic default.
 			const vault = makeFakeVault();
-			vault.files.set('Plaud/2026-04-14 Morning standup.md', 'Just some text, no frontmatter.');
+			vault.files.set(
+				'Plaud/2026-04-14 Morning standup.md',
+				'Just some text, no frontmatter.',
+			);
 			const writer = new NoteWriter(vault, {
 				outputFolder: 'Plaud',
 				onDuplicate: 'overwrite',
 			});
 
-			const outcome = await writer.writeNote(makeRecording(), makeTranscript(), makeSummary());
+			const outcome = await writer.writeNote(
+				makeRecording(),
+				makeTranscript(),
+				makeSummary(),
+			);
 
 			expect(outcome.status).toBe('overwritten');
 		});
@@ -3010,7 +3528,10 @@ describe('NoteWriter', () => {
 	describe('advertised-but-null guard', () => {
 		it('throws when transcriptAvailable is true but transcript is null', async () => {
 			const vault = makeFakeVault();
-			const writer = new NoteWriter(vault, { outputFolder: 'Plaud', onDuplicate: 'skip' });
+			const writer = new NoteWriter(vault, {
+				outputFolder: 'Plaud',
+				onDuplicate: 'skip',
+			});
 
 			await expect(
 				writer.writeNote(
@@ -3026,27 +3547,40 @@ describe('NoteWriter', () => {
 			// is unretrievable. As long as a transcript exists, write the note
 			// with a "_No summary available._" placeholder rather than failing.
 			const vault = makeFakeVault();
-			const writer = new NoteWriter(vault, { outputFolder: 'Plaud', onDuplicate: 'skip' });
+			const writer = new NoteWriter(vault, {
+				outputFolder: 'Plaud',
+				onDuplicate: 'skip',
+			});
 
 			const outcome = await writer.writeNote(
-				makeRecording({ summaryAvailable: true, transcriptAvailable: true }),
+				makeRecording({
+					summaryAvailable: true,
+					transcriptAvailable: true,
+				}),
 				makeTranscript(),
 				null,
 			);
 
 			expect(outcome.status).toBe('created');
-			const body = vault.files.get('Plaud/2026-04-14 Morning standup.md') ?? '';
+			const body =
+				vault.files.get('Plaud/2026-04-14 Morning standup.md') ?? '';
 			expect(body).toContain('## Summary');
 			expect(body).toContain('_No summary available._');
 		});
 
 		it('throws when an advertised summary is null and no transcript is available either', async () => {
 			const vault = makeFakeVault();
-			const writer = new NoteWriter(vault, { outputFolder: 'Plaud', onDuplicate: 'skip' });
+			const writer = new NoteWriter(vault, {
+				outputFolder: 'Plaud',
+				onDuplicate: 'skip',
+			});
 
 			await expect(
 				writer.writeNote(
-					makeRecording({ summaryAvailable: true, transcriptAvailable: false }),
+					makeRecording({
+						summaryAvailable: true,
+						transcriptAvailable: false,
+					}),
 					null,
 					null,
 				),
@@ -3055,16 +3589,23 @@ describe('NoteWriter', () => {
 
 		it('accepts null transcript when transcriptAvailable is false', async () => {
 			const vault = makeFakeVault();
-			const writer = new NoteWriter(vault, { outputFolder: 'Plaud', onDuplicate: 'skip' });
+			const writer = new NoteWriter(vault, {
+				outputFolder: 'Plaud',
+				onDuplicate: 'skip',
+			});
 
 			const outcome = await writer.writeNote(
-				makeRecording({ transcriptAvailable: false, summaryAvailable: false }),
+				makeRecording({
+					transcriptAvailable: false,
+					summaryAvailable: false,
+				}),
 				null,
 				null,
 			);
 
 			expect(outcome.status).toBe('created');
-			const body = vault.files.get('Plaud/2026-04-14 Morning standup.md') ?? '';
+			const body =
+				vault.files.get('Plaud/2026-04-14 Morning standup.md') ?? '';
 			expect(body).toContain('_No transcript available._');
 			expect(body).toContain('_No summary available._');
 		});
@@ -3100,12 +3641,21 @@ describe('NoteWriter', () => {
 			vault.create = async () => {
 				throw new Error('EACCES permission denied');
 			};
-			const writer = new NoteWriter(vault, { outputFolder: 'Plaud', onDuplicate: 'skip' });
+			const writer = new NoteWriter(vault, {
+				outputFolder: 'Plaud',
+				onDuplicate: 'skip',
+			});
 
 			// Error message format: "Failed to create <path> for recording <id>: <cause>"
 			await expect(
-				writer.writeNote(makeRecording(), makeTranscript(), makeSummary()),
-			).rejects.toThrow(/Plaud\/2026-04-14 Morning standup\.md.*abc123.*EACCES/);
+				writer.writeNote(
+					makeRecording(),
+					makeTranscript(),
+					makeSummary(),
+				),
+			).rejects.toThrow(
+				/Plaud\/2026-04-14 Morning standup\.md.*abc123.*EACCES/,
+			);
 		});
 
 		it('wraps vault.process errors with recording id and target path', async () => {
@@ -3117,10 +3667,17 @@ describe('NoteWriter', () => {
 			vault.process = async () => {
 				throw new Error('disk full');
 			};
-			const writer = new NoteWriter(vault, { outputFolder: 'Plaud', onDuplicate: 'overwrite' });
+			const writer = new NoteWriter(vault, {
+				outputFolder: 'Plaud',
+				onDuplicate: 'overwrite',
+			});
 
 			await expect(
-				writer.writeNote(makeRecording(), makeTranscript(), makeSummary()),
+				writer.writeNote(
+					makeRecording(),
+					makeTranscript(),
+					makeSummary(),
+				),
 			).rejects.toThrow(/abc123.*disk full/);
 		});
 
@@ -3130,10 +3687,17 @@ describe('NoteWriter', () => {
 			vault.read = async () => {
 				throw new Error('read blew up');
 			};
-			const writer = new NoteWriter(vault, { outputFolder: 'Plaud', onDuplicate: 'skip' });
+			const writer = new NoteWriter(vault, {
+				outputFolder: 'Plaud',
+				onDuplicate: 'skip',
+			});
 
 			await expect(
-				writer.writeNote(makeRecording(), makeTranscript(), makeSummary()),
+				writer.writeNote(
+					makeRecording(),
+					makeTranscript(),
+					makeSummary(),
+				),
 			).rejects.toThrow(/collisions.*read blew up/);
 		});
 	});
@@ -3145,18 +3709,35 @@ describe('formatFrontmatter YAML hardening', () => {
 	it('quotes reserved YAML boolean/null words in plaud-id', () => {
 		// Plaud IDs are typically hex, but defend against the pathological
 		// case where an ID coincidentally matches a YAML reserved word.
-		const fm = formatFrontmatter(makeRecording({ id: 'null' as never }), []);
+		const fm = formatFrontmatter(
+			makeRecording({ id: 'null' as never }),
+			[],
+		);
 		expect(fm).toContain('plaud-id: "null"');
 	});
 
 	it.each([
-		'true', 'True', 'TRUE',
-		'false', 'False', 'FALSE',
-		'yes', 'Yes', 'YES',
-		'no', 'No', 'NO',
-		'on', 'On', 'ON',
-		'off', 'Off', 'OFF',
-		'null', 'Null', 'NULL',
+		'true',
+		'True',
+		'TRUE',
+		'false',
+		'False',
+		'FALSE',
+		'yes',
+		'Yes',
+		'YES',
+		'no',
+		'No',
+		'NO',
+		'on',
+		'On',
+		'ON',
+		'off',
+		'Off',
+		'OFF',
+		'null',
+		'Null',
+		'NULL',
 		'~',
 	])('quotes reserved YAML token %s when it appears in speakers', (token) => {
 		const fm = formatFrontmatter(makeRecording(), [token]);
@@ -3164,12 +3745,18 @@ describe('formatFrontmatter YAML hardening', () => {
 	});
 
 	it('quotes numeric-looking plaud-ids (prevents parse as number)', () => {
-		const fm = formatFrontmatter(makeRecording({ id: '12345' as never }), []);
+		const fm = formatFrontmatter(
+			makeRecording({ id: '12345' as never }),
+			[],
+		);
 		expect(fm).toContain('plaud-id: "12345"');
 	});
 
 	it('quotes date-looking plaud-ids', () => {
-		const fm = formatFrontmatter(makeRecording({ id: '2026-04-14' as never }), []);
+		const fm = formatFrontmatter(
+			makeRecording({ id: '2026-04-14' as never }),
+			[],
+		);
 		expect(fm).toContain('plaud-id: "2026-04-14"');
 	});
 
@@ -3181,7 +3768,10 @@ describe('formatFrontmatter YAML hardening', () => {
 	});
 
 	it('escapes tabs and carriage returns inside quoted values', () => {
-		const fm = formatFrontmatter(makeRecording(), ['tabs\there', 'cr\rhere']);
+		const fm = formatFrontmatter(makeRecording(), [
+			'tabs\there',
+			'cr\rhere',
+		]);
 		expect(fm).toContain('\\t');
 		expect(fm).toContain('\\r');
 	});
@@ -3192,7 +3782,9 @@ describe('formatFrontmatter YAML hardening', () => {
 	});
 
 	it('does not quote a normal letter-initial alphanumeric value', () => {
-		const fm = formatFrontmatter(makeRecording({ id: 'abc123' as never }), ['Charles']);
+		const fm = formatFrontmatter(makeRecording({ id: 'abc123' as never }), [
+			'Charles',
+		]);
 		expect(fm).toContain('plaud-id: abc123');
 		expect(fm).toContain('speakers: [Charles]');
 	});
@@ -3240,7 +3832,9 @@ describe('extractPlaudIdFromFrontmatter', () => {
 	});
 
 	it('returns null when there is no frontmatter', () => {
-		expect(extractPlaudIdFromFrontmatter('# just a title\n\nbody')).toBeNull();
+		expect(
+			extractPlaudIdFromFrontmatter('# just a title\n\nbody'),
+		).toBeNull();
 	});
 
 	it('returns null when frontmatter has no plaud-id key', () => {
@@ -3261,7 +3855,10 @@ describe('extractPlaudIdFromFrontmatter', () => {
 	it('round-trips a quoted id from formatFrontmatter', () => {
 		// The frontmatter writer quotes reserved words and numeric IDs;
 		// the extractor must round-trip them.
-		const fm = formatFrontmatter(makeRecording({ id: 'null' as never }), []);
+		const fm = formatFrontmatter(
+			makeRecording({ id: 'null' as never }),
+			[],
+		);
 		expect(extractPlaudIdFromFrontmatter(fm)).toBe('null');
 	});
 });
@@ -3278,11 +3875,9 @@ describe('mergeTagSources', () => {
 	});
 
 	it('lowercases base tags and preserves their insertion order', () => {
-		expect(mergeTagSources(['Work', 'Meeting', 'Planning'], undefined)).toEqual([
-			'work',
-			'meeting',
-			'planning',
-		]);
+		expect(
+			mergeTagSources(['Work', 'Meeting', 'Planning'], undefined),
+		).toEqual(['work', 'meeting', 'planning']);
 	});
 
 	it('slugifies AI keywords with plaud/ prefix, lowercase, and dashes', () => {
@@ -3292,7 +3887,11 @@ describe('mergeTagSources', () => {
 				'Customer Data',
 				'AWS Environment',
 			]),
-		).toEqual(['plaud/ai-agent', 'plaud/customer-data', 'plaud/aws-environment']);
+		).toEqual([
+			'plaud/ai-agent',
+			'plaud/customer-data',
+			'plaud/aws-environment',
+		]);
 	});
 
 	it('collapses multiple whitespace runs into a single dash', () => {
@@ -3302,17 +3901,15 @@ describe('mergeTagSources', () => {
 	});
 
 	it('strips leading and trailing whitespace (and the dashes they would produce)', () => {
-		expect(mergeTagSources(undefined, ['  Leading', 'Trailing  '])).toEqual([
-			'plaud/leading',
-			'plaud/trailing',
-		]);
+		expect(mergeTagSources(undefined, ['  Leading', 'Trailing  '])).toEqual(
+			['plaud/leading', 'plaud/trailing'],
+		);
 	});
 
 	it('drops empty and whitespace-only entries on both sides', () => {
-		expect(mergeTagSources(['', '   ', 'Keep'], ['', '   ', 'Keep Me'])).toEqual([
-			'keep',
-			'plaud/keep-me',
-		]);
+		expect(
+			mergeTagSources(['', '   ', 'Keep'], ['', '   ', 'Keep Me']),
+		).toEqual(['keep', 'plaud/keep-me']);
 	});
 
 	it('deduplicates base tags case-insensitively, first occurrence wins', () => {
@@ -3367,17 +3964,20 @@ describe('mergeTagSources', () => {
 	it('end-to-end: real-data-shape example from the 2026-04-14 capture', () => {
 		// Base list is empty (filetag_id_list was empty in Charles's test
 		// data) and the 9 AI keywords land as the only tags on the note.
-		const result = mergeTagSources([], [
-			'AI Agent',
-			'Customer Data',
-			'AWS Environment',
-			'Semantic Search',
-			'ImageRight',
-			'Cloud Code',
-			'Roper Architecture',
-			'DevOps',
-			'Workflow Modernization',
-		]);
+		const result = mergeTagSources(
+			[],
+			[
+				'AI Agent',
+				'Customer Data',
+				'AWS Environment',
+				'Semantic Search',
+				'ImageRight',
+				'Cloud Code',
+				'Roper Architecture',
+				'DevOps',
+				'Workflow Modernization',
+			],
+		);
 		expect(result).toEqual([
 			'plaud/ai-agent',
 			'plaud/customer-data',
@@ -3412,22 +4012,38 @@ describe('buildNoteTags', () => {
 
 	describe('tag modes', () => {
 		it("mode 'none' emits no tags at all, even custom ones", () => {
-			const result = buildNoteTags(BASE, AI, opts({ tagMode: 'none', customTags: 'pinned' }));
+			const result = buildNoteTags(
+				BASE,
+				AI,
+				opts({ tagMode: 'none', customTags: 'pinned' }),
+			);
 			expect(result.tags).toEqual([]);
 		});
 
 		it("mode 'custom' emits only the custom tags", () => {
-			const result = buildNoteTags(BASE, AI, opts({ tagMode: 'custom', customTags: 'plaud-meeting' }));
+			const result = buildNoteTags(
+				BASE,
+				AI,
+				opts({ tagMode: 'custom', customTags: 'plaud-meeting' }),
+			);
 			expect(result.tags).toEqual(['plaud-meeting']);
 		});
 
 		it("mode 'plaud' emits base tags plus custom tags, no AI keywords", () => {
-			const result = buildNoteTags(BASE, AI, opts({ tagMode: 'plaud', customTags: 'plaud-meeting' }));
+			const result = buildNoteTags(
+				BASE,
+				AI,
+				opts({ tagMode: 'plaud', customTags: 'plaud-meeting' }),
+			);
 			expect(result.tags).toEqual(['work', 'meeting', 'plaud-meeting']);
 		});
 
 		it("mode 'all' emits base, custom, then slugified AI tags in that order", () => {
-			const result = buildNoteTags(BASE, AI, opts({ tagMode: 'all', customTags: 'plaud-meeting' }));
+			const result = buildNoteTags(
+				BASE,
+				AI,
+				opts({ tagMode: 'all', customTags: 'plaud-meeting' }),
+			);
 			expect(result.tags).toEqual([
 				'work',
 				'meeting',
@@ -3445,45 +4061,73 @@ describe('buildNoteTags', () => {
 
 	describe('custom tag parsing', () => {
 		it('splits on commas, trims, lowercases, drops empties, and dedups', () => {
-			const result = buildNoteTags(undefined, undefined, opts({
-				tagMode: 'custom',
-				customTags: 'a,, b ,A',
-			}));
+			const result = buildNoteTags(
+				undefined,
+				undefined,
+				opts({
+					tagMode: 'custom',
+					customTags: 'a,, b ,A',
+				}),
+			);
 			expect(result.tags).toEqual(['a', 'b']);
 		});
 
 		it('an empty custom tags string contributes nothing', () => {
-			const result = buildNoteTags(BASE, undefined, opts({ tagMode: 'plaud', customTags: '' }));
+			const result = buildNoteTags(
+				BASE,
+				undefined,
+				opts({ tagMode: 'plaud', customTags: '' }),
+			);
 			expect(result.tags).toEqual(['work', 'meeting']);
 		});
 
 		it('custom tags dedup case-insensitively against base tags', () => {
-			const result = buildNoteTags(['Work'], undefined, opts({
-				tagMode: 'plaud',
-				customTags: 'WORK, extra',
-			}));
+			const result = buildNoteTags(
+				['Work'],
+				undefined,
+				opts({
+					tagMode: 'plaud',
+					customTags: 'WORK, extra',
+				}),
+			);
 			expect(result.tags).toEqual(['work', 'extra']);
 		});
 	});
 
 	describe('keywords property output', () => {
 		it('returns trimmed original-cased keywords when the mode excludes AI and the toggle is on', () => {
-			const result = buildNoteTags(BASE, ['  AI Agent ', 'Customer Data'], opts({ tagMode: 'plaud' }));
+			const result = buildNoteTags(
+				BASE,
+				['  AI Agent ', 'Customer Data'],
+				opts({ tagMode: 'plaud' }),
+			);
 			expect(result.keywords).toEqual(['AI Agent', 'Customer Data']);
 		});
 
 		it('dedups keywords case-insensitively, first occurrence wins', () => {
-			const result = buildNoteTags(undefined, ['AI Agent', 'ai agent'], opts({ tagMode: 'none' }));
+			const result = buildNoteTags(
+				undefined,
+				['AI Agent', 'ai agent'],
+				opts({ tagMode: 'none' }),
+			);
 			expect(result.keywords).toEqual(['AI Agent']);
 		});
 
 		it('drops empty and non-string keyword entries', () => {
-			const result = buildNoteTags(undefined, ['', '   ', 42 as unknown as string, 'Real'], opts());
+			const result = buildNoteTags(
+				undefined,
+				['', '   ', 42 as unknown as string, 'Real'],
+				opts(),
+			);
 			expect(result.keywords).toEqual(['Real']);
 		});
 
 		it('is empty when the toggle is off', () => {
-			const result = buildNoteTags(BASE, AI, opts({ aiKeywordsAsProperty: false }));
+			const result = buildNoteTags(
+				BASE,
+				AI,
+				opts({ aiKeywordsAsProperty: false }),
+			);
 			expect(result.keywords).toEqual([]);
 		});
 
@@ -3504,17 +4148,21 @@ describe('buildNoteTags', () => {
 		// tagMode 'plaud' with the property toggle explicitly on. The toggle
 		// is OFF by default (see DEFAULT_SETTINGS); this exercises the opt-in
 		// path where the 9 AI keywords move from tags: to keywords:.
-		const result = buildNoteTags([], [
-			'AI Agent',
-			'Customer Data',
-			'AWS Environment',
-			'Semantic Search',
-			'ImageRight',
-			'Cloud Code',
-			'Roper Architecture',
-			'DevOps',
-			'Workflow Modernization',
-		], opts());
+		const result = buildNoteTags(
+			[],
+			[
+				'AI Agent',
+				'Customer Data',
+				'AWS Environment',
+				'Semantic Search',
+				'ImageRight',
+				'Cloud Code',
+				'Roper Architecture',
+				'DevOps',
+				'Workflow Modernization',
+			],
+			opts(),
+		);
 		expect(result.tags).toEqual([]);
 		expect(result.keywords).toEqual([
 			'AI Agent',
@@ -3536,7 +4184,12 @@ describe('buildNoteTags', () => {
 
 describe('groupTranscriptByChapters', () => {
 	function seg(startSeconds: number, text = 'text'): TranscriptSegment {
-		return { startSeconds, endSeconds: startSeconds + 5, text, speaker: 'A' };
+		return {
+			startSeconds,
+			endSeconds: startSeconds + 5,
+			text,
+			speaker: 'A',
+		};
 	}
 	function tx(segments: readonly TranscriptSegment[]): Transcript {
 		return { id: 'abc' as PlaudRecordingId, segments, rawText: '' };
@@ -3550,7 +4203,9 @@ describe('groupTranscriptByChapters', () => {
 
 	it('returns [] when transcript has no segments', () => {
 		expect(
-			groupTranscriptByChapters(tx([]), [{ title: 'A', startSeconds: 0 }]),
+			groupTranscriptByChapters(tx([]), [
+				{ title: 'A', startSeconds: 0 },
+			]),
 		).toEqual([]);
 	});
 
@@ -3560,7 +4215,13 @@ describe('groupTranscriptByChapters', () => {
 	});
 
 	it('assigns segments to chapters by last startSeconds <= segment.startSeconds', () => {
-		const segments = [seg(0, 'intro'), seg(30, 'intro-2'), seg(60, 'main'), seg(120, 'main-2'), seg(200, 'wrap')];
+		const segments = [
+			seg(0, 'intro'),
+			seg(30, 'intro-2'),
+			seg(60, 'main'),
+			seg(120, 'main-2'),
+			seg(200, 'wrap'),
+		];
 		const chapters: readonly Chapter[] = [
 			{ title: 'Intro', startSeconds: 0 },
 			{ title: 'Main', startSeconds: 60 },
@@ -3568,29 +4229,40 @@ describe('groupTranscriptByChapters', () => {
 		];
 		const groups = groupTranscriptByChapters(tx(segments), chapters);
 		expect(groups).toHaveLength(3);
-		expect(groups[0].segments.map((s) => s.text)).toEqual(['intro', 'intro-2']);
-		expect(groups[1].segments.map((s) => s.text)).toEqual(['main', 'main-2']);
+		expect(groups[0].segments.map((s) => s.text)).toEqual([
+			'intro',
+			'intro-2',
+		]);
+		expect(groups[1].segments.map((s) => s.text)).toEqual([
+			'main',
+			'main-2',
+		]);
 		expect(groups[2].segments.map((s) => s.text)).toEqual(['wrap']);
 	});
 
 	it('assigns segments that start before the first chapter to the first chapter', () => {
-		const segments = [seg(0, 'early'), seg(10, 'also-early'), seg(60, 'main')];
+		const segments = [
+			seg(0, 'early'),
+			seg(10, 'also-early'),
+			seg(60, 'main'),
+		];
 		const chapters: readonly Chapter[] = [
 			{ title: 'Main block', startSeconds: 30 },
 		];
 		const groups = groupTranscriptByChapters(tx(segments), chapters);
 		expect(groups).toHaveLength(1);
-		expect(groups[0].segments.map((s) => s.text)).toEqual(['early', 'also-early', 'main']);
+		expect(groups[0].segments.map((s) => s.text)).toEqual([
+			'early',
+			'also-early',
+			'main',
+		]);
 	});
 
 	it('gives non-empty groups a blockId of "t-ch-{idx}"', () => {
-		const groups = groupTranscriptByChapters(
-			tx([seg(0), seg(60)]),
-			[
-				{ title: 'Intro', startSeconds: 0 },
-				{ title: 'Main', startSeconds: 60 },
-			],
-		);
+		const groups = groupTranscriptByChapters(tx([seg(0), seg(60)]), [
+			{ title: 'Intro', startSeconds: 0 },
+			{ title: 'Main', startSeconds: 60 },
+		]);
 		expect(groups[0].blockId).toBe('t-ch-0');
 		expect(groups[1].blockId).toBe('t-ch-1');
 	});
@@ -3598,26 +4270,20 @@ describe('groupTranscriptByChapters', () => {
 	it('gives empty groups a null blockId so the caller can skip linking', () => {
 		// Two chapters but only one segment near the start — the second
 		// chapter gets no segments and therefore no block id.
-		const groups = groupTranscriptByChapters(
-			tx([seg(0)]),
-			[
-				{ title: 'A', startSeconds: 0 },
-				{ title: 'B', startSeconds: 300 },
-			],
-		);
+		const groups = groupTranscriptByChapters(tx([seg(0)]), [
+			{ title: 'A', startSeconds: 0 },
+			{ title: 'B', startSeconds: 300 },
+		]);
 		expect(groups[0].blockId).toBe('t-ch-0');
 		expect(groups[1].blockId).toBeNull();
 		expect(groups[1].segments).toEqual([]);
 	});
 
 	it('drops chapters with blank titles before bucketing', () => {
-		const groups = groupTranscriptByChapters(
-			tx([seg(0), seg(60)]),
-			[
-				{ title: '   ', startSeconds: 0 },
-				{ title: 'Real', startSeconds: 30 },
-			],
-		);
+		const groups = groupTranscriptByChapters(tx([seg(0), seg(60)]), [
+			{ title: '   ', startSeconds: 0 },
+			{ title: 'Real', startSeconds: 30 },
+		]);
 		expect(groups).toHaveLength(1);
 		expect(groups[0].chapter.title).toBe('Real');
 		// Both segments attach to the sole surviving chapter.
@@ -3683,15 +4349,24 @@ describe('formatChapterIndexSection', () => {
 
 	it('sanitizes wiki-link delimiter characters out of the anchor text', () => {
 		const groups = [
-			makeGroup({ title: 'Main | topic [x] #id', startSeconds: 0 }, 't-ch-0'),
+			makeGroup(
+				{ title: 'Main | topic [x] #id', startSeconds: 0 },
+				't-ch-0',
+			),
 		];
 		const out = formatChapterIndexSection(groups);
-		expect(out).toContain('- [[#00:00 Main - topic -x- -id|**[00:00]** Main | topic [x] #id]]');
+		expect(out).toContain(
+			'- [[#00:00 Main - topic -x- -id|**[00:00]** Main | topic [x] #id]]',
+		);
 	});
 
 	it('uses h:MM:SS for chapters past the hour mark', () => {
-		const groups = [makeGroup({ title: 'Late', startSeconds: 3700 }, 't-ch-0')];
-		expect(formatChapterIndexSection(groups)).toContain('**[1:01:40]** Late');
+		const groups = [
+			makeGroup({ title: 'Late', startSeconds: 3700 }, 't-ch-0'),
+		];
+		expect(formatChapterIndexSection(groups)).toContain(
+			'**[1:01:40]** Late',
+		);
 	});
 });
 
@@ -3740,8 +4415,12 @@ describe('formatTranscriptSection', () => {
 		expect(out).toContain('##### 00:00 Intro');
 		expect(out).toContain('##### 01:00 Middle');
 		expect(out).toContain('[[#^plaud-chapters|Back to Chapters]]');
-		expect(out).toMatch(/##### 00:00 Intro\n\n\[\[#\^plaud-chapters\|Back to Chapters\]\]\n\n\*\*\[00:00\]\*\* A: hi/);
-		expect(out).toMatch(/##### 01:00 Middle\n\n\[\[#\^plaud-chapters\|Back to Chapters\]\]\n\n\*\*\[01:00\]\*\* B: mid/);
+		expect(out).toMatch(
+			/##### 00:00 Intro\n\n\[\[#\^plaud-chapters\|Back to Chapters\]\]\n\n\*\*\[00:00\]\*\* A: hi/,
+		);
+		expect(out).toMatch(
+			/##### 01:00 Middle\n\n\[\[#\^plaud-chapters\|Back to Chapters\]\]\n\n\*\*\[01:00\]\*\* B: mid/,
+		);
 		expect(out).not.toContain('> [!note]- Transcript');
 	});
 
@@ -3882,7 +4561,11 @@ describe('substitutePlaudPlaceholders', () => {
 	});
 
 	it('substitutes $[audio_title] with the recording title', () => {
-		const out = substitutePlaudPlaceholders('Title: $[audio_title]', rec, transcript);
+		const out = substitutePlaudPlaceholders(
+			'Title: $[audio_title]',
+			rec,
+			transcript,
+		);
 		expect(out).toBe('Title: Q2 Planning');
 	});
 
@@ -3896,7 +4579,11 @@ describe('substitutePlaudPlaceholders', () => {
 	});
 
 	it('substitutes $[speakers] with a comma-separated speaker list', () => {
-		const out = substitutePlaudPlaceholders('Speakers: $[speakers]', rec, transcript);
+		const out = substitutePlaudPlaceholders(
+			'Speakers: $[speakers]',
+			rec,
+			transcript,
+		);
 		expect(out).toBe('Speakers: Charles, Mary');
 	});
 
@@ -3906,7 +4593,11 @@ describe('substitutePlaudPlaceholders', () => {
 			rawText: '',
 			segments: [{ startSeconds: 0, endSeconds: 5, text: 'hi' }],
 		};
-		const out = substitutePlaudPlaceholders('Speakers: $[speakers]', rec, noSpeakers);
+		const out = substitutePlaudPlaceholders(
+			'Speakers: $[speakers]',
+			rec,
+			noSpeakers,
+		);
 		expect(out).toBe('Speakers: $[speakers]');
 	});
 
@@ -3929,9 +4620,9 @@ describe('substitutePlaudPlaceholders', () => {
 	});
 
 	it('returns text unchanged when no placeholders are present', () => {
-		expect(substitutePlaudPlaceholders('No tokens here', rec, transcript)).toBe(
-			'No tokens here',
-		);
+		expect(
+			substitutePlaudPlaceholders('No tokens here', rec, transcript),
+		).toBe('No tokens here');
 	});
 
 	it('returns an empty string unchanged without recursing into the regex', () => {
@@ -3976,8 +4667,18 @@ describe('formatMarkdown with chapters', () => {
 			id: recording.id,
 			rawText: '',
 			segments: [
-				{ startSeconds: 0, endSeconds: 30, text: 'hello', speaker: 'A' },
-				{ startSeconds: 60, endSeconds: 90, text: 'world', speaker: 'B' },
+				{
+					startSeconds: 0,
+					endSeconds: 30,
+					text: 'hello',
+					speaker: 'A',
+				},
+				{
+					startSeconds: 60,
+					endSeconds: 90,
+					text: 'world',
+					speaker: 'B',
+				},
 			],
 		};
 		const summary: Summary = {
@@ -4000,12 +4701,18 @@ describe('formatMarkdown with chapters', () => {
 		expect(md).toContain('##### 00:00 Opening');
 		expect(md).toContain('##### 01:00 Close');
 		// Each chapter section contains a quick return link to the index.
-		expect(md).toMatch(/##### 00:00 Opening\n\n\[\[#\^plaud-chapters\|Back to Chapters\]\]\n\n\*\*\[00:00\]\*\* A: hello/);
-		expect(md).toMatch(/##### 01:00 Close\n\n\[\[#\^plaud-chapters\|Back to Chapters\]\]\n\n\*\*\[01:00\]\*\* B: world/);
+		expect(md).toMatch(
+			/##### 00:00 Opening\n\n\[\[#\^plaud-chapters\|Back to Chapters\]\]\n\n\*\*\[00:00\]\*\* A: hello/,
+		);
+		expect(md).toMatch(
+			/##### 01:00 Close\n\n\[\[#\^plaud-chapters\|Back to Chapters\]\]\n\n\*\*\[01:00\]\*\* B: world/,
+		);
 		// Chapters index carries the ^plaud-chapters block id.
 		expect(md).toContain('^plaud-chapters');
 		// Horizontal rule separates summary from transcript area.
-		expect(md).toContain('## Summary\n\nSummary body goes here.\n\n---\n\n#### Transcript');
+		expect(md).toContain(
+			'## Summary\n\nSummary body goes here.\n\n---\n\n#### Transcript',
+		);
 
 		// No [!note]- Transcript callout wrapper in the chaptered path.
 		expect(md).not.toContain('> [!note]- Transcript');
@@ -4120,7 +4827,8 @@ describe('findTranscriptHeadingLine', () => {
 	});
 
 	it('returns null when no wrapping heading matches at the given level', () => {
-		const md = '## Summary\n\nbody\n\n> [!note]- Transcript\n> **[00:00]** A: hi';
+		const md =
+			'## Summary\n\nbody\n\n> [!note]- Transcript\n> **[00:00]** A: hi';
 		expect(findTranscriptHeadingLine(md, 4)).toBeNull();
 	});
 
@@ -4182,7 +4890,12 @@ describe('NoteWriter.writeNote foldInfo', () => {
 			{ title: 'Close', startSeconds: 14 },
 		];
 
-		const outcome = await writer.writeNote(recording, transcript, summary, chapters);
+		const outcome = await writer.writeNote(
+			recording,
+			transcript,
+			summary,
+			chapters,
+		);
 		const created = expectCreatedOutcome(outcome);
 		expect(created.foldInfo).toBeDefined();
 		expect(created.foldInfo?.transcriptHeadingLine).toBeGreaterThan(0);
@@ -4252,7 +4965,8 @@ describe('NoteWriter.writeNote foldInfo', () => {
 
 describe('extractPlaudPlaceholderFlag', () => {
 	it('returns true when the frontmatter carries plaud-placeholder: true', () => {
-		const content = '---\nplaud-id: abc\nplaud-placeholder: true\n---\n\n# Note';
+		const content =
+			'---\nplaud-id: abc\nplaud-placeholder: true\n---\n\n# Note';
 		expect(extractPlaudPlaceholderFlag(content)).toBe(true);
 	});
 
@@ -4260,9 +4974,9 @@ describe('extractPlaudPlaceholderFlag', () => {
 		expect(
 			extractPlaudPlaceholderFlag('---\nplaud-placeholder: "true"\n---'),
 		).toBe(true);
-		expect(extractPlaudPlaceholderFlag('---\nplaud-placeholder: YES\n---')).toBe(
-			true,
-		);
+		expect(
+			extractPlaudPlaceholderFlag('---\nplaud-placeholder: YES\n---'),
+		).toBe(true);
 	});
 
 	it('returns false for a real note with no marker', () => {
@@ -4283,7 +4997,10 @@ describe('extractPlaudPlaceholderFlag', () => {
 describe('formatPlaceholderMarkdown', () => {
 	it('carries the recording id, link, marker, and reason', () => {
 		const md = formatPlaceholderMarkdown(
-			makeRecording({ id: 'rec-9' as PlaudRecordingId, title: 'Strategy sync' }),
+			makeRecording({
+				id: 'rec-9' as PlaudRecordingId,
+				title: 'Strategy sync',
+			}),
 			'Plaud reported: status=-12 msg=start trans task error',
 		);
 		expect(md).toContain('plaud-id: rec-9');
@@ -4295,7 +5012,10 @@ describe('formatPlaceholderMarkdown', () => {
 	});
 
 	it('is recognized as a placeholder by extractPlaudPlaceholderFlag', () => {
-		const md = formatPlaceholderMarkdown(makeRecording(), 'because reasons');
+		const md = formatPlaceholderMarkdown(
+			makeRecording(),
+			'because reasons',
+		);
 		expect(extractPlaudPlaceholderFlag(md)).toBe(true);
 		// And it still carries a parseable plaud-id for collision/dedup checks.
 		expect(extractPlaudIdFromFrontmatter(md)).toBe('abc123');
@@ -4313,11 +5033,16 @@ describe('formatPlaceholderMarkdown', () => {
 	// datetime property (issue #32): the placeholder path mirrors formatFrontmatter,
 	// so it must emit datetime under the same conditions to stay in sync.
 	it('omits the datetime line when no datetime template is given', () => {
-		expect(formatPlaceholderMarkdown(makeRecording(), 'reason')).not.toMatch(
-			/^datetime:/m,
-		);
 		expect(
-			formatPlaceholderMarkdown(makeRecording(), 'reason', DEFAULT_NOTE_NAME_TEMPLATE, ''),
+			formatPlaceholderMarkdown(makeRecording(), 'reason'),
+		).not.toMatch(/^datetime:/m);
+		expect(
+			formatPlaceholderMarkdown(
+				makeRecording(),
+				'reason',
+				DEFAULT_NOTE_NAME_TEMPLATE,
+				'',
+			),
 		).not.toMatch(/^datetime:/m);
 	});
 
@@ -4340,47 +5065,79 @@ describe('formatPlaceholderMarkdown', () => {
 describe('NoteWriter.writePlaceholderNote', () => {
 	it('creates a placeholder note when none exists', async () => {
 		const vault = makeFakeVault();
-		const writer = new NoteWriter(vault, { outputFolder: 'Plaud', onDuplicate: 'skip' });
+		const writer = new NoteWriter(vault, {
+			outputFolder: 'Plaud',
+			onDuplicate: 'skip',
+		});
 
-		const outcome = await writer.writePlaceholderNote(makeRecording(), 'no content yet');
+		const outcome = await writer.writePlaceholderNote(
+			makeRecording(),
+			'no content yet',
+		);
 
 		expect(outcome.status).toBe('created');
 		expect(outcome.path).toBe('Plaud/2026-04-14 Morning standup.md');
-		const body = vault.files.get('Plaud/2026-04-14 Morning standup.md') ?? '';
+		const body =
+			vault.files.get('Plaud/2026-04-14 Morning standup.md') ?? '';
 		expect(extractPlaudPlaceholderFlag(body)).toBe(true);
 	});
 
 	it('refreshes an existing placeholder rather than duplicating it', async () => {
 		const vault = makeFakeVault();
-		const writer = new NoteWriter(vault, { outputFolder: 'Plaud', onDuplicate: 'skip' });
+		const writer = new NoteWriter(vault, {
+			outputFolder: 'Plaud',
+			onDuplicate: 'skip',
+		});
 		await writer.writePlaceholderNote(makeRecording(), 'first reason');
 
-		const outcome = await writer.writePlaceholderNote(makeRecording(), 'second reason');
+		const outcome = await writer.writePlaceholderNote(
+			makeRecording(),
+			'second reason',
+		);
 
 		expect(outcome.status).toBe('refreshed');
 		expect(vault.files.size).toBe(1);
-		expect(vault.files.get('Plaud/2026-04-14 Morning standup.md')).toContain('second reason');
+		expect(
+			vault.files.get('Plaud/2026-04-14 Morning standup.md'),
+		).toContain('second reason');
 	});
 
 	it('keeps an existing real note and never downgrades it to a stub', async () => {
 		const vault = makeFakeVault();
-		const writer = new NoteWriter(vault, { outputFolder: 'Plaud', onDuplicate: 'skip' });
-		await writer.writeNote(makeRecording(), makeTranscript(), makeSummary());
+		const writer = new NoteWriter(vault, {
+			outputFolder: 'Plaud',
+			onDuplicate: 'skip',
+		});
+		await writer.writeNote(
+			makeRecording(),
+			makeTranscript(),
+			makeSummary(),
+		);
 		const realBody = vault.files.get('Plaud/2026-04-14 Morning standup.md');
 
-		const outcome = await writer.writePlaceholderNote(makeRecording(), 'plaud erred');
+		const outcome = await writer.writePlaceholderNote(
+			makeRecording(),
+			'plaud erred',
+		);
 
 		expect(outcome.status).toBe('kept-existing');
 		// The real note is untouched: still has the summary, no placeholder marker.
-		expect(vault.files.get('Plaud/2026-04-14 Morning standup.md')).toBe(realBody);
+		expect(vault.files.get('Plaud/2026-04-14 Morning standup.md')).toBe(
+			realBody,
+		);
 		expect(
-			extractPlaudPlaceholderFlag(vault.files.get('Plaud/2026-04-14 Morning standup.md') ?? ''),
+			extractPlaudPlaceholderFlag(
+				vault.files.get('Plaud/2026-04-14 Morning standup.md') ?? '',
+			),
 		).toBe(false);
 	});
 
 	it('throws a collision error when a note for a DIFFERENT recording occupies the path', async () => {
 		const vault = makeFakeVault();
-		const writer = new NoteWriter(vault, { outputFolder: 'Plaud', onDuplicate: 'skip' });
+		const writer = new NoteWriter(vault, {
+			outputFolder: 'Plaud',
+			onDuplicate: 'skip',
+		});
 		vault.files.set(
 			'Plaud/2026-04-14 Morning standup.md',
 			'---\nplaud-id: someone-else\n---\n\n# 2026-04-14 Morning standup',
@@ -4397,7 +5154,10 @@ describe('NoteWriter.writePlaceholderNote', () => {
 describe('NoteWriter.writeNote superseding a placeholder', () => {
 	it('overwrites a placeholder with real content even under the skip policy', async () => {
 		const vault = makeFakeVault();
-		const writer = new NoteWriter(vault, { outputFolder: 'Plaud', onDuplicate: 'skip' });
+		const writer = new NoteWriter(vault, {
+			outputFolder: 'Plaud',
+			onDuplicate: 'skip',
+		});
 		await writer.writePlaceholderNote(makeRecording(), 'no content yet');
 
 		const outcome = await writer.writeNote(
@@ -4409,7 +5169,8 @@ describe('NoteWriter.writeNote superseding a placeholder', () => {
 		// Skip policy would normally leave an existing note alone, but a
 		// placeholder must always yield to real content.
 		expect(outcome.status).toBe('overwritten');
-		const body = vault.files.get('Plaud/2026-04-14 Morning standup.md') ?? '';
+		const body =
+			vault.files.get('Plaud/2026-04-14 Morning standup.md') ?? '';
 		expect(extractPlaudPlaceholderFlag(body)).toBe(false);
 		expect(body).toContain('## Summary');
 	});
@@ -4466,7 +5227,11 @@ describe('formatMarkdown consumer_note template outputs', () => {
 	});
 
 	it('renders no block when there are no template outputs', () => {
-		const md = formatMarkdown(makeRecording(), makeTranscript(), makeSummary());
+		const md = formatMarkdown(
+			makeRecording(),
+			makeTranscript(),
+			makeSummary(),
+		);
 		expect(md).not.toContain('## Template outputs');
 	});
 
@@ -4502,7 +5267,14 @@ describe('formatMarkdown consumer_note template outputs', () => {
 			makeTranscript(),
 			makeSummary(),
 			undefined,
-			{ consumerNotes: [{ heading: 'Verbatim Transcript', markdown: 'Speaker 1: hello' }] },
+			{
+				consumerNotes: [
+					{
+						heading: 'Verbatim Transcript',
+						markdown: 'Speaker 1: hello',
+					},
+				],
+			},
 		);
 		// The user's "Verbatim Transcript" template renders as its own section...
 		expect(md).toContain('### Verbatim Transcript');
@@ -4528,7 +5300,11 @@ describe('formatMarkdown consumer_note template outputs', () => {
 			makeTranscript(),
 			makeSummary(),
 			undefined,
-			{ consumerNotes: [{ heading: 'Outline', markdown: '# Top\n\n## Sub' }] },
+			{
+				consumerNotes: [
+					{ heading: 'Outline', markdown: '# Top\n\n## Sub' },
+				],
+			},
 		);
 		const lines = md.split('\n');
 		// Shallowest body heading (H1) shifts to H4; the H2 shifts in step to H5.
@@ -4557,7 +5333,11 @@ describe('formatMarkdown consumer_note template outputs', () => {
 			makeTranscript(),
 			makeSummary(),
 			undefined,
-			{ consumerNotes: [{ heading: 'Deep', markdown: '#### Already deep\n\ntext' }] },
+			{
+				consumerNotes: [
+					{ heading: 'Deep', markdown: '#### Already deep\n\ntext' },
+				],
+			},
 		);
 		expect(md.split('\n')).toContain('#### Already deep');
 	});
@@ -4568,7 +5348,14 @@ describe('formatMarkdown consumer_note template outputs', () => {
 			makeTranscript(),
 			makeSummary(),
 			undefined,
-			{ consumerNotes: [{ heading: 'Notes', markdown: 'Action items\n---\nFollow up' }] },
+			{
+				consumerNotes: [
+					{
+						heading: 'Notes',
+						markdown: 'Action items\n---\nFollow up',
+					},
+				],
+			},
 		);
 		const lines = md.split('\n');
 		const idx = lines.indexOf('Action items');
