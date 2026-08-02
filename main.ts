@@ -168,6 +168,14 @@ const CAPTURE_SAVE_FAILED_NOTICE =
 // the user to the one place that can answer the question.
 const CAPTURE_UNEXPECTED_FAILURE_NOTICE =
 	"Plaud: the sign-in did not finish. Check the status under Plaud token in settings to see whether it was saved, and sign in again if it was not.";
+// The same vault failure on the two credential changes that are not captures.
+// They get their own wording because "sign-in" is the wrong noun for either:
+// one picks an already-stored secret, the other removes one. Both can promise
+// nothing changed, for the same reason a capture can.
+const LINK_SECRET_FAILED_NOTICE =
+	"Plaud: could not save that choice to this vault, so the previously linked token is still in use. Check that the vault is writable and has free space.";
+const SIGN_OUT_FAILED_NOTICE =
+	"Plaud: could not save the sign-out to this vault, so you are still signed in. Check that the vault is writable and has free space, then try again.";
 // Several candidates and no way to ask which one works. Picking blind would
 // store the wrong credential (a revoked long-lived token outranks a live short
 // one on every claim we can read), so store nothing and let the user retry.
@@ -212,6 +220,18 @@ type CaptureStoreResult =
  * was live before issue #86 (a rejected credential drew both its own notice and
  * a "closed" one) and would have gotten worse with the save-failure notice.
  */
+/**
+ * What Clear sign-in did. `settingsSaved` is false when the vault refused the
+ * write, in which case NOTHING was cleared: the credentials are blanked only
+ * after the sign-out is durable, so a refused write leaves the session intact
+ * rather than half-removed. The caller has to say so instead of reporting a
+ * clean sign-out, which is the same requirement issue #86 puts on a capture.
+ */
+interface SignOutResult {
+	sessionCleared: boolean;
+	settingsSaved: boolean;
+}
+
 type ReauthOutcome =
 	/** A credential was captured and stored. */
 	| "captured"
@@ -860,6 +880,15 @@ export default class PlaudImporterPlugin extends Plugin {
 	// order. See serializeStateWrite for why that ordering has to be
 	// enforced rather than assumed (issue #86).
 	private stateWriteChain: Promise<unknown> = Promise.resolve();
+	// Bumped by every sign-out that actually persists. Capture surfaces snapshot
+	// it when they START and refuse to store if it has moved, because the queue
+	// orders mutations by when they COMMIT and a capture commits at the end of a
+	// long tail of user interaction and network probing. Clear sign-in clicked
+	// during that tail would otherwise be undone by the capture landing after it,
+	// with the UI already reporting a cleared sign-in. Only sign-outs bump it: a
+	// newer capture superseding an older one is decided by queue order, and
+	// counting those here would make the newer one abandon instead.
+	private signOutGeneration = 0;
 	// Redraws the open settings tab's sign-in status and secret picker. Set by
 	// the tab's display() (the pre-1.13 imperative path; 1.13+ renders
 	// declaratively and re-reads on its own) and cleared by its hide(), so it
@@ -3292,19 +3321,33 @@ export default class PlaudImporterPlugin extends Plugin {
 	 * would land afterwards and silently re-link its own secret over the one the
 	 * user just picked.
 	 */
-	async linkSecret(id: string): Promise<void> {
-		await this.serializeStateWrite(async () => {
-			this.settings.secretId = id;
+	async linkSecret(id: string): Promise<boolean> {
+		return this.serializeStateWrite(async () => {
+			// Commit-first, like a capture: the settings are applied in memory only
+			// once the write has landed, so a vault that refuses it leaves the
+			// previously linked secret in place rather than pointing the plugin at
+			// a choice that was never persisted.
+			const next: PlaudImporterSettings = {
+				...this.settings,
+				secretId: id,
+			};
 			// A manually linked secret has unknown provenance, so the recorded
 			// sign-in method no longer describes the active credential; clear it and
 			// let Reconnect fall back to the legacy heuristic. Re-linking the
 			// plugin-captured secret keeps its recorded method, which still
 			// describes that token.
 			if (id !== CAPTURED_SECRET_ID) {
-				this.settings.signInMethod = "";
+				next.signInMethod = "";
 			}
-			// Unqueued: this already holds the slot.
-			await this.writeSettings();
+			try {
+				await this.saveData(next);
+			} catch (err) {
+				console.error("Plaud importer: could not save the linked secret", err);
+				return false;
+			}
+			this.settings.secretId = next.secretId;
+			this.settings.signInMethod = next.signInMethod;
+			return true;
 		});
 	}
 
@@ -3343,13 +3386,82 @@ export default class PlaudImporterPlugin extends Plugin {
 	// the plugin is effectively signed out. Region (apiBaseUrl) is left as-is;
 	// it re-detects on the next import. Returns whether the browser session was
 	// cleared, so the caller can tell the user if only the token was unlinked.
-	async clearSignIn(): Promise<{ sessionCleared: boolean }> {
+	async clearSignIn(): Promise<SignOutResult> {
+		// Runs through the shared queue, so a capture that is mid-commit (or
+		// waiting its turn) cannot land on top of this sign-out and quietly
+		// restore the session the user just cleared.
+		return this.serializeStateWrite(() => this.commitSignOut());
+	}
+
+	/** The whole of clearSignIn. Always run through the queue. */
+	private async commitSignOut(): Promise<SignOutResult> {
+		// Commit-first, the same shape as a capture and for the same reason. This
+		// used to blank the secrets and then await the settings write, so a vault
+		// that refused the write left the credentials wiped while settings still
+		// named them: signed out in practice, still linked on disk, and reported
+		// to the user as a clean sign-out because nothing checked. The ids to
+		// blank are read BEFORE the commit, since the commit is what clears
+		// secretId.
+		const ids = new Set([
+			this.settings.secretId,
+			CAPTURED_SECRET_ID,
+			LEGACY_REFRESH_SECRET_ID,
+		]);
+		const next: PlaudImporterSettings = {
+			...this.settings,
+			secretId: "",
+			// A cleared plugin has no session, so there is no sign-in method to
+			// route a Reconnect from until the next capture records one. The warn
+			// stamp resets too: the next credential deserves its own warning.
+			signInMethod: "",
+			sessionWarnedForExpMs: 0,
+		};
+		try {
+			await this.saveData(next);
+		} catch (err) {
+			console.error("Plaud importer: could not save the sign-out", err);
+			return { sessionCleared: false, settingsSaved: false };
+		}
+		this.settings.secretId = next.secretId;
+		this.settings.signInMethod = next.signInMethod;
+		this.settings.sessionWarnedForExpMs = next.sessionWarnedForExpMs;
+		// Committed, so any capture that was already under way when the user asked
+		// to sign out is now stale and must not re-link on its way past. Bumped
+		// only on the committed path: a refused sign-out changed nothing and has no
+		// business invalidating a capture.
+		this.signOutGeneration += 1;
+		// A cleared session has nothing to refresh, and the next capture gets a
+		// clean slate rather than inheriting this one's failure state.
+		this.sessionRefreshFailed = false;
+		// Wipe the stored token value(s). Obsidian's SecretStorage exposes no
+		// delete call (only set/get/list), so the secret entry itself cannot be
+		// removed; blanking the value is the most thorough removal available. The
+		// legacy refresh token is blanked too so no credential outlives sign-out.
+		// After the commit: a sign-out that did not persist must not destroy the
+		// credentials the still-recorded session is using.
+		for (const id of ids) {
+			if (id.length > 0) {
+				try {
+					this.app.secretStorage.setSecret(id, "");
+				} catch (err) {
+					console.error("Plaud importer: failed to blank secret", err);
+				}
+			}
+		}
+		// Also after the commit, and inside the queue, which is where this moved
+		// to. It ran FIRST before, which broke the no-change promise in a way that
+		// is easy to miss: deleting the Electron partition is what a window
+		// sign-in renews against, so a sign-out whose settings write then failed
+		// left the old token still linked and no longer renewable. It is Electron
+		// work rather than a credential write, and it holds the queue slot for its
+		// duration, which is the price of not destroying it speculatively.
+		//
+		// Explicit sign-out, so it also removes the pre-#87 shared leftover. The
+		// reconnect path deliberately does not: see the note in
+		// clearPlaudLoginSession about not signing out a sibling vault as a side
+		// effect of one vault recovering.
 		let sessionCleared = false;
 		try {
-			// Explicit sign-out, so it also removes the pre-#87 shared leftover.
-			// The reconnect path deliberately does not: see the note in
-			// clearPlaudLoginSession about not signing out a sibling vault as a
-			// side effect of one vault recovering.
 			sessionCleared = await clearPlaudLoginSession(this.app, {
 				includeLegacyShared: true,
 			});
@@ -3359,51 +3471,9 @@ export default class PlaudImporterPlugin extends Plugin {
 				err,
 			);
 		}
-		// The credential mutation runs through the shared queue, so a capture that
-		// is mid-commit (or waiting its turn) cannot land on top of this sign-out
-		// and quietly restore the session the user just cleared. The browser
-		// session clear above stays outside it: it touches Electron, not the
-		// credential, and it can take a while.
-		return this.serializeStateWrite(() =>
-			this.commitSignOut(sessionCleared),
-		);
-	}
-
-	/** The credential half of clearSignIn. Always run through the queue. */
-	private async commitSignOut(
-		sessionCleared: boolean,
-	): Promise<{ sessionCleared: boolean }> {
-		// Wipe the stored token value(s). Obsidian's SecretStorage exposes no
-		// delete call (only set/get/list), so the secret entry itself cannot be
-		// removed; blanking the value is the most thorough removal available. The
-		// legacy refresh token is blanked too so no credential outlives sign-out.
-		for (const id of new Set([
-			this.settings.secretId,
-			CAPTURED_SECRET_ID,
-			LEGACY_REFRESH_SECRET_ID,
-		])) {
-			if (id.length > 0) {
-				try {
-					this.app.secretStorage.setSecret(id, "");
-				} catch (err) {
-					console.error("Plaud importer: failed to blank secret", err);
-				}
-			}
-		}
-		this.settings.secretId = "";
-		// A cleared plugin has no session, so there is no sign-in method to route
-		// a Reconnect from until the next capture records one. The warn stamp
-		// resets too: the next credential deserves its own warning.
-		this.settings.signInMethod = "";
-		this.settings.sessionWarnedForExpMs = 0;
-		// A cleared session has nothing to refresh, and the next capture gets a
-		// clean slate rather than inheriting this one's failure state.
-		this.sessionRefreshFailed = false;
-		// Unqueued: this already holds the slot.
-		await this.writeSettings();
 		this.reconcileSessionExpiryWarning();
 		this.reconcileSessionRefresh();
-		return { sessionCleared };
+		return { sessionCleared, settingsSaved: true };
 	}
 
 	// Re-authenticates via the email/password login window and persists the
@@ -3442,6 +3512,12 @@ export default class PlaudImporterPlugin extends Plugin {
 			return "reported";
 		}
 		this.reauthInFlight = true;
+		// Snapshotted before the window opens, which is the longest tail any
+		// capture has: the user can sit in it for minutes. If they give up and
+		// clear the sign-in from settings meanwhile, this capture must not land
+		// afterwards and re-link. storeFirstWorkingCandidate takes its own
+		// snapshot for the probing that follows; this one covers the window.
+		const signOutAtStart = this.signOutGeneration;
 		try {
 			const result = await openPlaudLogin(this.app, {
 				debugLogger: this.debugLogger,
@@ -3474,7 +3550,8 @@ export default class PlaudImporterPlugin extends Plugin {
 			// to unwind and nothing to race.
 			const outcome = await this.storeFirstWorkingCandidate(
 				result.tokens,
-				() => !this.disposed,
+				() =>
+					!this.disposed && this.signOutGeneration === signOutAtStart,
 				"window",
 				result.apiBaseUrl ?? undefined,
 			);
@@ -3509,6 +3586,12 @@ export default class PlaudImporterPlugin extends Plugin {
 		// credential. Callers with no such window keep the default.
 		canStore: () => boolean = () => true,
 	): Promise<boolean> {
+		// Snapshotted at ENTRY, not inside storeFirstWorkingCandidate, because the
+		// clipboard read below is itself an await. Taking it after that read would
+		// see a sign-out that happened DURING the read as this paste's own
+		// starting value, and let the paste re-link the token the user just
+		// cleared. Same reason the sign-in window takes its own.
+		const signOutAtStart = this.signOutGeneration;
 		let text = "";
 		try {
 			text = await navigator.clipboard.readText();
@@ -3519,7 +3602,11 @@ export default class PlaudImporterPlugin extends Plugin {
 			);
 			return false;
 		}
-		if (!canStore()) {
+		// Folds in the sign-out check, so every later use of this guard carries it
+		// too, including the one handed to the store.
+		const stillWanted = (): boolean =>
+			this.signOutGeneration === signOutAtStart && canStore();
+		if (!stillWanted()) {
 			return false;
 		}
 		// The bookmarklet's fallback offers the whole deep link, so a paste can
@@ -3536,7 +3623,10 @@ export default class PlaudImporterPlugin extends Plugin {
 		}
 		// The same guard again, because the probe between here and the store is
 		// a second, longer chance for this paste to go stale.
-		const result = await this.storeFirstWorkingCandidate(candidates, canStore);
+		const result = await this.storeFirstWorkingCandidate(
+			candidates,
+			stillWanted,
+		);
 		if (!result.stored && result.message.length > 0) {
 			new Notice(result.message);
 		}
@@ -3901,6 +3991,9 @@ export default class PlaudImporterPlugin extends Plugin {
 		// configured host untouched.
 		discoveredBaseUrl?: string,
 	): Promise<{ stored: boolean; message: string }> {
+		// Read before anything slow happens, so a sign-out during the probing
+		// below is detectable at store time. See stillOwns further down.
+		const signOutAtStart = this.signOutGeneration;
 		const probeBaseUrl = discoveredBaseUrl ?? this.settings.apiBaseUrl;
 		// The region redirect a probe may follow is captured locally instead of
 		// being persisted by the client's own callback: an unvalidated
@@ -3947,7 +4040,14 @@ export default class PlaudImporterPlugin extends Plugin {
 		// after waiting in the credential queue. This check alone stopped being
 		// binding once the store could wait: the answer can change between here
 		// and the write.
-		const stillOwns = (): boolean => !this.disposed && canStore();
+		//
+		// The sign-out generation is snapshotted at the TOP of this method, before
+		// the probing above, because probing is several round-trips and is exactly
+		// the window in which a user gives up and clicks Clear sign-in.
+		const stillOwns = (): boolean =>
+			!this.disposed &&
+			this.signOutGeneration === signOutAtStart &&
+			canStore();
 		if (!stillOwns()) {
 			return { stored: false, message: "" };
 		}
@@ -4668,15 +4768,30 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 						// Routed through the plugin so the link joins the credential
 						// mutation queue; a capture waiting to commit must not land
 						// on top of the secret the user just picked.
-						await this.plugin.linkSecret(id);
-						// A freshly stored token is a resume trigger for a paused
-						// auto-sync.
-						this.plugin.resumeAutoSyncIfPaused();
-						// The linked credential changed, so the expiry warning
-						// must re-derive (fifth mutation channel, issue #78),
-						// and so must the refresh schedule.
-						this.plugin.reconcileSessionExpiryWarning();
-						this.plugin.reconcileSessionRefresh();
+						const linked = await this.plugin.linkSecret(id);
+						if (linked) {
+							// A freshly stored token is a resume trigger for a paused
+							// auto-sync.
+							this.plugin.resumeAutoSyncIfPaused();
+							// The linked credential changed, so the expiry warning
+							// must re-derive (fifth mutation channel, issue #78),
+							// and so must the refresh schedule.
+							this.plugin.reconcileSessionExpiryWarning();
+							this.plugin.reconcileSessionRefresh();
+						} else {
+							// A vault that refuses the write leaves the previously
+							// linked secret in place, so the dropdown is showing a
+							// choice that is not in effect.
+							new Notice(LINK_SECRET_FAILED_NOTICE);
+						}
+						// Redrawn on BOTH paths, from the settings the plugin actually
+						// holds. Redrawing only on failure was itself a race: two quick
+						// selections both queue, and if the first fails while the second
+						// succeeds, the failure's redraw can run after the second
+						// commit and leave the dropdown showing the secret the plugin
+						// is no longer using. Since links complete in queue order, the
+						// last completion redraws last and wins.
+						this.tokenRefresh?.();
 						refreshStatus();
 					});
 			this.tokenRefresh = () => {
@@ -4840,7 +4955,22 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 				btn.setDisabled(true);
 				resultEl.setText("Clearing…");
 				try {
-					const { sessionCleared } = await this.plugin.clearSignIn();
+					const { sessionCleared, settingsSaved } =
+						await this.plugin.clearSignIn();
+					// The sign-out commits before anything is destroyed, so a refused
+					// write means nothing was cleared at all. Reporting "Cleared." here
+					// would be the same over-claiming issue #86 is about, one step over
+					// from the capture path. The status text has to move off "Clearing…"
+					// either way.
+					if (!settingsSaved) {
+						resultEl.setText(
+							"Could not save the sign-out to this vault, so you are still signed in. Check that the vault is writable and has free space, then try again.",
+						);
+						new Notice(SIGN_OUT_FAILED_NOTICE);
+						this.signinRefresh?.();
+						this.tokenRefresh?.();
+						return;
+					}
 					resultEl.setText(
 						sessionCleared
 							? "Cleared. The embedded browser is signed out and the stored token is unlinked. Click Sign in to start fresh."

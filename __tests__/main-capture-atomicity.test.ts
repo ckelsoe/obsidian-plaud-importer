@@ -62,6 +62,8 @@ interface StoreHost {
 	saveData(data: unknown): Promise<void>;
 	/** Tail of the mutation queue. Seeded by hand: see the note in makeHarness. */
 	stateWriteChain: Promise<unknown>;
+	/** Bumped by each persisted sign-out. Seeded for the same reason. */
+	signOutGeneration: number;
 	sessionRefreshFailed: boolean;
 	settingsRefresh?: () => void;
 	reconcileSessionExpiryWarning(): void;
@@ -73,6 +75,8 @@ interface StoreHost {
 		background?: boolean,
 		stillOwns?: () => boolean,
 	): Promise<StoreOutcome>;
+	linkSecret(id: string): Promise<boolean>;
+	clearSignIn(): Promise<{ sessionCleared: boolean; settingsSaved: boolean }>;
 }
 
 interface Harness {
@@ -110,6 +114,7 @@ function makeHarness(
 	// load-bearing rather than cosmetic: the queue chains onto it, and leaving it
 	// undefined fails at the first store rather than in some later assertion.
 	plugin.stateWriteChain = Promise.resolve();
+	plugin.signOutGeneration = 0;
 	plugin.settings = {
 		secretId: "some-other-secret",
 		apiBaseUrl: "https://api.plaud.ai",
@@ -600,6 +605,147 @@ describe("storing a capture is all-or-nothing (issue #86)", () => {
 			await expect(first).rejects.toThrow("reconcile blew up");
 			await expect(second).resolves.toEqual({ outcome: "stored" });
 			expect(h.secrets.get(CAPTURED_SECRET_ID)).toBe(survivor);
+		});
+	});
+
+	describe("the other two credential mutations", () => {
+		// CodeRabbit raised these on the PR: both were routed through the queue but
+		// neither reported a refused write, so a failing vault silently left the
+		// UI showing a change that never happened. Both now commit before they
+		// mutate anything, so a refusal changes nothing and is reportable.
+
+		describe("linking a secret by hand", () => {
+			it("applies the choice once the write lands", async () => {
+				const h = makeHarness();
+
+				await expect(h.plugin.linkSecret("another-secret")).resolves.toBe(true);
+
+				expect(h.plugin.settings.secretId).toBe("another-secret");
+				// Unknown provenance, so the recorded method no longer describes it.
+				expect(h.plugin.settings.signInMethod).toBe("");
+			});
+
+			it("keeps the recorded method when the captured secret is re-linked", async () => {
+				const h = makeHarness({ signInMethod: "window" });
+
+				await h.plugin.linkSecret(CAPTURED_SECRET_ID);
+
+				expect(h.plugin.settings.signInMethod).toBe("window");
+			});
+
+			it("leaves the previous secret linked when the vault refuses", async () => {
+				const h = makeHarness();
+				h.failSave = vaultWriteError();
+
+				await expect(h.plugin.linkSecret("another-secret")).resolves.toBe(
+					false,
+				);
+
+				expect(h.plugin.settings.secretId).toBe("some-other-secret");
+				expect(h.plugin.settings.signInMethod).toBe("browser");
+			});
+		});
+
+		describe("clearing the sign-in", () => {
+			it("blanks the credentials once the sign-out is durable", async () => {
+				const h = makeHarness();
+
+				const result = await h.plugin.clearSignIn();
+
+				expect(result.settingsSaved).toBe(true);
+				expect(h.plugin.settings.secretId).toBe("");
+				expect(h.plugin.settings.signInMethod).toBe("");
+				expect(h.secrets.get(CAPTURED_SECRET_ID)).toBe("");
+				expect(h.secrets.get(LEGACY_REFRESH_SECRET_ID)).toBe("");
+				expect(h.secrets.get("some-other-secret")).toBe("");
+			});
+
+			it("destroys nothing when the vault refuses the write", async () => {
+				// The ordering that matters: this used to blank the credentials and
+				// THEN await the write, so a refusal left the user signed out in
+				// practice, still linked on disk, and told it had worked.
+				const h = makeHarness();
+				h.failSave = vaultWriteError();
+
+				const result = await h.plugin.clearSignIn();
+
+				expect(result.settingsSaved).toBe(false);
+				expect(h.plugin.settings.secretId).toBe("some-other-secret");
+				expect(h.plugin.settings.signInMethod).toBe("browser");
+				expect(h.secrets.get(CAPTURED_SECRET_ID)).toBe("previous-token");
+				expect(h.secrets.get(LEGACY_REFRESH_SECRET_ID)).toBe(
+					"previous-refresh-token",
+				);
+			});
+
+			it("does not touch the browser session when the vault refuses", async () => {
+				// Codex raised this on the follow-up. Clearing the Electron partition
+				// ran FIRST, and it is what a window sign-in renews against, so a
+				// sign-out whose write then failed left the old token linked and no
+				// longer renewable. "Nothing was changed" has to cover that too.
+				//
+				// Asserted through the reconciles, which run only on the committed
+				// path: a refused sign-out reaches neither them nor the session clear
+				// that precedes them.
+				const h = makeHarness();
+				h.failSave = vaultWriteError();
+
+				await h.plugin.clearSignIn();
+
+				expect(h.calls).not.toContain("reconcileExpiry");
+				expect(h.calls).not.toContain("reconcileRefresh");
+			});
+		});
+
+		it("bumps the sign-out generation only when the sign-out persisted", async () => {
+			// Codex raised the case this exists for: Clear sign-in clicked while a
+			// capture is still probing (or the user is still in the sign-in window).
+			// The capture commits after the sign-out, so queue order alone re-links
+			// a session the UI has already reported as cleared. Capture surfaces
+			// snapshot this counter when they START and refuse to store if it moved.
+			const h = makeHarness();
+
+			h.failSave = vaultWriteError();
+			await h.plugin.clearSignIn();
+			expect(h.plugin.signOutGeneration).toBe(0);
+
+			h.failSave = null;
+			await h.plugin.clearSignIn();
+			expect(h.plugin.signOutGeneration).toBe(1);
+		});
+
+		it("abandons a capture whose sign-out generation moved", async () => {
+			// The guard capture surfaces build from that counter, exercised through
+			// the store the same way they use it.
+			const h = makeHarness();
+			const before = h.plugin.signOutGeneration;
+			await h.plugin.clearSignIn();
+
+			const result = await h.plugin.storeAccessToken(
+				usableToken(),
+				"window",
+				undefined,
+				false,
+				() => h.plugin.signOutGeneration === before,
+			);
+
+			expect(result).toEqual({ outcome: "superseded" });
+			expect(h.plugin.settings.secretId).toBe("");
+			expect(h.secrets.get(CAPTURED_SECRET_ID)).toBe("");
+		});
+
+		it("orders a sign-out against a capture by call order", async () => {
+			// Both hold the same queue, so the later caller wins. Before the queue a
+			// capture already mid-commit could land after the sign-out and quietly
+			// restore the session the user had just cleared.
+			const h = makeHarness();
+
+			const capture = h.plugin.storeAccessToken(usableToken(), "window");
+			const signOut = h.plugin.clearSignIn();
+			await Promise.all([capture, signOut]);
+
+			expect(h.plugin.settings.secretId).toBe("");
+			expect(h.secrets.get(CAPTURED_SECRET_ID)).toBe("");
 		});
 	});
 
