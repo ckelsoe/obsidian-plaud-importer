@@ -50,7 +50,8 @@ type StoreOutcome =
 	| { outcome: "stored" }
 	| { outcome: "unusable" }
 	| { outcome: "superseded" }
-	| { outcome: "save-failed"; error: unknown };
+	| { outcome: "save-failed"; error: unknown }
+	| { outcome: "torn"; error: unknown };
 
 /** The subset of the plugin the store touches. Private members need the cast. */
 interface StoreHost {
@@ -79,6 +80,8 @@ interface Harness {
 	secrets: Map<string, string>;
 	/** Set to reject the settings write, the failure this suite is about. */
 	failSave: Error | null;
+	/** Set to make the CAPTURED-id credential write throw, recording nothing. */
+	failSecret: Error | null;
 	/** Runs during the settings write, while the commit is still in flight. */
 	duringSave: (() => void) | null;
 }
@@ -95,6 +98,7 @@ function makeHarness(settings: Record<string, unknown> = {}): Harness {
 		calls: [],
 		secrets: new Map<string, string>(),
 		failSave: null,
+		failSecret: null,
 		duringSave: null,
 	};
 
@@ -119,6 +123,10 @@ function makeHarness(settings: Record<string, unknown> = {}): Harness {
 	plugin.app = {
 		secretStorage: {
 			setSecret: (id: string, secret: string): void => {
+				if (id === CAPTURED_SECRET_ID && harness.failSecret !== null) {
+					// A backend that refused the write recorded nothing.
+					throw harness.failSecret;
+				}
 				harness.calls.push(`setSecret:${id}`);
 				harness.secrets.set(id, secret);
 			},
@@ -336,6 +344,98 @@ describe("storing a capture is all-or-nothing (issue #86)", () => {
 			expect(h.calls).toContain("reconcileExpiry");
 			expect(h.calls).toContain("reconcileRefresh");
 		});
+
+		it("does not fail a stored capture when post-store bookkeeping throws", async () => {
+			// The credential and settings are durably linked by the time the
+			// reconcilers run. A throw there used to escape as a rejection, which
+			// the settings tab renders as a save failure: a stored sign-in
+			// reported as a failed one. The calls are also independent, so one
+			// failing must not skip the rest: a stored window credential still
+			// arms its renewal timer and the tab still redraws.
+			const h = makeHarness();
+			h.plugin.reconcileSessionExpiryWarning = (): void => {
+				throw new Error("expiry reconcile blew up");
+			};
+			h.plugin.settingsRefresh = () => h.calls.push("settingsRefresh");
+			const token = usableToken();
+
+			const result = await h.plugin.storeAccessToken(token, "window");
+
+			expect(result).toEqual({ outcome: "stored" });
+			expect(h.secrets.get(CAPTURED_SECRET_ID)).toBe(token);
+			expect(consoleError).toHaveBeenCalledWith(
+				expect.stringContaining("after a stored capture failed"),
+				expect.any(Error),
+			);
+			expect(h.calls).toContain("reconcileRefresh");
+			expect(h.calls).toContain("settingsRefresh");
+		});
+	});
+
+	describe("when the credential write fails after the commit", () => {
+		it("writes the previous settings back and reports a clean save failure", async () => {
+			// The settings commit has landed by the time setSecret throws, so a
+			// bare return would leave data.json naming a credential that never
+			// arrived: the original tear, from the other side. Inside the queue a
+			// rollback is safe (no other capture can interleave), so the store
+			// puts the old settings back and the failure is a real no-op again.
+			const h = makeHarness();
+			const cause = new Error("secret backing store unavailable");
+			h.failSecret = cause;
+
+			const result = await h.plugin.storeAccessToken(
+				usableToken(),
+				"window",
+				"https://api-eu.plaud.ai",
+			);
+
+			expect(result).toEqual({ outcome: "save-failed", error: cause });
+			expect(h.secrets.get(CAPTURED_SECRET_ID)).toBe("previous-token");
+			const onDisk = JSON.parse(
+				h.secrets.get("__data.json__") ?? "{}",
+			) as Record<string, unknown>;
+			expect(onDisk.secretId).toBe("some-other-secret");
+			expect(onDisk.signInMethod).toBe("browser");
+			expect(onDisk.apiBaseUrl).toBe("https://api.plaud.ai");
+			expect(h.plugin.settings.secretId).toBe("some-other-secret");
+			expect(h.calls).not.toContain("reconcileRefresh");
+			expect(consoleError).toHaveBeenCalledWith(
+				expect.stringContaining("could not store the captured credential"),
+				cause,
+			);
+		});
+
+		it("reports the tear, not a clean failure, when the restore write fails too", async () => {
+			// The one sequence that can still half-apply: commit landed,
+			// credential write threw, restore write refused. It must arrive as
+			// its own value, because the save-failed notice promises nothing
+			// changed and that would be a lie here.
+			const h = makeHarness();
+			const cause = new Error("secret backing store unavailable");
+			h.failSecret = cause;
+			// The restore write is the second save this store makes; refuse
+			// exactly that one via the harness's own failure switch.
+			let saves = 0;
+			h.duringSave = () => {
+				saves += 1;
+				if (saves === 2) {
+					h.failSave = vaultWriteError();
+				}
+			};
+
+			const result = await h.plugin.storeAccessToken(usableToken(), "window");
+
+			expect(result).toEqual({ outcome: "torn", error: cause });
+			// Disk kept the committed capture; memory and the secret still hold
+			// the previous session, which keeps working until the re-sign-in.
+			const onDisk = JSON.parse(
+				h.secrets.get("__data.json__") ?? "{}",
+			) as Record<string, unknown>;
+			expect(onDisk.secretId).toBe(CAPTURED_SECRET_ID);
+			expect(h.secrets.get(CAPTURED_SECRET_ID)).toBe("previous-token");
+			expect(h.plugin.settings.secretId).toBe("some-other-secret");
+			expect(h.calls).not.toContain("reconcileRefresh");
+		});
 	});
 
 	describe("when two captures overlap", () => {
@@ -447,21 +547,25 @@ describe("storing a capture is all-or-nothing (issue #86)", () => {
 		});
 
 		it("does not strand later captures behind one that threw", async () => {
-			// The queue chains on completion, not success. A store that throws past
-			// its commit must not reject every capture queued after it.
+			// The queue chains on completion, not success. The store's own writes
+			// all resolve to outcomes now, so the throw that can still escape is
+			// caller-supplied code: the ownership guard. One of those must not
+			// reject every capture queued after it.
 			const h = makeHarness();
-			h.plugin.reconcileSessionRefresh = (): void => {
-				h.plugin.reconcileSessionRefresh = (): void => {
-					h.calls.push("reconcileRefresh");
-				};
-				throw new Error("reconcile blew up");
-			};
 			const survivor = usableToken("survivor");
 
-			const first = h.plugin.storeAccessToken(usableToken("doomed"), "window");
+			const first = h.plugin.storeAccessToken(
+				usableToken("doomed"),
+				"window",
+				undefined,
+				false,
+				() => {
+					throw new Error("guard blew up");
+				},
+			);
 			const second = h.plugin.storeAccessToken(survivor, "browser");
 
-			await expect(first).rejects.toThrow("reconcile blew up");
+			await expect(first).rejects.toThrow("guard blew up");
 			await expect(second).resolves.toEqual({ outcome: "stored" });
 			expect(h.secrets.get(CAPTURED_SECRET_ID)).toBe(survivor);
 		});
