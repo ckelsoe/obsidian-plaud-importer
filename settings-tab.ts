@@ -355,6 +355,14 @@ const DATETIME_TEMPLATE_FOOTNOTE =
 const CLEAR_SIGN_IN_DESC =
 	'Sign out of the embedded Plaud browser for this vault and wipe the stored token so the next sign-in starts completely fresh. Other vaults keep their own sign-ins. This also removes the older shared sign-in left over from before each vault had its own. Use this to reach the sign-in screen when it keeps signing you in automatically. Obsidian has no way to delete the secret entry, so an emptied one may stay in the token picker, but it holds no token.';
 
+// Same reason as the const above, and this one had ALREADY drifted: the
+// imperative path was missing the sentence explaining why the toggle is off by
+// default, so an Obsidian 1.12 user read a shorter description than a 1.13 one
+// for the same control. Pre-existing, found while this file was being split
+// out. One definition now.
+const AI_KEYWORDS_PROPERTY_DESC =
+	"When AI keywords are excluded from tags, write them to a keywords frontmatter property instead. Plaud's keyword list can run to hundreds of low-value entries per recording, so this is off by default. The property is searchable and Dataview-queryable but stays out of the tag pane.";
+
 // Exported for tests only (issue #90). The plugin registers this itself in
 // onload; nothing outside main.ts constructs it.
 export class PlaudImporterSettingsTab extends PluginSettingTab {
@@ -577,7 +585,7 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 		this.addToggleRow(
 			containerEl,
 			'Keep AI keywords as note property',
-			'When AI keywords are excluded from tags, write them to a keywords frontmatter property instead. The property is searchable and Dataview-queryable but stays out of the tag pane.',
+			AI_KEYWORDS_PROPERTY_DESC,
 			'aiKeywordsAsProperty',
 		);
 
@@ -1843,7 +1851,7 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 					},
 					{
 						name: 'Keep AI keywords as note property',
-						desc: "When AI keywords are excluded from tags, write them to a keywords frontmatter property instead. Plaud's keyword list can run to hundreds of low-value entries per recording, so this is off by default. The property is searchable and Dataview-queryable but stays out of the tag pane.",
+						desc: AI_KEYWORDS_PROPERTY_DESC,
 						control: {
 							type: 'toggle',
 							key: 'aiKeywordsAsProperty',
