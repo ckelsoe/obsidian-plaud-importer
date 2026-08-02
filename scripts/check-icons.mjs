@@ -1,4 +1,4 @@
-// Guard for the hardcoded Lucide icon ids in main.ts.
+// Guard for the hardcoded Lucide icon ids across the plugin sources.
 //
 // Obsidian renders icons from the Lucide set; `setIcon` with an id that is not a
 // real Lucide icon renders nothing (a blank ribbon icon). The ribbon-icon picker
@@ -13,7 +13,7 @@
 // hands-on testing remain the authoritative checks. Exits non-zero on any finding
 // so it chains into `npm run lint` and CI.
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 
 const ICONS_DIR = "node_modules/lucide-static/icons";
 
@@ -23,11 +23,29 @@ if (!existsSync(ICONS_DIR)) {
 	console.error(`check-icons: ${ICONS_DIR} not found. Run \`npm install\` (lucide-static is a devDependency).`);
 	process.exit(1);
 }
+// Every top-level source file, not a hardcoded main.ts. The ids used to all live
+// in main.ts; the split moved the curated list to settings-types.ts and the
+// setIcon calls across settings-tab.ts and modals.ts. Scanning the directory means
+// the next extraction cannot silently take icons out of this guard's view, which
+// is exactly what happened when the list moved. Declaration files carry no calls.
+let sources;
+try {
+	sources = readdirSync(".")
+		.filter((f) => f.endsWith(".ts") && !f.endsWith(".d.ts"))
+		.sort();
+} catch (error) {
+	console.error(`check-icons: could not list the source directory (${error.message}).`);
+	process.exit(1);
+}
+if (sources.length === 0) {
+	console.error("check-icons: found no .ts sources to scan.");
+	process.exit(1);
+}
 let source;
 try {
-	source = readFileSync("main.ts", "utf8");
+	source = sources.map((f) => readFileSync(f, "utf8")).join("\n");
 } catch (error) {
-	console.error(`check-icons: could not read main.ts (${error.message}).`);
+	console.error(`check-icons: could not read a source file (${error.message}).`);
 	process.exit(1);
 }
 
@@ -51,7 +69,7 @@ function add(id, reason) {
 // close), a second guard against an in-body `];`.
 const listMatch = code.match(/RIBBON_ICON_CHOICES[^=]*=\s*\[([\s\S]*?)\n\s*\];/);
 if (!listMatch) {
-	console.error("check-icons: could not locate the RIBBON_ICON_CHOICES array in main.ts (did its shape change?).");
+	console.error("check-icons: could not locate the RIBBON_ICON_CHOICES array in any source file (did its shape change, or did it move out of the scanned set?).");
 	process.exit(1);
 }
 for (const m of listMatch[1].matchAll(/id:\s*["']([a-z0-9-]+)["']/g)) {
@@ -79,7 +97,7 @@ for (const [id, reason] of ids) {
 }
 
 if (missing.length > 0) {
-	console.error("Icon check failed: unknown Lucide icon id(s) in main.ts:");
+	console.error("Icon check failed: unknown Lucide icon id(s):");
 	for (const line of missing) console.error(line);
 	console.error("");
 	console.error("Find the correct id at https://lucide.dev/icons and fix it, or remove the entry.");

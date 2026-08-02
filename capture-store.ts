@@ -99,6 +99,21 @@ export type CaptureStoreResult =
 	| { outcome: 'torn'; error: unknown }
 	| { outcome: 'stored' };
 
+/**
+ * What a re-authentication attempt did. Needed because turning a save failure
+ * from a throw into a value changed which handler runs: the failure used to
+ * reach the settings tab's catch, and now it comes back as an ordinary "did not
+ * store", which those callers read as a cancelled sign-in and answer with a
+ * second, contradicting notice. "reported" says the reason is already on screen.
+ */
+export type ReauthOutcome =
+	/** A credential was captured and stored. */
+	| 'captured'
+	/** The user closed the window, or the login API is unavailable on this build. */
+	| 'closed'
+	/** Failed, and the reason is already on screen. Say nothing more about it. */
+	| 'reported';
+
 /** The settings fields the store itself reads and writes. */
 export interface CaptureSettings {
 	secretId: string;

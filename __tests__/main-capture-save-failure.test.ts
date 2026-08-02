@@ -17,7 +17,7 @@
  * suite is: `display()` renders the entire settings tab, and none of it is
  * needed to exercise one button's error path.
  */
-import { PlaudImporterSettingsTab } from '../main';
+import { PlaudImporterSettingsTab } from '../settings-tab';
 import { Notice, Setting, settingButton } from './__mocks__/obsidian';
 
 /** The subset of the settings tab these tests drive. Private members need the cast. */
