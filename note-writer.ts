@@ -520,6 +520,33 @@ function formatDateYmd(d: Date): string {
 }
 
 /**
+ * One `{{token}}`. Four places in this file used to spell this out separately,
+ * as `/\{\{([^}]*)\}\}/`; one definition now, so a change to what counts as a
+ * token cannot land in three of them.
+ *
+ * The inner class excludes `{` as well as `}`, which is what closes two CodeQL
+ * `js/polynomial-redos` highs. With only `}` excluded, a template of many `{`
+ * makes the engine start a match attempt at every one of them, scan the rest of
+ * the string, and fail: quadratic in the template's length. Templates are user
+ * settings, so the input is attacker-controlled in the sense the rule means (a
+ * pasted or synced `data.json`), even if the attacker is usually just a typo.
+ *
+ * Excluding `{` also fixes what a malformed template did. `{{{{YYYY}}` used to
+ * match from the first brace with an inner value of `{{YYYY`, which Moment
+ * formatted as garbage; it now matches `{{YYYY}}` at offset 2 and leaves the
+ * stray braces as the literal text they are. No well-formed template changes:
+ * the token body is a Moment format string, and Moment escapes literals with
+ * `[square brackets]`, never braces.
+ *
+ * A factory rather than a shared `RegExp`, so no call site can be affected by
+ * another's `lastIndex`.
+ */
+const TEMPLATE_TOKEN_PATTERN = '\\{\\{([^{}]*)\\}\\}';
+function templateTokenRe(flags = 'g'): RegExp {
+	return new RegExp(TEMPLATE_TOKEN_PATTERN, flags);
+}
+
+/**
  * Expand a `{{...}}` template against a date using real Moment.js formatting.
  * The content INSIDE each `{{}}` is a Moment format string, so a single pair can
  * hold a whole date layout (`{{YYYY-MM-DD - dddd}}`) or several tokens with their
@@ -558,7 +585,7 @@ function expandDateTemplate(
 	// off no-unnecessary-type-assertion.
 	const m = (moment as typeof import('moment'))(date).locale('en');
 	return template.replace(
-		/\{\{([^}]*)\}\}/g,
+		templateTokenRe(),
 		(_match, raw: string): string => {
 			const inner = raw.trim();
 			if (title !== undefined && inner === 'title') {
@@ -681,7 +708,7 @@ export function resolveSubfolder(
 		return '';
 	}
 	const dateValid = date instanceof Date && !Number.isNaN(date.getTime());
-	if (!dateValid && /\{\{[^}]*\}\}/.test(template)) {
+	if (!dateValid && templateTokenRe('').test(template)) {
 		return '_undated';
 	}
 	// {{title}} support (issue #30 follow-up): strip a leading date from the title
@@ -943,13 +970,10 @@ const LEGACY_TOKEN_MIGRATION: ReadonlyMap<string, string> = new Map([
  * never throws, so a hand-edited bad template cannot block settings load.
  */
 export function migrateLegacyDateTemplate(template: string): string {
-	return template.replace(
-		/\{\{([^}]*)\}\}/g,
-		(match, raw: string): string => {
-			const mapped = LEGACY_TOKEN_MIGRATION.get(raw.trim());
-			return mapped === undefined ? match : `{{${mapped}}}`;
-		},
-	);
+	return template.replace(templateTokenRe(), (match, raw: string): string => {
+		const mapped = LEGACY_TOKEN_MIGRATION.get(raw.trim());
+		return mapped === undefined ? match : `{{${mapped}}}`;
+	});
 }
 
 /**
@@ -1363,7 +1387,7 @@ export function expandCustomFrontmatterValue(
 	// the Moment date engine. The moment cast mirrors expandDateTemplate: it pins
 	// the factory to moment's own type at the marketplace type-check boundary.
 	const m = (moment as typeof import('moment'))(ctx.date).locale('en');
-	return value.replace(/\{\{([^}]*)\}\}/g, (_match, raw: string): string => {
+	return value.replace(templateTokenRe(), (_match, raw: string): string => {
 		const inner = raw.trim();
 		if (Object.prototype.hasOwnProperty.call(content, inner)) {
 			return content[inner];
