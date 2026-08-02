@@ -151,11 +151,70 @@ const DEEP_LINK_PROBING_NOTICE = "Checking which Plaud sign-in still works…";
 // properly needs the result union tracked in issue #86.
 const CAPTURE_SAVE_FAILED_NOTICE =
 	"Plaud: could not save the token. If this keeps happening, check that this vault is writable and has free space.";
+// The one failure that cannot promise "nothing changed": the settings commit
+// landed, the credential write then threw, and writing the old settings back
+// failed too. Signing in again rewrites both halves, so that is the instruction.
+const CAPTURE_TORN_NOTICE =
+	"Plaud: the sign-in was recorded but its credential could not be stored, so the previous session is still in use. Sign in again to finish reconnecting.";
 // Several candidates and no way to ask which one works. Picking blind would
 // store the wrong credential (a revoked long-lived token outranks a live short
 // one on every claim we can read), so store nothing and let the user retry.
 const DEEP_LINK_UNREACHABLE_NOTICE =
 	"Could not reach Plaud to check which sign-in token to use, so nothing was saved. Check your connection, then click the bookmark again.";
+
+/**
+ * What storing a captured credential did (issue #86). A boolean could not carry
+ * the distinction the issue asks for: a credential the plugin REJECTED is fixed
+ * by signing in again, and one it never got to WRITE is not. The second used to
+ * arrive only as an opaque throw, so no surface could tell them apart.
+ *
+ * No outcome here means "partly applied and unreported". "torn" exists for the
+ * one sequence that can still half-apply (commit landed, credential write
+ * threw, restore write failed too), so even that arrives as a value a surface
+ * can explain rather than as an opaque rejection.
+ */
+type CaptureStoreResult =
+	/** Failed the pre-write capture guard. Nothing was written. */
+	| { outcome: "unusable" }
+	/**
+	 * Something took over the credential while this store waited its turn.
+	 * Nothing was written, and nothing should be said: whatever superseded this
+	 * is what the user is holding.
+	 */
+	| { outcome: "superseded" }
+	/**
+	 * The settings write rejected (read-only vault, full disk, a sync client
+	 * holding the file), or the credential write threw and the settings were
+	 * rolled back. Either way nothing is changed. Carries the cause for
+	 * logging; surfaces show CAPTURE_SAVE_FAILED_NOTICE rather than the raw
+	 * error.
+	 */
+	| { outcome: "save-failed"; error: unknown }
+	/**
+	 * The settings commit landed, the credential write then threw, and writing
+	 * the previous settings back failed too. data.json names this capture
+	 * while the secret still holds the previous credential; the previous
+	 * session keeps working in memory. Signing in again rewrites both sides,
+	 * so surfaces show CAPTURE_TORN_NOTICE, which says exactly that. Carries
+	 * the credential write's cause.
+	 */
+	| { outcome: "torn"; error: unknown }
+	| { outcome: "stored" };
+
+/**
+ * What a re-authentication attempt did. Needed because turning a save failure
+ * from a throw into a value changed which handler runs: the failure used to
+ * reach the settings tab's catch, and now it comes back as an ordinary "did not
+ * store", which those callers read as a cancelled sign-in and answer with a
+ * second, contradicting notice. "reported" says the reason is already on screen.
+ */
+type ReauthOutcome =
+	/** A credential was captured and stored. */
+	| "captured"
+	/** The user closed the window, or the login API is unavailable on this build. */
+	| "closed"
+	/** Failed, and the reason is already on screen. Say nothing more about it. */
+	| "reported";
 
 const SIGN_IN_NOTE =
 	"Plaud has no official API, so this plugin relies on their internal one. That makes sign-in fragile, and it may stop working when Plaud changes that internal API. We expect this whole process to get much simpler once Plaud releases an official API. There are two ways to sign in, depending on how you log in to Plaud. Use 'Sign in with email' if you log in with an email address and password. Use 'Sign in with Google or Apple' if you use single sign-on (SSO) through a Google or Apple account. How long you stay signed in depends on the method: a session from the email sign-in window normally renews itself in the background for about 30 days before asking you to sign in again, while a session captured from a Google or Apple login cannot be renewed by the plugin and usually lasts about 24 hours. If you use Google or Apple, you can add a password to your Plaud account and use the email sign-in instead. The status line under Plaud token shows your session's actual expiry and whether background renewal is active for it. When the session lapses the plugin shows a one-click Reconnect that reopens the sign-in matching your account.";
@@ -792,6 +851,10 @@ export default class PlaudImporterPlugin extends Plugin {
 	// entry point (settings, the auth-pause notice, the backfill retry), so
 	// stacked stale notices cannot launch clobbering capture sessions.
 	private reauthInFlight = false;
+	// Tail of the capture-store queue. Scoped to captures only: it exists to
+	// restore the call ordering that committing settings before the credential
+	// would otherwise break, not to serialize settings writes generally (#86).
+	private captureStoreChain: Promise<unknown> = Promise.resolve();
 	// Redraws the open settings tab's sign-in status and secret picker. Set by
 	// the tab's display() (the pre-1.13 imperative path; 1.13+ renders
 	// declaratively and re-reads on its own) and cleared by its hide(), so it
@@ -1440,18 +1503,31 @@ export default class PlaudImporterPlugin extends Plugin {
 				this.onSessionRefreshFailed();
 				return "failed";
 			}
-			// The store can REJECT, not just return false: it awaits saveSettings,
-			// which a read-only vault or a full disk fails. This runs from a timer
-			// whose caller only voids the promise, so an escaping rejection would be
-			// an unhandled one AND would skip both the failure prompt and the
-			// re-arm, quietly ending unattended renewal until the next reload.
-			let stored: boolean;
+			// A vault that will not take the settings write comes back as a
+			// `save-failed` outcome now rather than a throw, so it can be named in
+			// the log. The try/catch stays for everything else the store touches
+			// after its commit: this runs from a timer whose caller only voids the
+			// promise, so an escaping rejection would be an unhandled one AND would
+			// skip both the failure prompt and the re-arm, quietly ending
+			// unattended renewal until the next reload.
+			//
+			// The supersede check above is re-run inside the store, and has to be.
+			// Since the store commits settings before writing the secret, a user
+			// capture that is mid-commit has not reached `setSecret` yet, so
+			// `readStoredTokenValue()` still returns the old value and that check
+			// passes when it should not. It stays where it is because discarding
+			// there is cheaper than queueing and then discarding.
+			let stored: CaptureStoreResult;
 			try {
 				stored = await this.storeAccessToken(
 					result.token,
 					"window",
 					result.apiBaseUrl ?? undefined,
 					true,
+					() =>
+						!this.disposed &&
+						this.readStoredTokenValue() === current &&
+						this.settings.secretId === currentSecretId,
 				);
 			} catch (err) {
 				this.debugLogger.log({
@@ -1463,9 +1539,32 @@ export default class PlaudImporterPlugin extends Plugin {
 						error: err instanceof Error ? err.message : String(err),
 					},
 				});
-				stored = false;
+				this.onSessionRefreshFailed();
+				return "failed";
 			}
-			if (!stored) {
+			if (stored.outcome === "superseded") {
+				// Same meaning as the early supersede check, so the same result:
+				// drop it, and do NOT record a failure. Marking the user's brand new
+				// session as failed would clear the timer it had just armed.
+				this.debugLogger.log({
+					kind: "note",
+					endpoint: "/session-refresh",
+					message:
+						"session refresh discarded: the stored credential changed while the store was queued",
+				});
+				return "superseded";
+			}
+			if (stored.outcome !== "stored") {
+				this.debugLogger.log({
+					kind: "error",
+					endpoint: "/session-refresh",
+					message:
+						stored.outcome === "save-failed"
+							? "session refresh failed: the vault would not accept the settings write, so the fresh token was not stored and the previous session is unchanged"
+							: stored.outcome === "torn"
+								? "session refresh failed: the settings write landed but the credential write did not, so data.json names a session whose token was never stored"
+								: "session refresh failed: the minted token did not pass the capture guard at store time",
+				});
 				this.onSessionRefreshFailed();
 				return "failed";
 			}
@@ -2134,8 +2233,10 @@ export default class PlaudImporterPlugin extends Plugin {
 
 	private async reauthAndRetryTitle(file: TFile, plaudId: string): Promise<void> {
 		try {
-			const ok = await this.reauthenticate();
-			if (!ok) {
+			const outcome = await this.reauthenticate();
+			if (outcome !== "captured") {
+				// Shown for "reported" too: it adds the consequence rather than
+				// restating the cause, so it reads as a follow-on, not a contradiction.
 				new Notice(
 					"Plaud importer: sign-in was not completed, so the recording title was not updated.",
 				);
@@ -2612,20 +2713,22 @@ export default class PlaudImporterPlugin extends Plugin {
 			return false;
 		}
 		try {
-			const ok = await this.reauthenticate();
+			const outcome = await this.reauthenticate();
+			const captured = outcome === "captured";
 			// Plugin unloaded mid sign-in: skip side effects and messaging.
-			if (this.disposed) return ok;
-			if (ok) {
+			if (this.disposed) return captured;
+			if (captured) {
 				new Notice("Plaud reconnected.");
 				this.resumeAutoSyncIfPaused();
 				if (onReconnected) await onReconnected();
-			} else if (!this.reauthInFlight) {
-				// A false with reauthInFlight still set means another sign-in
-				// window is already open (reauthenticate short-circuited and
-				// already said so); don't contradict it with "sign-in closed".
+			} else if (outcome === "closed") {
+				// Only when nothing else is on screen. This used to test
+				// `!this.reauthInFlight`, which caught exactly one of the reasons
+				// reauthenticate speaks for itself and let "sign-in closed"
+				// contradict every other one, now including a failed save.
 				new Notice("Plaud sign-in closed. Still disconnected.");
 			}
-			return ok;
+			return captured;
 		} catch (err) {
 			console.error("Plaud importer: reconnect failed", err);
 			if (!this.disposed) {
@@ -2976,9 +3079,11 @@ export default class PlaudImporterPlugin extends Plugin {
 				// After a successful in-modal re-auth, clear any auth pause so
 				// background sync resumes without waiting for the settings tab.
 				onReauth: async () => {
-					const ok = await this.reauthenticate();
-					if (ok) this.resumeAutoSyncIfPaused();
-					return ok;
+					// The modal only needs to know whether to carry on, and
+					// reauthenticate has already explained any failure it can.
+					const captured = (await this.reauthenticate()) === "captured";
+					if (captured) this.resumeAutoSyncIfPaused();
+					return captured;
 				},
 				onReauthSso: {
 					setupBookmark: () => {
@@ -3215,20 +3320,20 @@ export default class PlaudImporterPlugin extends Plugin {
 	// Re-authenticates via the email/password login window and persists the
 	// captured token with the FULL recipe: set the secret, link secretId, and
 	// adopt the redirected region (apiBaseUrl) so a region-redirected user is not
-	// stranded on a stale host. Returns true once a token is captured and saved,
-	// false if the user closed the window or the login API is unavailable on this
-	// build. Shared by the settings tab and the import modal's inline re-auth.
-	// On the happy and closed paths it shows no Notice, so each caller phrases
-	// its own; the one exception is the single-flight guard, which shows a
-	// "sign-in is already open" Notice and returns false when a window is open.
-	async reauthenticate(): Promise<boolean> {
+	// stranded on a stale host. Shared by the settings tab and the import modal's
+	// inline re-auth. Resolves "captured" once a token is stored, "closed" when
+	// the user closed the window (or the login API is unavailable on this build)
+	// and nothing is on screen, and "reported" when the failure has already been
+	// named in a Notice here, so callers add consequences, never causes. On the
+	// captured and closed paths it shows no Notice; each caller phrases its own.
+	async reauthenticate(): Promise<ReauthOutcome> {
 		// One sign-in window at a time. Concurrent windows share the same
 		// Electron capture partition and would clobber each other's token
 		// capture, so a second caller (a stacked notice, a repeated command)
 		// no-ops with a hint instead of opening a rival window.
 		if (this.reauthInFlight) {
 			new Notice("Plaud sign-in is already open.");
-			return false;
+			return "reported";
 		}
 		// Both directions of this pairing have to be locked, not just one. The
 		// refresh refuses to start under an open sign-in; this is the mirror.
@@ -3242,7 +3347,7 @@ export default class PlaudImporterPlugin extends Plugin {
 			new Notice(
 				"Finishing a background session refresh. Try signing in again in a moment.",
 			);
-			return false;
+			return "reported";
 		}
 		this.reauthInFlight = true;
 		try {
@@ -3250,11 +3355,13 @@ export default class PlaudImporterPlugin extends Plugin {
 				debugLogger: this.debugLogger,
 			});
 			if (result === null) {
-				return false;
+				return "closed";
 			}
-			// Do not persist a token onto a plugin that unloaded mid sign-in.
+			// Do not persist a token onto a plugin that unloaded mid sign-in. A
+			// torn-down plugin has no surface left to explain itself on, so this is
+			// "closed" (say nothing) rather than "reported".
 			if (this.disposed) {
-				return false;
+				return "closed";
 			}
 			// The window now hands back CANDIDATES, because Plaud's web app stopped
 			// writing a single plain token: the live credential is nested beside a
@@ -3280,12 +3387,17 @@ export default class PlaudImporterPlugin extends Plugin {
 				result.apiBaseUrl ?? undefined,
 			);
 			if (!outcome.stored) {
+				// An empty message means the plugin unloaded or a newer sign-in owns
+				// the credential; nothing is on screen, so the caller's own wording is
+				// all the user would see. Otherwise the reason has just been named and
+				// the caller must not talk over it.
 				if (outcome.message.length > 0) {
 					new Notice(outcome.message);
+					return "reported";
 				}
-				return false;
+				return "closed";
 			}
-			return true;
+			return "captured";
 		} finally {
 			this.reauthInFlight = false;
 		}
@@ -3414,59 +3526,258 @@ export default class PlaudImporterPlugin extends Plugin {
 		// refresh that just succeeded, wrong. A silent path that announces
 		// itself every cycle is not silent.
 		background = false,
-	): Promise<boolean> {
+		// Re-checked immediately before the commit, for callers whose right to
+		// store can lapse while they wait: a cancelled reconnect flow, or a
+		// background refresh whose credential the user has since replaced. Their
+		// own checks run BEFORE this call, and this method now has an await ahead
+		// of the credential write, so a check made out there is not binding by the
+		// time the write happens. Callers with nothing to go stale keep the
+		// default.
+		stillOwns: () => boolean = () => true,
+	): Promise<CaptureStoreResult> {
 		const token = rawToken.trim().replace(/^bearer\s+/i, "");
 		if (token.length === 0 || !isUsableUserToken(token)) {
-			return false;
+			return { outcome: "unusable" };
 		}
-		this.app.secretStorage.setSecret(CAPTURED_SECRET_ID, token);
-		this.settings.secretId = CAPTURED_SECRET_ID;
-		// A pasted/deep-linked token came through the browser flow. Record that
-		// so Reconnect routes there, and blank any legacy WRT from a previous
-		// session so it cannot shadow the recorded method.
-		this.settings.signInMethod = signInMethod;
+		// Serialized, and ONLY this method is. The old store wrote the secret with
+		// a synchronous setSecret before its await, so credentials landed in CALL
+		// order however the saves interleaved. Committing settings first puts an
+		// await between a caller's decision and its credential write, so without
+		// this a store that STARTED earlier could FINISH later and overwrite a
+		// newer one: a background refresh mid-save when the user pastes a token.
+		// The queue exists to restore the ordering this reorder breaks, nothing
+		// more, so it is scoped to captures rather than to settings writes at
+		// large.
+		return this.serializeCaptureStore(() =>
+			this.commitCapturedToken(
+				token,
+				signInMethod,
+				apiBaseUrl,
+				background,
+				stillOwns,
+			),
+		);
+	}
+
+	/** Runs capture stores one at a time, in the order they were called. */
+	private serializeCaptureStore(
+		work: () => Promise<CaptureStoreResult>,
+	): Promise<CaptureStoreResult> {
+		// Both handlers run `work`: a predecessor that failed still had its turn,
+		// and a queue that stopped on the first failure would strand every later
+		// capture behind it.
+		const run = this.captureStoreChain.then(work, work);
+		// The chain must never carry a rejection forward, or one throwing store
+		// would reject every store queued after it. Successors wait for this one to
+		// FINISH, not to succeed; the result still reaches its own caller.
+		this.captureStoreChain = run.then(
+			() => undefined,
+			() => undefined,
+		);
+		return run;
+	}
+
+	/**
+	 * The store itself, always run through the queue above. `token` has already
+	 * passed the capture guard and been trimmed.
+	 */
+	private async commitCapturedToken(
+		token: string,
+		signInMethod: SignInMethod,
+		apiBaseUrl: string | undefined,
+		background: boolean,
+		stillOwns: () => boolean,
+	): Promise<CaptureStoreResult> {
+		// The queue guarantees order, not relevance. This caller may have waited
+		// while a newer capture took over, and its own guard was evaluated before
+		// it joined. Re-ask now, with nothing yet written.
+		if (!stillOwns()) {
+			return { outcome: "superseded" };
+		}
+		// THE SETTINGS WRITE IS THE COMMIT POINT, AND IT RUNS FIRST (issue #86).
+		//
+		// It used to run last, after `setSecret` had already put the credential on
+		// disk. `setSecret` is a synchronous void call (obsidian.d.ts: `setSecret(
+		// id: string, secret: string): void`), so it persists the moment it is
+		// called and there is no promise to fail. The awaited settings save right
+		// after it CAN fail, for ordinary reasons: a vault on read-only storage, a
+		// full disk, a sync client holding data.json. When it did, the new
+		// credential was already durably stored under the same id the old one used
+		// while data.json still named the old region and sign-in method, and that
+		// mismatch survived a restart.
+		//
+		// Unwinding the secret afterwards is the obvious fix and it is the wrong
+		// one. Three attempts were each faulted correctly, the last because the
+		// capture surfaces are not serialized against each other, so an unwind can
+		// undo whichever capture finished last: the one the user is holding.
+		//
+		// Doing the failable write first removes the unwind instead of trying to
+		// make one safe. Until `saveData` resolves nothing is mutated: not the
+		// secret, not `this.settings`, not the file. A rejection is a clean no-op,
+		// which is what lets CAPTURE_SAVE_FAILED_NOTICE promise nothing changed.
+		//
+		// KNOWN, ACCEPTED RESIDUAL, and the one thing this reorder makes worse
+		// rather than better. Everything below hangs on one fact: `this.settings`
+		// still holds the OLD auth fields until the commit resolves, because they
+		// are applied only after it. So during that window:
+		//
+		// - Clear sign-in or the token picker can run. This method then resumes
+		//   and re-links its own credential, undoing a sign-out the user asked
+		//   for. The old synchronous store had already written by then, so the
+		//   sign-out won.
+		// - An ordinary saveSettings() from any settings control writes the stale
+		//   auth fields. If it lands after this commit, disk names the old sign-in
+		//   while the secret holds the new token, which is this bug's own shape
+		//   arriving from the other side.
+		//
+		// The queue above covers captures against each other and nothing else, on
+		// purpose. Closing these two needs every settings write and credential
+		// mutation to share one ordering protocol, which is a change to the whole
+		// plugin rather than to this method, with a much wider blast radius than
+		// the defect being fixed. It belongs in its own issue and its own review.
+		//
+		// The trade, stated so it can be argued with: both windows are the
+		// duration of one file write, both need a competing action inside those
+		// few milliseconds, and both are recoverable by repeating the action. What
+		// they buy is the removal of a failure that anyone on a read-only or full
+		// vault hit every single time, silently, and permanently.
+		//
+		// Residual, stated plainly: a crash between the commit and `setSecret`
+		// leaves data.json naming the new region and method with the previous
+		// token. Closing that needs a fresh secret id per capture and a pointer
+		// swap; rejected because SecretStorage has no delete (see clearSignIn) and
+		// the settings token picker lists every id, so each orphan is permanent
+		// and user-visible. A crash window one synchronous step wide, worst case a
+		// one-generation-stale credential and a reconnect prompt, against a
+		// failure reproducible on any read-only vault whose worst case was silent,
+		// restart-surviving corruption. A THROWN credential write is not part of
+		// this residual: it is caught below, the settings are written back, and
+		// only when even that restore fails does it surface, as a reported
+		// `torn` outcome rather than silence. What remains is the hard crash.
+		const next: PlaudImporterSettings = {
+			...this.settings,
+			secretId: CAPTURED_SECRET_ID,
+			// A pasted/deep-linked token came through the browser flow. Record that
+			// so Reconnect routes there.
+			signInMethod,
+		};
+		if (apiBaseUrl !== undefined) {
+			next.apiBaseUrl = apiBaseUrl;
+		}
+		try {
+			await this.saveData(next);
+		} catch (err) {
+			console.error("Plaud importer: could not save the captured sign-in", err);
+			return { outcome: "save-failed", error: err };
+		}
+		// The credential write CAN THROW: this file treats setSecret as throwable
+		// everywhere else it writes one (clearSignIn, clearStoredRefreshToken).
+		// Left bare here, a backing store that refused the write would recreate
+		// the tear this method exists to prevent, from the other side: data.json
+		// naming a sign-in whose credential never landed. It runs BEFORE the
+		// in-memory fields are applied, so on failure memory still describes the
+		// credential that survives.
+		try {
+			this.app.secretStorage.setSecret(CAPTURED_SECRET_ID, token);
+		} catch (err) {
+			console.error(
+				"Plaud importer: could not store the captured credential",
+				err,
+			);
+			// The commit above already landed, so write the previous settings
+			// back. A rollback is safe HERE and nowhere else: this store holds
+			// the capture queue, so no other capture can interleave with it,
+			// which is exactly what faulted the three pre-#97 rollback attempts.
+			// `this.settings` is untouched at this point and still describes the
+			// surviving credential, concurrent non-capture edits included.
+			try {
+				await this.saveData({ ...this.settings });
+			} catch (restoreErr) {
+				console.error(
+					"Plaud importer: could not restore settings after the credential write failed",
+					restoreErr,
+				);
+				return { outcome: "torn", error: err };
+			}
+			return { outcome: "save-failed", error: err };
+		}
+		// Committed. Apply the fields this capture owns to the live settings object
+		// rather than swapping in `next` wholesale: `next` was snapshotted before
+		// the await, so adopting it would silently revert an unrelated setting the
+		// user changed while the write was in flight.
+		this.settings.secretId = next.secretId;
+		this.settings.signInMethod = next.signInMethod;
 		if (apiBaseUrl !== undefined) {
 			this.settings.apiBaseUrl = apiBaseUrl;
 		}
+		// Blank any legacy WRT from a previous session so it cannot shadow the
+		// recorded method. After the commit, like the credential: a capture that
+		// never stored must not clear the session it failed to replace.
 		this.clearStoredRefreshToken();
-		// KNOWN GAP (issue #86), pre-dates this method's current shape and
-		// deliberately not patched here: if saveSettings rejects (read-only vault,
-		// disk full), the secret above is already durably written while
-		// settings.json still names the old region and method. Rolling that back
-		// looks obvious and is not: capture surfaces are not serialized, so an
-		// unwind can wipe a deep-link or paste capture that completed meanwhile.
-		//
-		// This comment used to add that the failure "is reported to callers as a
-		// bad token rather than as a save failure". That was never true and is
-		// corrected here: the only `return false` above is the pre-write guard, so
-		// a rejection can only ever THROW, and DEEP_LINK_BAD_TOKEN_NOTICE is
-		// unreachable from it. Every caller now catches the throw; the user-facing
-		// capture surfaces say the save failed, while the background refresh takes
-		// its own path (logs, prompts Reconnect, re-arms the schedule).
-		// What is still missing is the ability to tell a persistence failure from
-		// any other throw, which needs this method to return a result union rather
-		// than a boolean. See dev-docs/plaud-importer for the writeup.
-		await this.saveSettings();
-		if (!background) {
-			this.noteShortLifetimeOnCapture(token, signInMethod);
-		}
 		// A newly stored credential clears any prior refresh failure: whatever
 		// was wrong, the user just replaced the thing that was failing.
 		this.sessionRefreshFailed = false;
-		this.reconcileSessionExpiryWarning();
-		this.reconcileSessionRefresh();
+		// Everything below is bookkeeping about a store that has already
+		// succeeded. A throw in it must not escape, or the caller reports a
+		// save failure for a credential that is durably linked; the redraw
+		// guard this generalizes existed for exactly that reason. Each call is
+		// guarded ALONE, because they are independent: one failing must not
+		// skip the rest, or a stored credential is left without its renewal
+		// timer or with a stale settings tab.
+		const guarded = (what: string, run: () => void): void => {
+			try {
+				run();
+			} catch (err) {
+				console.error(
+					`Plaud importer: ${what} after a stored capture failed`,
+					err,
+				);
+			}
+		};
+		if (!background) {
+			guarded("short-lifetime notice", () =>
+				this.noteShortLifetimeOnCapture(token, signInMethod),
+			);
+		}
+		guarded("expiry-warning reconcile", () =>
+			this.reconcileSessionExpiryWarning(),
+		);
+		guarded("session-refresh reconcile", () => this.reconcileSessionRefresh());
 		// A deep link can land while the settings tab is open, which is exactly
 		// what the one-click bookmark encourages: launch sign-in from settings,
 		// click the bookmark, come back. Redraw the status line and secret
 		// picker so the tab does not keep saying "not connected yet". Read at
 		// call time, so a tab closed during the await above is simply null.
-		// Guarded because a redraw failure must not fail a good capture.
-		try {
-			this.settingsRefresh?.();
-		} catch (err) {
-			console.error("Plaud importer: settings refresh failed", err);
+		guarded("settings redraw", () => this.settingsRefresh?.());
+		return { outcome: "stored" };
+	}
+
+	/**
+	 * Renders a store outcome as the {stored, message} pair the capture surfaces
+	 * show, so a save failure cannot be reported as a bad token on one path and
+	 * correctly on another. `savedNotice` differs per path (a probed capture and
+	 * an unverified one say different things), so it is passed in.
+	 */
+	private describeCaptureOutcome(
+		result: CaptureStoreResult,
+		savedNotice: string,
+	): { stored: boolean; message: string } {
+		switch (result.outcome) {
+			case "stored":
+				return { stored: true, message: savedNotice };
+			case "save-failed":
+				return { stored: false, message: CAPTURE_SAVE_FAILED_NOTICE };
+			case "torn":
+				// NOT the save-failed notice: that one promises nothing changed,
+				// which is untrue on this path. This one says what did.
+				return { stored: false, message: CAPTURE_TORN_NOTICE };
+			case "superseded":
+				// The established "say nothing" signal on this path, already used
+				// when the plugin unloads or a newer sign-in owns the credential.
+				return { stored: false, message: "" };
+			case "unusable":
+				return { stored: false, message: DEEP_LINK_BAD_TOKEN_NOTICE };
 		}
-		return true;
 	}
 
 	// Probes candidate tokens against Plaud and stores the first one Plaud
@@ -3535,7 +3846,11 @@ export default class PlaudImporterPlugin extends Plugin {
 		}
 		// An empty message means "say nothing": the plugin unloaded, or a newer
 		// sign-in owns the credential and this delivery is stale.
-		if (this.disposed || !canStore()) {
+		// Checked here to skip the store entirely, and handed to the store as well,
+		// which re-asks immediately before its commit. This check alone stopped
+		// being binding once the store had an await ahead of its credential write.
+		const stillOwns = (): boolean => !this.disposed && canStore();
+		if (!stillOwns()) {
 			return { stored: false, message: "" };
 		}
 		if (selection.outcome === "none-usable") {
@@ -3556,17 +3871,16 @@ export default class PlaudImporterPlugin extends Plugin {
 			}
 			// Unreachable means nothing was proven, so no redirect was observed
 			// either; the surface's own discovered region is the best available.
-			const stored = await this.storeAccessToken(
-				selection.usable[0],
-				signInMethod,
-				discoveredBaseUrl,
+			return this.describeCaptureOutcome(
+				await this.storeAccessToken(
+					selection.usable[0],
+					signInMethod,
+					discoveredBaseUrl,
+					false,
+					stillOwns,
+				),
+				DEEP_LINK_UNVERIFIED_NOTICE,
 			);
-			return {
-				stored,
-				message: stored
-					? DEEP_LINK_UNVERIFIED_NOTICE
-					: DEEP_LINK_BAD_TOKEN_NOTICE,
-			};
 		}
 		// Selected. A 'selected' outcome always carries a token; fail closed
 		// rather than assert it.
@@ -3577,15 +3891,16 @@ export default class PlaudImporterPlugin extends Plugin {
 		// Hand the store the regional host this candidate was actually proven
 		// against, so the token and its region are written in one batch. A
 		// redirect followed during probing outranks the surface's own guess.
-		const stored = await this.storeAccessToken(
-			token,
-			signInMethod,
-			detected.baseUrl ?? discoveredBaseUrl,
+		return this.describeCaptureOutcome(
+			await this.storeAccessToken(
+				token,
+				signInMethod,
+				detected.baseUrl ?? discoveredBaseUrl,
+				false,
+				stillOwns,
+			),
+			DEEP_LINK_SAVED_NOTICE,
 		);
-		return {
-			stored,
-			message: stored ? DEEP_LINK_SAVED_NOTICE : DEEP_LINK_BAD_TOKEN_NOTICE,
-		};
 	}
 
 	// Handles obsidian://plaud-importer-token deep links from the browser
@@ -4296,31 +4611,34 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 				.onClick(async () => {
 					btn.setDisabled(true);
 					try {
-						let ok: boolean;
-						// Scoped to the capture call ALONE, deliberately. Capturing
-						// writes secret storage and THEN awaits a settings save, and
-						// that save can reject (read-only vault, full disk, a sync
-						// client holding the file). A rejection is the only way a save
-						// failure can surface, because the store's single `false` is
-						// its pre-write validation guard, so without a catch here the
-						// async click rejected unhandled: the button re-enabled and the
-						// user was told nothing, which is the hardest version of this
+						let outcome: ReauthOutcome;
+						// Scoped to the capture call ALONE, deliberately. A settings
+						// write the vault refuses no longer arrives here as a throw:
+						// it comes back as "reported", with the specific reason
+						// already on screen. The capture path can still throw for
+						// other reasons, though, and without a catch here the async
+						// click rejected unhandled: the button re-enabled and the user
+						// was told nothing, which is the hardest version of this
 						// failure to diagnose (issue #86). Widening it to cover the
 						// success branch below would be worse than the bug: a redraw
 						// that threw after a token was safely stored would show the
-						// success notice AND a save-failure notice contradicting it.
+						// success notice AND a failure notice contradicting it.
 						try {
-							ok = await this.plugin.reauthenticate();
+							outcome = await this.plugin.reauthenticate();
 						} catch (err) {
-							console.error("Plaud importer: sign-in failed to save", err);
+							console.error("Plaud importer: sign-in failed", err);
 							new Notice(CAPTURE_SAVE_FAILED_NOTICE);
 							return;
 						}
-						if (ok) {
+						if (outcome === "captured") {
 							new Notice("Plaud token captured and saved.");
 							this.signinRefresh?.();
 							this.tokenRefresh?.();
-						} else {
+						} else if (outcome === "closed") {
+							// "reported" gets nothing added: the reason is already on
+							// screen, and this wording would claim the user closed the
+							// window when they may have finished signing in and had the
+							// vault refuse the save.
 							new Notice("Plaud sign-in closed — no token captured.");
 						}
 					} finally {

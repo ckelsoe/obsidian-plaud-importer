@@ -21,9 +21,11 @@ import { PlaudImporterSettingsTab } from "../main";
 import { Notice, Setting, settingButton } from "./__mocks__/obsidian";
 
 /** The subset of the settings tab these tests drive. Private members need the cast. */
+type ReauthOutcome = "captured" | "closed" | "reported";
+
 interface SigninHost {
 	plugin: {
-		reauthenticate(): Promise<boolean>;
+		reauthenticate(): Promise<ReauthOutcome>;
 		pasteTokenFromClipboard(): Promise<boolean>;
 	};
 	signinRefresh?: () => void;
@@ -38,7 +40,7 @@ const SAVE_FAILED =
 function makeTab(plugin: Partial<SigninHost["plugin"]> = {}): SigninHost {
 	const tab = Object.create(PlaudImporterSettingsTab.prototype) as SigninHost;
 	tab.plugin = {
-		reauthenticate: () => Promise.resolve(true),
+		reauthenticate: () => Promise.resolve<ReauthOutcome>("captured"),
 		pasteTokenFromClipboard: () => Promise.resolve(true),
 		...plugin,
 	};
@@ -102,7 +104,7 @@ describe("settings tab reports a capture that failed to save (issue #86)", () =>
 			// A closed window resolves false and means something different: nothing
 			// was written and nothing is wrong with the vault.
 			const tab = makeTab({
-				reauthenticate: () => Promise.resolve(false),
+				reauthenticate: () => Promise.resolve<ReauthOutcome>("closed"),
 			});
 			const setting = new Setting();
 			tab.renderSigninControl(setting);
@@ -125,6 +127,24 @@ describe("settings tab reports a capture that failed to save (issue #86)", () =>
 			expect(Notice.instances[0].message).toBe(
 				"Plaud token captured and saved.",
 			);
+		});
+
+		it("says nothing more when the failure has already been reported", async () => {
+			// The route a refused settings write now takes. Turning that failure
+			// from a throw into a value moved it out of the catch above and into
+			// the ordinary "did not store" branch, which used to answer with the
+			// button's own closed-sign-in wording on top of the real reason. That
+			// claims the user walked away from a sign-in they completed, which is
+			// the over-claiming issue #86 exists to stop.
+			const tab = makeTab({
+				reauthenticate: () => Promise.resolve<ReauthOutcome>("reported"),
+			});
+			const setting = new Setting();
+			tab.renderSigninControl(setting);
+
+			await settingButton(setting, "Sign in").click();
+
+			expect(Notice.instances).toHaveLength(0);
 		});
 
 		it("does not blame the save when a post-success redraw throws", async () => {
