@@ -646,6 +646,33 @@ describe('formatNoteName', () => {
 			'Notes {{draft}}',
 		);
 	});
+
+	// CodeQL js/polynomial-redos, two highs. The token regex used to exclude
+	// only `}` from its inner class, so a run of `{` made the engine start a
+	// match at every one of them and scan to the end before failing: quadratic
+	// in the template's length. Templates are user settings, so the input
+	// arrives from data.json.
+	it('does not degrade quadratically on a template of many open braces', () => {
+		// 40k braces. Under the old pattern this is ~800M character
+		// comparisons and takes seconds; under the new one it is linear.
+		// The assertion is the wall clock, so the threshold is loose enough
+		// not to flake on a loaded CI box but far below the old behavior.
+		const hostile = '{'.repeat(40000);
+		const started = Date.now();
+		expect(() => formatNoteName(hostile, d, 'X')).not.toThrow();
+		expect(Date.now() - started).toBeLessThan(1000);
+	});
+
+	it('reads a doubled brace as the literal it is, not as part of the token', () => {
+		// Excluding `{` from the token body changed this, for the better. The
+		// old pattern matched from the FIRST brace with an inner value of
+		// "{{YYYY", which Moment rendered as garbage. The token is now the
+		// well-formed pair and the strays stay literal.
+		expect(formatNoteName('{{{{YYYY}}', d, 'X')).toBe('{{2026');
+		// A brace inside an otherwise well-formed token means the token is not
+		// well-formed, so none of it is substituted.
+		expect(formatNoteName('{{YY{YY}}', d, 'X')).toBe('{{YY{YY}}');
+	});
 });
 
 // isValidNoteNameTemplate ---------------------------------------------------
