@@ -355,6 +355,12 @@ const DATETIME_TEMPLATE_FOOTNOTE =
 const CLEAR_SIGN_IN_DESC =
 	'Sign out of the embedded Plaud browser for this vault and wipe the stored token so the next sign-in starts completely fresh. Other vaults keep their own sign-ins. This also removes the older shared sign-in left over from before each vault had its own. Use this to reach the sign-in screen when it keeps signing you in automatically. Obsidian has no way to delete the secret entry, so an emptied one may stay in the token picker, but it holds no token.';
 
+// Community discussion for this plugin. This must stay a never-expiring
+// discord.gg invite. A discord.com/channels/... deep link only resolves for
+// accounts already in the server, so it cannot get anyone in, and a default
+// invite expires after 7 days and would rot in a shipped release.
+const DISCORD_URL = 'https://discord.gg/gd6tKJDPj4';
+
 // Same reason as the const above, and this one had ALREADY drifted: the
 // imperative path was missing the sentence explaining why the toggle is off by
 // default, so an Obsidian 1.12 user read a shorter description than a 1.13 one
@@ -2149,26 +2155,38 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 		el.empty();
 		el.addClass('plaud-importer-settings-footer');
 
+		// Everything goes in one inner container. settingEl is a flex row, and a
+		// flex item drops the whitespace at its own edges, which is what
+		// collapsed the separators into "GitHub|Report issues". Spacing is a gap
+		// now, so it no longer depends on text nodes surviving layout. Same fix
+		// and same markup as the reference plugin's footer.
+		const inner = el.createDiv({ cls: 'plaud-importer-footer-inner' });
+
 		const manifestVersion = this.plugin.manifest.version || '0.0.0';
-		el.createSpan({ text: `Version ${manifestVersion} | ` });
+		inner.createSpan({ text: `Version ${manifestVersion}` });
 
 		const createExternalLink = (
 			text: string,
 			url: string,
-		): HTMLAnchorElement =>
-			el.createEl('a', {
+		): HTMLAnchorElement => {
+			inner.createSpan({
+				cls: 'plaud-importer-footer-separator',
+				text: '|',
+			});
+			return inner.createEl('a', {
 				text,
 				href: url,
 				attr: { target: '_blank', rel: 'noopener' },
 			});
+		};
 
 		createExternalLink(
 			'GitHub',
 			'https://github.com/ckelsoe/obsidian-plaud-importer',
 		);
-		el.createSpan({ text: ' | ' });
+		createExternalLink('Discord', DISCORD_URL);
 		createExternalLink(
-			'Report Issues',
+			'Report issues',
 			'https://github.com/ckelsoe/obsidian-plaud-importer/issues',
 		);
 	}
