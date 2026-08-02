@@ -13,10 +13,17 @@
  * makes the settings write the commit point and runs it FIRST, so a failure has
  * nothing to unwind.
  *
- * Built with `Object.create(prototype)` like the other main.ts suites: the store
- * is one method and constructing a real plugin would drag in the whole onload.
+ * This suite used to build its subject with
+ * `Object.create(PlaudImporterPlugin.prototype)`, because the store was five
+ * methods on the plugin class and constructing a real plugin would have dragged
+ * in the whole onload. `Object.create` runs no field initializers, so every
+ * field the store touched had to be seeded by hand, and a field added later was
+ * silently `undefined` rather than a failure. The store now lives in
+ * capture-store.ts with a constructor and an explicit host, so the subject
+ * below is a real `new CaptureStore(...)` over an ordinary stub.
  */
-import PlaudImporterPlugin from '../main';
+import { CaptureStore, type CaptureStoreHost } from '../capture-store';
+import type { SignInMethod } from '../reconnect-routing';
 
 // Build a minimal unsigned JWT. The capture guard reads unverified claims only,
 // so an unsigned token with a dummy signature segment is a faithful fixture.
@@ -43,38 +50,38 @@ function usableToken(clientId = 'web'): string {
 	});
 }
 
+// Written out rather than imported from the source. These ids address secrets
+// that already exist in every user's vault, so a change to either is a breaking
+// change; a literal here fails when one moves, an import would follow it.
 const CAPTURED_SECRET_ID = 'plaud-importer-token';
 const LEGACY_REFRESH_SECRET_ID = 'plaud-importer-refresh-token';
 
-type StoreOutcome =
-	| { outcome: 'stored' }
-	| { outcome: 'unusable' }
-	| { outcome: 'superseded' }
-	| { outcome: 'save-failed'; error: unknown }
-	| { outcome: 'torn'; error: unknown };
+/** Settings shaped like the plugin's, plus one unrelated field to watch. */
+interface HarnessSettings {
+	secretId: string;
+	apiBaseUrl: string;
+	signInMethod: SignInMethod;
+	/** Unrelated to auth, used to prove a concurrent edit is not reverted. */
+	autoSyncEnabled: boolean;
+	[key: string]: unknown;
+}
 
-/** The subset of the plugin the store touches. Private members need the cast. */
-interface StoreHost {
-	settings: Record<string, unknown>;
-	app: { secretStorage: { setSecret(id: string, secret: string): void } };
-	saveData(data: unknown): Promise<void>;
-	/** Tail of the capture queue. Seeded by hand: see the note in makeHarness. */
-	captureStoreChain: Promise<unknown>;
+/**
+ * Stands in for the plugin. It is the object main.ts builds inline, with the
+ * plugin state the store mutates hoisted onto it so the assertions can read it
+ * back, and with the hooks the tests override left as plain properties.
+ */
+interface HostStub extends CaptureStoreHost<HarnessSettings> {
+	settings: HarnessSettings;
+	/** Cleared by a successful store, exactly as on the plugin. */
 	sessionRefreshFailed: boolean;
-	settingsRefresh?: () => void;
-	reconcileSessionExpiryWarning(): void;
-	reconcileSessionRefresh(): void;
-	storeAccessToken(
-		rawToken: string,
-		signInMethod?: string,
-		apiBaseUrl?: string,
-		background?: boolean,
-		stillOwns?: () => boolean,
-	): Promise<StoreOutcome>;
+	/** Null when no settings tab is mounted, exactly as on the plugin. */
+	settingsRefresh: (() => void) | null;
 }
 
 interface Harness {
-	plugin: StoreHost;
+	store: CaptureStore<HarnessSettings>;
+	host: HostStub;
 	/** Every mutation in the order it happened, so ordering is assertable. */
 	calls: string[];
 	secrets: Map<string, string>;
@@ -82,8 +89,23 @@ interface Harness {
 	failSave: Error | null;
 	/** Set to make the CAPTURED-id credential write throw, recording nothing. */
 	failSecret: Error | null;
+	/**
+	 * Set to make the LEGACY-id blank throw. A separate switch from failSecret
+	 * because the two happen on opposite sides of the commit: the credential
+	 * write can still undo a capture, the legacy blank is bookkeeping after one
+	 * has already succeeded and must not be able to fail it.
+	 */
+	failLegacySecret: Error | null;
 	/** Runs during the settings write, while the commit is still in flight. */
 	duringSave: (() => void) | null;
+	/**
+	 * How many times the short-lifetime heads-up hook was invoked. Counted
+	 * rather than pushed into `calls`, because the real method is advisory and
+	 * silent for the iat-less fixtures above: recording it as a mutation would
+	 * put an event in the ordering assertions that a real capture of these
+	 * tokens never produces.
+	 */
+	shortLifetimeNotices: number;
 }
 
 /** What a vault that will not take the write looks like out of saveData. */
@@ -91,71 +113,98 @@ function vaultWriteError(): Error {
 	return new Error("EROFS: read-only file system, open 'data.json'");
 }
 
-function makeHarness(settings: Record<string, unknown> = {}): Harness {
-	const plugin = Object.create(PlaudImporterPlugin.prototype) as StoreHost;
-	const harness: Harness = {
-		plugin,
-		calls: [],
-		secrets: new Map<string, string>(),
-		failSave: null,
-		failSecret: null,
-		duringSave: null,
-	};
-
-	// `Object.create` builds the prototype chain but runs no field initializers,
-	// so every class field the store reads has to be seeded here. This one is
-	// load-bearing rather than cosmetic: the queue chains onto it, and leaving it
-	// undefined fails at the first store rather than in some later assertion.
-	plugin.captureStoreChain = Promise.resolve();
-	plugin.settings = {
-		secretId: 'some-other-secret',
-		apiBaseUrl: 'https://api.plaud.ai',
-		signInMethod: 'browser',
-		// An unrelated setting, used to prove a concurrent edit is not reverted.
-		autoSyncEnabled: false,
-		...settings,
-	};
+function makeHarness(settings: Partial<HarnessSettings> = {}): Harness {
+	const secrets = new Map<string, string>();
+	const calls: string[] = [];
 	// Seed the credential a previous sign-in left, so "nothing was written" can
 	// be checked as "the old value is still there" rather than merely "absent".
-	harness.secrets.set(CAPTURED_SECRET_ID, 'previous-token');
-	harness.secrets.set(LEGACY_REFRESH_SECRET_ID, 'previous-refresh-token');
+	secrets.set(CAPTURED_SECRET_ID, 'previous-token');
+	secrets.set(LEGACY_REFRESH_SECRET_ID, 'previous-refresh-token');
 
-	plugin.app = {
-		secretStorage: {
-			setSecret: (id: string, secret: string): void => {
-				if (id === CAPTURED_SECRET_ID && harness.failSecret !== null) {
-					// A backend that refused the write recorded nothing.
-					throw harness.failSecret;
-				}
-				harness.calls.push(`setSecret:${id}`);
-				harness.secrets.set(id, secret);
-			},
+	const harness: Harness = {
+		// Both filled in below; the host closes over `harness`, so it cannot be
+		// built before the object exists.
+		store: null as unknown as CaptureStore<HarnessSettings>,
+		host: null as unknown as HostStub,
+		calls,
+		secrets,
+		failSave: null,
+		failSecret: null,
+		failLegacySecret: null,
+		duringSave: null,
+		shortLifetimeNotices: 0,
+	};
+
+	const host: HostStub = {
+		settings: {
+			secretId: 'some-other-secret',
+			apiBaseUrl: 'https://api.plaud.ai',
+			signInMethod: 'browser',
+			autoSyncEnabled: false,
+			...settings,
+		},
+		sessionRefreshFailed: true,
+		settingsRefresh: null,
+		getSettings: () => host.settings,
+		setSecret: (id: string, secret: string): void => {
+			if (id === CAPTURED_SECRET_ID && harness.failSecret !== null) {
+				// A backend that refused the write recorded nothing.
+				throw harness.failSecret;
+			}
+			if (
+				id === LEGACY_REFRESH_SECRET_ID &&
+				harness.failLegacySecret !== null
+			) {
+				throw harness.failLegacySecret;
+			}
+			calls.push(`setSecret:${id}`);
+			secrets.set(id, secret);
+		},
+		saveData: async (data: HarnessSettings): Promise<void> => {
+			calls.push('saveData');
+			harness.duringSave?.();
+			// A real settings write is not synchronous. Yielding here is what makes
+			// "the credential lands only after the write resolves" a real assertion
+			// rather than an artifact of everything running in one tick.
+			await Promise.resolve();
+			if (harness.failSave !== null) {
+				throw harness.failSave;
+			}
+			calls.push('saveData:ok');
+			// Whatever reached disk, so a failed save can be checked as "nothing".
+			secrets.set('__data.json__', JSON.stringify(data));
+		},
+		isDisposed: () => false,
+		// Mirrors the plugin's one-liner rather than recording a bare call, so the
+		// "does not blank the legacy refresh token" assertions keep measuring a
+		// secret value instead of a spy.
+		clearStoredRefreshToken: (): void => {
+			host.setSecret(LEGACY_REFRESH_SECRET_ID, '');
+		},
+		clearRefreshFailure: (): void => {
+			host.sessionRefreshFailed = false;
+		},
+		noteShortLifetimeOnCapture: (): void => {
+			harness.shortLifetimeNotices += 1;
+		},
+		reconcileSessionExpiryWarning: (): void => {
+			calls.push('reconcileExpiry');
+		},
+		reconcileSessionRefresh: (): void => {
+			calls.push('reconcileRefresh');
+		},
+		redrawSettings: (): void => host.settingsRefresh?.(),
+		probeCandidate: (): Promise<void> => {
+			// storeAccessToken never probes; only storeFirstWorkingCandidate does,
+			// and this suite does not exercise it. Fail loudly if that changes.
+			throw new Error('probeCandidate is not part of this suite');
 		},
 	};
-	plugin.saveData = async (data: unknown): Promise<void> => {
-		harness.calls.push('saveData');
-		harness.duringSave?.();
-		// A real settings write is not synchronous. Yielding here is what makes
-		// "the credential lands only after the write resolves" a real assertion
-		// rather than an artifact of everything running in one tick.
-		await Promise.resolve();
-		if (harness.failSave !== null) {
-			throw harness.failSave;
-		}
-		harness.calls.push('saveData:ok');
-		// Whatever reached disk, so a failed save can be checked as "nothing".
-		harness.secrets.set('__data.json__', JSON.stringify(data));
-	};
-	plugin.sessionRefreshFailed = true;
-	plugin.reconcileSessionExpiryWarning = (): void => {
-		harness.calls.push('reconcileExpiry');
-	};
-	plugin.reconcileSessionRefresh = (): void => {
-		harness.calls.push('reconcileRefresh');
-	};
+
+	harness.host = host;
+	harness.store = new CaptureStore<HarnessSettings>(host);
 	return harness;
 }
-
 describe('storing a capture is all-or-nothing (issue #86)', () => {
 	let consoleError: jest.SpyInstance;
 
@@ -176,7 +225,7 @@ describe('storing a capture is all-or-nothing (issue #86)', () => {
 			const h = makeHarness();
 			h.failSave = vaultWriteError();
 
-			await h.plugin.storeAccessToken(usableToken(), 'window');
+			await h.store.storeAccessToken(usableToken(), 'window');
 
 			expect(h.calls).not.toContain(`setSecret:${CAPTURED_SECRET_ID}`);
 			expect(h.secrets.get(CAPTURED_SECRET_ID)).toBe('previous-token');
@@ -188,15 +237,15 @@ describe('storing a capture is all-or-nothing (issue #86)', () => {
 			const h = makeHarness();
 			h.failSave = vaultWriteError();
 
-			await h.plugin.storeAccessToken(
+			await h.store.storeAccessToken(
 				usableToken(),
 				'window',
 				'https://api-eu.plaud.ai',
 			);
 
-			expect(h.plugin.settings.secretId).toBe('some-other-secret');
-			expect(h.plugin.settings.signInMethod).toBe('browser');
-			expect(h.plugin.settings.apiBaseUrl).toBe('https://api.plaud.ai');
+			expect(h.host.settings.secretId).toBe('some-other-secret');
+			expect(h.host.settings.signInMethod).toBe('browser');
+			expect(h.host.settings.apiBaseUrl).toBe('https://api.plaud.ai');
 		});
 
 		it('reports the failure as its own outcome, carrying the cause', async () => {
@@ -206,7 +255,7 @@ describe('storing a capture is all-or-nothing (issue #86)', () => {
 			const cause = vaultWriteError();
 			h.failSave = cause;
 
-			const result = await h.plugin.storeAccessToken(
+			const result = await h.store.storeAccessToken(
 				usableToken(),
 				'window',
 			);
@@ -225,7 +274,7 @@ describe('storing a capture is all-or-nothing (issue #86)', () => {
 			const h = makeHarness();
 			h.failSave = vaultWriteError();
 
-			await h.plugin.storeAccessToken(usableToken(), 'window');
+			await h.store.storeAccessToken(usableToken(), 'window');
 
 			expect(h.secrets.get(LEGACY_REFRESH_SECRET_ID)).toBe(
 				'previous-refresh-token',
@@ -239,7 +288,7 @@ describe('storing a capture is all-or-nothing (issue #86)', () => {
 			const h = makeHarness();
 			h.failSave = vaultWriteError();
 
-			await h.plugin.storeAccessToken(usableToken(), 'window');
+			await h.store.storeAccessToken(usableToken(), 'window');
 
 			expect(h.calls).not.toContain('reconcileExpiry');
 			expect(h.calls).not.toContain('reconcileRefresh');
@@ -251,17 +300,17 @@ describe('storing a capture is all-or-nothing (issue #86)', () => {
 			const h = makeHarness();
 			h.failSave = vaultWriteError();
 
-			await h.plugin.storeAccessToken(usableToken(), 'window');
+			await h.store.storeAccessToken(usableToken(), 'window');
 
-			expect(h.plugin.sessionRefreshFailed).toBe(true);
+			expect(h.host.sessionRefreshFailed).toBe(true);
 		});
 
 		it('does not redraw the settings tab', async () => {
 			const h = makeHarness();
 			h.failSave = vaultWriteError();
-			h.plugin.settingsRefresh = () => h.calls.push('settingsRefresh');
+			h.host.settingsRefresh = () => h.calls.push('settingsRefresh');
 
-			await h.plugin.storeAccessToken(usableToken(), 'window');
+			await h.store.storeAccessToken(usableToken(), 'window');
 
 			expect(h.calls).not.toContain('settingsRefresh');
 		});
@@ -273,7 +322,7 @@ describe('storing a capture is all-or-nothing (issue #86)', () => {
 			// leave the credential behind with nothing describing it.
 			const h = makeHarness();
 
-			await h.plugin.storeAccessToken(usableToken(), 'window');
+			await h.store.storeAccessToken(usableToken(), 'window');
 
 			expect(h.calls.indexOf('saveData:ok')).toBeLessThan(
 				h.calls.indexOf(`setSecret:${CAPTURED_SECRET_ID}`),
@@ -284,7 +333,7 @@ describe('storing a capture is all-or-nothing (issue #86)', () => {
 			const h = makeHarness();
 			const token = usableToken();
 
-			const result = await h.plugin.storeAccessToken(
+			const result = await h.store.storeAccessToken(
 				token,
 				'window',
 				'https://api-eu.plaud.ai',
@@ -292,11 +341,9 @@ describe('storing a capture is all-or-nothing (issue #86)', () => {
 
 			expect(result).toEqual({ outcome: 'stored' });
 			expect(h.secrets.get(CAPTURED_SECRET_ID)).toBe(token);
-			expect(h.plugin.settings.secretId).toBe(CAPTURED_SECRET_ID);
-			expect(h.plugin.settings.signInMethod).toBe('window');
-			expect(h.plugin.settings.apiBaseUrl).toBe(
-				'https://api-eu.plaud.ai',
-			);
+			expect(h.host.settings.secretId).toBe(CAPTURED_SECRET_ID);
+			expect(h.host.settings.signInMethod).toBe('window');
+			expect(h.host.settings.apiBaseUrl).toBe('https://api-eu.plaud.ai');
 		});
 
 		it('persists the same pairing it applied in memory', async () => {
@@ -304,7 +351,7 @@ describe('storing a capture is all-or-nothing (issue #86)', () => {
 			// and applied another would just move the tear.
 			const h = makeHarness();
 
-			await h.plugin.storeAccessToken(
+			await h.store.storeAccessToken(
 				usableToken(),
 				'window',
 				'https://api-eu.plaud.ai',
@@ -321,9 +368,9 @@ describe('storing a capture is all-or-nothing (issue #86)', () => {
 		it('keeps the configured region when the capture found none', async () => {
 			const h = makeHarness();
 
-			await h.plugin.storeAccessToken(usableToken(), 'browser');
+			await h.store.storeAccessToken(usableToken(), 'browser');
 
-			expect(h.plugin.settings.apiBaseUrl).toBe('https://api.plaud.ai');
+			expect(h.host.settings.apiBaseUrl).toBe('https://api.plaud.ai');
 		});
 
 		it('does not revert an unrelated setting changed while the write was in flight', async () => {
@@ -332,22 +379,22 @@ describe('storing a capture is all-or-nothing (issue #86)', () => {
 			// write. Only the fields this capture owns are applied.
 			const h = makeHarness();
 			h.duringSave = () => {
-				h.plugin.settings.autoSyncEnabled = true;
+				h.host.settings.autoSyncEnabled = true;
 			};
 
-			await h.plugin.storeAccessToken(usableToken(), 'window');
+			await h.store.storeAccessToken(usableToken(), 'window');
 
-			expect(h.plugin.settings.autoSyncEnabled).toBe(true);
-			expect(h.plugin.settings.secretId).toBe(CAPTURED_SECRET_ID);
+			expect(h.host.settings.autoSyncEnabled).toBe(true);
+			expect(h.host.settings.secretId).toBe(CAPTURED_SECRET_ID);
 		});
 
 		it('blanks the legacy refresh token and reconciles the session', async () => {
 			const h = makeHarness();
 
-			await h.plugin.storeAccessToken(usableToken(), 'window');
+			await h.store.storeAccessToken(usableToken(), 'window');
 
 			expect(h.secrets.get(LEGACY_REFRESH_SECRET_ID)).toBe('');
-			expect(h.plugin.sessionRefreshFailed).toBe(false);
+			expect(h.host.sessionRefreshFailed).toBe(false);
 			expect(h.calls).toContain('reconcileExpiry');
 			expect(h.calls).toContain('reconcileRefresh');
 		});
@@ -360,13 +407,13 @@ describe('storing a capture is all-or-nothing (issue #86)', () => {
 			// failing must not skip the rest: a stored window credential still
 			// arms its renewal timer and the tab still redraws.
 			const h = makeHarness();
-			h.plugin.reconcileSessionExpiryWarning = (): void => {
+			h.host.reconcileSessionExpiryWarning = (): void => {
 				throw new Error('expiry reconcile blew up');
 			};
-			h.plugin.settingsRefresh = () => h.calls.push('settingsRefresh');
+			h.host.settingsRefresh = () => h.calls.push('settingsRefresh');
 			const token = usableToken();
 
-			const result = await h.plugin.storeAccessToken(token, 'window');
+			const result = await h.store.storeAccessToken(token, 'window');
 
 			expect(result).toEqual({ outcome: 'stored' });
 			expect(h.secrets.get(CAPTURED_SECRET_ID)).toBe(token);
@@ -376,6 +423,58 @@ describe('storing a capture is all-or-nothing (issue #86)', () => {
 			);
 			expect(h.calls).toContain('reconcileRefresh');
 			expect(h.calls).toContain('settingsRefresh');
+		});
+
+		it('does not fail a stored capture when blanking the legacy token throws', async () => {
+			// The legacy blank writes a secret, and setSecret is throwable. On the
+			// plugin this call was a private method that swallowed its own errors,
+			// so it could sit outside the guard; behind the host interface it is an
+			// arbitrary callback, and a throwing one would reject a store whose
+			// credential is already durably written. The bookkeeping after it must
+			// still run: a stored window credential without its renewal timer stops
+			// renewing silently.
+			const h = makeHarness();
+			h.failLegacySecret = new Error('secret backing store unavailable');
+			h.host.settingsRefresh = () => h.calls.push('settingsRefresh');
+			const token = usableToken();
+
+			const result = await h.store.storeAccessToken(token, 'window');
+
+			expect(result).toEqual({ outcome: 'stored' });
+			expect(h.secrets.get(CAPTURED_SECRET_ID)).toBe(token);
+			expect(h.host.settings.secretId).toBe(CAPTURED_SECRET_ID);
+			expect(consoleError).toHaveBeenCalledWith(
+				expect.stringContaining(
+					'legacy refresh-token blank after a stored capture failed',
+				),
+				expect.any(Error),
+			);
+			expect(h.calls).toContain('reconcileExpiry');
+			expect(h.calls).toContain('reconcileRefresh');
+			expect(h.calls).toContain('settingsRefresh');
+		});
+
+		it('does not fail a stored capture when clearing the refresh failure throws', async () => {
+			// Same reasoning as the legacy blank. On the plugin this was a bare
+			// field assignment that could not throw; through the host it is a
+			// callback like any other.
+			const h = makeHarness();
+			h.host.clearRefreshFailure = (): void => {
+				throw new Error('refresh-failure clear blew up');
+			};
+			const token = usableToken();
+
+			const result = await h.store.storeAccessToken(token, 'window');
+
+			expect(result).toEqual({ outcome: 'stored' });
+			expect(h.secrets.get(CAPTURED_SECRET_ID)).toBe(token);
+			expect(consoleError).toHaveBeenCalledWith(
+				expect.stringContaining(
+					'refresh-failure clear after a stored capture failed',
+				),
+				expect.any(Error),
+			);
+			expect(h.calls).toContain('reconcileRefresh');
 		});
 	});
 
@@ -390,7 +489,7 @@ describe('storing a capture is all-or-nothing (issue #86)', () => {
 			const cause = new Error('secret backing store unavailable');
 			h.failSecret = cause;
 
-			const result = await h.plugin.storeAccessToken(
+			const result = await h.store.storeAccessToken(
 				usableToken(),
 				'window',
 				'https://api-eu.plaud.ai',
@@ -404,7 +503,7 @@ describe('storing a capture is all-or-nothing (issue #86)', () => {
 			expect(onDisk.secretId).toBe('some-other-secret');
 			expect(onDisk.signInMethod).toBe('browser');
 			expect(onDisk.apiBaseUrl).toBe('https://api.plaud.ai');
-			expect(h.plugin.settings.secretId).toBe('some-other-secret');
+			expect(h.host.settings.secretId).toBe('some-other-secret');
 			expect(h.calls).not.toContain('reconcileRefresh');
 			expect(consoleError).toHaveBeenCalledWith(
 				expect.stringContaining(
@@ -424,15 +523,16 @@ describe('storing a capture is all-or-nothing (issue #86)', () => {
 			h.failSecret = cause;
 			// The restore write is the second save this store makes; refuse
 			// exactly that one via the harness's own failure switch.
+			const restoreFailure = vaultWriteError();
 			let saves = 0;
 			h.duringSave = () => {
 				saves += 1;
 				if (saves === 2) {
-					h.failSave = vaultWriteError();
+					h.failSave = restoreFailure;
 				}
 			};
 
-			const result = await h.plugin.storeAccessToken(
+			const result = await h.store.storeAccessToken(
 				usableToken(),
 				'window',
 			);
@@ -445,8 +545,24 @@ describe('storing a capture is all-or-nothing (issue #86)', () => {
 			) as Record<string, unknown>;
 			expect(onDisk.secretId).toBe(CAPTURED_SECRET_ID);
 			expect(h.secrets.get(CAPTURED_SECRET_ID)).toBe('previous-token');
-			expect(h.plugin.settings.secretId).toBe('some-other-secret');
+			expect(h.host.settings.secretId).toBe('some-other-secret');
 			expect(h.calls).not.toContain('reconcileRefresh');
+			// BOTH causes have to reach the log. The torn notice tells the user
+			// to sign in again and says nothing about why, so the console is the
+			// only place the two failures behind it are recorded; losing either
+			// leaves the rarest path in the store undiagnosable from a report.
+			expect(consoleError).toHaveBeenCalledWith(
+				expect.stringContaining(
+					'could not store the captured credential',
+				),
+				cause,
+			);
+			expect(consoleError).toHaveBeenCalledWith(
+				expect.stringContaining(
+					'could not restore settings after the credential write failed',
+				),
+				restoreFailure,
+			);
 		});
 	});
 
@@ -469,7 +585,7 @@ describe('storing a capture is all-or-nothing (issue #86)', () => {
 			const slowFirstSave = new Promise<void>((resolve) => {
 				releaseFirst = resolve;
 			});
-			h.plugin.saveData = async (): Promise<void> => {
+			h.host.saveData = async (): Promise<void> => {
 				if (!sawFirst) {
 					sawFirst = true;
 					h.calls.push('saveData:slow');
@@ -482,15 +598,15 @@ describe('storing a capture is all-or-nothing (issue #86)', () => {
 				h.calls.push('saveData:fast:ok');
 			};
 
-			const a = h.plugin.storeAccessToken(first, 'window');
-			const b = h.plugin.storeAccessToken(second, 'browser');
+			const a = h.store.storeAccessToken(first, 'window');
+			const b = h.store.storeAccessToken(second, 'browser');
 			await Promise.resolve();
 			await Promise.resolve();
 			releaseFirst();
 			await Promise.all([a, b]);
 
 			expect(h.secrets.get(CAPTURED_SECRET_ID)).toBe(second);
-			expect(h.plugin.settings.signInMethod).toBe('browser');
+			expect(h.host.settings.signInMethod).toBe('browser');
 		});
 
 		it("never runs one store's commit inside another's", async () => {
@@ -500,8 +616,8 @@ describe('storing a capture is all-or-nothing (issue #86)', () => {
 			const h = makeHarness();
 
 			await Promise.all([
-				h.plugin.storeAccessToken(usableToken('a'), 'window'),
-				h.plugin.storeAccessToken(usableToken('b'), 'browser'),
+				h.store.storeAccessToken(usableToken('a'), 'window'),
+				h.store.storeAccessToken(usableToken('b'), 'browser'),
 			]);
 
 			const oneStore = [
@@ -522,11 +638,11 @@ describe('storing a capture is all-or-nothing (issue #86)', () => {
 			// the write happens.
 			const h = makeHarness();
 			const first = usableToken('first');
-			const a = h.plugin.storeAccessToken(first, 'window');
+			const a = h.store.storeAccessToken(first, 'window');
 			// Holds the same guard the background refresh holds: "the credential I
 			// measured is still the live one". It passes at call time, because the
 			// first store has not reached its setSecret yet.
-			const b = h.plugin.storeAccessToken(
+			const b = h.store.storeAccessToken(
 				usableToken('stale'),
 				'browser',
 				undefined,
@@ -537,13 +653,13 @@ describe('storing a capture is all-or-nothing (issue #86)', () => {
 			await expect(a).resolves.toEqual({ outcome: 'stored' });
 			await expect(b).resolves.toEqual({ outcome: 'superseded' });
 			expect(h.secrets.get(CAPTURED_SECRET_ID)).toBe(first);
-			expect(h.plugin.settings.signInMethod).toBe('window');
+			expect(h.host.settings.signInMethod).toBe('window');
 		});
 
 		it('writes nothing at all when it finds itself superseded', async () => {
 			const h = makeHarness();
 
-			const result = await h.plugin.storeAccessToken(
+			const result = await h.store.storeAccessToken(
 				usableToken(),
 				'window',
 				'https://api-eu.plaud.ai',
@@ -554,8 +670,8 @@ describe('storing a capture is all-or-nothing (issue #86)', () => {
 			expect(result).toEqual({ outcome: 'superseded' });
 			expect(h.calls).toHaveLength(0);
 			expect(h.secrets.get(CAPTURED_SECRET_ID)).toBe('previous-token');
-			expect(h.plugin.settings.secretId).toBe('some-other-secret');
-			expect(h.plugin.settings.apiBaseUrl).toBe('https://api.plaud.ai');
+			expect(h.host.settings.secretId).toBe('some-other-secret');
+			expect(h.host.settings.apiBaseUrl).toBe('https://api.plaud.ai');
 		});
 
 		it('does not strand later captures behind one that threw', async () => {
@@ -566,7 +682,7 @@ describe('storing a capture is all-or-nothing (issue #86)', () => {
 			const h = makeHarness();
 			const survivor = usableToken('survivor');
 
-			const first = h.plugin.storeAccessToken(
+			const first = h.store.storeAccessToken(
 				usableToken('doomed'),
 				'window',
 				undefined,
@@ -575,7 +691,7 @@ describe('storing a capture is all-or-nothing (issue #86)', () => {
 					throw new Error('guard blew up');
 				},
 			);
-			const second = h.plugin.storeAccessToken(survivor, 'browser');
+			const second = h.store.storeAccessToken(survivor, 'browser');
 
 			await expect(first).rejects.toThrow('guard blew up');
 			await expect(second).resolves.toEqual({ outcome: 'stored' });
@@ -589,7 +705,7 @@ describe('storing a capture is all-or-nothing (issue #86)', () => {
 			// this one IS fixed by signing in again.
 			const h = makeHarness();
 
-			const result = await h.plugin.storeAccessToken(
+			const result = await h.store.storeAccessToken(
 				'not-a-jwt',
 				'window',
 			);
@@ -606,7 +722,7 @@ describe('storing a capture is all-or-nothing (issue #86)', () => {
 				exp: Math.floor(Date.now() / 1000) - 60,
 			});
 
-			const result = await h.plugin.storeAccessToken(expired, 'window');
+			const result = await h.store.storeAccessToken(expired, 'window');
 
 			expect(result).toEqual({ outcome: 'unusable' });
 			expect(h.calls).toHaveLength(0);
@@ -619,7 +735,7 @@ describe('storing a capture is all-or-nothing (issue #86)', () => {
 		const h = makeHarness();
 		const token = usableToken();
 
-		const result = await h.plugin.storeAccessToken(
+		const result = await h.store.storeAccessToken(
 			`Bearer ${token}`,
 			'window',
 		);
