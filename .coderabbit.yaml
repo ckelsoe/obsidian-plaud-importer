@@ -2,7 +2,9 @@
 # Review once when a PR opens; do not re-review on every push. Batch fixes,
 # then comment `@coderabbitai full review` to request the final pass.
 # Release/metadata PRs (titled "Release ...") are skipped: they only bump the
-# version + CHANGELOG, and the release workflow (attestation + scan) is their gate.
+# version + CHANGELOG and are still gated by the required CI check like any PR.
+# (The tag-push release workflow then adds SLSA attestation; its VirusTotal step
+# is best-effort and non-blocking, so it is not itself a gate.)
 reviews:
   auto_review:
     enabled: true
