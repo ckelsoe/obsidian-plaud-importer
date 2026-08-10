@@ -281,6 +281,16 @@ describe('listRecordings happy path', () => {
 		expect(r.captureOffsetMinutes).toBe(330);
 	});
 
+	it('folds a negative zonemins into a negative fractional offset', async () => {
+		// e.g. a UTC-3:30 zone: timezone -3 with a signed -30 minutes = -210.
+		const { fetcher } = captureFetcher(
+			ok(listEnvelope([record({ timezone: -3, zonemins: -30 })])),
+		);
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+		const [r] = await client.listRecordings();
+		expect(r.captureOffsetMinutes).toBe(-210);
+	});
+
 	it('treats a present timezone of 0 as UTC, not missing', async () => {
 		const { fetcher } = captureFetcher(
 			ok(listEnvelope([record({ timezone: 0, zonemins: 0 })])),
