@@ -27,6 +27,7 @@ import {
 	resolveSubfolder,
 	buildNoteName,
 	formatDatetime,
+	zoneOffsetMinutes,
 	isValidReplacementChar,
 	TEMPLATE_PREVIEW_DATE,
 	TEMPLATE_PREVIEW_DATETIME,
@@ -318,7 +319,31 @@ const CUSTOM_FRONTMATTER_FOOTNOTE =
 // exists. Held in consts, like the other template strings, so the sentence-case
 // lint inspects the literal arguments and leaves the token examples untouched.
 const DATETIME_TEMPLATE_INTRO =
-	"Adds a datetime property to each note's frontmatter, formatted with the same {{ }} Moment tokens as the other fields. Leave it empty to write no datetime property. The date property stays YYYY-MM-DD for Dataview; this separate field lets you record the recording time in any format. The value is your computer's local time, so include {{Z}} to capture the UTC offset if you want the instant to stay unambiguous across devices and time zones.";
+	"Adds a datetime property to each note's frontmatter, formatted with the same {{ }} Moment tokens as the other fields. Leave it empty to write no datetime property. The date property stays YYYY-MM-DD for Dataview; this separate field lets you record the recording time in any format. The value is in the recording's own capture time zone, so include {{Z}} to show that offset.";
+
+const FALLBACK_TIMEZONE_INTRO =
+	'Times are normally written in the recording\'s own capture time zone, which Plaud provides. This fallback is used only for older recordings that lack that information. Type an IANA zone name such as "America/New_York" or "UTC". Leave it empty to use this device\'s time zone instead.';
+
+// Refusal notice for an unrecognized fallback zone. Bound to a constant so the
+// sentence-case UI lint does not try to down-case the IANA example names.
+const FALLBACK_TIMEZONE_INVALID_NOTICE =
+	'Plaud importer: That is not a recognized time zone name (for example America/New_York or UTC). Keeping the previous value.';
+
+// A real IANA zone name as the field placeholder. Bound to a constant rather
+// than an inline string literal so the sentence-case UI lint does not try to
+// down-case this proper identifier (same reason the desc strings are constants).
+const FALLBACK_TIMEZONE_PLACEHOLDER = 'America/New_York';
+
+// Format a UTC offset in minutes as a human label, for example "UTC-04:00",
+// "UTC+05:30", or "UTC" for zero. Used by the fallback time-zone preview.
+function formatUtcOffsetLabel(offsetMinutes: number): string {
+	if (offsetMinutes === 0) return 'UTC';
+	const sign = offsetMinutes < 0 ? '-' : '+';
+	const abs = Math.abs(offsetMinutes);
+	const hh = String(Math.floor(abs / 60)).padStart(2, '0');
+	const mm = String(abs % 60).padStart(2, '0');
+	return `UTC${sign}${hh}:${mm}`;
+}
 
 const DATETIME_TEMPLATE_TOKENS: ReadonlyArray<readonly [string, string]> = [
 	['{{YYYY}}-{{MM}}-{{DD}}', 'the date, for example 2026-07-05'],
@@ -483,6 +508,13 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 				containerEl,
 				'Datetime property',
 				DATETIME_TEMPLATE_INTRO,
+			),
+		);
+		this.renderFallbackTimezoneControl(
+			this.makeSetting(
+				containerEl,
+				'Fallback time zone',
+				FALLBACK_TIMEZONE_INTRO,
 			),
 		);
 		this.renderCustomFrontmatterControl(
@@ -1198,6 +1230,39 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 		updatePreview(this.readSettingString('datetimeTemplate'));
 	}
 
+	// Renders the fallback time-zone row: a text field validated as an IANA zone,
+	// with a live preview of the zone's current offset. Empty is valid and means
+	// "use this device's zone". applyControlChange rejects an unrecognized name
+	// and keeps the previous value, so the preview reflects the typed value's
+	// validity while the saved value stays usable (like the subfolder row).
+	private renderFallbackTimezoneControl(setting: Setting): void {
+		setting.settingEl.addClass('plaud-importer-stacked-row');
+		let updatePreview: (zone: string) => void = () => {};
+		setting.addText((text) => {
+			// The stacked-row layout drops the visible <label> association, so give
+			// the input its own accessible name for screen readers.
+			text.inputEl.setAttribute('aria-label', 'Fallback time zone');
+			text.setPlaceholder(FALLBACK_TIMEZONE_PLACEHOLDER)
+				.setValue(this.readSettingString('fallbackTimezone'))
+				.onChange(async (value) => {
+					await this.applyControlChange('fallbackTimezone', value);
+					updatePreview(value);
+				});
+		});
+		updatePreview = this.attachTemplatePreview(setting, (zone) => {
+			const trimmed = zone.trim();
+			if (trimmed === '') {
+				return "Preview: automatic (this device's time zone)";
+			}
+			const offset = zoneOffsetMinutes(new Date(), trimmed);
+			if (offset === null) {
+				return 'Preview: not a recognized time zone name';
+			}
+			return `Preview: ${trimmed} (currently ${formatUtcOffsetLabel(offset)})`;
+		});
+		updatePreview(this.readSettingString('fallbackTimezone'));
+	}
+
 	// Renders the "Extra frontmatter" row: the token/example reference in the
 	// description, then a dynamic list of key / value / preserve rows with a
 	// token palette, an add-row button, and a live preview of the expanded
@@ -1725,6 +1790,15 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 							this.renderDatetimeTemplateControl(setting),
 					},
 					{
+						name: 'Fallback time zone',
+						desc: FALLBACK_TIMEZONE_INTRO,
+						// Rendered imperatively for the live offset preview, like the
+						// datetime row above.
+						searchable: false,
+						render: (setting: Setting) =>
+							this.renderFallbackTimezoneControl(setting),
+					},
+					{
 						name: 'Extra frontmatter',
 						desc: CUSTOM_FRONTMATTER_INTRO,
 						// Rendered imperatively for the token/example lists and the
@@ -2087,6 +2161,21 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 			// reject and the live preview is the only feedback. Persisted as typed.
 			this.plugin.settings.datetimeTemplate =
 				typeof value === 'string' ? value : '';
+		} else if (key === 'fallbackTimezone') {
+			// Empty means "use this device's zone" and is valid. A non-empty value
+			// must be an IANA zone name Intl recognizes; an unrecognized entry is
+			// refused with a Notice and the previous value kept, so a typo can never
+			// park a garbage zone that would silently misdate the rare recording
+			// that needs the fallback.
+			const next = typeof value === 'string' ? value.trim() : '';
+			if (next === '') {
+				this.plugin.settings.fallbackTimezone = '';
+			} else if (zoneOffsetMinutes(new Date(), next) !== null) {
+				this.plugin.settings.fallbackTimezone = next;
+			} else {
+				new Notice(FALLBACK_TIMEZONE_INVALID_NOTICE);
+				return;
+			}
 		} else if (key === 'transcriptHeaderLevel') {
 			const level = Number(value);
 			if (level >= 1 && level <= 6) {

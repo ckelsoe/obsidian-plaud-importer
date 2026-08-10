@@ -68,6 +68,12 @@ export interface PlaudImporterSettings {
 	// stays YYYY-MM-DD for Dataview, so the user can add the recording time in any
 	// format (24h, 12h, ISO 8601) without disturbing existing date queries.
 	datetimeTemplate: string;
+	// IANA time-zone name (e.g. "America/New_York") used to render a recording's
+	// times ONLY when Plaud's payload carried no capture offset for it (older
+	// recordings; not seen on current accounts). Empty (the default) falls back to
+	// the importing device's own zone. Normal recordings always render in their
+	// own capture zone regardless of this.
+	fallbackTimezone: string;
 	// User-defined extra frontmatter properties (see CustomFrontmatterRow). Each
 	// row's value may use {{ }} tokens; preserve keeps the note's existing value on
 	// re-import. Empty (the default) writes no extra properties.
@@ -185,6 +191,7 @@ export const DEFAULT_SETTINGS: PlaudImporterSettings = {
 	subfolderTemplate: '{{YYYY}}/{{MM}}',
 	noteNameTemplate: DEFAULT_NOTE_NAME_TEMPLATE,
 	datetimeTemplate: '',
+	fallbackTimezone: '',
 	// A real, editable example so the setting is self-documenting on a fresh
 	// install. Writes "Recording Source: Plaud Importer" to new imports until the
 	// user edits or removes it. Existing configs (which already stored a value)

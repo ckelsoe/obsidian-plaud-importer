@@ -1281,6 +1281,18 @@ interface RawRecording {
 	readonly filename: string;
 	readonly start_time: number;
 	readonly duration: number;
+	// When the recording ended, unix MILLISECONDS (same convention as
+	// start_time). Present on current payloads (100% of the live-audited
+	// account); optional so an older payload without it still parses. Validated
+	// in parseRecording, which falls back to start_time + duration when absent
+	// or implausible.
+	readonly end_time?: number;
+	// The recording's capture time-zone, as a signed whole-hour offset from UTC
+	// (e.g. -4 for UTC-4) plus sub-hour minutes in `zonemins`. Present on current
+	// payloads; optional for older ones. Combined by parseRecording into
+	// captureOffsetMinutes so the note's wall-clock matches Plaud's own app.
+	readonly timezone?: number;
+	readonly zonemins?: number;
 	readonly is_trans: boolean;
 	readonly is_summary: boolean;
 	// Optional: present on current Plaud payloads, absent on some older ones.
@@ -1413,6 +1425,13 @@ const MAX_PLAUSIBLE_SEGMENT_MS = 24 * 60 * 60 * 1000; // 24h
 // timestamps in the duration field by mistake).
 const MAX_PLAUSIBLE_DURATION_MS = 48 * 60 * 60 * 1000;
 
+// Bounds on a real earth UTC offset in minutes: from UTC-12 (Baker Island) to
+// UTC+14 (Line Islands). A `timezone`/`zonemins` pair that reconstructs outside
+// this range is unit-confused garbage, so parseRecording drops it to null and
+// the note writer falls back to a configured or device zone.
+const MIN_UTC_OFFSET_MINUTES = -12 * 60;
+const MAX_UTC_OFFSET_MINUTES = 14 * 60;
+
 function parseRecording(raw: RawRecording, endpoint: string): Recording {
 	if (raw.id.length === 0) {
 		throw new PlaudParseError('Recording has empty id', endpoint);
@@ -1469,10 +1488,46 @@ function parseRecording(raw: RawRecording, endpoint: string): Recording {
 		);
 	}
 
+	// End instant: trust Plaud's end_time only when it is finite, not before
+	// start, and within a plausible recording length of it (the same 48h bound
+	// the duration field is held to). A finite-but-inconsistent value, such as a
+	// year-2099 end on a ten-minute recording, is rejected and the end is
+	// reconstructed as start + duration instead. The two agree on 100% of the
+	// live-audited account, so the reconstruction is the defensive path.
+	const endDeltaMs =
+		typeof raw.end_time === 'number' ? raw.end_time - raw.start_time : NaN;
+	const endMs =
+		Number.isFinite(endDeltaMs) &&
+		endDeltaMs >= 0 &&
+		endDeltaMs <= MAX_PLAUSIBLE_DURATION_MS
+			? (raw.end_time as number)
+			: raw.start_time + raw.duration;
+
+	// Capture-zone offset in minutes (timezone whole hours + zonemins sub-hour),
+	// e.g. -240 for UTC-4. Present as a number 100% of the time on the live
+	// account; kept nullable for older payloads and dropped to null if it
+	// reconstructs to an impossible offset (unit-confusion guard).
+	let captureOffsetMinutes: number | null = null;
+	if (typeof raw.timezone === 'number' && Number.isFinite(raw.timezone)) {
+		const zoneMins =
+			typeof raw.zonemins === 'number' && Number.isFinite(raw.zonemins)
+				? raw.zonemins
+				: 0;
+		const offset = raw.timezone * 60 + zoneMins;
+		if (
+			offset >= MIN_UTC_OFFSET_MINUTES &&
+			offset <= MAX_UTC_OFFSET_MINUTES
+		) {
+			captureOffsetMinutes = offset;
+		}
+	}
+
 	return {
 		id: raw.id as PlaudRecordingId,
 		title: raw.filename,
 		createdAt: new Date(raw.start_time),
+		endsAt: new Date(endMs),
+		captureOffsetMinutes,
 		// Convert ms → seconds at the trust boundary so every downstream
 		// consumer (NoteWriter, ImportModal display, Dataview queries)
 		// sees seconds. Matches the segment-timestamp treatment at

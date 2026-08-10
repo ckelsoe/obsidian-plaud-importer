@@ -140,6 +140,14 @@ export interface NoteWriterOptions {
 	 */
 	readonly datetimeTemplate?: string;
 	/**
+	 * IANA time-zone name used to render a recording's times ONLY when Plaud's
+	 * payload carried no capture offset for it (older recordings). Empty or
+	 * omitted falls back to the importing device's zone. Normal recordings ignore
+	 * this and render in their own capture zone. See
+	 * `effectiveCaptureOffsetMinutes`.
+	 */
+	readonly fallbackTimezone?: string;
+	/**
 	 * User-defined extra frontmatter properties (the "Extra frontmatter"
 	 * setting). Each row's value may embed `{{...}}` tokens (see
 	 * `expandCustomFrontmatterValue`). A row with `preserve` keeps the note's
@@ -447,7 +455,7 @@ export function formatPlaudWebUrl(recordingId: string): string {
  *
  * Known placeholders (filled in from the recording / transcript we
  * already have on hand):
- *   $[audio_start_time]  → "YYYY-MM-DD HH:MM:SS" in local time
+ *   $[audio_start_time]  → "YYYY-MM-DD HH:MM:SS" in the capture zone
  *   $[audio_title]       → recording.title
  *   $[audio_duration]    → human-readable duration
  *   $[speakers]          → comma-separated speaker list
@@ -456,17 +464,22 @@ export function formatPlaudWebUrl(recordingId: string): string {
  * silently mangled by a regex on a token we don't have data for. New
  * tokens Plaud adds in future templates show through verbatim and a
  * follow-up can wire them in once we know what they should resolve to.
+ *
+ * `offsetMinutes` is the recording's effective capture-zone offset, threaded so
+ * $[audio_start_time] matches the note's own date/time. It defaults to the
+ * importing device's zone for callers that omit it.
  */
 export function substitutePlaudPlaceholders(
 	markdown: string,
 	recording: Recording,
 	transcript: Transcript | null,
+	offsetMinutes: number = machineOffsetMinutes(recording.createdAt),
 ): string {
 	if (markdown.length === 0) return markdown;
 	return markdown.replace(/\$\[([a-z0-9_]+)\]/g, (match, key: string) => {
 		switch (key) {
 			case 'audio_start_time':
-				return formatLocalDateTime(recording.createdAt);
+				return formatLocalDateTime(recording.createdAt, offsetMinutes);
 			case 'audio_title':
 				return recording.title;
 			case 'audio_duration':
@@ -482,14 +495,16 @@ export function substitutePlaudPlaceholders(
 }
 
 /**
- * Local-time "YYYY-MM-DD HH:MM:SS" formatter that matches the wall-clock
- * format Plaud's own UI uses (e.g. `2026-05-13 14:04:22`). Local time so
- * the rendered note reads naturally for the user who recorded it; this
- * matches what they see on web.plaud.ai.
+ * "YYYY-MM-DD HH:MM:SS" formatter in the recording's capture zone, matching the
+ * wall-clock format Plaud's own UI uses (e.g. `2026-05-13 14:04:22`). Rendered
+ * in the capture zone, not the importing device's, so it matches what the user
+ * sees on web.plaud.ai regardless of which machine ran the import.
  */
-function formatLocalDateTime(d: Date): string {
-	const pad = (n: number): string => String(n).padStart(2, '0');
-	return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+function formatLocalDateTime(
+	d: Date,
+	offsetMinutes: number = machineOffsetMinutes(d),
+): string {
+	return captureMoment(d, offsetMinutes).format('YYYY-MM-DD HH:mm:ss');
 }
 
 /**
@@ -514,9 +529,101 @@ export function extractSpeakers(
 	return out;
 }
 
-function formatDateYmd(d: Date): string {
-	const pad = (n: number): string => String(n).padStart(2, '0');
-	return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+// -----------------------------------------------------------------------------
+// Capture time-zone rendering
+//
+// Every recording carries an absolute instant (createdAt/endsAt) plus the
+// offset of the zone it was CAPTURED in (Recording.captureOffsetMinutes). We
+// render wall-clock times in that capture zone so a note matches Plaud's own
+// app and never shifts by which computer ran the import. Offsets are minutes
+// east of UTC (e.g. -240 for UTC-4). moment's utcOffset renders a fixed offset
+// without needing moment-timezone.
+// -----------------------------------------------------------------------------
+
+/** The importing device's own UTC offset (minutes) for a given instant. */
+function machineOffsetMinutes(d: Date): number {
+	return -d.getTimezoneOffset();
+}
+
+/**
+ * A named IANA zone's UTC offset (minutes) for a given instant, DST-aware, via
+ * Intl. Returns null when the zone name is not recognized, so the caller can
+ * fall back rather than emit a wrong time. Only exercised on the fallback path
+ * (a recording missing Plaud's own offset), which the live account never hit.
+ */
+export function zoneOffsetMinutes(instant: Date, zone: string): number | null {
+	try {
+		const parts = new Intl.DateTimeFormat('en-US', {
+			timeZone: zone,
+			timeZoneName: 'longOffset',
+		}).formatToParts(instant);
+		const name =
+			parts.find((p) => p.type === 'timeZoneName')?.value ?? 'GMT';
+		// 'GMT' / 'UTC' (no digits) is UTC; otherwise 'GMT-04:00' / 'GMT+05:30'.
+		const m = /GMT([+-])(\d{2}):(\d{2})/.exec(name);
+		if (!m) return 0;
+		const sign = m[1] === '-' ? -1 : 1;
+		return sign * (Number(m[2]) * 60 + Number(m[3]));
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * Resolve the offset (minutes) to render a recording's times in: the
+ * recording's own capture zone when Plaud provided it; otherwise a configured
+ * fallback zone; otherwise the importing device's zone for that instant. This
+ * is the single place the "all times in the capture zone" policy is decided.
+ */
+export function effectiveCaptureOffsetMinutes(
+	recording: Pick<Recording, 'createdAt' | 'captureOffsetMinutes'>,
+	fallbackTimezone = '',
+): number {
+	if (recording.captureOffsetMinutes !== null) {
+		return recording.captureOffsetMinutes;
+	}
+	if (fallbackTimezone !== '') {
+		const off = zoneOffsetMinutes(recording.createdAt, fallbackTimezone);
+		if (off !== null) return off;
+	}
+	return machineOffsetMinutes(recording.createdAt);
+}
+
+/**
+ * A moment pinned to a fixed capture-zone offset and the English locale, the
+ * one factory every capture-zone renderer shares. `offsetMinutes` defaults to
+ * the importing device's own offset so a caller that omits it reproduces the
+ * historical machine-local behavior exactly; production call sites always pass
+ * the recording's effective offset. The moment cast mirrors expandDateTemplate:
+ * it pins the factory to moment's own type at the marketplace type-check
+ * boundary (a no-op where moment already resolves).
+ */
+function captureMoment(
+	date: Date,
+	offsetMinutes: number = machineOffsetMinutes(date),
+): moment.Moment {
+	return (moment as typeof import('moment'))(date)
+		.utcOffset(offsetMinutes)
+		.locale('en');
+}
+
+function formatDateYmd(
+	d: Date,
+	offsetMinutes: number = machineOffsetMinutes(d),
+): string {
+	return captureMoment(d, offsetMinutes).format('YYYY-MM-DD');
+}
+
+/**
+ * ISO 8601 with the capture-zone offset, seconds precision, for the
+ * `start-time` / `end-time` frontmatter fields, e.g. `2026-08-07T14:52:11-04:00`.
+ * Sortable, unambiguous, and parsed as a datetime by Dataview.
+ */
+function formatIsoWithOffset(
+	d: Date,
+	offsetMinutes: number = machineOffsetMinutes(d),
+): string {
+	return captureMoment(d, offsetMinutes).format('YYYY-MM-DDTHH:mm:ssZ');
 }
 
 /**
@@ -556,9 +663,10 @@ function templateTokenRe(flags = 'g'): RegExp {
  * letters inside are read as Moment tokens (`{{Meeting YYYY}}` mangles "Meeting"),
  * which the settings preview surfaces.
  *
- * Moment formats in LOCAL time, the same calendar basis as formatDateYmd, so a
- * note name, its subfolder, and the `date:` frontmatter never disagree about
- * which day a recording belongs to. When `title` is provided a `{{title}}` token
+ * Moment renders in the recording's capture zone (via `offsetMinutes`), the same
+ * calendar basis as formatDateYmd, so a note name, its subfolder, and the `date:`
+ * frontmatter never disagree about which day a recording belongs to. When `title`
+ * is provided a `{{title}}` token
  * is replaced with it BEFORE the Moment call. Both the note-name and the subfolder
  * paths pass a title (the subfolder flattens its path separators first); a caller
  * that passes no title gets no `{{title}}` substitution.
@@ -573,17 +681,15 @@ function templateTokenRe(flags = 'g'): RegExp {
 function expandDateTemplate(
 	template: string,
 	date: Date,
+	offsetMinutes: number = machineOffsetMinutes(date),
 	title?: string,
 	folder?: string,
 ): string {
-	// Obsidian re-exports `moment`, and in the marketplace's stricter type-checking
-	// environment that re-export resolves as the `error`/`any` type, which trips
-	// @typescript-eslint/no-unsafe-* on every call in this chain. Pin the factory
-	// to moment's own module type at this one boundary so the expression is fully
-	// typed there. This casts TO moment's real type (not `as any`); it is a no-op
-	// where moment already resolves (locally), which is why the plugin config turns
-	// off no-unnecessary-type-assertion.
-	const m = (moment as typeof import('moment'))(date).locale('en');
+	// Render in the recording's capture zone (see captureMoment). Passing the
+	// effective offset here is what keeps the note name, its subfolder, and the
+	// date/datetime frontmatter all on the same calendar basis, so they never
+	// disagree about which day a recording belongs to.
+	const m = captureMoment(date, offsetMinutes);
 	return template.replace(
 		templateTokenRe(),
 		(_match, raw: string): string => {
@@ -604,10 +710,14 @@ function expandDateTemplate(
  * #32). A thin exported wrapper over the shared template engine so the
  * frontmatter builder and the settings live preview format identically. An empty
  * template yields an empty string; the caller decides whether to emit a line.
- * Local time, the same basis as the `date:` field.
+ * Capture zone (via `offsetMinutes`), the same basis as the `date:` field.
  */
-export function formatDatetime(template: string, date: Date): string {
-	return expandDateTemplate(template, date);
+export function formatDatetime(
+	template: string,
+	date: Date,
+	offsetMinutes: number = machineOffsetMinutes(date),
+): string {
+	return expandDateTemplate(template, date, offsetMinutes);
 }
 
 /**
@@ -703,6 +813,7 @@ export function resolveSubfolder(
 	title?: string,
 	replacement: string = '-',
 	folder?: string,
+	offsetMinutes: number = machineOffsetMinutes(date),
 ): string {
 	if (template.trim() === '') {
 		return '';
@@ -746,7 +857,13 @@ export function resolveSubfolder(
 		safeFolder = sanitizeFilename(folder, replacement, '') || '_unfiled';
 	}
 	const resolved = normalizeFolderPath(
-		expandDateTemplate(template, date, safeTitle, safeFolder),
+		expandDateTemplate(
+			template,
+			date,
+			offsetMinutes,
+			safeTitle,
+			safeFolder,
+		),
 	)
 		.split('/')
 		// Drop empty/whitespace-only segments so nesting stays as authored.
@@ -822,8 +939,9 @@ export function formatNoteName(
 	template: string,
 	date: Date,
 	title: string,
+	offsetMinutes: number = machineOffsetMinutes(date),
 ): string {
-	return expandDateTemplate(template, date, title)
+	return expandDateTemplate(template, date, offsetMinutes, title)
 		.replace(/\s+/g, ' ')
 		.trim();
 }
@@ -1015,9 +1133,15 @@ export function buildNoteName(
 	title: string,
 	date: Date,
 	template: string = DEFAULT_NOTE_NAME_TEMPLATE,
+	offsetMinutes: number = machineOffsetMinutes(date),
 ): string {
-	const name = formatNoteName(template, date, titleWithoutLeadingDate(title));
-	return name || formatDateYmd(date);
+	const name = formatNoteName(
+		template,
+		date,
+		titleWithoutLeadingDate(title),
+		offsetMinutes,
+	);
+	return name || formatDateYmd(date, offsetMinutes);
 }
 
 /**
@@ -1326,6 +1450,8 @@ export const RESERVED_FRONTMATTER_KEYS: ReadonlySet<string> = new Set([
  */
 export interface CustomFrontmatterContext {
 	readonly date: Date;
+	/** Capture-zone offset (minutes) the date tokens render in. */
+	readonly offsetMinutes: number;
 	readonly title: string;
 	readonly folderName: string;
 	readonly durationSeconds: number;
@@ -1342,9 +1468,14 @@ export function customFrontmatterContext(
 	recording: Recording,
 	summary: Summary | null | undefined,
 	folderName: string,
+	fallbackTimezone = '',
 ): CustomFrontmatterContext {
 	return {
 		date: recording.createdAt,
+		offsetMinutes: effectiveCaptureOffsetMinutes(
+			recording,
+			fallbackTimezone,
+		),
 		title: recording.title,
 		folderName,
 		durationSeconds: Number.isFinite(recording.durationSeconds)
@@ -1384,9 +1515,9 @@ export function expandCustomFrontmatterValue(
 	// Single pass: each `{{...}}` is resolved exactly once, so a substituted value
 	// that itself contains braces (a Plaud category holding "{{...}}") is never
 	// re-interpreted as another token. Content tokens win, then title/folder, then
-	// the Moment date engine. The moment cast mirrors expandDateTemplate: it pins
-	// the factory to moment's own type at the marketplace type-check boundary.
-	const m = (moment as typeof import('moment'))(ctx.date).locale('en');
+	// the Moment date engine, rendered in the recording's capture zone so a custom
+	// date token agrees with the note's own date/name.
+	const m = captureMoment(ctx.date, ctx.offsetMinutes);
 	return value.replace(templateTokenRe(), (_match, raw: string): string => {
 		const inner = raw.trim();
 		if (Object.prototype.hasOwnProperty.call(content, inner)) {
@@ -1409,6 +1540,9 @@ export function expandCustomFrontmatterValue(
  */
 export const TEMPLATE_PREVIEW_CUSTOM_CONTEXT: CustomFrontmatterContext = {
 	date: TEMPLATE_PREVIEW_DATE,
+	// The preview has no real recording, so its date tokens render in the
+	// importing device's own zone, matching what the user sees on their machine.
+	offsetMinutes: machineOffsetMinutes(TEMPLATE_PREVIEW_DATE),
 	title: TEMPLATE_PREVIEW_TITLE,
 	folderName: TEMPLATE_PREVIEW_FOLDER,
 	durationSeconds: 1830,
@@ -1462,10 +1596,29 @@ export function formatFrontmatter(
 	customRows?: readonly CustomFrontmatterRow[],
 	existingValues?: ReadonlyMap<string, string>,
 	preserveUnknown = false,
+	fallbackTimezone = '',
 ): string {
 	const duration = Number.isFinite(recording.durationSeconds)
 		? Math.max(0, Math.floor(recording.durationSeconds))
 		: 0;
+	// Render every time in the recording's own capture zone (see
+	// effectiveCaptureOffsetMinutes) so the note matches Plaud's app regardless
+	// of which machine imported it. When Plaud gave a capture offset it is one
+	// value for the whole recording, so start and end share it. The end offset is
+	// resolved separately only for the fallback path (no Plaud offset + a
+	// configured zone), where a recording spanning a DST change ends on a
+	// different offset than it started.
+	const offsetMinutes = effectiveCaptureOffsetMinutes(
+		recording,
+		fallbackTimezone,
+	);
+	const endOffsetMinutes = effectiveCaptureOffsetMinutes(
+		{
+			createdAt: recording.endsAt,
+			captureOffsetMinutes: recording.captureOffsetMinutes,
+		},
+		fallbackTimezone,
+	);
 
 	// Build the frontmatter as an ordered key -> serialized-value map so custom
 	// rows can merge by key (override a slot, or preserve an existing value on
@@ -1480,14 +1633,34 @@ export function formatFrontmatter(
 	// unquoted `https://...` scalar as a mapping key + value on some
 	// parsers.
 	entries.set('plaud-url', yamlScalar(formatPlaudWebUrl(recording.id)));
-	entries.set('date', formatDateYmd(recording.createdAt));
+	entries.set('date', formatDateYmd(recording.createdAt, offsetMinutes));
+	// Precise start/end instants in the recording's capture zone, ISO 8601 with
+	// offset (e.g. 2026-08-07T14:52:11-04:00), always emitted. `date:` stays
+	// YYYY-MM-DD so Dataview date queries and daily-note links keep working;
+	// these give the exact times without needing the datetime template. endsAt is
+	// Plaud's end_time (or start + duration when absent). yamlScalar quotes them
+	// so the `:` in the time is not read as a YAML mapping.
+	entries.set(
+		'start-time',
+		yamlScalar(formatIsoWithOffset(recording.createdAt, offsetMinutes)),
+	);
+	entries.set(
+		'end-time',
+		yamlScalar(formatIsoWithOffset(recording.endsAt, endOffsetMinutes)),
+	);
 	// Optional datetime property (issue #32): a user-formatted timestamp, emitted
 	// only when a template is configured. yamlScalar quotes it so a `:` in the time
-	// is not read as a YAML mapping. Local time, the same basis as `date:`.
+	// is not read as a YAML mapping. Capture zone, the same basis as `date:`.
 	if (datetimeTemplate && datetimeTemplate.trim() !== '') {
 		entries.set(
 			'datetime',
-			yamlScalar(formatDatetime(datetimeTemplate, recording.createdAt)),
+			yamlScalar(
+				formatDatetime(
+					datetimeTemplate,
+					recording.createdAt,
+					offsetMinutes,
+				),
+			),
 		);
 	}
 	entries.set('duration-seconds', String(duration));
@@ -1567,7 +1740,12 @@ export function formatFrontmatter(
 	// is the note's locked identity and can never be set by a custom row.
 	if (customRows && customRows.length > 0) {
 		const folderName = folders && folders.length > 0 ? folders[0] : '';
-		const ctx = customFrontmatterContext(recording, summary, folderName);
+		const ctx = customFrontmatterContext(
+			recording,
+			summary,
+			folderName,
+			fallbackTimezone,
+		);
 		for (const row of customRows) {
 			const key = row.key.trim();
 			// Extra properties only ADD: skip a blank name, any plugin-managed key
@@ -2291,6 +2469,13 @@ export interface FormatMarkdownOptions {
 	 * on the overwrite path, where `existingFrontmatter` is supplied.
 	 */
 	readonly preserveUnknownFrontmatter?: boolean;
+	/**
+	 * IANA time-zone name used to render a recording's times ONLY when Plaud's
+	 * payload carried no capture offset for it (older recordings). Empty means
+	 * fall back to the importing device's zone. Normal recordings ignore this and
+	 * use their own `captureOffsetMinutes`. See `effectiveCaptureOffsetMinutes`.
+	 */
+	readonly fallbackTimezone?: string;
 }
 
 export function formatMarkdown(
@@ -2303,12 +2488,17 @@ export function formatMarkdown(
 	const includeTranscript = options.includeTranscript ?? true;
 	const includeSummary = options.includeSummary ?? true;
 	const headerLevel: HeadingLevel = options.transcriptHeaderLevel ?? 4;
+	const offsetMinutes = effectiveCaptureOffsetMinutes(
+		recording,
+		options.fallbackTimezone ?? '',
+	);
 
 	const speakers = extractSpeakers(transcript);
 	const expandedTitle = buildNoteName(
 		recording.title,
 		recording.createdAt,
 		options.noteNameTemplate,
+		offsetMinutes,
 	);
 	const groups = groupTranscriptByChapters(transcript, chapters);
 	const transcriptSection = includeTranscript
@@ -2325,6 +2515,7 @@ export function formatMarkdown(
 			options.customFrontmatter,
 			options.existingFrontmatter,
 			options.preserveUnknownFrontmatter,
+			options.fallbackTimezone ?? '',
 		),
 		'',
 		`# ${expandedTitle}`,
@@ -2347,6 +2538,7 @@ export function formatMarkdown(
 							summary.text,
 							recording,
 							transcript,
+							offsetMinutes,
 						),
 					}
 				: null;
@@ -2356,6 +2548,7 @@ export function formatMarkdown(
 				renderedSummary.aiSuggestion,
 				recording,
 				transcript,
+				offsetMinutes,
 			).trim();
 			parts.push('## AI Suggestions', '', renderedSuggestion, '');
 		}
@@ -2386,24 +2579,43 @@ export function formatPlaceholderMarkdown(
 	reason: string,
 	template: string = DEFAULT_NOTE_NAME_TEMPLATE,
 	datetimeTemplate: string = '',
+	fallbackTimezone = '',
 ): string {
 	const url = formatPlaudWebUrl(recording.id);
+	const offsetMinutes = effectiveCaptureOffsetMinutes(
+		recording,
+		fallbackTimezone,
+	);
+	// See formatFrontmatter: end offset differs from start only on the
+	// fallback-zone path across a DST change.
+	const endOffsetMinutes = effectiveCaptureOffsetMinutes(
+		{
+			createdAt: recording.endsAt,
+			captureOffsetMinutes: recording.captureOffsetMinutes,
+		},
+		fallbackTimezone,
+	);
 	const expandedTitle = buildNoteName(
 		recording.title,
 		recording.createdAt,
 		template,
+		offsetMinutes,
 	);
 	const flatReason = reason.replace(/\s*\r?\n\s*/g, ' ').trim();
 	const lines: string[] = [
 		'---',
 		`plaud-id: ${yamlScalar(recording.id)}`,
 		`plaud-url: ${yamlScalar(url)}`,
-		`date: ${formatDateYmd(recording.createdAt)}`,
+		`date: ${formatDateYmd(recording.createdAt, offsetMinutes)}`,
+		// Same start/end fields as a real note so a Dataview query sees one shape
+		// across stubs and imported notes.
+		`start-time: ${yamlScalar(formatIsoWithOffset(recording.createdAt, offsetMinutes))}`,
+		`end-time: ${yamlScalar(formatIsoWithOffset(recording.endsAt, endOffsetMinutes))}`,
 		// Match the real note's frontmatter (issue #32): emit datetime only when a
 		// template is configured, so a Dataview query sees the same shape on stubs.
 		...(datetimeTemplate.trim() !== ''
 			? [
-					`datetime: ${yamlScalar(formatDatetime(datetimeTemplate, recording.createdAt))}`,
+					`datetime: ${yamlScalar(formatDatetime(datetimeTemplate, recording.createdAt, offsetMinutes))}`,
 				]
 			: []),
 		'source: plaud',
@@ -2581,6 +2793,7 @@ export class NoteWriter {
 	private readonly subfolderTemplate: string;
 	private readonly noteNameTemplate: string;
 	private readonly datetimeTemplate: string;
+	private readonly fallbackTimezone: string;
 	private readonly customFrontmatter: readonly CustomFrontmatterRow[];
 	private readonly preserveUnknownFrontmatter: boolean;
 	private readonly forbiddenCharReplacement: string;
@@ -2626,6 +2839,7 @@ export class NoteWriter {
 				? requestedTemplate
 				: DEFAULT_NOTE_NAME_TEMPLATE;
 		this.datetimeTemplate = options.datetimeTemplate ?? '';
+		this.fallbackTimezone = options.fallbackTimezone ?? '';
 		this.customFrontmatter = options.customFrontmatter ?? [];
 		// Default true: a headless caller (or hand-edited data.json) that omits this
 		// gets the non-destructive behavior, matching DEFAULT_SETTINGS.
@@ -2649,6 +2863,7 @@ export class NoteWriter {
 			transcriptHeaderLevel: options.transcriptHeaderLevel,
 			noteNameTemplate: this.noteNameTemplate,
 			datetimeTemplate: this.datetimeTemplate,
+			fallbackTimezone: this.fallbackTimezone,
 			customFrontmatter: this.customFrontmatter,
 			preserveUnknownFrontmatter: this.preserveUnknownFrontmatter,
 		};
@@ -2677,12 +2892,20 @@ export class NoteWriter {
 		// (existingPathForPlaudId) migrates such a stub to the real folder on the
 		// later successful import.
 		const folderName = folders && folders.length > 0 ? folders[0] : '';
+		// The note name and its subfolder must use the SAME capture-zone basis as
+		// the frontmatter date, or a recording near midnight could land in a
+		// subfolder for one day while its `date:` reads another.
+		const offsetMinutes = effectiveCaptureOffsetMinutes(
+			recording,
+			this.fallbackTimezone,
+		);
 		const subfolder = resolveSubfolder(
 			this.subfolderTemplate,
 			recording.createdAt,
 			recording.title,
 			this.forbiddenCharReplacement,
 			folderName,
+			offsetMinutes,
 		);
 		const destinationFolder = joinFolderPath(this.outputFolder, subfolder);
 		await this.ensureFolder(destinationFolder);
@@ -2690,6 +2913,7 @@ export class NoteWriter {
 			recording.title,
 			recording.createdAt,
 			this.noteNameTemplate,
+			offsetMinutes,
 		);
 		const filename = `${sanitizeFilename(expandedTitle, this.forbiddenCharReplacement)}.md`;
 		return destinationFolder === ''
@@ -2773,6 +2997,7 @@ export class NoteWriter {
 			reason,
 			this.noteNameTemplate,
 			this.datetimeTemplate,
+			this.fallbackTimezone,
 		);
 		const { existing, notePath } = this.findExistingNote(
 			recording,

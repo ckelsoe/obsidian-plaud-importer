@@ -85,11 +85,15 @@ function makeWriter(
 let nextId = 0;
 function makeRecording(overrides: Partial<Recording> = {}): Recording {
 	nextId += 1;
+	const createdAt = overrides.createdAt ?? new Date(2026, 5, 28, 9, 0);
+	const durationSeconds = overrides.durationSeconds ?? 600;
 	return {
 		id: `rec-${nextId}` as PlaudRecordingId,
 		title: `Recording ${nextId}`,
-		createdAt: new Date(2026, 5, 28, 9, 0),
-		durationSeconds: 600,
+		createdAt,
+		endsAt: new Date(createdAt.getTime() + durationSeconds * 1000),
+		durationSeconds,
+		captureOffsetMinutes: null,
 		transcriptAvailable: true,
 		summaryAvailable: true,
 		isTrashed: false,
