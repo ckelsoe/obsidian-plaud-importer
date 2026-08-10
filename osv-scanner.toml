@@ -3,9 +3,10 @@
 # changes (a new lockfile may remove the transitive path entirely).
 #
 # There are currently NO suppressions. The brace-expansion advisories
-# (GHSA-mh99 and its bypass GHSA-rgw5), fast-uri (GHSA-7p8r), and js-yaml
-# (GHSA-5p4m) that once needed one were all resolved by patched transitive
-# versions on 2026-08-10; a plain `npm audit fix` cleared them without breaking
-# the toolchain, so nothing needs ignoring. Add an entry below only for an
-# advisory that is genuinely unfixable without breaking a build (dev-only, not
-# reachable, no non-breaking upgrade), and say what would let us remove it.
+# (GHSA-mh99-v99m-4gvg and its bypass GHSA-rgw5-rvv9-x895), fast-uri
+# (GHSA-7p8r-x3mc-p8w7), and js-yaml (GHSA-5p4m-2wfm-xmqj) that once needed one
+# were all resolved by patched transitive versions on 2026-08-10; a plain
+# `npm audit fix` cleared them without breaking the toolchain, so nothing needs
+# ignoring. Add an entry below only for an advisory that is genuinely unfixable
+# without breaking a build (dev-only, not reachable, no non-breaking upgrade),
+# and say what would let us remove it.
