@@ -1,0 +1,12 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+# Review once when a PR opens; do not re-review on every push. Batch fixes,
+# then comment `@coderabbitai full review` to request the final pass.
+# Release/metadata PRs (titled "Release ...") are skipped: they only bump the
+# version + CHANGELOG, and the release workflow (attestation + scan) is their gate.
+reviews:
+  auto_review:
+    enabled: true
+    auto_incremental_review: false
+    drafts: false
+    ignore_title_keywords:
+      - "Release"
