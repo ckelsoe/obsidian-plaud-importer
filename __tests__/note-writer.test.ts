@@ -11,6 +11,7 @@ import {
 	formatChapterIndexSection,
 	formatDurationHoursMinutes,
 	formatFrontmatter,
+	effectiveCaptureOffsetMinutes,
 	expandCustomFrontmatterValue,
 	extractFrontmatterValues,
 	customFrontmatterContext,
@@ -59,11 +60,18 @@ import { moment } from 'obsidian';
 // Fixtures ------------------------------------------------------------------
 
 function makeRecording(overrides: Partial<Recording> = {}): Recording {
+	const createdAt = overrides.createdAt ?? new Date(2026, 3, 14, 9, 30); // 2026-04-14 09:30 local
+	const durationSeconds = overrides.durationSeconds ?? 600;
 	return {
 		id: 'abc123' as PlaudRecordingId,
 		title: 'Morning standup',
-		createdAt: new Date(2026, 3, 14, 9, 30), // 2026-04-14 09:30 local
-		durationSeconds: 600,
+		createdAt,
+		endsAt: new Date(createdAt.getTime() + durationSeconds * 1000),
+		durationSeconds,
+		// null by default so the effective offset falls back to the device zone,
+		// keeping the historical machine-local rendering these fixtures assert on.
+		// Capture-zone behavior is covered by dedicated tests that set an offset.
+		captureOffsetMinutes: null,
 		transcriptAvailable: true,
 		summaryAvailable: true,
 		isTrashed: false,
@@ -1473,7 +1481,7 @@ describe('formatFrontmatter', () => {
 		expect(fm).toMatch(/^datetime: "2026-04-14T09:30:00[+-]\d\d:\d\d"$/m);
 	});
 
-	it('keeps date as YYYY-MM-DD and places datetime right after it', () => {
+	it('keeps date as YYYY-MM-DD, then start-time, end-time, then datetime', () => {
 		const fm = formatFrontmatter(
 			makeRecording(),
 			[],
@@ -1485,7 +1493,9 @@ describe('formatFrontmatter', () => {
 		const lines = fm.split('\n');
 		const dateIdx = lines.findIndex((l) => l.startsWith('date:'));
 		expect(lines[dateIdx]).toBe('date: 2026-04-14');
-		expect(lines[dateIdx + 1]).toBe('datetime: "2026-04-14 09:30"');
+		expect(lines[dateIdx + 1]).toMatch(/^start-time: /);
+		expect(lines[dateIdx + 2]).toMatch(/^end-time: /);
+		expect(lines[dateIdx + 3]).toBe('datetime: "2026-04-14 09:30"');
 	});
 
 	it('clamps negative/infinite durations in the duration-seconds line', () => {
@@ -2613,6 +2623,30 @@ describe('NoteWriter', () => {
 		expect(
 			vault.files.has('Plaud/2026-04-14 Meeting - notes - draft.md'),
 		).toBe(true);
+	});
+
+	it('files the note by the capture-zone date (subfolder and filename)', async () => {
+		const vault = makeFakeVault();
+		const writer = new NoteWriter(vault, {
+			outputFolder: 'Plaud',
+			subfolderTemplate: '{{YYYY}}/{{MM}}/{{DD}}',
+			onDuplicate: 'skip',
+		});
+
+		// 02:00Z on the 8th is 22:00 on the 7th at UTC-4, so both the subfolder
+		// and the filename date must read the 7th, the day it was recorded.
+		const outcome = await writer.writeNote(
+			makeRecording({
+				title: 'Late sync',
+				createdAt: new Date('2026-08-08T02:00:00Z'),
+				endsAt: new Date('2026-08-08T02:30:00Z'),
+				captureOffsetMinutes: -240,
+			}),
+			makeTranscript(),
+			makeSummary(),
+		);
+
+		expect(outcome.path).toBe('Plaud/2026/08/07/2026-08-07 Late sync.md');
 	});
 
 	it('puts the recording date in the filename so files sort chronologically', async () => {
@@ -4587,6 +4621,21 @@ describe('substitutePlaudPlaceholders', () => {
 		expect(out).toBe('Date & Time:  2026-05-13 14:04:22');
 	});
 
+	it('formats $[audio_start_time] in the capture zone when an offset is given', () => {
+		const capturedRec = makeRecording({
+			title: 'Q2 Planning',
+			createdAt: new Date('2026-05-13T18:04:22Z'), // 14:04:22 at UTC-4
+			durationSeconds: 600,
+		});
+		const out = substitutePlaudPlaceholders(
+			'Date & Time:  $[audio_start_time]',
+			capturedRec,
+			transcript,
+			-240,
+		);
+		expect(out).toBe('Date & Time:  2026-05-13 14:04:22');
+	});
+
 	it('substitutes $[audio_title] with the recording title', () => {
 		const out = substitutePlaudPlaceholders(
 			'Title: $[audio_title]',
@@ -5083,7 +5132,9 @@ describe('formatPlaceholderMarkdown', () => {
 		const lines = md.split('\n');
 		const dateIdx = lines.findIndex((l) => l.startsWith('date:'));
 		expect(lines[dateIdx]).toBe('date: 2026-04-14');
-		expect(lines[dateIdx + 1]).toBe('datetime: "2026-04-14 09:30"');
+		expect(lines[dateIdx + 1]).toMatch(/^start-time: /);
+		expect(lines[dateIdx + 2]).toMatch(/^end-time: /);
+		expect(lines[dateIdx + 3]).toBe('datetime: "2026-04-14 09:30"');
 	});
 });
 
@@ -5421,5 +5472,163 @@ describe('formatMarkdown consumer_note template outputs', () => {
 		const lines = md.split('\n');
 		expect(lines).toContain('## Inside');
 		expect(lines).toContain('#### Real');
+	});
+});
+
+// Capture time-zone rendering -----------------------------------------------
+
+describe('effectiveCaptureOffsetMinutes', () => {
+	it("uses the recording's own capture offset when present", () => {
+		expect(
+			effectiveCaptureOffsetMinutes({
+				createdAt: new Date('2026-08-07T18:52:11Z'),
+				captureOffsetMinutes: -240,
+			}),
+		).toBe(-240);
+	});
+
+	it('treats a captured offset of 0 (UTC) as authoritative', () => {
+		expect(
+			effectiveCaptureOffsetMinutes(
+				{
+					createdAt: new Date('2026-08-07T18:52:11Z'),
+					captureOffsetMinutes: 0,
+				},
+				'America/New_York',
+			),
+		).toBe(0);
+	});
+
+	it('falls back to a configured IANA zone when the offset is null', () => {
+		// Asia/Kolkata is a fixed +05:30 with no DST, so this is stable.
+		expect(
+			effectiveCaptureOffsetMinutes(
+				{
+					createdAt: new Date('2026-08-07T09:00:00Z'),
+					captureOffsetMinutes: null,
+				},
+				'Asia/Kolkata',
+			),
+		).toBe(330);
+	});
+
+	it('falls back to the device zone when null and no fallback zone is set', () => {
+		const createdAt = new Date('2026-08-07T09:00:00Z');
+		expect(
+			effectiveCaptureOffsetMinutes({
+				createdAt,
+				captureOffsetMinutes: null,
+			}),
+		).toBe(-createdAt.getTimezoneOffset());
+	});
+
+	it('falls back to the device zone when the configured zone is unrecognized', () => {
+		const createdAt = new Date('2026-08-07T09:00:00Z');
+		expect(
+			effectiveCaptureOffsetMinutes(
+				{ createdAt, captureOffsetMinutes: null },
+				'Not/AZone',
+			),
+		).toBe(-createdAt.getTimezoneOffset());
+	});
+});
+
+describe('frontmatter times in the capture zone', () => {
+	// 2026-08-07T18:52:11Z is 14:52:11 at UTC-4; end 40 minutes later.
+	const capturedRecording = makeRecording({
+		createdAt: new Date('2026-08-07T18:52:11Z'),
+		endsAt: new Date('2026-08-07T19:32:11Z'),
+		captureOffsetMinutes: -240,
+	});
+
+	it('emits start-time and end-time as ISO 8601 with the capture offset', () => {
+		const fm = formatFrontmatter(capturedRecording, []);
+		expect(fm).toContain('start-time: "2026-08-07T14:52:11-04:00"');
+		expect(fm).toContain('end-time: "2026-08-07T15:32:11-04:00"');
+	});
+
+	it('renders date: in the capture zone regardless of the importing machine', () => {
+		// 02:00Z on the 8th is 22:00 on the 7th at UTC-4: the note belongs to
+		// the 7th, the day it was actually recorded, on any importing machine.
+		const rec = makeRecording({
+			createdAt: new Date('2026-08-08T02:00:00Z'),
+			endsAt: new Date('2026-08-08T02:30:00Z'),
+			captureOffsetMinutes: -240,
+		});
+		const fm = formatFrontmatter(rec, []);
+		expect(fm).toContain('date: 2026-08-07');
+		expect(fm).toContain('start-time: "2026-08-07T22:00:00-04:00"');
+	});
+
+	it('handles fractional (half-hour) capture zones', () => {
+		const rec = makeRecording({
+			createdAt: new Date('2026-08-07T09:00:00Z'),
+			endsAt: new Date('2026-08-07T09:30:00Z'),
+			captureOffsetMinutes: 330, // +05:30
+		});
+		const fm = formatFrontmatter(rec, []);
+		expect(fm).toContain('start-time: "2026-08-07T14:30:00+05:30"');
+		expect(fm).toContain('end-time: "2026-08-07T15:00:00+05:30"');
+	});
+
+	it('renders datetime in the capture zone too', () => {
+		const fm = formatFrontmatter(
+			capturedRecording,
+			[],
+			null,
+			undefined,
+			undefined,
+			'{{YYYY-MM-DD HH:mm Z}}',
+		);
+		expect(fm).toContain('datetime: "2026-08-07 14:52 -04:00"');
+	});
+
+	it('resolves the end offset separately across a DST change on the fallback path', () => {
+		// No Plaud offset, so the configured zone is used. In America/New_York,
+		// DST ends at 06:00Z on 2026-11-01: 05:30Z is 01:30 EDT (-04:00) and
+		// 06:30Z is 01:30 EST (-05:00), so start and end need different offsets.
+		const rec = makeRecording({
+			createdAt: new Date('2026-11-01T05:30:00Z'),
+			endsAt: new Date('2026-11-01T06:30:00Z'),
+			captureOffsetMinutes: null,
+		});
+		const fm = formatFrontmatter(
+			rec,
+			[],
+			null,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			false,
+			'America/New_York',
+		);
+		expect(fm).toContain('start-time: "2026-11-01T01:30:00-04:00"');
+		expect(fm).toContain('end-time: "2026-11-01T01:30:00-05:00"');
+	});
+});
+
+describe('note name and subfolder in the capture zone', () => {
+	// 02:00Z on the 8th is 22:00 on the 7th at UTC-4.
+	const instant = new Date('2026-08-08T02:00:00Z');
+
+	it('builds the note name from the capture-zone date', () => {
+		expect(
+			buildNoteName('Sync', instant, DEFAULT_NOTE_NAME_TEMPLATE, -240),
+		).toBe('2026-08-07 Sync');
+	});
+
+	it('resolves the subfolder from the capture-zone date', () => {
+		expect(
+			resolveSubfolder(
+				'{{YYYY}}/{{MM}}/{{DD}}',
+				instant,
+				'Sync',
+				'-',
+				'',
+				-240,
+			),
+		).toBe('2026/08/07');
 	});
 });

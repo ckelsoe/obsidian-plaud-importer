@@ -303,6 +303,13 @@ describe('formatDate', () => {
 		const d = new Date(2026, 0, 1, 0, 0);
 		expect(formatDate(d)).toBe('2026-01-01 00:00');
 	});
+
+	it('renders in a given capture-zone offset, crossing midnight', () => {
+		// 02:00Z on the 8th is 22:00 on the 7th at UTC-4, so the list row shows
+		// the 7th, the day the note is filed under.
+		const d = new Date('2026-08-08T02:00:00Z');
+		expect(formatDate(d, -240)).toBe('2026-08-07 22:00');
+	});
 });
 
 // formatDuration ------------------------------------------------------------
@@ -419,7 +426,9 @@ function rec(id: string, title = `rec ${id}`, isTrashed = false): Recording {
 		id: id as PlaudRecordingId,
 		title,
 		createdAt: new Date(2026, 3, 14),
+		endsAt: new Date(2026, 3, 14, 0, 1),
 		durationSeconds: 60,
+		captureOffsetMinutes: null,
 		transcriptAvailable: true,
 		summaryAvailable: true,
 		isTrashed,

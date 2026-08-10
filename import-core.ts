@@ -364,11 +364,22 @@ export function isPlaudUnprocessedError(err: unknown): boolean {
 	);
 }
 
-export function formatDate(d: Date): string {
+// Short "YYYY-MM-DD HH:mm" for the recording-list UI, rendered in the
+// recording's capture zone so a row shows the same day the note is filed under
+// (a recording near midnight otherwise reads one day here and another in the
+// note). `offsetMinutes` is minutes east of UTC; it defaults to the importing
+// device's own zone so a caller that omits it keeps the historical behavior. The
+// shift-then-UTC-getters trick renders the wall-clock at that fixed offset
+// without pulling in moment here.
+export function formatDate(
+	d: Date,
+	offsetMinutes: number = -d.getTimezoneOffset(),
+): string {
+	const shifted = new Date(d.getTime() + offsetMinutes * 60000);
 	const pad = (n: number): string => String(n).padStart(2, '0');
-	return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(
-		d.getHours(),
-	)}:${pad(d.getMinutes())}`;
+	return `${shifted.getUTCFullYear()}-${pad(shifted.getUTCMonth() + 1)}-${pad(
+		shifted.getUTCDate(),
+	)} ${pad(shifted.getUTCHours())}:${pad(shifted.getUTCMinutes())}`;
 }
 
 export function formatDuration(seconds: number): string {

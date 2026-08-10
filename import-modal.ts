@@ -11,6 +11,7 @@ import {
 	type DuplicatePolicy,
 	type DuplicatePromptCallback,
 	findTranscriptHeadingLine,
+	effectiveCaptureOffsetMinutes,
 } from './note-writer';
 import { runImport } from './import-runner';
 import { buildPlaudIdIndex, type ImportedRecord } from './vault-index';
@@ -1345,7 +1346,17 @@ export class ImportModal extends Modal {
 		}
 
 		const meta = labelWrap.createDiv({ cls: 'plaud-importer-meta' });
-		meta.createSpan({ text: formatDate(rec.createdAt) });
+		// Show the list time in the recording's capture zone so a row's day
+		// matches the day the note is filed under.
+		meta.createSpan({
+			text: formatDate(
+				rec.createdAt,
+				effectiveCaptureOffsetMinutes(
+					rec,
+					this.noteWriterOptions.fallbackTimezone ?? '',
+				),
+			),
+		});
 		meta.createSpan({ text: '  ·  ', cls: 'plaud-importer-sep' });
 		meta.createSpan({ text: formatDuration(rec.durationSeconds) });
 

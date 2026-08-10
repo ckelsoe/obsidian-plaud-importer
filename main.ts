@@ -33,6 +33,7 @@ import {
 	renameRecordingNote,
 	isValidReplacementChar,
 	sanitizeFilename,
+	zoneOffsetMinutes,
 	type RenameFileFn,
 } from './note-writer';
 import {
@@ -790,6 +791,7 @@ export default class PlaudImporterPlugin extends Plugin {
 			subfolderTemplate: this.settings.subfolderTemplate,
 			noteNameTemplate: this.settings.noteNameTemplate,
 			datetimeTemplate: this.settings.datetimeTemplate,
+			fallbackTimezone: this.settings.fallbackTimezone,
 			customFrontmatter: this.settings.customFrontmatter,
 			preserveUnknownFrontmatter:
 				this.settings.preserveUnknownFrontmatter,
@@ -2187,6 +2189,21 @@ export default class PlaudImporterPlugin extends Plugin {
 			!isValidReplacementChar(this.settings.forbiddenCharReplacement)
 		) {
 			this.settings.forbiddenCharReplacement = '-';
+		}
+		// Repair a hand-edited or synced fallbackTimezone. It must be a string, and
+		// if non-empty an IANA zone Intl recognizes; anything else resets to '' (use
+		// the device zone) so a bad value cannot silently misdate the rare recording
+		// that falls back to it. The settings UI validates on entry, but data.json
+		// could carry a non-string, padded, or invalid value. The value is trimmed
+		// so a padded-but-valid zone is normalized rather than rejected.
+		if (typeof this.settings.fallbackTimezone !== 'string') {
+			this.settings.fallbackTimezone = '';
+		} else {
+			const tz = this.settings.fallbackTimezone.trim();
+			this.settings.fallbackTimezone =
+				tz === '' || zoneOffsetMinutes(new Date(), tz) !== null
+					? tz
+					: '';
 		}
 		// v1 (issue #30): the date-template engine moved from bespoke lowercase
 		// tokens to real Moment. Rewrite the two stored templates once, output-

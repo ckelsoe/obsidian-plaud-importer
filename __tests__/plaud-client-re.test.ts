@@ -188,6 +188,125 @@ describe('listRecordings happy path', () => {
 		// start_time is milliseconds on the wire; createdAt is a Date
 		// constructed directly from the ms value.
 		expect(r.createdAt.getTime()).toBe(1744628400000);
+		// end_time is milliseconds on the wire; endsAt is a Date from it.
+		expect(r.endsAt.getTime()).toBe(1744629000000);
+	});
+
+	it('takes endsAt from end_time when present and consistent', async () => {
+		const { fetcher } = captureFetcher(
+			ok(
+				listEnvelope([
+					record({
+						start_time: 1744628400000,
+						duration: 600000,
+						end_time: 1744629000000,
+					}),
+				]),
+			),
+		);
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+		const [r] = await client.listRecordings();
+		expect(r.endsAt.getTime()).toBe(1744629000000);
+	});
+
+	it('reconstructs endsAt as start + duration when end_time is missing', async () => {
+		const { fetcher } = captureFetcher(
+			ok(
+				listEnvelope([
+					record({
+						start_time: 1744628400000,
+						duration: 600000,
+						end_time: undefined,
+					}),
+				]),
+			),
+		);
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+		const [r] = await client.listRecordings();
+		expect(r.endsAt.getTime()).toBe(1744628400000 + 600000);
+	});
+
+	it('falls back to start + duration when end_time precedes start_time', async () => {
+		const { fetcher } = captureFetcher(
+			ok(
+				listEnvelope([
+					record({
+						start_time: 1744628400000,
+						duration: 600000,
+						// Implausible: end before start. Ignore it and reconstruct.
+						end_time: 1744628000000,
+					}),
+				]),
+			),
+		);
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+		const [r] = await client.listRecordings();
+		expect(r.endsAt.getTime()).toBe(1744628400000 + 600000);
+	});
+
+	it('falls back to start + duration when end_time is implausibly far from start', async () => {
+		const { fetcher } = captureFetcher(
+			ok(
+				listEnvelope([
+					record({
+						start_time: 1744628400000,
+						duration: 600000,
+						// A year-2100 end on a 10-minute recording: finite and after
+						// start, but the delta is far beyond any real recording length.
+						end_time: 4102444800000,
+					}),
+				]),
+			),
+		);
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+		const [r] = await client.listRecordings();
+		expect(r.endsAt.getTime()).toBe(1744628400000 + 600000);
+	});
+
+	it('derives captureOffsetMinutes from timezone (whole hours)', async () => {
+		const { fetcher } = captureFetcher(
+			ok(listEnvelope([record({ timezone: -4, zonemins: 0 })])),
+		);
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+		const [r] = await client.listRecordings();
+		expect(r.captureOffsetMinutes).toBe(-240);
+	});
+
+	it('folds zonemins into captureOffsetMinutes (fractional zones)', async () => {
+		const { fetcher } = captureFetcher(
+			ok(listEnvelope([record({ timezone: 5, zonemins: 30 })])),
+		);
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+		const [r] = await client.listRecordings();
+		expect(r.captureOffsetMinutes).toBe(330);
+	});
+
+	it('treats a present timezone of 0 as UTC, not missing', async () => {
+		const { fetcher } = captureFetcher(
+			ok(listEnvelope([record({ timezone: 0, zonemins: 0 })])),
+		);
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+		const [r] = await client.listRecordings();
+		expect(r.captureOffsetMinutes).toBe(0);
+	});
+
+	it('leaves captureOffsetMinutes null when timezone is absent', async () => {
+		const { fetcher } = captureFetcher(
+			ok(listEnvelope([record({ timezone: undefined })])),
+		);
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+		const [r] = await client.listRecordings();
+		expect(r.captureOffsetMinutes).toBeNull();
+	});
+
+	it('drops an implausible timezone offset to null', async () => {
+		const { fetcher } = captureFetcher(
+			// 99 hours is not a real earth offset (unit-confusion guard).
+			ok(listEnvelope([record({ timezone: 99, zonemins: 0 })])),
+		);
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+		const [r] = await client.listRecordings();
+		expect(r.captureOffsetMinutes).toBeNull();
 	});
 
 	it('returns an empty array when the list is empty', async () => {

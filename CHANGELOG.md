@@ -2,6 +2,17 @@
 
 All notable changes to Plaud Importer will be documented in this file.
 
+## [Unreleased]
+
+### Added
+
+- **Start and end times in frontmatter.** Every imported note now gets `start-time` and `end-time` properties, written as ISO 8601 with the time-zone offset (for example `2026-08-07T14:52:11-04:00`). They are always present, no template needed, so you can query and sort recordings by their exact time in Dataview. The `date` property stays `YYYY-MM-DD` so existing date queries and daily-note links keep working.
+- **A "Fallback time zone" setting.** Used only for the rare older recording that arrives without Plaud's own time-zone information. Type an IANA zone name such as `America/New_York`, or leave it empty to use the importing device's zone. Almost every recording carries its own zone and ignores this.
+
+### Changed
+
+- **Times are written in the recording's own capture time zone.** The plugin now reads the time zone each recording was made in and renders every time in it, so a note reads the same wall-clock time Plaud shows and no longer shifts depending on which computer ran the import. This applies to the `date` property, the note name, the subfolder, the optional `datetime` property, and the new start and end times. If you have always imported on a computer set to the same zone you record in, nothing changes. If you sometimes import from a different zone (a second machine, travel, or an automated run), notes now land on the correct day and time instead of the importing machine's. A recording imported before this change is only re-dated if you re-import it.
+
 ## [0.38.0] - 2026-08-02
 
 ### Added

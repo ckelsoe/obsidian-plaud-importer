@@ -207,7 +207,23 @@ export interface Recording {
 	readonly id: PlaudRecordingId;
 	readonly title: string;
 	readonly createdAt: Date;
+	/**
+	 * When the recording ended, as an absolute instant. Taken from Plaud's
+	 * `end_time` when present and consistent, otherwise reconstructed as
+	 * `createdAt + duration` (the two agree on 100% of the live-audited account,
+	 * so the fallback is defensive). Used for the `end-time` frontmatter field.
+	 */
+	readonly endsAt: Date;
 	readonly durationSeconds: number;
+	/**
+	 * The recording's own capture time-zone offset from UTC, in minutes
+	 * (`timezone*60 + zonemins`), e.g. -240 for UTC-4. This is where the
+	 * recording was actually made, independent of the importing computer, so the
+	 * note's wall-clock time matches Plaud's own app. `null` only when the list
+	 * payload omits `timezone` (not seen on the live account, kept for older
+	 * payloads); the note writer then falls back to a configured or device zone.
+	 */
+	readonly captureOffsetMinutes: number | null;
 	/**
 	 * Advisory hint from the list endpoint that a transcript exists for this
 	 * recording. The authoritative answer is `getTranscript(id) !== null` —
