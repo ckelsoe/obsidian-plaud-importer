@@ -175,6 +175,27 @@ export function deviceModelLabel(model: string): string {
 	return DEVICE_MODEL_LABELS[model] ?? 'Plaud device';
 }
 
+/**
+ * Display label for a recording's capture source (issue #110 follow-up): the
+ * paired device's name when known, "App" for a non-device (Plaud app / desktop /
+ * imported) recording, and a generic fallback for a device serial not in the
+ * supplied name map. Used by the `{{device}}` frontmatter token and the import
+ * list badge. Returns '' for a recording with no classified source.
+ */
+export function recordingSourceLabel(
+	source: RecordingSource | undefined,
+	deviceNames: ReadonlyMap<string, string>,
+): string {
+	if (source === undefined) {
+		return '';
+	}
+	if (source.kind === 'app') {
+		return 'App';
+	}
+	const name = deviceNames.get(source.serial);
+	return name !== undefined && name.length > 0 ? name : 'Plaud device';
+}
+
 export interface PlaudClient {
 	listRecordings(filter?: RecordingFilter): Promise<readonly Recording[]>;
 	/**

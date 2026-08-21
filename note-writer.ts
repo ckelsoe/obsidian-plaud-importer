@@ -34,6 +34,7 @@ import type {
 	Transcript,
 	TranscriptSegment,
 } from './plaud-client';
+import { recordingSourceLabel } from './plaud-client';
 
 // -----------------------------------------------------------------------------
 // Errors
@@ -1461,6 +1462,13 @@ export interface CustomFrontmatterContext {
 	readonly language: string;
 	readonly template: string;
 	readonly model: string;
+	/**
+	 * The recording's capture source as a display label (issue #110 follow-up):
+	 * the paired device's name, "App" for a non-device recording, or a generic
+	 * fallback for an unknown device serial. Resolved from the supplied device-
+	 * name map. Powers the `{{device}}` token.
+	 */
+	readonly device: string;
 }
 
 /** Build the token context for one recording (folderName '' when unfiled). */
@@ -1469,6 +1477,7 @@ export function customFrontmatterContext(
 	summary: Summary | null | undefined,
 	folderName: string,
 	fallbackTimezone = '',
+	deviceNames: ReadonlyMap<string, string> = new Map(),
 ): CustomFrontmatterContext {
 	return {
 		date: recording.createdAt,
@@ -1487,6 +1496,7 @@ export function customFrontmatterContext(
 		language: summary?.language ?? '',
 		template: summary?.template ?? '',
 		model: summary?.model ?? '',
+		device: recordingSourceLabel(recording.source, deviceNames),
 	};
 }
 
@@ -1511,6 +1521,7 @@ export function expandCustomFrontmatterValue(
 		language: ctx.language,
 		template: ctx.template,
 		model: ctx.model,
+		device: ctx.device,
 	};
 	// Single pass: each `{{...}}` is resolved exactly once, so a substituted value
 	// that itself contains braces (a Plaud category holding "{{...}}") is never
@@ -1552,6 +1563,7 @@ export const TEMPLATE_PREVIEW_CUSTOM_CONTEXT: CustomFrontmatterContext = {
 	language: 'en',
 	template: 'Meeting notes',
 	model: 'gpt-5',
+	device: 'Plaud Note',
 };
 
 /**
@@ -1597,6 +1609,7 @@ export function formatFrontmatter(
 	existingValues?: ReadonlyMap<string, string>,
 	preserveUnknown = false,
 	fallbackTimezone = '',
+	deviceNames: ReadonlyMap<string, string> = new Map(),
 ): string {
 	const duration = Number.isFinite(recording.durationSeconds)
 		? Math.max(0, Math.floor(recording.durationSeconds))
@@ -1745,6 +1758,7 @@ export function formatFrontmatter(
 			summary,
 			folderName,
 			fallbackTimezone,
+			deviceNames,
 		);
 		for (const row of customRows) {
 			const key = row.key.trim();
@@ -2476,6 +2490,13 @@ export interface FormatMarkdownOptions {
 	 * use their own `captureOffsetMinutes`. See `effectiveCaptureOffsetMinutes`.
 	 */
 	readonly fallbackTimezone?: string;
+	/**
+	 * Serial -> device name map (issue #110 follow-up) used to resolve the
+	 * `{{device}}` custom-frontmatter token to a friendly device name. Omitted or
+	 * empty leaves device recordings as a generic label and app recordings as
+	 * "App". Sourced from the remembered device list.
+	 */
+	readonly deviceNames?: ReadonlyMap<string, string>;
 }
 
 export function formatMarkdown(
@@ -2516,6 +2537,7 @@ export function formatMarkdown(
 			options.existingFrontmatter,
 			options.preserveUnknownFrontmatter,
 			options.fallbackTimezone ?? '',
+			options.deviceNames,
 		),
 		'',
 		`# ${expandedTitle}`,

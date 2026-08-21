@@ -270,6 +270,8 @@ Optional filter, **off by default**, that limits import to the sources you choos
 
 The filter applies to both manual import and auto-sync. It uses blocklist behavior: a source is imported unless you uncheck it, so a device you pair later is included by default until you change it here.
 
+**Seeing and saving the source.** Whether or not the filter is on, the import list shows a small source chip on each row (the device name, or "App" for a recording made in the Plaud app or imported) so you can tell which device a recording came from while choosing what to import. To keep that on the note itself, add a `{{device}}` token to an Extra frontmatter row in settings, for example `device: {{device}}`, and each imported note records the device it came from for filtering and Dataview.
+
 ### Tags and keywords
 
 - **Tag mode** — which sources land in each note's `tags:` frontmatter: no tags, your custom tags only, Plaud tags (the default), or all (which also adds Plaud's AI keywords as `plaud/...` tags).

@@ -212,6 +212,13 @@ export async function runImport(
 		}
 	}
 
+	// Serial -> device name map for the {{device}} frontmatter token (issue #110
+	// follow-up). Resolved once from the host's live getter; a batch shares one
+	// snapshot. Empty when no devices are remembered, which leaves {{device}} as a
+	// generic label rather than failing.
+	const deviceNames: ReadonlyMap<string, string> =
+		options.getDeviceNames?.() ?? new Map();
+
 	const results: ImportResult[] = [];
 	for (let i = 0; i < total; i++) {
 		// Bail on mid-import modal close. The caller renders the partial
@@ -300,6 +307,7 @@ export async function runImport(
 				keywords: tagResult.keywords,
 				folders: folderNames,
 				consumerNotes,
+				deviceNames,
 			};
 			const selectedChapters = selection.includeTranscript
 				? chapters

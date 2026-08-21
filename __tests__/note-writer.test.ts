@@ -1,3 +1,4 @@
+import { recordingSourceLabel } from '../plaud-client';
 import {
 	NoteWriter,
 	NoteWriterError,
@@ -1659,6 +1660,55 @@ describe('customFrontmatterContext', () => {
 		expect(ctx.template).toBe('');
 		expect(ctx.model).toBe('');
 	});
+
+	it('resolves the device token from the source and name map', () => {
+		const names = new Map([['NP', 'CK PLAUD NotePin']]);
+		const ctx = customFrontmatterContext(
+			makeRecording({ source: { kind: 'device', serial: 'NP' } }),
+			null,
+			'',
+			'',
+			names,
+		);
+		expect(ctx.device).toBe('CK PLAUD NotePin');
+	});
+
+	it('labels a non-device recording as App and no source as empty', () => {
+		expect(
+			customFrontmatterContext(
+				makeRecording({ source: { kind: 'app' } }),
+				null,
+				'',
+			).device,
+		).toBe('App');
+		expect(customFrontmatterContext(makeRecording(), null, '').device).toBe(
+			'',
+		);
+	});
+});
+
+describe('recordingSourceLabel', () => {
+	const names = new Map([['NP', 'CK PLAUD NotePin']]);
+
+	it('returns the device name when the serial is known', () => {
+		expect(
+			recordingSourceLabel({ kind: 'device', serial: 'NP' }, names),
+		).toBe('CK PLAUD NotePin');
+	});
+
+	it('falls back to a generic label for an unknown device serial', () => {
+		expect(
+			recordingSourceLabel({ kind: 'device', serial: 'X' }, names),
+		).toBe('Plaud device');
+	});
+
+	it('labels a non-device recording App', () => {
+		expect(recordingSourceLabel({ kind: 'app' }, names)).toBe('App');
+	});
+
+	it('returns an empty label for a recording with no source', () => {
+		expect(recordingSourceLabel(undefined, names)).toBe('');
+	});
 });
 
 describe('expandCustomFrontmatterValue', () => {
@@ -1692,6 +1742,29 @@ describe('expandCustomFrontmatterValue', () => {
 		expect(expandCustomFrontmatterValue('{{plaud-folder}}', ctx)).toBe(
 			'Meetings',
 		);
+	});
+
+	it('expands the device token from a device-name map', () => {
+		const deviceCtx = customFrontmatterContext(
+			makeRecording({ source: { kind: 'device', serial: 'NP' } }),
+			null,
+			'',
+			'',
+			new Map([['NP', 'CK PLAUD NotePin']]),
+		);
+		expect(expandCustomFrontmatterValue('{{device}}', deviceCtx)).toBe(
+			'CK PLAUD NotePin',
+		);
+		expect(
+			expandCustomFrontmatterValue(
+				'{{device}}',
+				customFrontmatterContext(
+					makeRecording({ source: { kind: 'app' } }),
+					null,
+					'',
+				),
+			),
+		).toBe('App');
 	});
 
 	it('expands the duration content token', () => {
@@ -1804,6 +1877,23 @@ describe('formatFrontmatter custom rows', () => {
 		);
 		expect(fm).toMatch(/^status: unprocessed$/m);
 		expect(fm.indexOf('source: plaud')).toBeLessThan(fm.indexOf('status:'));
+	});
+
+	it('renders {{device}} in a custom row from the device-name map', () => {
+		const fm = formatFrontmatter(
+			makeRecording({ source: { kind: 'device', serial: 'NP' } }),
+			[],
+			null,
+			undefined,
+			undefined,
+			undefined,
+			rows({ key: 'device', value: '{{device}}', preserve: false }),
+			undefined,
+			false,
+			'',
+			new Map([['NP', 'CK PLAUD NotePin']]),
+		);
+		expect(fm).toMatch(/^device: CK PLAUD NotePin$/m);
 	});
 
 	it('writes an empty value as YAML null', () => {

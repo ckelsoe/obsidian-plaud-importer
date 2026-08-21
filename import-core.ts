@@ -120,6 +120,21 @@ export interface ImportModalOptions extends NoteWriterOptions {
 	 * hidden from manual import too, matching auto-sync. Omitted -> no filtering.
 	 */
 	readonly sourceFilter?: SourceFilter;
+	/**
+	 * Live serial -> device name map (issue #110 follow-up), read at call time so
+	 * it reflects the latest remembered device list. Powers the `{{device}}`
+	 * frontmatter token and the import list's source badge. Omitted -> no names
+	 * (device recordings fall back to a generic label).
+	 */
+	readonly getDeviceNames?: () => ReadonlyMap<string, string>;
+	/**
+	 * Best-effort refresh of the remembered device list (issue #110 follow-up).
+	 * The modal calls this once on open so source badges show real device names
+	 * even before the user has loaded devices in settings. Resolves when the
+	 * remembered list (read via `getDeviceNames`) has been updated; rejects are
+	 * swallowed by the modal.
+	 */
+	readonly refreshDeviceNames?: () => Promise<void>;
 	readonly defaultIncludeSummary?: boolean;
 	readonly defaultIncludeAttachments?: boolean;
 	readonly defaultIncludeMindmap?: boolean;
