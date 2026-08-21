@@ -2,6 +2,12 @@
 
 All notable changes to Plaud Importer will be documented in this file.
 
+## [Unreleased]
+
+### Added
+
+- **Import only from the Plaud devices you choose.** A new "Recording sources" section in settings lets you load the devices paired to your Plaud account and uncheck any whose recordings you do not want in your vault, plus a separate choice for recordings made in the Plaud app or imported. It applies to both manual import and background auto-sync, so a device you keep for personal recordings (for example a NotePin) stops being pulled in automatically. Off by default, and a device you pair later is included until you change it here.
+
 ## [0.39.0] - 2026-08-10
 
 ### Added

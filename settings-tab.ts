@@ -21,6 +21,7 @@ import {
 	setIcon,
 } from 'obsidian';
 import { describeTokenLifetime, readTokenLifetime } from './plaud-token';
+import { deviceModelLabel } from './plaud-client';
 import {
 	DEFAULT_NOTE_NAME_TEMPLATE,
 	isValidNoteNameTemplate,
@@ -47,6 +48,7 @@ import {
 	RIBBON_ICON_CHOICES,
 	resolveRibbonIconId,
 	type PlaudImporterSettings,
+	type StoredDevice,
 } from './settings-types';
 import type { SignInMethod } from './reconnect-routing';
 import type { BufferedDebugLogger } from './debug-logger';
@@ -70,6 +72,7 @@ export interface SettingsTabHost extends Plugin {
 	saveSettings(): Promise<void>;
 	readStoredTokenValue(): string;
 	testPlaudConnection(): Promise<{ ok: boolean; message: string }>;
+	loadPlaudDevices(): Promise<readonly StoredDevice[]>;
 	reauthenticate(): Promise<ReauthOutcome>;
 	pasteTokenFromClipboard(canStore?: () => boolean): Promise<boolean>;
 	clearSignIn(): Promise<{ sessionCleared: boolean }>;
@@ -97,6 +100,12 @@ const SIGN_IN_NOTE =
 // lifetime.
 const AUTO_SYNC_DESC =
 	"Off by default. Runs a background import on a schedule, unattended and never prompting. It uses your default import options: new recordings are imported, and a recording you changed in Plaud (edited speaker names, corrected transcript, or finished processing) is re-imported. IMPORTANT: a re-import OVERWRITES that note and its downloaded artifacts with Plaud's current version, so edits you made to a synced note or its attachment files are lost on the next change. Only recordings that actually changed are touched; unchanged notes are never modified. Desktop only. The background sync runs between sign-ins for as long as your Plaud session lasts (set by Plaud and shown in the status line under Plaud token), pausing for a one-click reconnection when the session expires.";
+
+const RECORDING_SOURCES_DESC =
+	'Off by default, so every recording is imported. Turn on to import only the sources you pick below, for both manual import and automatic sync. Useful when one of your Plaud devices records things you do not want in your vault (for example a personal NotePin), so automatic sync stops pulling them in.';
+
+const RECORDING_SOURCES_CONTROL_DESC =
+	'Load your devices, then uncheck any whose recordings you do not want imported. A source stays imported unless you uncheck it, so a device you add later is included by default until you change it here. Only applies when the setting above is on.';
 
 // Subfolder template documentation, shared by the declarative settings
 // (1.13+) and the imperative display() fallback (1.12) so both render the
@@ -683,6 +692,21 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 			},
 		);
 
+		new Setting(containerEl).setName('Recording sources').setHeading();
+		this.addToggleRow(
+			containerEl,
+			'Only import from selected sources',
+			RECORDING_SOURCES_DESC,
+			'sourceFilterEnabled',
+		);
+		this.renderRecordingSourcesControl(
+			this.makeSetting(
+				containerEl,
+				'Sources',
+				RECORDING_SOURCES_CONTROL_DESC,
+			),
+		);
+
 		new Setting(containerEl).setName('Transcript rendering').setHeading();
 		this.addToggleRow(
 			containerEl,
@@ -967,6 +991,144 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 				}
 			}),
 		);
+	}
+
+	// Recording-source filter control (issue #110): a "Load devices" action, a
+	// status line, then a checkbox per device plus the non-device bucket. A ticked
+	// box means "import from this source"; unticking a device adds its serial to
+	// the blocklist. Rendered once and shared by both the imperative display() and
+	// the declarative getSettingDefinitions() paths.
+	private renderRecordingSourcesControl(setting: Setting): void {
+		setting.settingEl.addClass('plaud-importer-stacked-row');
+
+		// The button is added first so it sits above the status and list; the
+		// status and list divs are created after so they stack below it.
+		setting.addButton((btn) =>
+			btn.setButtonText('Load devices').onClick(async () => {
+				btn.setDisabled(true);
+				statusEl.setText('Loading devices…');
+				try {
+					const devices = await this.plugin.loadPlaudDevices();
+					statusEl.setText(
+						devices.length === 1
+							? 'Loaded 1 device.'
+							: `Loaded ${devices.length} devices.`,
+					);
+					renderList();
+				} catch (err) {
+					statusEl.setText(
+						err instanceof Error
+							? err.message
+							: 'Could not load devices.',
+					);
+				} finally {
+					btn.setDisabled(false);
+				}
+			}),
+		);
+
+		const statusEl = setting.controlEl.createDiv({
+			cls: 'plaud-importer-sources-status',
+		});
+		const listEl = setting.controlEl.createDiv({
+			cls: 'plaud-importer-sources-list',
+		});
+
+		// One checkbox row. `imported` is the checked state; onToggle is called
+		// with the new checked (imported) state.
+		const addSourceRow = (
+			name: string,
+			sublabel: string,
+			imported: boolean,
+			ariaLabel: string,
+			onToggle: (imported: boolean) => void,
+		): void => {
+			const row = listEl.createEl('label', {
+				cls: 'plaud-importer-source-row',
+			});
+			const checkbox = row.createEl('input', {
+				attr: { type: 'checkbox', 'aria-label': ariaLabel },
+			});
+			checkbox.checked = imported;
+			const textEl = row.createDiv({
+				cls: 'plaud-importer-source-text',
+			});
+			textEl.createDiv({
+				cls: 'plaud-importer-source-name',
+				text: name,
+			});
+			if (sublabel.length > 0) {
+				textEl.createDiv({
+					cls: 'plaud-importer-source-sub',
+					text: sublabel,
+				});
+			}
+			checkbox.addEventListener('change', () =>
+				onToggle(checkbox.checked),
+			);
+		};
+
+		const renderList = (): void => {
+			listEl.empty();
+			const blocked = new Set(this.plugin.settings.blockedDeviceSerials);
+
+			// Show the remembered devices, plus any blocked serial we have no
+			// remembered name for, so a block is always visible and reversible even
+			// before the device list is loaded.
+			const devices: StoredDevice[] = [
+				...this.plugin.settings.knownDevices,
+			];
+			const knownSerials = new Set(devices.map((d) => d.sn));
+			for (const sn of blocked) {
+				if (!knownSerials.has(sn)) {
+					devices.push({ sn, name: sn, model: '' });
+				}
+			}
+
+			if (devices.length === 0) {
+				listEl.createDiv({
+					cls: 'plaud-importer-sources-empty',
+					text: 'No devices loaded yet. Click Load devices to fetch the devices paired to your Plaud account.',
+				});
+			}
+
+			for (const device of devices) {
+				const name = device.name.length > 0 ? device.name : device.sn;
+				addSourceRow(
+					name,
+					deviceModelLabel(device.model),
+					!blocked.has(device.sn),
+					`Import recordings from ${name}`,
+					(imported) => {
+						const next = new Set(
+							this.plugin.settings.blockedDeviceSerials,
+						);
+						if (imported) {
+							next.delete(device.sn);
+						} else {
+							next.add(device.sn);
+						}
+						this.plugin.settings.blockedDeviceSerials = [...next];
+						void this.plugin.saveSettings();
+					},
+				);
+			}
+
+			// The non-device bucket (Plaud app / desktop / imported audio), always
+			// shown since it needs no device list.
+			addSourceRow(
+				'App, desktop and imported recordings',
+				'Recordings made in the Plaud app or imported, with no device',
+				!this.plugin.settings.blockAppRecordings,
+				'Import app, desktop and imported recordings',
+				(imported) => {
+					this.plugin.settings.blockAppRecordings = !imported;
+					void this.plugin.saveSettings();
+				},
+			);
+		};
+
+		renderList();
 	}
 
 	private renderClearSignInControl(setting: Setting): void {
@@ -2008,6 +2170,29 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 								'1440': 'Once a day',
 							},
 						},
+					},
+				],
+			},
+			{
+				type: 'group',
+				heading: 'Recording sources',
+				items: [
+					{
+						name: 'Only import from selected sources',
+						desc: RECORDING_SOURCES_DESC,
+						control: {
+							type: 'toggle',
+							key: 'sourceFilterEnabled',
+						},
+					},
+					{
+						name: 'Sources',
+						desc: RECORDING_SOURCES_CONTROL_DESC,
+						// Dynamic checkbox list backed by a network device fetch, so
+						// it is rendered imperatively and is not search-indexable.
+						searchable: false,
+						render: (setting: Setting) =>
+							this.renderRecordingSourcesControl(setting),
 					},
 				],
 			},

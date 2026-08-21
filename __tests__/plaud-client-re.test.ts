@@ -1131,7 +1131,7 @@ describe('listRecordings filter validation', () => {
 // getTranscriptAndSummary — POST /ai/transsumm/{id}
 // =============================================================================
 
-import type { PlaudRecordingId } from '../plaud-client';
+import type { PlaudRecordingId, Recording } from '../plaud-client';
 
 function transsummEnvelope(
 	overrides: Record<string, unknown> = {},
@@ -4488,6 +4488,136 @@ describe('getFolderCatalog', () => {
 		await expect(client.getFolderCatalog()).rejects.toBeInstanceOf(
 			PlaudParseError,
 		);
+	});
+});
+
+// getDeviceCatalog (issue #110): fetch + cache the paired-device list.
+describe('getDeviceCatalog', () => {
+	const deviceEnvelope = (items: unknown[]): Record<string, unknown> => ({
+		status: 0,
+		msg: 'success',
+		data_devices: items,
+	});
+
+	it('parses {sn,name,model,version_number} and calls GET /device/list', async () => {
+		const { fetcher, lastRequest } = captureFetcher(
+			ok(
+				deviceEnvelope([
+					{
+						sn: '8800040111486696',
+						name: 'CK PLAUD NotePin',
+						model: '880',
+						version_number: 131335,
+					},
+				]),
+			),
+		);
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+		const devices = await client.getDeviceCatalog();
+		expect(devices).toEqual([
+			{
+				sn: '8800040111486696',
+				name: 'CK PLAUD NotePin',
+				model: '880',
+				versionNumber: 131335,
+			},
+		]);
+		expect(lastRequest()?.url).toContain('/device/list');
+		expect(lastRequest()?.method).toBe('GET');
+	});
+
+	it('coerces a numeric model to a string and tolerates a missing name', async () => {
+		const { fetcher } = captureFetcher(
+			ok(deviceEnvelope([{ sn: 'S1', model: 888 }])),
+		);
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+		const devices = await client.getDeviceCatalog();
+		expect(devices[0]).toEqual({
+			sn: 'S1',
+			name: '',
+			model: '888',
+			versionNumber: undefined,
+		});
+	});
+
+	it('caches per session: a second call does not refetch', async () => {
+		const { fetcher, allRequests } = captureFetcher(
+			ok(deviceEnvelope([{ sn: 'S1', name: 'A', model: '880' }])),
+		);
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+		await client.getDeviceCatalog();
+		await client.getDeviceCatalog();
+		expect(allRequests().length).toBe(1);
+	});
+
+	it('skips malformed entries instead of failing the whole list', async () => {
+		const { fetcher } = captureFetcher(
+			ok(
+				deviceEnvelope([
+					{ sn: 'S1', name: 'A', model: '880' },
+					{ name: 'no sn' }, // missing sn
+					{ sn: '' }, // empty sn
+					{ sn: 'S2', name: 'B', model: '888' },
+				]),
+			),
+		);
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+		const devices = await client.getDeviceCatalog();
+		expect(devices.map((d) => d.sn)).toEqual(['S1', 'S2']);
+	});
+
+	it('throws a parse error when data_devices is missing', async () => {
+		const { fetcher } = captureFetcher(ok({ status: 0, msg: 'x' }));
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+		await expect(client.getDeviceCatalog()).rejects.toBeInstanceOf(
+			PlaudParseError,
+		);
+	});
+});
+
+// Recording capture-source derivation (issue #110): scene + serial_number ->
+// { kind: 'device', serial } | { kind: 'app' }.
+describe('parseRecording source derivation', () => {
+	const firstRecording = async (
+		overrides: Record<string, unknown>,
+	): Promise<Recording> => {
+		const { fetcher } = captureFetcher(
+			ok(listEnvelope([record(overrides)])),
+		);
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
+		const recordings = await client.listRecordings();
+		return recordings[0];
+	};
+
+	it('classifies scene 1 with a serial as a device capture', async () => {
+		const r = await firstRecording({ scene: 1, serial_number: 'DEV-1' });
+		expect(r.source).toEqual({ kind: 'device', serial: 'DEV-1' });
+	});
+
+	it('classifies scene 7 with a serial as a device capture', async () => {
+		const r = await firstRecording({ scene: 7, serial_number: 'DEV-7' });
+		expect(r.source).toEqual({ kind: 'device', serial: 'DEV-7' });
+	});
+
+	it('classifies scene 102 as a non-device (app) capture', async () => {
+		const r = await firstRecording({
+			scene: 102,
+			serial_number: '1787255948336',
+		});
+		expect(r.source).toEqual({ kind: 'app' });
+	});
+
+	it('treats a device scene with an empty serial as app', async () => {
+		const r = await firstRecording({ scene: 1, serial_number: '' });
+		expect(r.source).toEqual({ kind: 'app' });
+	});
+
+	it('treats a missing scene as app even with a serial present', async () => {
+		const r = await firstRecording({
+			scene: undefined,
+			serial_number: 'S',
+		});
+		expect(r.source).toEqual({ kind: 'app' });
 	});
 });
 

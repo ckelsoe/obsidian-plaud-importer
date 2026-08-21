@@ -1,6 +1,12 @@
 import type { PlaudRecordingId, Recording } from '../plaud-client';
 import type { ImportedRecord } from '../vault-index';
-import { filterListView, type ListViewFilter } from '../import-core';
+import {
+	buildSourceFilter,
+	filterListView,
+	isRecordingSourceAllowed,
+	type ListViewFilter,
+	type SourceFilterSettings,
+} from '../import-core';
 
 function rec(
 	overrides: Partial<Omit<Recording, 'id'>> & { id: string },
@@ -19,6 +25,7 @@ function rec(
 		tags: overrides.tags,
 		versionMs: overrides.versionMs,
 		waitPull: overrides.waitPull,
+		source: overrides.source,
 	};
 }
 
@@ -40,6 +47,7 @@ function filter(over: Partial<ListViewFilter>): ListViewFilter {
 		hideIgnored: over.hideIgnored ?? false,
 		index: over.index ?? idx([]),
 		ignoredIds: over.ignoredIds ?? ignored([]),
+		sourceFilter: over.sourceFilter,
 	};
 }
 
@@ -235,5 +243,108 @@ describe('filterListView', () => {
 				),
 			),
 		).toEqual([]);
+	});
+});
+
+describe('filterListView source filter', () => {
+	it('hides a recording from a blocked source, keeps allowed ones', () => {
+		const page = [
+			rec({ id: 'np', source: { kind: 'device', serial: 'NOTEPIN' } }),
+			rec({ id: 'note', source: { kind: 'device', serial: 'NOTE' } }),
+			rec({ id: 'app', source: { kind: 'app' } }),
+		];
+		const sourceFilter = buildSourceFilter({
+			sourceFilterEnabled: true,
+			blockedDeviceSerials: ['NOTEPIN'],
+			blockAppRecordings: false,
+		});
+		expect(ids(filterListView(page, filter({ sourceFilter })))).toEqual([
+			'note',
+			'app',
+		]);
+	});
+
+	it('does not filter by source when no source filter is supplied', () => {
+		const page = [
+			rec({ id: 'np', source: { kind: 'device', serial: 'NOTEPIN' } }),
+		];
+		expect(ids(filterListView(page, filter({})))).toEqual(['np']);
+	});
+});
+
+describe('buildSourceFilter', () => {
+	const settings = (
+		over: Partial<SourceFilterSettings>,
+	): SourceFilterSettings => ({
+		sourceFilterEnabled: over.sourceFilterEnabled ?? false,
+		blockedDeviceSerials: over.blockedDeviceSerials ?? [],
+		blockAppRecordings: over.blockAppRecordings ?? false,
+	});
+
+	it('maps settings fields onto the resolved filter', () => {
+		const f = buildSourceFilter(
+			settings({
+				sourceFilterEnabled: true,
+				blockedDeviceSerials: ['A', 'B'],
+				blockAppRecordings: true,
+			}),
+		);
+		expect(f.enabled).toBe(true);
+		expect(f.blockApp).toBe(true);
+		expect([...f.blockedDeviceSerials].sort()).toEqual(['A', 'B']);
+	});
+});
+
+describe('isRecordingSourceAllowed', () => {
+	const device = (serial: string): Recording =>
+		rec({ id: `dev-${serial}`, source: { kind: 'device', serial } });
+	const app = rec({ id: 'app', source: { kind: 'app' } });
+
+	it('allows everything when the filter is disabled', () => {
+		const f = buildSourceFilter({
+			sourceFilterEnabled: false,
+			blockedDeviceSerials: ['NP'],
+			blockAppRecordings: true,
+		});
+		expect(isRecordingSourceAllowed(device('NP'), f)).toBe(true);
+		expect(isRecordingSourceAllowed(app, f)).toBe(true);
+	});
+
+	it('blocks a device whose serial is in the blocklist, allows others', () => {
+		const f = buildSourceFilter({
+			sourceFilterEnabled: true,
+			blockedDeviceSerials: ['NP'],
+			blockAppRecordings: false,
+		});
+		expect(isRecordingSourceAllowed(device('NP'), f)).toBe(false);
+		expect(isRecordingSourceAllowed(device('NOTE'), f)).toBe(true);
+	});
+
+	it('allows a never-configured device by default (blocklist semantics)', () => {
+		const f = buildSourceFilter({
+			sourceFilterEnabled: true,
+			blockedDeviceSerials: ['NP'],
+			blockAppRecordings: false,
+		});
+		expect(isRecordingSourceAllowed(device('BRAND-NEW'), f)).toBe(true);
+	});
+
+	it('honors the app bucket independently of device serials', () => {
+		const f = buildSourceFilter({
+			sourceFilterEnabled: true,
+			blockedDeviceSerials: [],
+			blockAppRecordings: true,
+		});
+		expect(isRecordingSourceAllowed(app, f)).toBe(false);
+		expect(isRecordingSourceAllowed(device('NOTE'), f)).toBe(true);
+	});
+
+	it('never hides a recording with no classified source', () => {
+		const f = buildSourceFilter({
+			sourceFilterEnabled: true,
+			blockedDeviceSerials: ['NP'],
+			blockAppRecordings: true,
+		});
+		expect(isRecordingSourceAllowed(rec({ id: 'none' }), f)).toBe(true);
 	});
 });

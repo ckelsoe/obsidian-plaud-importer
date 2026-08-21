@@ -9,6 +9,7 @@ import {
 	isUpdateAvailable,
 	INITIAL_AUTO_SYNC_STATE,
 } from '../auto-sync';
+import { buildSourceFilter } from '../import-core';
 
 function rec(
 	overrides: Partial<Omit<Recording, 'id'>> & { id: string },
@@ -27,6 +28,7 @@ function rec(
 		tags: overrides.tags,
 		versionMs: overrides.versionMs,
 		waitPull: overrides.waitPull,
+		source: overrides.source,
 	};
 }
 
@@ -307,6 +309,79 @@ describe('selectAutoSyncCandidates', () => {
 		);
 		expect(candidates).toEqual([]);
 		expect(reachedUpToDate).toBe(false);
+	});
+
+	// Source filter (issue #110): a blocked-source recording behaves exactly like
+	// an ignored one -- never a candidate, and never the frontier.
+	it('drops a source-blocked recording but still reaches a candidate below it', () => {
+		const filter = buildSourceFilter({
+			sourceFilterEnabled: true,
+			blockedDeviceSerials: ['NOTEPIN'],
+			blockAppRecordings: false,
+		});
+		const page = [
+			rec({
+				id: 'blocked',
+				versionMs: 900,
+				source: { kind: 'device', serial: 'NOTEPIN' },
+			}),
+			rec({
+				id: 'wanted',
+				versionMs: 800,
+				source: { kind: 'device', serial: 'NOTE' },
+			}),
+		];
+		const { candidates, reachedUpToDate } = selectAutoSyncCandidates(
+			page,
+			idx([]),
+			undefined,
+			filter,
+		);
+		expect(candidates.map((c) => c.recording.id)).toEqual(['wanted']);
+		expect(reachedUpToDate).toBe(false);
+	});
+
+	it('a page of only source-blocked recordings is not a frontier', () => {
+		const filter = buildSourceFilter({
+			sourceFilterEnabled: true,
+			blockedDeviceSerials: ['NOTEPIN'],
+			blockAppRecordings: false,
+		});
+		const index = idx([['synced', { path: 's', versionMs: 500 }]]);
+		const page = [
+			rec({
+				id: 'blocked',
+				versionMs: 900,
+				source: { kind: 'device', serial: 'NOTEPIN' },
+			}),
+			// An up-to-date recording that WOULD be a frontier on its own, but the
+			// blocked row above keeps the page from proving the frontier.
+			rec({
+				id: 'synced',
+				versionMs: 500,
+				source: { kind: 'device', serial: 'NOTE' },
+			}),
+		];
+		const { candidates, reachedUpToDate } = selectAutoSyncCandidates(
+			page,
+			index,
+			undefined,
+			filter,
+		);
+		expect(candidates).toEqual([]);
+		expect(reachedUpToDate).toBe(false);
+	});
+
+	it('applies no source filtering when the filter is omitted', () => {
+		const page = [
+			rec({
+				id: 'np',
+				versionMs: 900,
+				source: { kind: 'device', serial: 'NOTEPIN' },
+			}),
+		];
+		const { candidates } = selectAutoSyncCandidates(page, idx([]));
+		expect(candidates.map((c) => c.recording.id)).toEqual(['np']);
 	});
 });
 

@@ -1105,6 +1105,10 @@ export class ImportModal extends Modal {
 			hideIgnored: this.hideIgnored,
 			index: this.importedIndex,
 			ignoredIds: this.ignoredIds,
+			// Recording-source filter (issue #110): a static snapshot from the
+			// host, not a filter-bar toggle, so a blocked source is hidden here the
+			// same way it is skipped by auto-sync.
+			sourceFilter: this.noteWriterOptions.sourceFilter,
 		};
 	}
 

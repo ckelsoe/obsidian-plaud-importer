@@ -51,12 +51,18 @@ import {
 import { runImport } from './import-runner';
 import {
 	PAGE_SIZE,
+	buildSourceFilter,
 	categoryAllowsReauth,
 	type ArtifactSelection,
 	type ImportModalOptions,
 	type ImportViewStatePatch,
 } from './import-core';
-import type { PlaudClient, PlaudRecordingId, Recording } from './plaud-client';
+import type {
+	PlaudClient,
+	PlaudDevice,
+	PlaudRecordingId,
+	Recording,
+} from './plaud-client';
 import { runAutoSyncTick } from './auto-sync-runner';
 import {
 	coerceIntervalMinutes,
@@ -79,6 +85,7 @@ import {
 	DEFAULT_SETTINGS,
 	resolveRibbonIconId,
 	type PlaudImporterSettings,
+	type StoredDevice,
 } from './settings-types';
 import { PlaudImporterSettingsTab } from './settings-tab';
 import { SessionRenewal, type RefreshOutcome } from './session-renewal';
@@ -768,6 +775,34 @@ export default class PlaudImporterPlugin extends Plugin {
 		}
 	}
 
+	/**
+	 * Fetch the account's paired devices and remember them for the recording-
+	 * source filter UI (issue #110). Persists the list to `knownDevices` so the
+	 * settings checkboxes can label each device by name. Throws a user-facing
+	 * Error when no client is ready or the fetch fails; the settings control
+	 * catches it and shows the message.
+	 */
+	async loadPlaudDevices(): Promise<readonly StoredDevice[]> {
+		const client = this.client;
+		if (client === undefined) {
+			throw new Error('Sign in to Plaud first, then load your devices.');
+		}
+		let devices: readonly PlaudDevice[];
+		try {
+			devices = await client.getDeviceCatalog();
+		} catch (err) {
+			throw new Error(classifyError(err).message);
+		}
+		const stored: StoredDevice[] = devices.map((d) => ({
+			sn: d.sn,
+			name: d.name,
+			model: d.model,
+		}));
+		this.settings.knownDevices = stored;
+		await this.saveSettings();
+		return stored;
+	}
+
 	// ---- Auto-sync (issue #5) -------------------------------------------
 
 	private logAutoSync(message: string, payload?: unknown): void {
@@ -823,6 +858,10 @@ export default class PlaudImporterPlugin extends Plugin {
 			ignoredRecordingIds: this.settings.ignoredRecordingIds.map(
 				(id) => id as PlaudRecordingId,
 			),
+			// Recording-source filter (issue #110): the same filter auto-sync
+			// applies, so a blocked source is hidden from the manual import list
+			// too. Built here so the modal needs no settings access of its own.
+			sourceFilter: buildSourceFilter(this.settings),
 			debugLogger: this.debugLogger,
 			getAuthToken: () =>
 				this.settings.secretId.length > 0
@@ -1465,6 +1504,10 @@ export default class PlaudImporterPlugin extends Plugin {
 						(id) => id as PlaudRecordingId,
 					),
 				),
+				// Honor the recording-source filter in the background. Rebuilt each
+				// tick from settings so a device blocked/unblocked mid-session takes
+				// effect on the next run, matching the ignore set above.
+				sourceFilter: buildSourceFilter(this.settings),
 				listPage: (skip, limit) =>
 					client.listRecordings({ sortBy: 'edit_time', skip, limit }),
 				buildIndex: () => index,

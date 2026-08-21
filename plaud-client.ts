@@ -146,8 +146,45 @@ export interface PlaudFolder {
 	readonly color?: string;
 }
 
+/**
+ * One paired device from the account (`GET /device/list` → `data_devices[]`).
+ * `sn` is the hardware serial that a device-captured recording carries in its
+ * `serial_number` field, so it is the join key between a recording and the
+ * device that made it (verified live 2026-08-21, issue #110). `name` is the
+ * user-assigned device name shown in the Plaud app; `model` is Plaud's numeric
+ * class code (see `deviceModelLabel`).
+ */
+export interface PlaudDevice {
+	readonly sn: string;
+	readonly name: string;
+	readonly model: string;
+	readonly versionNumber?: number;
+}
+
+// Plaud's numeric device-class codes, observed live 2026-08-21. Unknown codes
+// fall back to a generic label rather than guessing, so a future device model
+// still renders a sensible name.
+const DEVICE_MODEL_LABELS: Readonly<Record<string, string>> = {
+	'880': 'NotePin',
+	'881': 'Note Pro',
+	'888': 'Note',
+};
+
+/** Human-readable class name for a device `model` code, e.g. `880` → "NotePin". */
+export function deviceModelLabel(model: string): string {
+	return DEVICE_MODEL_LABELS[model] ?? 'Plaud device';
+}
+
 export interface PlaudClient {
 	listRecordings(filter?: RecordingFilter): Promise<readonly Recording[]>;
+	/**
+	 * Fetch the account's paired devices (`GET /device/list`) so the import-
+	 * source filter can list them by name and match a recording's
+	 * `serial_number` to the device that captured it. Implementations should
+	 * cache per session; the device list changes rarely. Best-effort at the call
+	 * site: a failed fetch degrades to "no devices known", never fails a sync.
+	 */
+	getDeviceCatalog(): Promise<readonly PlaudDevice[]>;
 	getTranscriptAndSummary(
 		id: PlaudRecordingId,
 	): Promise<TranscriptAndSummary>;
@@ -202,6 +239,19 @@ export interface RecordingFilter {
 	 */
 	readonly sortBy?: 'start_time' | 'edit_time';
 }
+
+/**
+ * Where a recording was captured, derived from the list payload's `scene` and
+ * `serial_number`. Verified live 2026-08-21 (issue #110): `scene` 1 and 7 are
+ * physical-device captures whose `serial_number` is the capturing device's
+ * hardware serial (it joins to a `PlaudDevice.sn`); every other scene, or a
+ * synthetic/empty serial, is the non-device app/desktop/import path. The
+ * recording-source import filter uses this to keep a chosen device (for example
+ * a personal NotePin) out of auto-sync.
+ */
+export type RecordingSource =
+	| { readonly kind: 'device'; readonly serial: string }
+	| { readonly kind: 'app' };
 
 export interface Recording {
 	readonly id: PlaudRecordingId;
@@ -261,6 +311,14 @@ export interface Recording {
 	 * absent.
 	 */
 	readonly waitPull?: boolean;
+	/**
+	 * Where the recording was captured (`{ kind: 'device', serial }` for a
+	 * physical Plaud device, `{ kind: 'app' }` for the desktop/phone/import path).
+	 * Derived by the parser from `scene` + `serial_number`. Optional only so
+	 * legacy/synthetic Recording values without it still type-check; the live
+	 * parser always sets it. Consumed by the recording-source import filter.
+	 */
+	readonly source?: RecordingSource;
 }
 
 export interface Transcript {
