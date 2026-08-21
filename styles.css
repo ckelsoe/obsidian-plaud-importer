@@ -796,3 +796,15 @@
 	color: var(--text-muted);
 	font-size: var(--font-ui-smaller);
 }
+
+/*
+ * Per-row capture-source chip in the import list meta line (issue #110
+ * follow-up): a small muted pill naming the device (or "App"). Subtle so it
+ * reads as metadata alongside the date and duration, not as a status badge.
+ */
+.plaud-importer-source-chip {
+	padding: 0 0.4em;
+	border-radius: 0.5em;
+	background: var(--background-modifier-hover);
+	color: var(--text-muted);
+}

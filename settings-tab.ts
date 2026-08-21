@@ -301,6 +301,10 @@ const CUSTOM_FRONTMATTER_TOKENS: ReadonlyArray<readonly [string, string]> = [
 	],
 	['{{headline}}', "the summary's one-line headline"],
 	[
+		'{{device}}',
+		'the recording device name, or App for an app or imported recording',
+	],
+	[
 		'{{YYYY}} {{MM}} {{DD}} {{Q}} {{WW}}',
 		'the date set, same as the other fields',
 	],
@@ -313,6 +317,7 @@ const CUSTOM_FRONTMATTER_EXAMPLES: ReadonlyArray<readonly [string, string]> = [
 		'writes quarter: Q3-2026 for a July recording',
 	],
 	['type: {{category}}', "the recording's own category under your key name"],
+	['device: {{device}}', 'the device the recording came from, or App'],
 	['project:', 'writes project: with no value, to fill in by hand'],
 ];
 

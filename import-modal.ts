@@ -5,6 +5,7 @@ import type {
 	Recording,
 	TranscriptAndSummary,
 } from './plaud-client';
+import { recordingSourceLabel } from './plaud-client';
 import {
 	NoteWriter,
 	NoteWriterError,
@@ -530,6 +531,11 @@ export class ImportModal extends Modal {
 	private hideUpdates: boolean;
 	private hideIgnored: boolean;
 	private readonly ignoredIds: Set<PlaudRecordingId>;
+	// Serial -> device name map for the per-row source chip (issue #110 follow-up).
+	// Seeded from the host's remembered devices, then freshened once on open via
+	// refreshDeviceNames so the chip shows real names even before the user has
+	// loaded devices in settings.
+	private deviceNames: ReadonlyMap<string, string>;
 
 	constructor(
 		app: App,
@@ -548,6 +554,7 @@ export class ImportModal extends Modal {
 		this.hideUpdates = noteWriterOptions.hideUpdatesRecordings === true;
 		this.hideIgnored = noteWriterOptions.hideIgnoredRecordings !== false;
 		this.ignoredIds = new Set(noteWriterOptions.ignoredRecordingIds ?? []);
+		this.deviceNames = noteWriterOptions.getDeviceNames?.() ?? new Map();
 		this.attachments = new AttachmentImporter({
 			app,
 			getAuthToken: noteWriterOptions.getAuthToken,
@@ -570,6 +577,43 @@ export class ImportModal extends Modal {
 			);
 			this.renderError(classifyError(err));
 		});
+		this.refreshDeviceNamesInBackground();
+	}
+
+	// Freshen the serial -> device name map once on open so the per-row source
+	// chip shows real device names even before the user has loaded devices in
+	// settings (issue #110 follow-up). Best-effort: a failed fetch keeps the
+	// seeded map. Re-renders only when the names changed and the modal is still
+	// open (the captured generation guards against a mid-fetch close).
+	private refreshDeviceNamesInBackground(): void {
+		const refresh = this.noteWriterOptions.refreshDeviceNames;
+		if (refresh === undefined) {
+			return;
+		}
+		const generation = this.fetchGeneration;
+		void refresh().then(
+			() => {
+				if (generation !== this.fetchGeneration) {
+					return;
+				}
+				const next =
+					this.noteWriterOptions.getDeviceNames?.() ??
+					new Map<string, string>();
+				const changed =
+					next.size !== this.deviceNames.size ||
+					[...next].some(
+						([sn, name]) => this.deviceNames.get(sn) !== name,
+					);
+				this.deviceNames = next;
+				if (changed && this.currentRecordings.length > 0) {
+					this.renderList();
+				}
+			},
+			() => {
+				// Best-effort: no client, offline, or a Plaud error. Keep the
+				// seeded names; the chip falls back to a generic label.
+			},
+		);
 	}
 
 	onClose(): void {
@@ -1363,6 +1407,18 @@ export class ImportModal extends Modal {
 		});
 		meta.createSpan({ text: '  ·  ', cls: 'plaud-importer-sep' });
 		meta.createSpan({ text: formatDuration(rec.durationSeconds) });
+		// Capture source (issue #110 follow-up): the device name, or "App" for a
+		// non-device recording, so a user can tell at a glance which device a row
+		// came from while choosing what to import. Hidden when the source cannot be
+		// labelled (no classified source).
+		const sourceLabel = recordingSourceLabel(rec.source, this.deviceNames);
+		if (sourceLabel.length > 0) {
+			meta.createSpan({ text: '  ·  ', cls: 'plaud-importer-sep' });
+			meta.createSpan({
+				text: sourceLabel,
+				cls: 'plaud-importer-source-chip',
+			});
+		}
 
 		// Per-row ignore control. A direct child of the row (not the label) so it
 		// sits at the row's trailing edge. Toggling re-renders the list, so the

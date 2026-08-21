@@ -798,9 +798,30 @@ export default class PlaudImporterPlugin extends Plugin {
 			name: d.name,
 			model: d.model,
 		}));
+		// Persist only when the list actually changed: the import modal calls this
+		// on every open to freshen source labels, and an unconditional save would
+		// rewrite data.json each time for no change.
+		const unchanged =
+			stored.length === this.settings.knownDevices.length &&
+			stored.every((d, i) => {
+				const prev = this.settings.knownDevices[i];
+				return (
+					prev !== undefined &&
+					prev.sn === d.sn &&
+					prev.name === d.name &&
+					prev.model === d.model
+				);
+			});
 		this.settings.knownDevices = stored;
-		await this.saveSettings();
+		if (!unchanged) {
+			await this.saveSettings();
+		}
 		return stored;
+	}
+
+	/** Serial -> device name map from the remembered device list (issue #110). */
+	private deviceNameMap(): ReadonlyMap<string, string> {
+		return new Map(this.settings.knownDevices.map((d) => [d.sn, d.name]));
 	}
 
 	// ---- Auto-sync (issue #5) -------------------------------------------
@@ -862,6 +883,14 @@ export default class PlaudImporterPlugin extends Plugin {
 			// applies, so a blocked source is hidden from the manual import list
 			// too. Built here so the modal needs no settings access of its own.
 			sourceFilter: buildSourceFilter(this.settings),
+			// Device-name resolution for the {{device}} token and the import list
+			// badge (issue #110 follow-up). A live getter so it reflects the latest
+			// remembered device list; the refresh is best-effort and only persists
+			// when the list changed.
+			getDeviceNames: () => this.deviceNameMap(),
+			refreshDeviceNames: async () => {
+				await this.loadPlaudDevices();
+			},
 			debugLogger: this.debugLogger,
 			getAuthToken: () =>
 				this.settings.secretId.length > 0
