@@ -49,6 +49,19 @@ export function resolveRibbonIconId(stored: string | undefined): string {
 		: DEFAULT_RIBBON_ICON;
 }
 
+/**
+ * A paired Plaud device remembered for the recording-source filter (issue #110).
+ * Snapshotted from `GET /device/list` when the user refreshes the device list in
+ * settings, so the settings UI can label a device by name even offline, and a
+ * blocked serial always has a friendly name. `sn` is the join key to a device
+ * recording's `serial_number`.
+ */
+export interface StoredDevice {
+	sn: string;
+	name: string;
+	model: string;
+}
+
 export interface PlaudImporterSettings {
 	secretId: string;
 	// Base host for the Plaud API. Defaults to the US host. The plugin
@@ -141,6 +154,27 @@ export interface PlaudImporterSettings {
 	// note tag: it must cover recordings that were never imported, so no note
 	// exists to carry a marker. Keyed by the stable plaud-id.
 	ignoredRecordingIds: string[];
+	// Recording-source filter (issue #110). When on, recordings whose capture
+	// source is blocked below are kept out of both manual import and, most
+	// importantly, unattended auto-sync (a personal NotePin the user does not want
+	// in the vault). OFF by default so existing installs keep importing everything
+	// until the user opts in. Blocklist semantics: a source is imported unless it
+	// is explicitly blocked, so a brand-new device is imported by default rather
+	// than silently dropped.
+	sourceFilterEnabled: boolean;
+	// Hardware serials (device `sn`) whose recordings the user chose to skip.
+	// Only consulted when sourceFilterEnabled is on. Matched against a device
+	// recording's `serial_number`.
+	blockedDeviceSerials: string[];
+	// When on (and sourceFilterEnabled), skip non-device recordings: those made
+	// through the Plaud desktop/phone app or imported, which carry no hardware
+	// serial. Off by default.
+	blockAppRecordings: boolean;
+	// Remembered device list from the last "Refresh devices" in settings, so the
+	// source filter UI can show a device's name even when offline and a blocked
+	// serial always resolves to a friendly label. Not load-bearing for filtering
+	// (the filter matches serials); purely for display.
+	knownDevices: StoredDevice[];
 	// Title write-back: when on, renaming an imported recording (via the Rename
 	// recording command or a file-explorer rename) also updates that recording's
 	// title in Plaud to match the new note name. OFF by default because it is the
@@ -228,6 +262,10 @@ export const DEFAULT_SETTINGS: PlaudImporterSettings = {
 	hideUpdatesRecordings: false,
 	hideIgnoredRecordings: true,
 	ignoredRecordingIds: [],
+	sourceFilterEnabled: false,
+	blockedDeviceSerials: [],
+	blockAppRecordings: false,
+	knownDevices: [],
 	autoUpdatePlaudTitle: false,
 	autoSyncEnabled: false,
 	autoSyncIntervalMinutes: 60,

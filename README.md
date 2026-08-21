@@ -69,6 +69,7 @@ Plaud does not offer an official API yet, so this plugin works by using Plaud's 
 - **Optionally sync a rename back to Plaud (off by default).** When you rename a recording in Obsidian, the plugin can update that recording's title in Plaud so the two stay in sync. This is opt-in and the only thing the plugin ever writes back to Plaud; with it off, renames stay entirely local. See [Renaming recordings](#renaming-recordings).
 - **"Imported" and "Update available" badges in the recording list.** Each row whose `plaud-id` already exists in your output folder shows an Imported pill; click it to open the existing note. If that recording changed in Plaud since you imported it, the row shows an Update available badge instead, so you can spot and re-import a stale note by hand. Re-importing is still possible and honors your duplicate-handling setting.
 - **Filter the import list, and ignore recordings you never want.** A filter bar at the top of the import dialog hides recordings you have already imported (on by default), so the list shows what is left to import instead of everything. Separate toggles also hide update-available, ignored, and trashed recordings. Each row has an eye button to **ignore** a recording (a junk or personal clip): ignored recordings drop out of the list and are skipped by background auto-sync, and ignoring works even on recordings you never imported. Recordings in Plaud's trash show a **Trashed** badge when you choose to show them.
+- **Import only from selected recording sources.** Choose which of your paired Plaud devices to import from, and whether to include recordings made in the Plaud app or imported, so a device you keep for personal recordings stays out of your vault. Applies to manual import and background auto-sync alike, off by default. See [Recording sources](#recording-sources).
 - **Resume an interrupted import.** If your Plaud session expires partway through a multi-select import, the run stops at the first recording that fails to authenticate, keeps what it already imported, and lets you sign in again right there; a **Resume remaining** button then finishes the recordings that were left.
 - **Duplicate handling** is configurable — Skip, Overwrite, or Ask each time. "Ask each time" prompts per file with an explicit warning that the existing note body AND its `-assets` folder will be replaced; in a multi-select import you can escalate to "Overwrite all remaining" / "Skip all remaining" or cancel the batch.
 - **Transcript folding** — imported notes open with the transcript section collapsed by default so the summary is what you see first. Toggleable in settings.
@@ -259,6 +260,15 @@ It also re-imports recordings you changed in Plaud since importing them (an edit
 If your Plaud session expires, auto-sync pauses with a single notice and resumes automatically when you reconnect (Test connection, a manual import, re-entering your token, or toggling auto-sync off and on). The notice's **Reconnect** button opens the sign-in that matches your account: the email window for password logins, or the browser bookmarklet flow for Google and Apple accounts.
 
 **Backfill for existing notes:** notes imported before this feature shipped do not carry the version marker auto-sync compares against, so their Plaud-side edits are not detected until the marker exists. Run the command **Plaud Importer: Backfill version markers for auto-sync** once after enabling auto-sync to make your existing library edit-detectable. It only adds a frontmatter marker and never rewrites note content.
+
+### Recording sources
+
+Optional filter, **off by default**, that limits import to the sources you choose. Useful when one of your Plaud devices records things you do not want in your vault, so background auto-sync stops pulling them in.
+
+- **Only import from selected sources.** The master switch. Off means every recording is imported (the original behavior).
+- **Sources.** Click **Load devices** to fetch the devices paired to your Plaud account, then uncheck any whose recordings you want to skip. A separate **App, desktop and imported recordings** checkbox covers recordings made in the Plaud app or imported, which have no device.
+
+The filter applies to both manual import and auto-sync. It uses blocklist behavior: a source is imported unless you uncheck it, so a device you pair later is included by default until you change it here.
 
 ### Tags and keywords
 

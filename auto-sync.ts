@@ -18,7 +18,9 @@ import type { ImportedRecord } from './vault-index';
 import {
 	categoryAllowsReauth,
 	filterVisibleRecordings,
+	isRecordingSourceAllowed,
 	type ErrorCategory,
+	type SourceFilter,
 } from './import-core';
 
 // isUpdateAvailable moved to import-core.ts (the acyclic pure base) so the list-
@@ -116,9 +118,9 @@ export interface SelectCandidatesResult {
 	 * `version_ms` <= stored). That is the real synced frontier, so the
 	 * scheduler stops paging. A page is deliberately NOT a frontier when it
 	 * still holds any candidate, any `up-to-date-current` (legacy note with no
-	 * marker, per the migration rule), or any `skipped-wait-pull` row: an
-	 * importable recording can sort below those on a later page, so paging must
-	 * continue. This replaces both the old "first up-to-date recording" break
+	 * marker, per the migration rule), any `skipped-wait-pull` row, or any
+	 * source-blocked row (issue #110): an importable recording can sort below
+	 * those on a later page, so paging must continue. This replaces both the old "first up-to-date recording" break
 	 * (stranded new recordings below it) and the interim "zero candidates" stop
 	 * (stranded ready recordings below an all-legacy or all-wait_pull page).
 	 */
@@ -142,18 +144,30 @@ export function selectAutoSyncCandidates(
 	page: readonly Recording[],
 	index: ReadonlyMap<PlaudRecordingId, ImportedRecord>,
 	ignoredIds: ReadonlySet<PlaudRecordingId> = NO_IGNORED_IDS,
+	sourceFilter?: SourceFilter,
 ): SelectCandidatesResult {
 	// Never import trash. filterVisibleRecordings preserves order.
 	const visible = filterVisibleRecordings(page, false);
 	const candidates: AutoSyncCandidate[] = [];
 	// The frontier is reached only if the page has at least one recording and
 	// every one of them is an `up-to-date-boundary`. Any candidate, legacy
-	// (`up-to-date-current`), pending (`skipped-wait-pull`), or `ignored` row
-	// means an importable recording could still be below, so we must keep paging.
+	// (`up-to-date-current`), pending (`skipped-wait-pull`), `ignored`, or
+	// source-blocked row means an importable recording could still be below, so
+	// we must keep paging.
 	let sawRecording = false;
 	let allProvenUpToDate = true;
 	for (const recording of visible) {
 		sawRecording = true;
+		// A source-blocked recording (for example a device the user chose to skip)
+		// is treated exactly like an ignored one: never imported, and NOT a
+		// frontier, so an allowed recording sorted below it is still reached.
+		if (
+			sourceFilter !== undefined &&
+			!isRecordingSourceAllowed(recording, sourceFilter)
+		) {
+			allProvenUpToDate = false;
+			continue;
+		}
 		const classification = classifyRecording(recording, index, ignoredIds);
 		if (classification === 'new' || classification === 'changed') {
 			candidates.push({ recording, kind: classification });

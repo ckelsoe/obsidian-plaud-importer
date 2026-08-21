@@ -13,10 +13,12 @@ import type {
 	Chapter,
 	ConsumerNote,
 	PlaudClient,
+	PlaudDevice,
 	PlaudFolder,
 	PlaudRecordingId,
 	Recording,
 	RecordingFilter,
+	RecordingSource,
 	Summary,
 	Transcript,
 	TranscriptAndSummary,
@@ -150,6 +152,11 @@ export class ReverseEngineeredPlaudClient implements PlaudClient {
 	// plugin reloads (a fresh client instance clears the cache). undefined means
 	// "not yet fetched"; an empty array is a valid cached "no folders" result.
 	private folderCatalogCache: readonly PlaudFolder[] | undefined;
+	// Per-session cache of the paired-device list (`GET /device/list`), same
+	// rationale as the folder catalog: it changes rarely, so one fetch per plugin
+	// session is enough and a reload clears it. undefined = not yet fetched; an
+	// empty array is a valid cached "no devices" result.
+	private deviceCatalogCache: readonly PlaudDevice[] | undefined;
 
 	constructor(
 		tokenProvider: PlaudTokenProvider,
@@ -263,6 +270,28 @@ export class ReverseEngineeredPlaudClient implements PlaudClient {
 			});
 		}
 		return catalog;
+	}
+
+	async getDeviceCatalog(): Promise<readonly PlaudDevice[]> {
+		if (this.deviceCatalogCache !== undefined) {
+			return this.deviceCatalogCache;
+		}
+		const endpoint = '/device/list';
+		const url = `${this.baseUrl}${endpoint}`;
+		const raw = await this.fetchJson(url, endpoint);
+		const { devices, skipped } = parseDeviceCatalog(raw, endpoint);
+		this.deviceCatalogCache = devices;
+		if (this.debugLogger?.enabled === true) {
+			this.debugLogger.log({
+				kind: 'parsed',
+				endpoint,
+				message: `parsed ${devices.length} devices${
+					skipped > 0 ? ` (skipped ${skipped} malformed)` : ''
+				}`,
+				payload: { count: devices.length, skipped },
+			});
+		}
+		return devices;
 	}
 
 	async getTranscriptAndSummary(
@@ -1308,6 +1337,16 @@ interface RawRecording {
 	readonly version_ms?: number;
 	// 1 while the recording is still syncing from the capture device.
 	readonly wait_pull?: number;
+	// Capture-context enum (issue #110, verified live 2026-08-21): 1 and 7 are
+	// physical-device captures, 102/101/1000 are the non-device app/desktop/import
+	// path. Present on 100% of the live account; optional so an older payload
+	// without it still parses (source then falls back to 'app').
+	readonly scene?: number;
+	// The capturing device's hardware serial on a device capture (joins to a
+	// PlaudDevice.sn); a synthetic timestamp/uuid/random string on the non-device
+	// path. Present on 100% of the live account; optional and loosely typed
+	// because a malformed value must not fail the whole recording.
+	readonly serial_number?: string;
 }
 
 function parseListResponse(
@@ -1402,6 +1441,71 @@ function parseFolderCatalog(
 		});
 	}
 	return { catalog, skipped };
+}
+
+// Wire shape of one `GET /device/list` entry (`data_devices[]`). `sn` is the
+// join key to a recording's serial_number and must be a non-empty string;
+// `name` is the user-assigned label (may be empty on the wire); `model` is
+// Plaud's class code, seen as a string ("880") but accepted as a number too,
+// defensively.
+interface RawDevice {
+	readonly sn: string;
+	readonly name?: string;
+	readonly model?: string | number;
+	readonly version_number?: number;
+}
+
+function isRawDevice(value: unknown): value is RawDevice {
+	return (
+		isRecord(value) &&
+		typeof value.sn === 'string' &&
+		value.sn.length > 0 &&
+		(value.name === undefined || typeof value.name === 'string') &&
+		(value.model === undefined ||
+			typeof value.model === 'string' ||
+			typeof value.model === 'number') &&
+		(value.version_number === undefined ||
+			typeof value.version_number === 'number')
+	);
+}
+
+// Parse the paired-device list envelope (`GET /device/list` → data_devices[]).
+// Like parseFolderCatalog, a single malformed entry is skipped and counted
+// rather than aborting the whole parse: the device list is best-effort filter
+// enrichment, so one bad device must not cost the rest their names. Only a
+// structurally-wrong envelope (missing/!array `data_devices`) throws.
+function parseDeviceCatalog(
+	raw: unknown,
+	endpoint: string,
+): { devices: readonly PlaudDevice[]; skipped: number } {
+	if (!isRecord(raw)) {
+		throw new PlaudParseError('Response body is not an object', endpoint);
+	}
+	const list = raw.data_devices;
+	if (!Array.isArray(list)) {
+		throw new PlaudParseError(
+			'Response is missing data_devices array',
+			endpoint,
+		);
+	}
+	const devices: PlaudDevice[] = [];
+	let skipped = 0;
+	for (const item of list) {
+		if (!isRawDevice(item)) {
+			skipped++;
+			continue;
+		}
+		devices.push({
+			sn: item.sn,
+			name: typeof item.name === 'string' ? item.name : '',
+			model: item.model === undefined ? '' : String(item.model),
+			versionNumber:
+				typeof item.version_number === 'number'
+					? item.version_number
+					: undefined,
+		});
+	}
+	return { devices, skipped };
 }
 
 // Plausibility bounds for a Plaud recording's start_time, which is a unix
@@ -1522,12 +1626,26 @@ function parseRecording(raw: RawRecording, endpoint: string): Recording {
 		}
 	}
 
+	// Capture source (issue #110). A physical-device capture is `scene` 1 or 7
+	// carrying the device's hardware serial; everything else (scenes 102/101/1000,
+	// or a missing/empty serial) is the non-device app/desktop/import path. Keep
+	// this derivation catalog-free so the headless auto-sync filter never needs a
+	// network call to classify a recording.
+	const isDeviceScene = raw.scene === 1 || raw.scene === 7;
+	const serial =
+		typeof raw.serial_number === 'string' ? raw.serial_number : '';
+	const source: RecordingSource =
+		isDeviceScene && serial.length > 0
+			? { kind: 'device', serial }
+			: { kind: 'app' };
+
 	return {
 		id: raw.id as PlaudRecordingId,
 		title: raw.filename,
 		createdAt: new Date(raw.start_time),
 		endsAt: new Date(endMs),
 		captureOffsetMinutes,
+		source,
 		// Convert ms → seconds at the trust boundary so every downstream
 		// consumer (NoteWriter, ImportModal display, Dataview queries)
 		// sees seconds. Matches the segment-timestamp treatment at

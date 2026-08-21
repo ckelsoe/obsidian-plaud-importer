@@ -114,6 +114,12 @@ export interface ImportModalOptions extends NoteWriterOptions {
 	 * perspective; the host owns save-error handling.
 	 */
 	readonly onViewStateChange?: (patch: ImportViewStatePatch) => void;
+	/**
+	 * Recording-source filter (issue #110), prebuilt from settings by the host.
+	 * The modal applies it to its list view so a source the user chose to skip is
+	 * hidden from manual import too, matching auto-sync. Omitted -> no filtering.
+	 */
+	readonly sourceFilter?: SourceFilter;
 	readonly defaultIncludeSummary?: boolean;
 	readonly defaultIncludeAttachments?: boolean;
 	readonly defaultIncludeMindmap?: boolean;
@@ -641,6 +647,70 @@ export function filterVisibleRecordings(
 	return recordings.filter((r) => !r.isTrashed);
 }
 
+// -----------------------------------------------------------------------------
+// Recording-source filter (issue #110). Lets a user keep a chosen capture
+// source out of import, most importantly out of unattended auto-sync (a personal
+// NotePin the user does not want in the vault). The signal is a recording's
+// `source` (derived from `scene` + `serial_number` at parse time), so the filter
+// is catalog-free and the headless path never needs a network call to apply it.
+//
+// Blocklist semantics on purpose: a recording is allowed unless its source is
+// explicitly blocked. A device the user has never configured (a brand-new
+// device) is therefore imported by default rather than silently dropped.
+// -----------------------------------------------------------------------------
+
+/** Resolved recording-source filter, built from settings by `buildSourceFilter`. */
+export interface SourceFilter {
+	/** Master switch. When false the filter allows everything (no-op). */
+	readonly enabled: boolean;
+	/** Hardware serials whose device recordings the user chose to skip. */
+	readonly blockedDeviceSerials: ReadonlySet<string>;
+	/** When true, skip non-device (app / desktop / imported) recordings. */
+	readonly blockApp: boolean;
+}
+
+/** The settings fields `buildSourceFilter` reads. A structural subset of the plugin settings. */
+export interface SourceFilterSettings {
+	readonly sourceFilterEnabled: boolean;
+	readonly blockedDeviceSerials: readonly string[];
+	readonly blockAppRecordings: boolean;
+}
+
+/** Build the resolved `SourceFilter` from the relevant settings fields. */
+export function buildSourceFilter(
+	settings: SourceFilterSettings,
+): SourceFilter {
+	return {
+		enabled: settings.sourceFilterEnabled,
+		blockedDeviceSerials: new Set(settings.blockedDeviceSerials),
+		blockApp: settings.blockAppRecordings,
+	};
+}
+
+/**
+ * True when a recording is allowed past the source filter. Pure and exported so
+ * both auto-sync candidate selection and the import view can share one rule. A
+ * disabled filter, or a recording with no classified source, always passes.
+ */
+export function isRecordingSourceAllowed(
+	recording: Recording,
+	filter: SourceFilter,
+): boolean {
+	if (!filter.enabled) {
+		return true;
+	}
+	const source = recording.source;
+	// Only synthetic/legacy Recording values reach here without a source (the
+	// live parser always sets one); never hide something we cannot classify.
+	if (source === undefined) {
+		return true;
+	}
+	if (source.kind === 'device') {
+		return !filter.blockedDeviceSerials.has(source.serial);
+	}
+	return !filter.blockApp;
+}
+
 /**
  * True when an already-imported recording has changed in Plaud since import:
  * both the listed and the stored `version_ms` are known and the listed one is
@@ -701,6 +771,13 @@ export interface ListViewFilter {
 	readonly index: ReadonlyMap<PlaudRecordingId, ImportedRecord>;
 	/** Ignored recording ids. */
 	readonly ignoredIds: ReadonlySet<PlaudRecordingId>;
+	/**
+	 * Recording-source filter (issue #110). When present and enabled, recordings
+	 * from a blocked source are hidden from the dialog, matching the same filter
+	 * auto-sync applies, so a device the user chose to skip does not clutter the
+	 * manual import list either. Omitted -> no source filtering in the view.
+	 */
+	readonly sourceFilter?: SourceFilter;
 }
 
 /**
@@ -728,6 +805,12 @@ export function filterListView(
 			return false;
 		}
 		if (filter.hideIgnored && filter.ignoredIds.has(r.id)) {
+			return false;
+		}
+		if (
+			filter.sourceFilter !== undefined &&
+			!isRecordingSourceAllowed(r, filter.sourceFilter)
+		) {
 			return false;
 		}
 		const existing = filter.index.get(r.id);

@@ -750,3 +750,49 @@
 	outline: 2px solid var(--text-accent);
 	outline-offset: 2px;
 }
+
+/*
+ * Recording-source filter (issue #110): the device/source checkbox list under
+ * the "Sources" setting. Full-width block below the name/description, matching
+ * the stacked-row treatment of the other doc-heavy rows.
+ */
+.plaud-importer-sources-status {
+	flex-basis: 100%;
+	margin-top: 0.35em;
+	color: var(--text-muted);
+	font-size: var(--font-ui-smaller);
+}
+
+.plaud-importer-sources-list {
+	flex-basis: 100%;
+	margin-top: 0.4em;
+	display: flex;
+	flex-direction: column;
+	gap: 0.35em;
+}
+
+.plaud-importer-sources-empty {
+	color: var(--text-muted);
+	font-size: var(--font-ui-smaller);
+}
+
+/* One source row: a checkbox beside a stacked name + class sublabel. */
+.plaud-importer-source-row {
+	display: flex;
+	align-items: flex-start;
+	gap: 0.5em;
+	cursor: pointer;
+}
+
+.plaud-importer-source-row input[type="checkbox"] {
+	margin-top: 0.2em;
+}
+
+.plaud-importer-source-name {
+	color: var(--text-normal);
+}
+
+.plaud-importer-source-sub {
+	color: var(--text-muted);
+	font-size: var(--font-ui-smaller);
+}

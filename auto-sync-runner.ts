@@ -12,6 +12,7 @@
 import type { PlaudRecordingId, Recording } from './plaud-client';
 import type { ImportedRecord } from './vault-index';
 import { selectAutoSyncCandidates } from './auto-sync';
+import type { SourceFilter } from './import-core';
 
 export interface AutoSyncTickDeps {
 	/** One page of the list, edit-time descending (sort_by=edit_time). */
@@ -36,6 +37,12 @@ export interface AutoSyncTickDeps {
 	 * selection so auto-sync never pulls them. Omitted -> nothing ignored.
 	 */
 	readonly ignoredIds?: ReadonlySet<PlaudRecordingId>;
+	/**
+	 * Recording-source filter (issue #110). A recording from a blocked source is
+	 * skipped exactly like an ignored one. Rebuilt from settings each tick so a
+	 * change takes effect on the next run. Omitted -> nothing filtered.
+	 */
+	readonly sourceFilter?: SourceFilter;
 	log?(message: string, payload?: unknown): void;
 }
 
@@ -76,7 +83,12 @@ export async function runAutoSyncTick(
 			break;
 		}
 		const { candidates, reachedUpToDate: hitBoundary } =
-			selectAutoSyncCandidates(page, index, deps.ignoredIds);
+			selectAutoSyncCandidates(
+				page,
+				index,
+				deps.ignoredIds,
+				deps.sourceFilter,
+			);
 		for (const candidate of candidates) {
 			if (newRecs.length + changedRecs.length >= deps.maxImportsPerTick) {
 				cappedByImports = true;
