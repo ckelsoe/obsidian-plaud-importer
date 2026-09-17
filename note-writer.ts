@@ -120,6 +120,11 @@ export type HeadingLevel = 1 | 2 | 3 | 4 | 5 | 6;
 export interface NoteWriterOptions {
 	readonly outputFolder: string;
 	/**
+	 * Origin of the web portal for `plaud-url` permalinks (v3 prod vs v4 new
+	 * portal). Omitted defaults to the prod portal. See `formatPlaudWebUrl`.
+	 */
+	readonly webBaseUrl?: string;
+	/**
 	 * Optional subfolder template appended to `outputFolder`, resolved per
 	 * recording against its date via `resolveSubfolder`. Empty or omitted
 	 * reproduces the flat `outputFolder`-only layout. See `resolveSubfolder`
@@ -427,13 +432,17 @@ export function formatTimestamp(seconds: number): string {
 	return `${pad(m)}:${pad(s)}`;
 }
 
+/** Prod (v3) web portal, the default when no environment base is supplied. */
+export const PLAUD_WEB_URL_V3 = 'https://web.plaud.ai';
+
 /**
- * Build the public web-app URL for a Plaud recording. This is the link a
- * user clicks to open the recording in Plaud's browser UI. The pattern
- * `https://web.plaud.ai/file/{id}` was confirmed from a live Plaud
- * session on 2026-04-14 — see `dev-docs/deferred-decisions.md` DD-002
- * for the stable-ID risk that makes this a tracked deferred decision
- * rather than a permanent constant.
+ * Build the public web-app URL for a Plaud recording. This is the link a user
+ * clicks to open the recording in Plaud's browser UI. The `/file/{id}` path
+ * shape is the same on every portal, so only the origin differs: a v3 (prod)
+ * account links to `https://web.plaud.ai`, a v4 (new portal) account to its own
+ * web app (e.g. `https://beta.plaud.ai`). The caller passes the environment's
+ * base via `webBase`; it defaults to the prod portal so an unthreaded caller
+ * stays correct for v3. Confirmed from a live Plaud session on 2026-04-14.
  *
  * The ID is passed through `encodeURIComponent` for defense-in-depth,
  * matching the same treatment `plaud-client-re.ts` applies to the ID
@@ -442,8 +451,12 @@ export function formatTimestamp(seconds: number): string {
  * change (slashes, dots, etc.) would silently produce broken URLs
  * without this guard.
  */
-export function formatPlaudWebUrl(recordingId: string): string {
-	return `https://web.plaud.ai/file/${encodeURIComponent(recordingId)}`;
+export function formatPlaudWebUrl(
+	recordingId: string,
+	webBase: string = PLAUD_WEB_URL_V3,
+): string {
+	const base = webBase.replace(/\/+$/, '');
+	return `${base}/file/${encodeURIComponent(recordingId)}`;
 }
 
 /**
@@ -1610,6 +1623,7 @@ export function formatFrontmatter(
 	preserveUnknown = false,
 	fallbackTimezone = '',
 	deviceNames: ReadonlyMap<string, string> = new Map(),
+	webBaseUrl: string = PLAUD_WEB_URL_V3,
 ): string {
 	const duration = Number.isFinite(recording.durationSeconds)
 		? Math.max(0, Math.floor(recording.durationSeconds))
@@ -1645,7 +1659,10 @@ export function formatFrontmatter(
 	// unquoted allowlist), which is what we want — YAML treats an
 	// unquoted `https://...` scalar as a mapping key + value on some
 	// parsers.
-	entries.set('plaud-url', yamlScalar(formatPlaudWebUrl(recording.id)));
+	entries.set(
+		'plaud-url',
+		yamlScalar(formatPlaudWebUrl(recording.id, webBaseUrl)),
+	);
 	entries.set('date', formatDateYmd(recording.createdAt, offsetMinutes));
 	// Precise start/end instants in the recording's capture zone, ISO 8601 with
 	// offset (e.g. 2026-08-07T14:52:11-04:00), always emitted. `date:` stays
@@ -2430,6 +2447,13 @@ export interface FormatMarkdownOptions {
 	readonly includeSummary?: boolean;
 	readonly transcriptHeaderLevel?: HeadingLevel;
 	/**
+	 * Origin of the web portal for this account's `plaud-url` permalink and the
+	 * "Open in Plaud" link. A v3 (prod) account uses `https://web.plaud.ai`, a
+	 * v4 (new portal) account its own web app (e.g. `https://beta.plaud.ai`).
+	 * Omitted defaults to the prod portal. See `formatPlaudWebUrl`.
+	 */
+	readonly webBaseUrl?: string;
+	/**
 	 * AI keywords to surface as a `keywords:` frontmatter property.
 	 * Produced by `buildNoteTags` when the tag mode excludes AI keywords
 	 * from `tags:` and the keep-as-property setting is on.
@@ -2509,6 +2533,8 @@ export function formatMarkdown(
 	const includeTranscript = options.includeTranscript ?? true;
 	const includeSummary = options.includeSummary ?? true;
 	const headerLevel: HeadingLevel = options.transcriptHeaderLevel ?? 4;
+	// Portal origin for this account's permalinks (v3 prod vs v4 new portal).
+	const webBase = options.webBaseUrl ?? PLAUD_WEB_URL_V3;
 	const offsetMinutes = effectiveCaptureOffsetMinutes(
 		recording,
 		options.fallbackTimezone ?? '',
@@ -2538,6 +2564,7 @@ export function formatMarkdown(
 			options.preserveUnknownFrontmatter,
 			options.fallbackTimezone ?? '',
 			options.deviceNames,
+			webBase,
 		),
 		'',
 		`# ${expandedTitle}`,
@@ -2548,7 +2575,7 @@ export function formatMarkdown(
 		// note. The raw URL goes unescaped inside the markdown link
 		// target — safe because formatPlaudWebUrl encodes the ID and the
 		// host/path template contains no parentheses.
-		`[Open in Plaud →](${formatPlaudWebUrl(recording.id)})`,
+		`[Open in Plaud →](${formatPlaudWebUrl(recording.id, webBase)})`,
 		'',
 	];
 	if (includeSummary) {
@@ -2602,8 +2629,9 @@ export function formatPlaceholderMarkdown(
 	template: string = DEFAULT_NOTE_NAME_TEMPLATE,
 	datetimeTemplate: string = '',
 	fallbackTimezone = '',
+	webBaseUrl: string = PLAUD_WEB_URL_V3,
 ): string {
-	const url = formatPlaudWebUrl(recording.id);
+	const url = formatPlaudWebUrl(recording.id, webBaseUrl);
 	const offsetMinutes = effectiveCaptureOffsetMinutes(
 		recording,
 		fallbackTimezone,
@@ -2816,6 +2844,7 @@ export class NoteWriter {
 	private readonly noteNameTemplate: string;
 	private readonly datetimeTemplate: string;
 	private readonly fallbackTimezone: string;
+	private readonly webBaseUrl: string;
 	private readonly customFrontmatter: readonly CustomFrontmatterRow[];
 	private readonly preserveUnknownFrontmatter: boolean;
 	private readonly forbiddenCharReplacement: string;
@@ -2862,6 +2891,7 @@ export class NoteWriter {
 				: DEFAULT_NOTE_NAME_TEMPLATE;
 		this.datetimeTemplate = options.datetimeTemplate ?? '';
 		this.fallbackTimezone = options.fallbackTimezone ?? '';
+		this.webBaseUrl = options.webBaseUrl ?? PLAUD_WEB_URL_V3;
 		this.customFrontmatter = options.customFrontmatter ?? [];
 		// Default true: a headless caller (or hand-edited data.json) that omits this
 		// gets the non-destructive behavior, matching DEFAULT_SETTINGS.
@@ -2888,6 +2918,7 @@ export class NoteWriter {
 			fallbackTimezone: this.fallbackTimezone,
 			customFrontmatter: this.customFrontmatter,
 			preserveUnknownFrontmatter: this.preserveUnknownFrontmatter,
+			webBaseUrl: this.webBaseUrl,
 		};
 	}
 
@@ -3020,6 +3051,7 @@ export class NoteWriter {
 			this.noteNameTemplate,
 			this.datetimeTemplate,
 			this.fallbackTimezone,
+			this.webBaseUrl,
 		);
 		const { existing, notePath } = this.findExistingNote(
 			recording,

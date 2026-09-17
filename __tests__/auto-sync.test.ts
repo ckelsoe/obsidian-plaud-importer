@@ -1,5 +1,5 @@
 import type { PlaudRecordingId, Recording } from '../plaud-client';
-import type { ImportedRecord } from '../vault-index';
+import type { ImportedIndex, ImportedRecord } from '../vault-index';
 import {
 	classifyRecording,
 	selectAutoSyncCandidates,
@@ -34,8 +34,12 @@ function rec(
 
 function idx(
 	entries: ReadonlyArray<readonly [string, ImportedRecord]>,
-): Map<PlaudRecordingId, ImportedRecord> {
-	return new Map(entries.map(([id, r]) => [id as PlaudRecordingId, r]));
+): ImportedIndex {
+	return {
+		byId: new Map(entries.map(([id, r]) => [id as PlaudRecordingId, r])),
+		byInstant: new Map(),
+		byDay: new Map(),
+	};
 }
 
 describe('classifyRecording', () => {

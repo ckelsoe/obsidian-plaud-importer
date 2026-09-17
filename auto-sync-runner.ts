@@ -10,15 +10,15 @@
 // -----------------------------------------------------------------------------
 
 import type { PlaudRecordingId, Recording } from './plaud-client';
-import type { ImportedRecord } from './vault-index';
+import type { ImportedIndex } from './vault-index';
 import { selectAutoSyncCandidates } from './auto-sync';
 import type { SourceFilter } from './import-core';
 
 export interface AutoSyncTickDeps {
 	/** One page of the list, edit-time descending (sort_by=edit_time). */
 	listPage(skip: number, limit: number): Promise<readonly Recording[]>;
-	/** Fresh vault index (plaud-id -> {path, versionMs}) for this tick. */
-	buildIndex(): Map<PlaudRecordingId, ImportedRecord>;
+	/** Fresh vault index (id + stable-key fallback) for this tick. */
+	buildIndex(): ImportedIndex;
 	/**
 	 * Import the selected recordings. `newRecs` are created (skip-for-new),
 	 * `changedRecs` overwrite the matched note. Returns how many of each landed.

@@ -1,0 +1,670 @@
+import {
+	PlaudV4Client,
+	embedV4SummaryImages,
+	type PlaudV4ClientOptions,
+} from '../plaud-client-v4';
+import {
+	PlaudApiError,
+	PlaudAuthError,
+	type PlaudHttpFetcher,
+	type PlaudHttpRequest,
+	type PlaudHttpResponse,
+	type PlaudTokenProvider,
+} from '../plaud-client-re';
+import type { PlaudRecordingId } from '../plaud-client';
+
+// Response helpers ----------------------------------------------------------
+
+function okJson(json: unknown): PlaudHttpResponse {
+	return { status: 200, json, text: JSON.stringify(json) };
+}
+
+function okText(text: string): PlaudHttpResponse {
+	return { status: 200, json: null, text };
+}
+
+const TRANSCRIPT_URL = 'https://s3.example/transcript?sig=abc';
+const SUMMARY_URL = 'https://s3.example/summary?sig=abc';
+const OUTLINE_URL = 'https://s3.example/outline?sig=abc';
+const AUDIO_URL = 'https://s3.example/audio?sig=abc';
+
+function detailEnvelope(
+	overrides: {
+		objects?: unknown[];
+		keywords?: unknown;
+	} = {},
+): PlaudHttpResponse {
+	const objects = overrides.objects ?? [
+		{
+			object_type: 'TRANSCRIPT',
+			mime_type: 'text/vnd.plaud.transcript+json',
+			content_url: TRANSCRIPT_URL,
+		},
+		{
+			object_type: 'SUMMARY',
+			mime_type: 'text/vnd.plaud.summary+markdown',
+			content_url: SUMMARY_URL,
+		},
+		{
+			object_type: 'OUTLINE',
+			mime_type: 'text/vnd.plaud.outline+json',
+			content_url: OUTLINE_URL,
+		},
+		{
+			object_type: 'AUDIO',
+			mime_type: 'audio/ogg',
+			content_url: AUDIO_URL,
+		},
+	];
+	return okJson({
+		status: 0,
+		data: {
+			node: {
+				name: 'Meeting',
+				folder: { folder_id: 'fld1', name: 'Recordings' },
+			},
+			meta: {
+				file_id: 'f1',
+				duration: 4803000,
+				keywords: overrides.keywords ?? ['alpha', 'pilot'],
+			},
+			objects,
+		},
+	});
+}
+
+function listEnvelope(
+	items: unknown[],
+	nextCursor: string | null = 'CURSOR2',
+): PlaudHttpResponse {
+	return okJson({
+		status: 0,
+		data: { items, next_cursor: nextCursor },
+	});
+}
+
+function listItem(
+	overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
+	return {
+		node_id: 'n_sp_f1',
+		parent_id: 'n_root',
+		file_id: 'f1',
+		name: 'Meeting',
+		duration_ms: 4803000,
+		created_at_show_ms: 1755200000000, // 2025-08 (unix ms)
+		updated_at_show_ms: 1755200500000,
+		version_ms: 1755200500000,
+		parent_folder: {
+			folder_id: 'fld1',
+			name: 'Recordings',
+			system_folder_type: 1,
+		},
+		status: 0,
+		file_task_status: 1,
+		...overrides,
+	};
+}
+
+const TRANSCRIPT_BODY = JSON.stringify([
+	{
+		content: 'Hello everyone.',
+		speaker: 'Charles',
+		original_speaker: 'Speaker 1',
+		start_time: 1000,
+		end_time: 2000,
+	},
+	{
+		content: 'Second segment.',
+		speaker: 'Mary',
+		original_speaker: 'Speaker 2',
+		start_time: 2000,
+		end_time: 4000,
+	},
+]);
+
+const OUTLINE_BODY = JSON.stringify([
+	{ start_time: 0, end_time: 5000, topic: 'Intro' },
+	{ start_time: 5000, end_time: 10000, topic: 'Demo' },
+]);
+
+const SUMMARY_BODY = '# Summary\n\n- Key point one\n- Key point two\n';
+
+// A routing fetcher that returns canned responses by URL substring and records
+// every request so header/scope assertions are possible.
+function routingFetcher(
+	routes: Array<{ match: string; response: PlaudHttpResponse }>,
+): {
+	fetcher: PlaudHttpFetcher;
+	requests: () => readonly PlaudHttpRequest[];
+	requestFor: (substr: string) => PlaudHttpRequest | undefined;
+} {
+	const captured: PlaudHttpRequest[] = [];
+	const fetcher: PlaudHttpFetcher = async (req) => {
+		captured.push(req);
+		const hit = routes.find((r) => req.url.includes(r.match));
+		if (hit === undefined) {
+			throw new Error(`no route for ${req.url}`);
+		}
+		return hit.response;
+	};
+	return {
+		fetcher,
+		requests: () => captured,
+		requestFor: (substr) => captured.find((r) => r.url.includes(substr)),
+	};
+}
+
+const TOKEN: PlaudTokenProvider = () => 'eyJfake.token.value';
+
+function makeClient(
+	fetcher: PlaudHttpFetcher,
+	options: Partial<PlaudV4ClientOptions> = {},
+	tokenProvider: PlaudTokenProvider = TOKEN,
+): PlaudV4Client {
+	return new PlaudV4Client(tokenProvider, fetcher, {
+		baseUrl: 'https://api-staging-apne1.plaud.ai',
+		workspaceId: 'ws_test',
+		deviceId: 'dev123',
+		...options,
+	});
+}
+
+const ID = 'f1' as PlaudRecordingId;
+
+// Listing -------------------------------------------------------------------
+
+describe('PlaudV4Client.listRecordingsPage', () => {
+	it('maps v4 list items to Recording and returns the cursor', async () => {
+		const { fetcher, requestFor } = routingFetcher([
+			{ match: '/recordings/all', response: listEnvelope([listItem()]) },
+		]);
+		const client = makeClient(fetcher);
+
+		const page = await client.listRecordingsPage();
+		expect(page.nextCursor).toBe('CURSOR2');
+		expect(page.recordings).toHaveLength(1);
+		const rec = page.recordings[0]!;
+		expect(rec.id).toBe('f1');
+		expect(rec.title).toBe('Meeting');
+		expect(rec.createdAt.getTime()).toBe(1755200000000);
+		expect(rec.endsAt.getTime()).toBe(1755200000000 + 4803000);
+		expect(rec.durationSeconds).toBe(4803);
+		expect(rec.tags).toEqual(['fld1']);
+		expect(rec.versionMs).toBe(1755200500000);
+		expect(rec.captureOffsetMinutes).toBeNull();
+		expect(rec.isTrashed).toBe(false);
+		// The v4 list does not carry availability; note-writer treats
+		// transcriptAvailable as a promise, so we must not over-advertise.
+		expect(rec.transcriptAvailable).toBe(false);
+		expect(rec.summaryAvailable).toBe(false);
+		// ...but both-false means UNKNOWN, so the import runner must fetch
+		// instead of skipping the recording as no-content.
+		expect(rec.contentAvailabilityUnknown).toBe(true);
+
+		// Scope + auth headers are present on the list call.
+		const req = requestFor('/recordings/all')!;
+		expect(req.headers['Authorization']).toBe('Bearer eyJfake.token.value');
+		expect(req.headers['x-scope-id']).toBe('ws_test');
+		expect(req.headers['x-scope-type']).toBe('workspace');
+		expect(req.headers['app-platform']).toBe('web');
+		expect(req.headers['x-device-id']).toBe('dev123');
+		expect(req.url).toContain('page_size=300');
+		expect(req.url).toContain('sort_by=created');
+	});
+
+	it('passes a cursor and maps sortBy=edit_time to updated', async () => {
+		const { fetcher, requestFor } = routingFetcher([
+			{ match: '/recordings/all', response: listEnvelope([], null) },
+		]);
+		const client = makeClient(fetcher);
+
+		const page = await client.listRecordingsPage({
+			cursor: 'ABC',
+			sortBy: 'edit_time',
+		});
+		expect(page.nextCursor).toBeNull();
+		const req = requestFor('/recordings/all')!;
+		expect(req.url).toContain('cursor=ABC');
+		expect(req.url).toContain('sort_by=updated');
+	});
+
+	it('listRecordings returns just the recordings array', async () => {
+		const { fetcher } = routingFetcher([
+			{ match: '/recordings/all', response: listEnvelope([listItem()]) },
+		]);
+		const client = makeClient(fetcher);
+		const recs = await client.listRecordings();
+		expect(recs).toHaveLength(1);
+		expect(recs[0]!.id).toBe('f1');
+	});
+
+	it('getFolderCatalog surfaces folders discovered while listing', async () => {
+		const { fetcher } = routingFetcher([
+			{ match: '/recordings/all', response: listEnvelope([listItem()]) },
+		]);
+		const client = makeClient(fetcher);
+		await client.listRecordingsPage();
+		const folders = await client.getFolderCatalog();
+		expect(folders).toEqual([{ id: 'fld1', name: 'Recordings' }]);
+	});
+
+	it('rejects a folderId filter loudly', async () => {
+		const { fetcher } = routingFetcher([
+			{ match: '/recordings/all', response: listEnvelope([]) },
+		]);
+		const client = makeClient(fetcher);
+		await expect(
+			client.listRecordingsPage({ folderId: 'x' }),
+		).rejects.toBeInstanceOf(PlaudApiError);
+	});
+
+	it('rejects a non-zero skip (v4 pages by cursor, not offset)', async () => {
+		const { fetcher } = routingFetcher([
+			{ match: '/recordings/all', response: listEnvelope([listItem()]) },
+		]);
+		const client = makeClient(fetcher);
+		await expect(
+			client.listRecordingsPage({ skip: 50 }),
+		).rejects.toBeInstanceOf(PlaudApiError);
+	});
+
+	it('accepts skip: 0 (first page)', async () => {
+		const { fetcher } = routingFetcher([
+			{ match: '/recordings/all', response: listEnvelope([listItem()]) },
+		]);
+		const client = makeClient(fetcher);
+		const page = await client.listRecordingsPage({ skip: 0 });
+		expect(page.recordings).toHaveLength(1);
+	});
+
+	it('throws on a malformed items field instead of reporting empty', async () => {
+		const { fetcher } = routingFetcher([
+			{
+				match: '/recordings/all',
+				response: okJson({ status: 0, data: { items: null } }),
+			},
+		]);
+		const client = makeClient(fetcher);
+		await expect(client.listRecordingsPage()).rejects.toMatchObject({
+			name: 'PlaudParseError',
+		});
+	});
+});
+
+// Detail: transcript / summary / outline ------------------------------------
+
+describe('PlaudV4Client.getTranscriptAndSummary', () => {
+	function detailRoutes() {
+		return routingFetcher([
+			{ match: '/files/detail/', response: detailEnvelope() },
+			{ match: 'transcript', response: okText(TRANSCRIPT_BODY) },
+			{ match: 'summary', response: okText(SUMMARY_BODY) },
+			{ match: 'outline', response: okText(OUTLINE_BODY) },
+		]);
+	}
+
+	it('assembles transcript, summary and chapters from objects[]', async () => {
+		const { fetcher } = detailRoutes();
+		const client = makeClient(fetcher);
+
+		const result = await client.getTranscriptAndSummary(ID);
+
+		expect(result.transcript).not.toBeNull();
+		expect(result.transcript!.segments).toHaveLength(2);
+		expect(result.transcript!.segments[0]!.speaker).toBe('Charles');
+		expect(result.transcript!.segments[0]!.startSeconds).toBe(1);
+		expect(result.transcript!.segments[0]!.endSeconds).toBe(2);
+		expect(result.transcript!.segments[0]!.text).toBe('Hello everyone.');
+
+		expect(result.summary).not.toBeNull();
+		expect(result.summary!.text).toContain('# Summary');
+
+		expect(result.chapters).toBeDefined();
+		expect(result.chapters).toHaveLength(2);
+		expect(result.chapters![0]!.title).toBe('Intro');
+		expect(result.chapters![0]!.startSeconds).toBe(0);
+		expect(result.chapters![0]!.endSeconds).toBe(5);
+
+		expect(result.aiKeywords).toEqual(['alpha', 'pilot']);
+	});
+
+	it('prefers POLISHED_TRANSCRIPT when it has a content_url', async () => {
+		const { fetcher } = routingFetcher([
+			{
+				match: '/files/detail/',
+				response: detailEnvelope({
+					objects: [
+						{
+							object_type: 'TRANSCRIPT',
+							mime_type: 'text/vnd.plaud.transcript+json',
+							content_url: 'https://s3.example/raw?sig=1',
+						},
+						{
+							object_type: 'POLISHED_TRANSCRIPT',
+							mime_type:
+								'text/vnd.plaud.polished_transcript+json',
+							content_url: 'https://s3.example/polished?sig=1',
+						},
+					],
+				}),
+			},
+			{ match: 'polished', response: okText(TRANSCRIPT_BODY) },
+			{
+				match: 'raw',
+				response: okText(
+					'[{"content":"WRONG","start_time":0,"end_time":1}]',
+				),
+			},
+		]);
+		const client = makeClient(fetcher);
+		const result = await client.getTranscriptAndSummary(ID);
+		expect(result.transcript!.segments[0]!.text).toBe('Hello everyone.');
+	});
+
+	it('returns null transcript/summary when their content_url is absent', async () => {
+		const { fetcher } = routingFetcher([
+			{
+				match: '/files/detail/',
+				response: detailEnvelope({
+					objects: [
+						{
+							object_type: 'POLISHED_TRANSCRIPT',
+							mime_type:
+								'text/vnd.plaud.polished_transcript+json',
+							content_url: '',
+						},
+					],
+					keywords: [],
+				}),
+			},
+		]);
+		const client = makeClient(fetcher);
+		const result = await client.getTranscriptAndSummary(ID);
+		expect(result.transcript).toBeNull();
+		expect(result.summary).toBeNull();
+		expect(result.chapters).toBeUndefined();
+		expect(result.aiKeywords).toBeUndefined();
+	});
+
+	it('throws (does not return empty) when an advertised content_url fails', async () => {
+		// A present-but-failing content_url must NOT be treated as "no content",
+		// or a transient failure could overwrite an existing note's transcript.
+		const { fetcher } = routingFetcher([
+			{ match: '/files/detail/', response: detailEnvelope() },
+			{
+				match: 'transcript',
+				response: { status: 503, json: null, text: 'upstream down' },
+			},
+			{ match: 'summary', response: okText(SUMMARY_BODY) },
+			{ match: 'outline', response: okText(OUTLINE_BODY) },
+		]);
+		const client = makeClient(fetcher);
+		await expect(client.getTranscriptAndSummary(ID)).rejects.toBeInstanceOf(
+			PlaudApiError,
+		);
+	});
+
+	it('throws when an advertised summary_url returns a 403 (expired)', async () => {
+		const { fetcher } = routingFetcher([
+			{ match: '/files/detail/', response: detailEnvelope() },
+			{ match: 'transcript', response: okText(TRANSCRIPT_BODY) },
+			{
+				match: 'summary',
+				response: { status: 403, json: null, text: 'expired' },
+			},
+			{ match: 'outline', response: okText(OUTLINE_BODY) },
+		]);
+		const client = makeClient(fetcher);
+		await expect(client.getTranscriptAndSummary(ID)).rejects.toBeInstanceOf(
+			PlaudApiError,
+		);
+	});
+});
+
+// Audio ---------------------------------------------------------------------
+
+describe('PlaudV4Client.getAudioTempUrl', () => {
+	it('returns the AUDIO object content_url', async () => {
+		const { fetcher } = routingFetcher([
+			{ match: '/files/detail/', response: detailEnvelope() },
+		]);
+		const client = makeClient(fetcher);
+		const url = await client.getAudioTempUrl(ID);
+		expect(url).toBe(AUDIO_URL);
+	});
+
+	it('reuses the cached detail (single detail fetch for detail+audio)', async () => {
+		const { fetcher, requests } = routingFetcher([
+			{ match: '/files/detail/', response: detailEnvelope() },
+			{ match: 'transcript', response: okText(TRANSCRIPT_BODY) },
+			{ match: 'summary', response: okText(SUMMARY_BODY) },
+			{ match: 'outline', response: okText(OUTLINE_BODY) },
+		]);
+		const client = makeClient(fetcher);
+		await client.getTranscriptAndSummary(ID);
+		await client.getAudioTempUrl(ID);
+		const detailCalls = requests().filter((r) =>
+			r.url.includes('/files/detail/'),
+		);
+		expect(detailCalls).toHaveLength(1);
+	});
+
+	it('returns null when there is no AUDIO object', async () => {
+		const { fetcher } = routingFetcher([
+			{
+				match: '/files/detail/',
+				response: detailEnvelope({ objects: [] }),
+			},
+		]);
+		const client = makeClient(fetcher);
+		expect(await client.getAudioTempUrl(ID)).toBeNull();
+	});
+
+	it('refetches the detail after the cache TTL expires', async () => {
+		const nowSpy = jest.spyOn(Date, 'now');
+		try {
+			const { fetcher, requests } = routingFetcher([
+				{ match: '/files/detail/', response: detailEnvelope() },
+			]);
+			const client = makeClient(fetcher);
+			nowSpy.mockReturnValue(1_000_000);
+			await client.getAudioTempUrl(ID);
+			// Advance past the 60s TTL so the memo is considered stale.
+			nowSpy.mockReturnValue(1_000_000 + 61_000);
+			await client.getAudioTempUrl(ID);
+			const detailCalls = requests().filter((r) =>
+				r.url.includes('/files/detail/'),
+			);
+			expect(detailCalls).toHaveLength(2);
+		} finally {
+			nowSpy.mockRestore();
+		}
+	});
+});
+
+// Auth / errors -------------------------------------------------------------
+
+describe('PlaudV4Client auth and error handling', () => {
+	it('throws not_configured when the token provider returns null', async () => {
+		const { fetcher } = routingFetcher([
+			{ match: '/recordings/all', response: listEnvelope([]) },
+		]);
+		const client = makeClient(fetcher, {}, () => null);
+		await expect(client.listRecordings()).rejects.toMatchObject({
+			name: 'PlaudAuthError',
+			reason: 'not_configured',
+		});
+	});
+
+	it('reports not_configured when signed in but no workspace is captured', async () => {
+		const { fetcher } = routingFetcher([
+			{ match: '/recordings/all', response: listEnvelope([]) },
+		]);
+		// A valid token but an empty workspace: the sign-in predates workspace
+		// capture. This is a configuration state, not a retryable network fault.
+		const client = makeClient(fetcher, { workspaceId: '' });
+		await expect(client.listRecordings()).rejects.toMatchObject({
+			name: 'PlaudAuthError',
+			reason: 'not_configured',
+		});
+	});
+
+	it('maps a 401 to a token_rejected PlaudAuthError', async () => {
+		const { fetcher } = routingFetcher([
+			{
+				match: '/recordings/all',
+				response: { status: 401, json: null, text: '' },
+			},
+		]);
+		const client = makeClient(fetcher);
+		await expect(client.listRecordings()).rejects.toMatchObject({
+			name: 'PlaudAuthError',
+			reason: 'token_rejected',
+		});
+	});
+
+	it('routes a negative in-band status to an error', async () => {
+		const { fetcher } = routingFetcher([
+			{
+				match: '/recordings/all',
+				response: okJson({
+					status: -419,
+					msg: 'workspace token expired',
+				}),
+			},
+		]);
+		const client = makeClient(fetcher);
+		await expect(client.listRecordings()).rejects.toBeInstanceOf(
+			PlaudAuthError,
+		);
+	});
+
+	it('updateTitle is not yet supported on v4', async () => {
+		const { fetcher } = routingFetcher([]);
+		const client = makeClient(fetcher);
+		await expect(
+			client.updateTitle(ID, 'New title'),
+		).rejects.toBeInstanceOf(PlaudApiError);
+	});
+});
+
+// Credential safety: base-URL host allowlist --------------------------------
+
+describe('PlaudV4Client base URL host guard', () => {
+	// The host is validated per request (before the bearer is attached), not at
+	// construction, so a host captured after construction is re-checked.
+	it('accepts a regional plaud.ai host', async () => {
+		const { fetcher } = routingFetcher([
+			{
+				match: '/recordings/all',
+				response: listEnvelope([listItem()]),
+			},
+		]);
+		const client = makeClient(fetcher, {
+			baseUrl: 'https://api-staging-apne1.plaud.ai',
+		});
+		await expect(client.listRecordings()).resolves.toHaveLength(1);
+	});
+
+	it('rejects a non-plaud.ai host so the token is never sent there', async () => {
+		const { fetcher } = routingFetcher([]);
+		const client = makeClient(fetcher, {
+			baseUrl: 'https://evil.example.com',
+		});
+		await expect(client.listRecordings()).rejects.toBeInstanceOf(
+			PlaudApiError,
+		);
+	});
+
+	it('rejects a lookalike host that merely contains plaud.ai', async () => {
+		const { fetcher } = routingFetcher([]);
+		const client = makeClient(fetcher, {
+			baseUrl: 'https://plaud.ai.evil.com',
+		});
+		await expect(client.listRecordings()).rejects.toBeInstanceOf(
+			PlaudApiError,
+		);
+	});
+
+	it('rejects a non-https scheme', async () => {
+		const { fetcher } = routingFetcher([]);
+		const client = makeClient(fetcher, { baseUrl: 'http://api.plaud.ai' });
+		await expect(client.listRecordings()).rejects.toBeInstanceOf(
+			PlaudApiError,
+		);
+	});
+
+	it('reads the base URL from a provider each call (host captured post-construction)', async () => {
+		let host = '';
+		const { fetcher, requestFor } = routingFetcher([
+			{
+				match: '/recordings/all',
+				response: listEnvelope([listItem()]),
+			},
+		]);
+		const client = makeClient(fetcher, { baseUrl: () => host });
+		// Empty host fails the allowlist before any bearer is sent.
+		await expect(client.listRecordings()).rejects.toBeInstanceOf(
+			PlaudApiError,
+		);
+		// Capture happens; the provider now returns a real host, no rebuild.
+		host = 'https://api-staging-apne1.plaud.ai';
+		await expect(client.listRecordings()).resolves.toHaveLength(1);
+		expect(requestFor('/recordings/all')!.url).toContain(
+			'api-staging-apne1.plaud.ai',
+		);
+	});
+
+	it('reads the workspace id from a provider each call', async () => {
+		let ws = '';
+		const { fetcher, requestFor } = routingFetcher([
+			{
+				match: '/recordings/all',
+				response: listEnvelope([listItem()]),
+			},
+		]);
+		const client = makeClient(fetcher, { workspaceId: () => ws });
+		await expect(client.listRecordings()).rejects.toBeInstanceOf(
+			PlaudApiError,
+		);
+		ws = 'ws_captured';
+		await client.listRecordings();
+		expect(requestFor('/recordings/all')!.headers['x-scope-id']).toBe(
+			'ws_captured',
+		);
+	});
+});
+
+describe('embedV4SummaryImages', () => {
+	const CID = 'c_0123456789abcdef0123456789abcdef';
+	const SIGNED = 'https://api-apne1.staging.theplaud.com/x/pic.png?sig=abc';
+	const map = { [CID]: SIGNED };
+
+	it('rewrites a plain-link image marker to a real image embed', () => {
+		// The v4 summary embeds an image as a link whose URL carries the content
+		// id; the mapping resolves that id to the pre-signed image URL.
+		const summary = `intro\n\n[](https://web.example/view?id=${CID})\n\nrest`;
+		expect(embedV4SummaryImages(summary, map)).toBe(
+			`intro\n\n![](${SIGNED})\n\nrest`,
+		);
+	});
+
+	it('keeps alt text and rewrites an existing image marker', () => {
+		const summary = `![poster](https://web.example/view?id=${CID})`;
+		expect(embedV4SummaryImages(summary, map)).toBe(`![poster](${SIGNED})`);
+	});
+
+	it('leaves a marker whose id is not in the map untouched', () => {
+		const summary =
+			'![x](https://web.example/view?id=c_ffffffffffffffffffffffffffffffff)';
+		expect(embedV4SummaryImages(summary, map)).toBe(summary);
+	});
+
+	it('is a no-op for an empty map or a summary with no markers', () => {
+		expect(embedV4SummaryImages('plain text', map)).toBe('plain text');
+		expect(embedV4SummaryImages(`[](https://x/view?id=${CID})`, {})).toBe(
+			`[](https://x/view?id=${CID})`,
+		);
+	});
+});

@@ -8,10 +8,12 @@ import {
 	type RequestUrlResponse,
 } from 'obsidian';
 import {
-	ReverseEngineeredPlaudClient,
 	PlaudAuthError,
+	ReverseEngineeredPlaudClient,
 	type PlaudHttpFetcher,
 } from './plaud-client-re';
+import { PlaudV4Client } from './plaud-client-v4';
+import { createSequentialPageFetcher } from './list-paging';
 import { ImportModal, classifyError } from './import-modal';
 import { BufferedDebugLogger } from './debug-logger';
 import { clearPlaudLoginSession, openPlaudLogin } from './plaud-login';
@@ -34,6 +36,8 @@ import {
 	isValidReplacementChar,
 	sanitizeFilename,
 	zoneOffsetMinutes,
+	formatPlaudWebUrl,
+	PLAUD_WEB_URL_V3,
 	type RenameFileFn,
 } from './note-writer';
 import {
@@ -43,11 +47,14 @@ import {
 	repairLegacyCardEmbeds,
 } from './attachment-importer';
 import {
-	buildPlaudIdIndex,
-	buildPlaudIdIndexWithColdCheck,
+	buildImportedIndex,
+	buildImportedIndexWithColdCheck,
+	canonicalPlaudId,
 	outputFolderCacheIsCold,
-	type ImportedRecord,
+	type ImportedIndex,
 } from './vault-index';
+import { planMigration, type MigrationPlan } from './migration-plan';
+import { MigrationPreviewModal } from './migration-modal';
 import { runImport } from './import-runner';
 import {
 	PAGE_SIZE,
@@ -103,7 +110,12 @@ const LEGACY_REFRESH_SECRET_ID = 'plaud-importer-refresh-token';
 
 // Plaud web app, opened in the system browser for the browser-based sign-in
 // flow (where Google/Apple SSO work, unlike an embedded webview).
-const PLAUD_WEB_URL = 'https://web.plaud.ai';
+const PLAUD_WEB_URL = 'https://beta.plaud.ai';
+
+// The pre-beta portal default. A data.json that still pins this (from a build
+// before the portal left alpha) is migrated to the current default on load, so
+// a user who never touched the setting is not stranded on the retired portal.
+const RETIRED_ALPHA_PORTAL_URL = 'https://alpha.plaud.ai';
 
 // Standalone HTML page opened in the system browser for one-time bookmark
 // setup. It offers the sign-in bookmarklet (token-candidates.ts) as a
@@ -214,7 +226,7 @@ async function copyToClipboard(
 
 export default class PlaudImporterPlugin extends Plugin {
 	settings!: PlaudImporterSettings;
-	private client?: ReverseEngineeredPlaudClient;
+	private client?: PlaudClient;
 	// Single logger instance shared by the client and the settings tab.
 	// The `enabled` flag is toggled in place by the settings toggle so
 	// changes take effect immediately without reinstantiating the client.
@@ -326,15 +338,42 @@ export default class PlaudImporterPlugin extends Plugin {
 		// A THROWAWAY client per probe, built around a closure returning that one
 		// candidate: the real client reads secretStorage, and nothing may be
 		// written to storage before it is validated.
-		probeCandidate: async (token, baseUrl, onBaseUrlChanged) => {
+		probeCandidate: async (token, baseUrl, onBaseUrlChanged, v4Scope) => {
+			// Probe the SAME portal the capture came from. A v4 (new portal)
+			// capture surfaces a workspace id; validate that token against the
+			// v4 endpoint under THIS capture's scope, never plugin-global state,
+			// so overlapping captures never probe one candidate against
+			// another's workspace. A capture with no workspace scope is a prod
+			// (v3) sign-in: probe the prod client, which can learn a regional
+			// host via onBaseUrlChanged. Deciding the portal from the capture's
+			// own scope (not the stored setting) avoids a stale prior scope
+			// misrouting a fresh sign-in.
+			if ((v4Scope.workspaceId ?? '').trim().length > 0) {
+				const probe = new PlaudV4Client(() => token, obsidianFetcher, {
+					debugLogger: this.debugLogger,
+					baseUrl,
+					workspaceId: () =>
+						v4Scope.workspaceId ?? this.settings.plaudWorkspaceId,
+					deviceId: () => {
+						// Match commitCapturedToken's null/undefined rule:
+						// undefined = "not observed" (fall back to the stored id);
+						// null = "observed absent" (this sign-in confirmed no
+						// device, so send none rather than a stale id that could
+						// get a valid token's probe rejected); a string is used.
+						const d =
+							v4Scope.deviceId === undefined
+								? this.settings.plaudDeviceId
+								: (v4Scope.deviceId ?? '');
+						return d.length > 0 ? d : undefined;
+					},
+				});
+				await probe.listRecordings({ limit: 1 });
+				return;
+			}
 			const probe = new ReverseEngineeredPlaudClient(
 				() => token,
 				obsidianFetcher,
-				{
-					debugLogger: this.debugLogger,
-					baseUrl,
-					onBaseUrlChanged,
-				},
+				{ debugLogger: this.debugLogger, baseUrl, onBaseUrlChanged },
 			);
 			await probe.listRecordings({ limit: 1 });
 		},
@@ -366,6 +405,8 @@ export default class PlaudImporterPlugin extends Plugin {
 	// DEPRECATED one-time #52 repair: guards against a double-invoke running two
 	// bulk vault scans at once. REMOVE with the repair command.
 	private repairInFlight = false;
+	// Single-flight guard for the id-migration command (bulk frontmatter writes).
+	private migrateIdsInFlight = false;
 	// Sticky action notices (e.g. the auth-pause "Reconnect") tracked so
 	// onunload can hide any still on screen before their click handlers can run
 	// plugin work after the plugin is gone.
@@ -420,6 +461,18 @@ export default class PlaudImporterPlugin extends Plugin {
 			name: 'Backfill version markers for auto-sync',
 			callback: () => {
 				void this.backfillVersionMarkers();
+			},
+		});
+
+		this.addCommand({
+			id: 'migrate-recording-ids',
+			name: 'Migrate recording ids after a portal change',
+			callback: () => {
+				new MigrationPreviewModal(this.app, {
+					computePlan: () => this.computeMigrationPlan(),
+					applyPlan: (plan) => this.applyMigrationPlan(plan),
+					savePlan: (plan) => this.saveMigrationPlan(plan),
+				}).open();
 			},
 		});
 
@@ -595,20 +648,8 @@ export default class PlaudImporterPlugin extends Plugin {
 			// Construct the client once. It reads the token fresh on every
 			// API call via the provider, so settings changes take effect
 			// immediately with no reinstantiation.
-			this.client = new ReverseEngineeredPlaudClient(
-				() => this.app.secretStorage.getSecret(this.settings.secretId),
-				obsidianFetcher,
-				{
-					debugLogger: this.debugLogger,
-					baseUrl: this.settings.apiBaseUrl,
-					// Persist the regional host the first time Plaud redirects
-					// us, so later sessions skip the round-trip.
-					onBaseUrlChanged: (url) => {
-						this.settings.apiBaseUrl = url;
-						void this.saveSettings();
-					},
-				},
-			);
+			// Construct the client for this account's portal (see buildClient).
+			this.buildClient();
 			// The client exists now, so a scheduled tick can run. Starts the
 			// timer only when auto-sync is enabled; deferred first run is inside.
 			this.reconcileAutoSync();
@@ -631,6 +672,90 @@ export default class PlaudImporterPlugin extends Plugin {
 				});
 			}
 		});
+	}
+
+	/**
+	 * True when this account is signed in to the new Plaud portal (v4), decided
+	 * by whether sign-in captured a workspace id. The v4 API scopes every call
+	 * to a workspace via `x-scope-id`, so a v4 session always has one and a v3
+	 * (prod) session never does. Used to pick the client and the sign-in probe.
+	 * Clearing sign-in clears the workspace id, so this returns false again.
+	 */
+	private usesV4Portal(): boolean {
+		return this.settings.plaudWorkspaceId.trim().length > 0;
+	}
+
+	/**
+	 * Origin of the web app for this account's recording permalinks
+	 * (`plaud-url`, the "Open in Plaud" link). A v3 account links to the prod
+	 * portal; a v4 account links to the same web app it signs into, so the link
+	 * opens the recording in the portal that actually hosts it. Falls back to the
+	 * configured default portal if the stored sign-in URL is unparseable.
+	 */
+	private webBaseUrl(): string {
+		if (!this.usesV4Portal()) {
+			return PLAUD_WEB_URL_V3;
+		}
+		try {
+			return new URL(this.settings.signInPortalUrl).origin;
+		} catch {
+			return PLAUD_WEB_URL;
+		}
+	}
+
+	// Portal type of the currently constructed client, so buildClient can rebuild
+	// only when a sign-in flips v3<->v4.
+	private clientIsV4 = false;
+
+	/**
+	 * Construct this.client for the account's current portal (see usesV4Portal).
+	 * Called at startup and again after a sign-in whose capture flips the portal,
+	 * so a fresh install that signs in to the new portal uses the v4 client at
+	 * once, with no reload. Both clients read the token, host, and scope fresh
+	 * each call via providers.
+	 */
+	private buildClient(): void {
+		const tokenProvider = () =>
+			this.app.secretStorage.getSecret(this.settings.secretId);
+		this.clientIsV4 = this.usesV4Portal();
+		if (this.clientIsV4) {
+			// v4 has no region redirect, so no onBaseUrlChanged: the host comes
+			// from the captured domain, read fresh each call.
+			this.client = new PlaudV4Client(tokenProvider, obsidianFetcher, {
+				debugLogger: this.debugLogger,
+				baseUrl: () => this.settings.apiBaseUrl,
+				workspaceId: () => this.settings.plaudWorkspaceId,
+				deviceId: () =>
+					this.settings.plaudDeviceId.length > 0
+						? this.settings.plaudDeviceId
+						: undefined,
+			});
+			return;
+		}
+		this.client = new ReverseEngineeredPlaudClient(
+			tokenProvider,
+			obsidianFetcher,
+			{
+				debugLogger: this.debugLogger,
+				baseUrl: this.settings.apiBaseUrl,
+				// Persist the regional host the first time Plaud redirects us, so
+				// later sessions skip the round-trip.
+				onBaseUrlChanged: (url) => {
+					this.settings.apiBaseUrl = url;
+					void this.saveSettings();
+				},
+			},
+		);
+	}
+
+	/**
+	 * Rebuild the client after the API region setting changes. The v4 client
+	 * reads the host fresh via a provider, but the prod (v3) client snapshots it
+	 * at construction, so an edited region would not take effect until a reload
+	 * without this. No-op safe before the client is first built.
+	 */
+	rebuildClientForHostChange(): void {
+		this.buildClient();
 	}
 
 	onunload() {
@@ -1393,7 +1518,7 @@ export default class PlaudImporterPlugin extends Plugin {
 	private async importAutoSyncCandidates(
 		newRecs: readonly Recording[],
 		changedRecs: readonly Recording[],
-		index: Map<PlaudRecordingId, ImportedRecord>,
+		index: ImportedIndex,
 	): Promise<{ imported: number; updated: number }> {
 		const client = this.client;
 		if (client === undefined) return { imported: 0, updated: 0 };
@@ -1425,8 +1550,13 @@ export default class PlaudImporterPlugin extends Plugin {
 			new NoteWriter(this.app.vault, {
 				...options,
 				onDuplicate: policy,
+				webBaseUrl: this.webBaseUrl(),
+				// Canonicalize the lookup: byId is keyed by canonical id (of_
+				// stripped), so a v4 `of_<id>` recording matches its v3-imported
+				// note. Matches findImportedNote and the byId keying.
 				existingPathForPlaudId: (id) =>
-					index.get(id as PlaudRecordingId)?.path ?? null,
+					index.byId.get(canonicalPlaudId(id) as PlaudRecordingId)
+						?.path ?? null,
 			});
 		const runBatch = async (
 			recordings: readonly Recording[],
@@ -1506,10 +1636,10 @@ export default class PlaudImporterPlugin extends Plugin {
 		this.autoSyncTickInFlight = true;
 		try {
 			// One pass: cold-cache guard and index build fused (see
-			// buildPlaudIdIndexWithColdCheck). A cold cache would make the index
+			// buildImportedIndexWithColdCheck). A cold cache would make the index
 			// incomplete and every existing note look new, so skip; a later tick
 			// with a warm cache proceeds.
-			const indexState = buildPlaudIdIndexWithColdCheck(
+			const indexState = buildImportedIndexWithColdCheck(
 				this.app,
 				this.settings.outputFolder,
 			);
@@ -1537,8 +1667,8 @@ export default class PlaudImporterPlugin extends Plugin {
 				// tick from settings so a device blocked/unblocked mid-session takes
 				// effect on the next run, matching the ignore set above.
 				sourceFilter: buildSourceFilter(this.settings),
-				listPage: (skip, limit) =>
-					client.listRecordings({ sortBy: 'edit_time', skip, limit }),
+				// Feature-detects the client: cursor paging on v4, offset on prod.
+				listPage: createSequentialPageFetcher(client, 'edit_time'),
 				buildIndex: () => index,
 				// Reuse the index this tick already built (and cold-cache-guarded)
 				// so classification and the writer's dedup share one snapshot.
@@ -1993,7 +2123,7 @@ export default class PlaudImporterPlugin extends Plugin {
 			return;
 		}
 		if (outputFolderCacheIsCold(this.app, this.settings.outputFolder)) {
-			// A cold cache would make buildPlaudIdIndex return a partial map, so
+			// A cold cache would make buildImportedIndex return a partial map, so
 			// the backfill would silently miss notes ("backfilled 0"). Ask the
 			// user to retry once Obsidian has finished loading.
 			new Notice(
@@ -2007,24 +2137,31 @@ export default class PlaudImporterPlugin extends Plugin {
 			// Build id -> version_ms from the full list (bounded page loop).
 			const MAX_BACKFILL_PAGES = 500;
 			const versionById = new Map<PlaudRecordingId, number>();
+			const listPage = createSequentialPageFetcher(client, 'edit_time');
 			let skip = 0;
 			let reachedListEnd = false;
 			for (let page = 0; page < MAX_BACKFILL_PAGES; page++) {
 				// Stop if the plugin unloaded mid-scan (finally clears the gate).
 				if (this.disposed) return;
-				const recs = await client.listRecordings({
-					sortBy: 'edit_time',
-					skip,
-					limit: PAGE_SIZE,
-				});
+				const recs = await listPage(skip, PAGE_SIZE);
 				if (recs.length === 0) {
 					reachedListEnd = true;
 					break;
 				}
 				for (const r of recs) {
+					// Key by canonical id: index.byId (queried below) is keyed by
+					// canonicalPlaudId, so a v4 `of_<id>` recording must be stored
+					// under the bare id or migrated notes never match.
 					if (r.versionMs !== undefined)
-						versionById.set(r.id, r.versionMs);
+						versionById.set(
+							canonicalPlaudId(r.id) as PlaudRecordingId,
+							r.versionMs,
+						);
 				}
+				// A page shorter than the requested size marks the end of the
+				// list. This holds for both clients: the offset client returns a
+				// short final page, and createSequentialPageFetcher buffers the
+				// cursor client so it too returns a short page only at the end.
 				if (recs.length < PAGE_SIZE) {
 					reachedListEnd = true;
 					break;
@@ -2032,12 +2169,12 @@ export default class PlaudImporterPlugin extends Plugin {
 				skip += recs.length;
 			}
 
-			const index = buildPlaudIdIndex(
+			const index = buildImportedIndex(
 				this.app,
 				this.settings.outputFolder,
 			);
 			let written = 0;
-			for (const [id, record] of index) {
+			for (const [id, record] of index.byId) {
 				// Stop writing frontmatter if the plugin unloaded mid-backfill.
 				if (this.disposed) return;
 				if (record.versionMs !== undefined) continue; // already has a marker
@@ -2095,6 +2232,148 @@ export default class PlaudImporterPlugin extends Plugin {
 			// auto-sync permanently blocked.
 			this.autoSyncTickInFlight = false;
 		}
+	}
+
+	/**
+	 * Heal stale recording ids after a portal change. The v4 portal re-issued
+	 * every recording id, so a note imported under an older portal carries an id
+	 * that no longer matches the same meeting in the current list. This walks the
+	 * current recordings, matches each to an existing note by its id-INDEPENDENT
+	 * stable key (see stable-key.ts), and rewrites that note's plaud-id /
+	 * plaud-url / plaud-version-ms to the current values. After running, ordinary
+	 * id dedup recognizes every note again, so a re-import skips instead of
+	 * colliding or duplicating.
+	 *
+	 * A precise start-time match heals outright. An older note that stored only a
+	 * date (no start-time) heals on a date+duration match, but ONLY when exactly
+	 * one recording carries that day-key (the note index already guarantees one
+	 * note per key), so it can never point a note at the wrong meeting. A note
+	 * already on the current id is left alone, so the command is idempotent and
+	 * safe to re-run. Only heals notes whose meeting is in the CURRENT recording
+	 * list; a note whose meeting is not in the signed-in account is left as-is.
+	 * User-invoked.
+	 */
+	private async computeMigrationPlan(): Promise<MigrationPlan> {
+		const client = this.client;
+		if (client === undefined) {
+			throw new Error('Sign in to Plaud before migrating recording ids.');
+		}
+		// Pull the full current list (bounded page loop, like the backfill).
+		const MAX_PAGES = 500;
+		const recordings: Recording[] = [];
+		const listPage = createSequentialPageFetcher(client, 'edit_time');
+		let skip = 0;
+		for (let page = 0; page < MAX_PAGES; page++) {
+			if (this.disposed) break;
+			const recs = await listPage(skip, PAGE_SIZE);
+			if (recs.length === 0) break;
+			recordings.push(...recs);
+			if (recs.length < PAGE_SIZE) break;
+			skip += recs.length;
+		}
+		const index = buildImportedIndex(this.app, this.settings.outputFolder);
+		const versionById = new Map<string, number>();
+		for (const r of recordings) {
+			if (r.versionMs !== undefined) versionById.set(r.id, r.versionMs);
+		}
+		return planMigration(recordings, index, (rec) =>
+			versionById.get(rec.id),
+		);
+	}
+
+	/**
+	 * Apply a migration plan: rewrite each note's stale plaud-id (plus plaud-url
+	 * and plaud-version-ms) to the current one, and stamp `plaud-migrated-from`
+	 * with the old id so the note carries a durable record that it was migrated,
+	 * and from what. Single-flight; returns how many notes were rewritten.
+	 */
+	private async applyMigrationPlan(plan: MigrationPlan): Promise<number> {
+		if (this.migrateIdsInFlight) {
+			new Notice('Plaud importer: id migration is already running.');
+			return 0;
+		}
+		this.migrateIdsInFlight = true;
+		let written = 0;
+		// Migration heals v3 ids to their v4 form, so the account is on v4 and
+		// the healed permalink points at the v4 web portal.
+		const webBase = this.webBaseUrl();
+		try {
+			for (const heal of plan.heals) {
+				if (this.disposed) break;
+				const file = this.app.vault.getFileByPath(heal.notePath);
+				if (!(file instanceof TFile)) continue;
+				let applied = false;
+				await this.app.fileManager.processFrontMatter(
+					file,
+					(fm: Record<string, unknown>) => {
+						// Revalidate against the live frontmatter: if the note's
+						// plaud-id changed since the preview was computed (a
+						// re-import or auto-sync ran between preview and Apply),
+						// the plan is stale for this note. Skip rather than
+						// overwrite the newer id with the plan's target and stamp
+						// a wrong migrated-from; the user can re-run for a fresh
+						// plan.
+						const currentId =
+							typeof fm['plaud-id'] === 'string'
+								? fm['plaud-id']
+								: '';
+						if (currentId !== heal.fromId) {
+							return;
+						}
+						fm['plaud-migrated-from'] = heal.fromId;
+						fm['plaud-id'] = heal.toId;
+						fm['plaud-url'] = formatPlaudWebUrl(heal.toId, webBase);
+						if (heal.versionMs !== undefined) {
+							fm['plaud-version-ms'] = heal.versionMs;
+						}
+						applied = true;
+					},
+				);
+				if (applied) written += 1;
+			}
+		} finally {
+			this.migrateIdsInFlight = false;
+		}
+		return written;
+	}
+
+	/**
+	 * Write the full migration plan to a markdown note so a user can review every
+	 * matched note and recording (not just the first 200 the modal shows) before
+	 * applying. Returns the note path. The note has no plaud-id, so the index
+	 * never picks it up.
+	 */
+	private async saveMigrationPlan(plan: MigrationPlan): Promise<string> {
+		// Escape backslash FIRST, then the table separator, so a title with a
+		// literal backslash does not corrupt the markdown table cell.
+		const esc = (s: string): string =>
+			s.replace(/\\/g, '\\\\').replace(/\|/g, '\\|');
+		const lines: string[] = [
+			'# Plaud recording id migration plan',
+			'',
+			`- Recordings in the signed-in account: ${plan.recordingCount}`,
+			`- Imported notes in the output folder: ${plan.noteCount}`,
+			`- Notes that would be updated: ${plan.heals.length}`,
+			`- Already on the current id: ${plan.alreadyCurrent}`,
+			`- Recordings that match no note here: ${plan.unmatchedRecordings}`,
+			'',
+			'| Note | Matched recording | When | Match | Old id | New id |',
+			'| --- | --- | --- | --- | --- | --- |',
+		];
+		for (const h of plan.heals) {
+			const noteName = esc(h.notePath.split('/').pop() ?? h.notePath);
+			lines.push(
+				`| ${noteName} | ${esc(h.recordingTitle)} | ${h.recordingWhen} | ${h.via} | \`${h.fromId}\` | \`${h.toId}\` |`,
+			);
+		}
+		const stamp = new Date()
+			.toISOString()
+			.slice(0, 19)
+			.replace(/[:T]/g, '-');
+		const folder = this.settings.outputFolder.replace(/\/+$/, '');
+		const path = `${folder}/plaud-migration-plan-${stamp}.md`;
+		await this.app.vault.create(path, `${lines.join('\n')}\n`);
+		return path;
 	}
 
 	/**
@@ -2242,6 +2521,27 @@ export default class PlaudImporterPlugin extends Plugin {
 			Object.assign({}, DEFAULT_SETTINGS, stored ?? {});
 		delete merged.keepSessionAlive;
 		this.settings = merged;
+		// The v4 scope fields come from user-editable data.json. A malformed
+		// stored value (null, a number, an object) would survive the merge and
+		// then crash workspaceId.trim() / deviceId.length on every v4 request,
+		// so coerce anything non-string back to empty here.
+		if (typeof this.settings.plaudWorkspaceId !== 'string') {
+			this.settings.plaudWorkspaceId = '';
+		}
+		if (typeof this.settings.plaudDeviceId !== 'string') {
+			this.settings.plaudDeviceId = '';
+		}
+		// The sign-in portal moved from alpha.plaud.ai to beta.plaud.ai when the
+		// new portal left alpha. Migrate a stored value that still pins the
+		// retired alpha default (or is malformed) to the current default; a user
+		// who set a custom portal keeps it.
+		if (
+			typeof this.settings.signInPortalUrl !== 'string' ||
+			this.settings.signInPortalUrl.trim().length === 0 ||
+			this.settings.signInPortalUrl === RETIRED_ALPHA_PORTAL_URL
+		) {
+			this.settings.signInPortalUrl = DEFAULT_SETTINGS.signInPortalUrl;
+		}
 		// Repair a blank stored output folder back to the default. The
 		// declarative control can persist an empty string; consumers expect a
 		// non-empty folder name.
@@ -2425,6 +2725,13 @@ export default class PlaudImporterPlugin extends Plugin {
 			}
 		}
 		this.settings.secretId = '';
+		// Clear the captured v4 workspace scope too. Otherwise a signed-out
+		// session still reads as being on the new portal (usesV4Portal) and a
+		// later sign-in to a prod account would be misrouted to the v4 client by
+		// the stale workspace id. Sign-out is the clean-slate boundary; a v4
+		// reconnect that carries no scope keeps its scope via commitCapturedToken.
+		this.settings.plaudWorkspaceId = '';
+		this.settings.plaudDeviceId = '';
 		// A cleared plugin has no session, so there is no sign-in method to route
 		// a Reconnect from until the next capture records one. The warn stamp
 		// resets too: the next credential deserves its own warning.
@@ -2475,6 +2782,7 @@ export default class PlaudImporterPlugin extends Plugin {
 		try {
 			const result = await openPlaudLogin(this.app, {
 				debugLogger: this.debugLogger,
+				portalUrl: this.settings.signInPortalUrl,
 			});
 			if (result === null) {
 				return 'closed';
@@ -2507,6 +2815,13 @@ export default class PlaudImporterPlugin extends Plugin {
 				() => !this.disposed,
 				'window',
 				result.apiBaseUrl ?? undefined,
+				// Committed atomically with the token/host by the store, so a
+				// crash between writes can never pair a new token with a stale
+				// scope. Nulls leave any prior scope intact.
+				{
+					workspaceId: result.workspaceId,
+					deviceId: result.deviceId,
+				},
 			);
 			if (!outcome.stored) {
 				// An empty message means the plugin unloaded or a newer sign-in owns
@@ -2518,6 +2833,19 @@ export default class PlaudImporterPlugin extends Plugin {
 					return 'reported';
 				}
 				return 'closed';
+			}
+			// The workspace/device were committed to settings atomically with the
+			// token by storeFirstWorkingCandidate above (via the store's own
+			// saveData batch), so there is nothing to persist here. The live
+			// client reads host + scope from settings via providers.
+			//
+			// But the client CLASS is fixed at construction, so if this capture
+			// flipped the portal (e.g. a fresh install signing in to the new
+			// portal for the first time, or an account that just moved to v4),
+			// rebuild it so imports and auto-sync use the right client at once,
+			// with no reload.
+			if (this.usesV4Portal() !== this.clientIsV4) {
+				this.buildClient();
 			}
 			return 'captured';
 		} finally {
@@ -2576,9 +2904,14 @@ export default class PlaudImporterPlugin extends Plugin {
 
 	// Opens the Plaud web app in the system browser for the browser-based
 	// sign-in flow. Google and Apple SSO complete there because it is a real
-	// browser, not an embedded webview.
+	// browser, not an embedded webview. Uses the configured sign-in portal so
+	// the browser opens the same app as the embedded sign-in window.
 	openPlaudInBrowser(): void {
-		window.open(PLAUD_WEB_URL, '_blank');
+		const portal =
+			this.settings.signInPortalUrl.trim().length > 0
+				? this.settings.signInPortalUrl
+				: PLAUD_WEB_URL;
+		window.open(portal, '_blank');
 	}
 
 	// Writes the one-time bookmark-setup page to a temp file and opens it in the

@@ -1236,9 +1236,21 @@ describe('settings live preview', () => {
 // formatPlaudWebUrl ---------------------------------------------------------
 
 describe('formatPlaudWebUrl', () => {
-	it('builds the canonical web.plaud.ai/file/{id} URL for a real hex ID', () => {
+	it('defaults to the prod (v3) web portal for a real hex ID', () => {
 		expect(formatPlaudWebUrl('4cba85e559d7f7c9058bf71c23d86d2d')).toBe(
 			'https://web.plaud.ai/file/4cba85e559d7f7c9058bf71c23d86d2d',
+		);
+	});
+
+	it('uses the supplied portal base for a v4 account', () => {
+		expect(formatPlaudWebUrl('4cba85e5', 'https://beta.plaud.ai')).toBe(
+			'https://beta.plaud.ai/file/4cba85e5',
+		);
+	});
+
+	it('strips a trailing slash from the supplied base', () => {
+		expect(formatPlaudWebUrl('abc123', 'https://beta.plaud.ai/')).toBe(
+			'https://beta.plaud.ai/file/abc123',
 		);
 	});
 
@@ -1812,9 +1824,9 @@ describe('extractFrontmatterValues', () => {
 
 	it('keeps a quoted value and an inline array verbatim', () => {
 		const values = extractFrontmatterValues(
-			'---\nplaud-url: "https://web.plaud.ai/file/x"\ntags: [a, "B&B"]\n---\n',
+			'---\nplaud-url: "https://alpha.plaud.ai/file/x"\ntags: [a, "B&B"]\n---\n',
 		);
-		expect(values.get('plaud-url')).toBe('"https://web.plaud.ai/file/x"');
+		expect(values.get('plaud-url')).toBe('"https://alpha.plaud.ai/file/x"');
 		expect(values.get('tags')).toBe('[a, "B&B"]');
 	});
 
@@ -2263,6 +2275,22 @@ describe('formatMarkdown', () => {
 		);
 		expect(md).toContain(
 			'[Open in Plaud →](https://web.plaud.ai/file/4cba85e559d7f7c9058bf71c23d86d2d)',
+		);
+	});
+
+	it('threads a v4 webBaseUrl into the frontmatter and the link', () => {
+		const md = formatMarkdown(
+			makeRecording({ id: 'of_abc123' as PlaudRecordingId }),
+			makeTranscript(),
+			makeSummary(),
+			undefined,
+			{ webBaseUrl: 'https://beta.plaud.ai' },
+		);
+		expect(md).toContain(
+			'plaud-url: "https://beta.plaud.ai/file/of_abc123"',
+		);
+		expect(md).toContain(
+			'[Open in Plaud →](https://beta.plaud.ai/file/of_abc123)',
 		);
 	});
 

@@ -15,7 +15,13 @@ import {
 	effectiveCaptureOffsetMinutes,
 } from './note-writer';
 import { runImport } from './import-runner';
-import { buildPlaudIdIndex, type ImportedRecord } from './vault-index';
+import {
+	buildImportedIndex,
+	canonicalPlaudId,
+	findImportedNote,
+	type ImportedIndex,
+	type ImportedRecord,
+} from './vault-index';
 import { AttachmentImporter } from './attachment-importer';
 import {
 	classifyError,
@@ -443,9 +449,14 @@ export class ImportModal extends Modal {
 	// each successful loadMore() so the count stays accurate.
 	private introEl: HTMLElement | null = null;
 	// Whether Plaud probably has more recordings beyond what we've fetched.
-	// Set from mergeRecordings() on every page. When false, the Load More
-	// button is removed.
+	// Set from mergeRecordings() (offset paging) or the cursor (v4). When
+	// false, the Load More button is removed.
 	private hasMore = false;
+	// v4 cursor paging state. undefined = no page fetched yet, string = the
+	// opaque cursor for the next page, null = the list is exhausted. Only used
+	// when the client exposes listRecordingsPage (the v4 portal); the prod
+	// reverse-engineered client pages by offset and leaves this untouched.
+	private nextCursor: string | null | undefined = undefined;
 	// Auto-advance: when the filters hide every loaded row, page forward on our
 	// own so the user reaches importable (un-imported) recordings without having
 	// to scroll through invisible rows. Needed because auto-sync imports the
@@ -518,7 +529,11 @@ export class ImportModal extends Modal {
 	// so the badge state stays accurate without re-scanning the vault on
 	// every render. Empty map when no notes match — never null so callers
 	// can `.has()` without guarding.
-	private importedIndex: Map<PlaudRecordingId, ImportedRecord> = new Map();
+	private importedIndex: ImportedIndex = {
+		byId: new Map(),
+		byInstant: new Map(),
+		byDay: new Map(),
+	};
 
 	// Dialog view state: the three filter-bar toggles and the ignore set.
 	// Snapshotted from the options at open, mutated locally when the user
@@ -675,6 +690,53 @@ export class ImportModal extends Modal {
 		this.artifactCache.clear();
 	}
 
+	// Feature-detect cursor paging: the v4 portal client exposes
+	// listRecordingsPage (opaque cursors); the prod client pages by offset and
+	// leaves nextCursor untouched.
+	private usesCursorPaging(): boolean {
+		return typeof this.client.listRecordingsPage === 'function';
+	}
+
+	// Fetch one page. skip === 0 is the first page (v4: starts from no cursor);
+	// skip > 0 continues from the stored cursor. Returns the page AND the new
+	// cursor WITHOUT storing it, so the caller commits this.nextCursor only
+	// after its generation check passes. That matters because the cursor is
+	// stateful (unlike an idempotent offset): a stale in-flight fetch must not
+	// advance the shared cursor. On the prod client this is a plain offset
+	// fetch and the returned cursor is the untouched (undefined) value.
+	private async fetchRecordingsPage(skip: number): Promise<{
+		recordings: readonly Recording[];
+		nextCursor: string | null | undefined;
+	}> {
+		if (this.client.listRecordingsPage === undefined) {
+			const recordings = await this.client.listRecordings({
+				skip,
+				limit: PAGE_SIZE,
+			});
+			return { recordings, nextCursor: this.nextCursor };
+		}
+		const cursor = skip === 0 ? undefined : this.nextCursor;
+		// skip > 0 with an exhausted/absent cursor should not happen (hasMore
+		// gates Load More), but guard so a stray call returns empty rather than
+		// silently re-fetching page one.
+		if (skip > 0 && (cursor === null || cursor === undefined)) {
+			return { recordings: [], nextCursor: this.nextCursor };
+		}
+		const page = await this.client.listRecordingsPage({
+			cursor: cursor ?? undefined,
+			limit: PAGE_SIZE,
+		});
+		return { recordings: page.recordings, nextCursor: page.nextCursor };
+	}
+
+	// Whether more pages remain. On the v4 path this is the cursor (definitive);
+	// on the prod path it is the page-fullness heuristic from mergeRecordings.
+	private resolveHasMore(fullnessHasMore: boolean): boolean {
+		return this.usesCursorPaging()
+			? this.nextCursor !== null
+			: fullnessHasMore;
+	}
+
 	private async refresh(): Promise<void> {
 		// Full reset on every refresh — this covers both the initial open
 		// and the error-state Retry click. Any pending Load More from a
@@ -710,22 +772,21 @@ export class ImportModal extends Modal {
 		const generation = ++this.fetchGeneration;
 		this.renderLoading();
 		try {
-			const recordings = await this.client.listRecordings({
-				skip: 0,
-				limit: PAGE_SIZE,
-			});
+			const { recordings, nextCursor } =
+				await this.fetchRecordingsPage(0);
 			if (generation !== this.fetchGeneration) {
 				// A newer refresh() started while we were waiting. Drop the
-				// stale result on the floor.
+				// stale result on the floor (including its cursor).
 				return;
 			}
+			this.nextCursor = nextCursor;
 			const { merged, hasMore } = mergeRecordings(
 				[],
 				recordings,
 				PAGE_SIZE,
 			);
 			this.currentRecordings = [...merged];
-			this.hasMore = hasMore;
+			this.hasMore = this.resolveHasMore(hasMore);
 			if (this.currentRecordings.length === 0) {
 				this.renderEmpty();
 			} else {
@@ -772,17 +833,25 @@ export class ImportModal extends Modal {
 				skip,
 				source: fromPrefetch ? 'prefetch-cache' : 'live-fetch',
 			});
+			// Default to the current cursor; only a live fetch advances it, and
+			// only after the generation check below (a stale fetch must not move
+			// the shared cursor). Prefetch is disabled on the cursor path, so
+			// the prefetch branch here only runs for offset (prod) paging.
+			let pageCursor: string | null | undefined = this.nextCursor;
 			if (this.prefetchedRecordings !== null) {
 				incoming = this.prefetchedRecordings;
 				this.prefetchedRecordings = null;
 			} else {
-				incoming = await this.fetchPageWithSilentRetry(skip, trigger);
+				const page = await this.fetchPageWithSilentRetry(skip, trigger);
+				incoming = page.recordings;
+				pageCursor = page.nextCursor;
 			}
 			if (generation !== this.fetchGeneration) {
 				// A refresh() fired while we were waiting — the list has
 				// been torn down. Drop the stale page.
 				return;
 			}
+			this.nextCursor = pageCursor;
 			const { merged, hasMore } = mergeRecordings(
 				this.currentRecordings,
 				incoming,
@@ -798,7 +867,7 @@ export class ImportModal extends Modal {
 			);
 			const newRows = merged.filter((r) => !existingIds.has(r.id));
 			this.currentRecordings = [...merged];
-			this.hasMore = hasMore;
+			this.hasMore = this.resolveHasMore(hasMore);
 
 			if (this.listEl !== null) {
 				// Render only the newly-arrived rows that pass the current filter
@@ -1377,7 +1446,7 @@ export class ImportModal extends Modal {
 		});
 		titleRow.createDiv({ text: rec.title, cls: 'plaud-importer-title' });
 
-		const existing = this.importedIndex.get(rec.id);
+		const existing = findImportedNote(this.importedIndex, rec)?.record;
 		if (existing !== undefined) {
 			this.renderImportedBadge(titleRow, existing);
 			// Manual-import cue: this note is stale (the recording changed in
@@ -1457,7 +1526,7 @@ export class ImportModal extends Modal {
 	// successful write so badge state stays accurate without forcing
 	// the user to close and reopen the modal.
 	private refreshImportedIndex(): void {
-		this.importedIndex = buildPlaudIdIndex(
+		this.importedIndex = buildImportedIndex(
 			this.app,
 			this.noteWriterOptions.outputFolder,
 		);
@@ -1470,7 +1539,11 @@ export class ImportModal extends Modal {
 	private updateRowBadge(recId: PlaudRecordingId): void {
 		this.refreshImportedIndex();
 		if (this.listEl === null) return;
-		const existing = this.importedIndex.get(recId);
+		// byId is keyed by canonical id, so a v4 `of_<id>` recording must be
+		// looked up by its bare id or the badge never appears until a refresh.
+		const existing = this.importedIndex.byId.get(
+			canonicalPlaudId(recId) as PlaudRecordingId,
+		);
 		if (existing === undefined) return;
 		// Find the row by its stamped recording id. Robust to trashed
 		// recordings that sit in currentRecordings but are not rendered, which
@@ -1967,6 +2040,14 @@ export class ImportModal extends Modal {
 	}
 
 	private startPrefetchIfNeeded(): void {
+		// Prefetch speculatively loads the NEXT page ahead of the user. That is
+		// safe with idempotent offset paging, but the v4 cursor is stateful:
+		// a speculative fetch racing a manual Load More would advance the shared
+		// cursor twice and skip a page. Skip prefetch entirely on the cursor
+		// path; Load More still fetches on demand.
+		if (this.usesCursorPaging()) {
+			return;
+		}
 		if (!this.userStartedScrolling || !this.hasMore) {
 			return;
 		}
@@ -2219,13 +2300,14 @@ export class ImportModal extends Modal {
 	private async fetchPageWithSilentRetry(
 		skip: number,
 		trigger: LoadMoreTrigger,
-	): Promise<readonly Recording[]> {
-		const fetchOnce = async (): Promise<readonly Recording[]> => {
-			return this.client.listRecordings({
-				skip,
-				limit: PAGE_SIZE,
-			});
-		};
+	): Promise<{
+		recordings: readonly Recording[];
+		nextCursor: string | null | undefined;
+	}> {
+		const fetchOnce = (): Promise<{
+			recordings: readonly Recording[];
+			nextCursor: string | null | undefined;
+		}> => this.fetchRecordingsPage(skip);
 		try {
 			return await fetchOnce();
 		} catch (firstErr) {
@@ -2442,8 +2524,9 @@ export class ImportModal extends Modal {
 				// second copy. Backed by the vault index, read live so it reflects
 				// notes written earlier in this same run.
 				existingPathForPlaudId: (id) =>
-					this.importedIndex.get(id as PlaudRecordingId)?.path ??
-					null,
+					this.importedIndex.byId.get(
+						canonicalPlaudId(id) as PlaudRecordingId,
+					)?.path ?? null,
 			});
 		} catch (err) {
 			if (err instanceof NoteWriterError) {

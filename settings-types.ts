@@ -64,12 +64,24 @@ export interface StoredDevice {
 
 export interface PlaudImporterSettings {
 	secretId: string;
-	// Base host for the Plaud API. Defaults to the US host. The plugin
-	// auto-detects the correct regional host (EU, etc.) on the first API
-	// call that hits a region mismatch, then caches it here so later calls
-	// skip the redirect. Not surfaced in the settings UI; managed
-	// automatically.
+	// Base host for the Plaud API. Defaults to the prod US host, but on the
+	// alpha it is detected at sign-in from the portal's resolved workspace
+	// domain (a theplaud.com regional staging host) and written here. Surfaced
+	// in settings as the editable "API region" control for a manual override;
+	// the client reads it fresh per request.
 	apiBaseUrl: string;
+	// v4 portal (alpha) scoping, captured at sign-in alongside apiBaseUrl.
+	// The active workspace id (`ws_...`) is sent as the `x-scope-id` header on
+	// every v4 data call; the device id, when present, as `x-device-id`. Empty
+	// until the first sign-in captures them. Not surfaced in the settings UI.
+	plaudWorkspaceId: string;
+	plaudDeviceId: string;
+	// The Plaud portal the sign-in window loads. Defaults to the beta portal.
+	// A user on a different regional portal points the sign-in here, and the
+	// token, workspace, region, and API domain are all detected from whatever
+	// portal they log in to. Only an https URL on a trusted Plaud host is
+	// honored; anything else falls back to the default at sign-in time.
+	signInPortalUrl: string;
 	outputFolder: string;
 	subfolderTemplate: string;
 	// {{...}} Moment template for each note's name (same syntax as
@@ -221,6 +233,9 @@ export const CURRENT_SETTINGS_VERSION = 2;
 export const DEFAULT_SETTINGS: PlaudImporterSettings = {
 	secretId: '',
 	apiBaseUrl: 'https://api.plaud.ai',
+	plaudWorkspaceId: '',
+	plaudDeviceId: '',
+	signInPortalUrl: 'https://beta.plaud.ai',
 	outputFolder: 'Plaud',
 	subfolderTemplate: '{{YYYY}}/{{MM}}',
 	noteNameTemplate: DEFAULT_NOTE_NAME_TEMPLATE,

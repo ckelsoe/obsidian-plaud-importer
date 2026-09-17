@@ -235,7 +235,17 @@ export async function runImport(
 		// otherwise return a -12 "start trans task error". There is
 		// nothing to write, so record a benign "no content" skip rather
 		// than letting the error path classify it as a failure.
-		if (!recording.transcriptAvailable && !recording.summaryAvailable) {
+		//
+		// Only when the list actually REPORTS availability. On the v4 portal the
+		// list omits per-recording presence, so both flags are false as "unknown"
+		// (contentAvailabilityUnknown), and skipping here would drop every
+		// recording. In that case fetch and let the detail response be
+		// authoritative; the note writer writes whatever content exists.
+		if (
+			!recording.contentAvailabilityUnknown &&
+			!recording.transcriptAvailable &&
+			!recording.summaryAvailable
+		) {
 			emitImportDebug(
 				options,
 				'skipped recording with no content in Plaud',

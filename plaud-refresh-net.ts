@@ -64,6 +64,7 @@
 // "indefinite".
 
 import { decodeJwtPayload } from './plaud-token';
+import { isTrustedPlaudHost } from './plaud-hosts';
 
 /**
  * A non-empty string claim off the stored token's payload, or null.
@@ -98,12 +99,6 @@ const STATUS_OK = 0;
 // Region-mismatch soft redirect: HTTP 200 whose body carries the regional host
 // in data.domains.api. Matches detectRegionRedirect() in plaud-client-re.ts.
 const STATUS_REGION_REDIRECT = -302;
-
-// Only ever talk to Plaud's own hosts, even when a redirect body names the
-// target. A tampered redirect must not steer a cookie-authenticated call to an
-// arbitrary origin.
-const ALLOWED_HOST_SUFFIX = '.plaud.ai';
-const ALLOWED_EXACT_HOSTS = new Set(['plaud.ai', 'api.plaud.ai']);
 
 /** A single session-bound POST. Injected so tests drive it without Electron. */
 export interface SessionPost {
@@ -203,10 +198,9 @@ export function normalizeTrustedOrigin(raw: string): string | null {
 	if (parsed.protocol !== 'https:') {
 		return null;
 	}
-	const host = parsed.hostname.toLowerCase();
-	const trusted =
-		ALLOWED_EXACT_HOSTS.has(host) || host.endsWith(ALLOWED_HOST_SUFFIX);
-	return trusted ? `${parsed.protocol}//${parsed.host}` : null;
+	return isTrustedPlaudHost(parsed.hostname)
+		? `${parsed.protocol}//${parsed.host}`
+		: null;
 }
 
 /**
