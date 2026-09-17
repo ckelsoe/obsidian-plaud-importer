@@ -75,16 +75,18 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           tag="${GITHUB_REF#refs/tags/}"
-          # A semver pre-release tag carries a hyphen (e.g. 0.41.0-beta.1);
-          # a stable tag never does. Mark pre-release tags as GitHub
-          # pre-releases so they do not become the repo's "latest" release.
+          # A semver pre-release tag is MAJOR.MINOR.PATCH-<identifiers>
+          # (e.g. 0.41.0-beta.1); a stable tag is MAJOR.MINOR.PATCH with no
+          # suffix. Mark only real semver pre-releases as GitHub pre-releases so
+          # they do not become the repo's "latest" release, and so an unrelated
+          # hyphenated tag (e.g. docs-update) is never mistaken for one.
           # Obsidian's community updater tracks that non-prerelease latest, so
           # store users are never offered a beta, while BRAT installs
           # pre-releases and picks it up for opted-in testers.
           prerelease_flag=""
-          case "$tag" in
-            *-*) prerelease_flag="--prerelease" ;;
-          esac
+          if [[ "$tag" =~ ^[0-9]+\.[0-9]+\.[0-9]+-[0-9A-Za-z.-]+$ ]]; then
+            prerelease_flag="--prerelease"
+          fi
           if [ -s release-notes.md ]; then
             gh release create "$tag" $prerelease_flag \
               --title="$tag" \
