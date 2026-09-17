@@ -196,6 +196,16 @@ export function recordingSourceLabel(
 	return name !== undefined && name.length > 0 ? name : 'Plaud device';
 }
 
+/**
+ * One page of recordings plus the opaque forward cursor for the next page.
+ * Returned by the v4 portal client's cursor-paginated `listRecordingsPage`.
+ * `nextCursor` is null when the list is exhausted.
+ */
+export interface RecordingPage {
+	readonly recordings: readonly Recording[];
+	readonly nextCursor: string | null;
+}
+
 export interface PlaudClient {
 	listRecordings(filter?: RecordingFilter): Promise<readonly Recording[]>;
 	/**
@@ -206,6 +216,23 @@ export interface PlaudClient {
 	 * site: a failed fetch degrades to "no devices known", never fails a sync.
 	 */
 	getDeviceCatalog(): Promise<readonly PlaudDevice[]>;
+	/**
+	 * Cursor-paginated variant of `listRecordings` for the new Plaud portal
+	 * (`/file-app/v4/recordings/all`, which pages with an opaque `next_cursor`
+	 * instead of `skip`/`limit`). Returns the page plus the next cursor.
+	 *
+	 * OPTIONAL: the prod reverse-engineered client does not implement it (it
+	 * uses offset pagination via `listRecordings`). The v4 client implements
+	 * both; `listRecordings` returns just this page's `recordings` array.
+	 *
+	 * Paging contract: a caller that pages MUST feature-detect this method and,
+	 * when it is present, drive subsequent pages with `filter.cursor` set to the
+	 * prior page's `nextCursor`. The v4 client rejects a non-zero `filter.skip`
+	 * rather than silently repeating page one. The import modal, auto-sync, and
+	 * version backfill feature-detect it and page by cursor on the v4 client,
+	 * by offset on the prod client.
+	 */
+	listRecordingsPage?(filter?: RecordingFilter): Promise<RecordingPage>;
 	getTranscriptAndSummary(
 		id: PlaudRecordingId,
 	): Promise<TranscriptAndSummary>;
@@ -248,6 +275,13 @@ export interface RecordingFilter {
 	 * reject non-zero values loudly rather than silently ignore them.
 	 */
 	readonly skip?: number;
+	/**
+	 * Opaque forward cursor for the v4 portal's cursor-paginated list
+	 * (`/file-app/v4/recordings/all`). Mutually exclusive with `skip`: the v4
+	 * client pages with this, the prod RE client pages with `skip`. Undefined
+	 * requests the first page. Ignored by clients that use offset pagination.
+	 */
+	readonly cursor?: string;
 	readonly since?: Date;
 	readonly until?: Date;
 	readonly folderId?: string;
@@ -308,6 +342,16 @@ export interface Recording {
 	 * authoritative answer is `getSummary(id) !== null`.
 	 */
 	readonly summaryAvailable: boolean;
+	/**
+	 * True when the list endpoint does not report per-recording transcript/summary
+	 * presence, so `transcriptAvailable`/`summaryAvailable` are both left false as
+	 * "unknown" rather than "absent". The import runner's pre-fetch skip (both
+	 * flags false means nothing to fetch) is WRONG in that case: it would skip
+	 * every recording. When this is true the runner must fetch content and let the
+	 * detail response be authoritative. The v4 portal list omits the flags; the
+	 * prod list carries `is_trans`/`is_summary`, so it leaves this undefined.
+	 */
+	readonly contentAvailabilityUnknown?: boolean;
 	/**
 	 * True when the recording is in Plaud's trash. The list endpoint returns
 	 * trashed and non-trashed recordings together, so consumers that should not

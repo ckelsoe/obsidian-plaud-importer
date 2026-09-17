@@ -14,7 +14,7 @@
 // -----------------------------------------------------------------------------
 
 import type { PlaudRecordingId, Recording } from './plaud-client';
-import type { ImportedRecord } from './vault-index';
+import { findImportedNote, type ImportedIndex } from './vault-index';
 import {
 	categoryAllowsReauth,
 	filterVisibleRecordings,
@@ -64,7 +64,7 @@ const NO_IGNORED_IDS: ReadonlySet<PlaudRecordingId> = new Set();
 
 export function classifyRecording(
 	recording: Recording,
-	index: ReadonlyMap<PlaudRecordingId, ImportedRecord>,
+	index: ImportedIndex,
 	ignoredIds: ReadonlySet<PlaudRecordingId> = NO_IGNORED_IDS,
 ): AutoSyncClassification {
 	// Ignore wins over every other state: an ignored recording must never be
@@ -90,10 +90,19 @@ export function classifyRecording(
 	) {
 		return 'skipped-wait-pull';
 	}
-	const existing = index.get(recording.id);
-	if (existing === undefined) {
+	const match = findImportedNote(index, recording);
+	if (match === null) {
 		return 'new';
 	}
+	// Matched by a stable key, not the id: the note's stored id is stale (the
+	// portal re-issued ids), so its `version_ms` is on the OLD id's scale and
+	// cannot be compared to this recording's. Treat as current so auto-sync
+	// neither re-imports it nor overwrites it on a bogus version diff. The
+	// id-migration command brings such a note back onto the id path.
+	if (match.matchedBy !== 'id') {
+		return 'up-to-date-current';
+	}
+	const existing = match.record;
 	// Migration / unknowable: no stored marker, or the list omitted version_ms
 	// this time. Cannot prove a change, so treat as current and keep paging.
 	if (existing.versionMs === undefined || recording.versionMs === undefined) {
@@ -142,7 +151,7 @@ export interface SelectCandidatesResult {
  */
 export function selectAutoSyncCandidates(
 	page: readonly Recording[],
-	index: ReadonlyMap<PlaudRecordingId, ImportedRecord>,
+	index: ImportedIndex,
 	ignoredIds: ReadonlySet<PlaudRecordingId> = NO_IGNORED_IDS,
 	sourceFilter?: SourceFilter,
 ): SelectCandidatesResult {

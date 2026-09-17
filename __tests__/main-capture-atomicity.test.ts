@@ -61,6 +61,8 @@ interface HarnessSettings {
 	secretId: string;
 	apiBaseUrl: string;
 	signInMethod: SignInMethod;
+	plaudWorkspaceId: string;
+	plaudDeviceId: string;
 	/** Unrelated to auth, used to prove a concurrent edit is not reverted. */
 	autoSyncEnabled: boolean;
 	[key: string]: unknown;
@@ -140,6 +142,8 @@ function makeHarness(settings: Partial<HarnessSettings> = {}): Harness {
 			secretId: 'some-other-secret',
 			apiBaseUrl: 'https://api.plaud.ai',
 			signInMethod: 'browser',
+			plaudWorkspaceId: '',
+			plaudDeviceId: '',
 			autoSyncEnabled: false,
 			...settings,
 		},
@@ -742,5 +746,59 @@ describe('storing a capture is all-or-nothing (issue #86)', () => {
 
 		expect(result).toEqual({ outcome: 'stored' });
 		expect(h.secrets.get(CAPTURED_SECRET_ID)).toBe(token);
+	});
+});
+
+describe('v4 workspace scope commits atomically with the credential', () => {
+	it('writes the scope in the same saveData batch as the token and host', async () => {
+		const h = makeHarness();
+		const token = usableToken();
+
+		const result = await h.store.storeAccessToken(
+			token,
+			'window',
+			'https://api-euc1.plaud.ai',
+			false,
+			undefined,
+			{ workspaceId: 'ws_captured', deviceId: 'dev_captured' },
+		);
+
+		expect(result).toEqual({ outcome: 'stored' });
+		// One and only one settings batch reached disk...
+		expect(h.calls.filter((c) => c === 'saveData')).toHaveLength(1);
+		// ...and it carried the token's host AND scope together.
+		const onDisk = JSON.parse(
+			h.secrets.get('__data.json__') ?? '{}',
+		) as Record<string, unknown>;
+		expect(onDisk.secretId).toBe(CAPTURED_SECRET_ID);
+		expect(onDisk.apiBaseUrl).toBe('https://api-euc1.plaud.ai');
+		expect(onDisk.plaudWorkspaceId).toBe('ws_captured');
+		expect(onDisk.plaudDeviceId).toBe('dev_captured');
+		// Live settings reflect the same scope.
+		expect(h.host.settings.plaudWorkspaceId).toBe('ws_captured');
+		expect(h.host.settings.plaudDeviceId).toBe('dev_captured');
+	});
+
+	it('clears scope on an observed-absent (null) capture but keeps it on an unobserved (undefined) one', async () => {
+		const h = makeHarness({
+			plaudWorkspaceId: 'ws_existing',
+			plaudDeviceId: 'dev_existing',
+		});
+
+		await h.store.storeAccessToken(
+			usableToken(),
+			'window',
+			undefined,
+			false,
+			undefined,
+			{ workspaceId: null, deviceId: undefined },
+		);
+
+		// null = "observed absent" (a v3 embedded sign-in looked and found no
+		// workspace): clear the stale scope so the new token is not left paired
+		// with the v4 client. undefined = "not observed" (a reconnect that did
+		// not probe scope): leave the prior scope intact.
+		expect(h.host.settings.plaudWorkspaceId).toBe('');
+		expect(h.host.settings.plaudDeviceId).toBe('dev_existing');
 	});
 });

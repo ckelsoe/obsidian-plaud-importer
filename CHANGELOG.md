@@ -2,6 +2,22 @@
 
 All notable changes to Plaud Importer will be documented in this file.
 
+## [0.41.0-beta.1] - 2026-09-17
+
+Beta pre-release for the new Plaud portal. Install it through BRAT to help test the move. The stable release is unaffected.
+
+### Added
+
+- **Support for the new Plaud portal.** Plaud is moving accounts to a rebuilt web app and API. This build detects which portal your account is on and talks to the right one, so import keeps working after your account moves. An account still on the current portal behaves exactly as before.
+
+### Changed
+
+- **Recording links open in the right portal.** The `plaud-url` property and the "Open in Plaud" link in each note now point at the web app your account actually uses, so the link opens the recording instead of a sign-in wall.
+
+### Fixed
+
+- **Re-importing after a portal move no longer duplicates notes.** The new portal keeps each recording's existing id in a prefixed form, and the plugin now matches a note to its recording by that shared id, so a recording you imported before the move is recognized as the same one and updated in place. A new "Migrate recording ids" command heals older notes whose stored id predates the change.
+
 ## [0.40.0] - 2026-08-21
 
 ### Added

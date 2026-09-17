@@ -808,3 +808,70 @@
 	background: var(--background-modifier-hover);
 	color: var(--text-muted);
 }
+
+
+.plaud-importer-input-error {
+	border-color: var(--text-error);
+}
+
+/* Migrate recording ids preview modal */
+.plaud-importer-migration-summary {
+	margin-bottom: var(--size-4-3);
+}
+.plaud-importer-migration-list {
+	max-height: 40vh;
+	overflow-y: auto;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-s);
+	padding: var(--size-4-2);
+	margin-bottom: var(--size-4-3);
+}
+.plaud-importer-migration-row {
+	display: flex;
+	align-items: baseline;
+	gap: var(--size-4-2);
+	padding: var(--size-4-1) 0;
+	border-bottom: 1px solid var(--background-modifier-border-hover);
+}
+.plaud-importer-migration-note {
+	flex: 1 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.plaud-importer-migration-via {
+	flex: 0 0 auto;
+	font-size: var(--font-ui-smaller);
+	color: var(--text-muted);
+}
+.plaud-importer-migration-ids {
+	flex: 0 0 auto;
+	font-family: var(--font-monospace);
+	font-size: var(--font-ui-smaller);
+	color: var(--text-faint);
+}
+.plaud-importer-migration-more,
+.plaud-importer-migration-empty,
+.plaud-importer-migration-error {
+	color: var(--text-muted);
+}
+.plaud-importer-migration-buttons {
+	display: flex;
+	justify-content: flex-end;
+	gap: var(--size-4-2);
+}
+
+.plaud-importer-migration-arrow {
+	flex: 0 0 auto;
+	font-size: var(--font-ui-smaller);
+	color: var(--text-faint);
+}
+.plaud-importer-migration-rec {
+	flex: 1 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	color: var(--text-muted);
+}

@@ -14,7 +14,7 @@
 // -----------------------------------------------------------------------------
 
 import type { PlaudRecordingId, Recording } from './plaud-client';
-import type { ImportedRecord } from './vault-index';
+import { findImportedNote, type ImportedIndex } from './vault-index';
 import {
 	PlaudApiError,
 	PlaudAuthError,
@@ -782,8 +782,12 @@ export interface ListViewFilter {
 	readonly hideUpdates: boolean;
 	/** Hide recordings whose id is in `ignoredIds`. */
 	readonly hideIgnored: boolean;
-	/** Vault index (plaud-id -> imported note) used to decide "processed". */
-	readonly index: ReadonlyMap<PlaudRecordingId, ImportedRecord>;
+	/**
+	 * Vault index used to decide "processed". Matches by id first, then by the
+	 * id-independent stable keys, so a recording whose id changed (a v3 note
+	 * viewed under the v4 portal) is still recognized as already imported.
+	 */
+	readonly index: ImportedIndex;
 	/** Ignored recording ids. */
 	readonly ignoredIds: ReadonlySet<PlaudRecordingId>;
 	/**
@@ -828,7 +832,7 @@ export function filterListView(
 		) {
 			return false;
 		}
-		const existing = filter.index.get(r.id);
+		const existing = findImportedNote(filter.index, r)?.record;
 		if (existing !== undefined) {
 			// Imported. Split by whether Plaud has a newer version than the note.
 			const updated = isUpdateAvailable(r.versionMs, existing.versionMs);

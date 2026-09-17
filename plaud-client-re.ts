@@ -2908,7 +2908,11 @@ function parseTranssummResponse(
 	return { transcript, summary };
 }
 
-function parseTranscriptField(
+// Exported so the v4 client (plaud-client-v4.ts) can reuse the exact same
+// validated segment parsing on the v4 TRANSCRIPT content body, which has the
+// identical `{content, speaker, original_speaker, start_time(ms), end_time(ms)}`
+// shape. Keep this in sync with any v4 divergence rather than forking it.
+export function parseTranscriptField(
 	id: PlaudRecordingId,
 	rawSegments: unknown,
 	endpoint: string,

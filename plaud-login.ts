@@ -12,8 +12,9 @@
 // BrowserWindow is the render path that consistently works.
 //
 // Capture strategy: read the user token from the sign-in window's own
-// `localStorage` on web.plaud.ai (the origin this window loads); the web app
-// sends it as `Authorization: Bearer <token>` on every data call. Its lifetime
+// `localStorage` on the origin this window loads (the configured portal,
+// beta.plaud.ai by default; web.plaud.ai on the prod build); the web app sends it as
+// `Authorization: Bearer <token>` on every data call. Its lifetime
 // varies by account: ~300 days observed on US accounts, 24 hours reported on an
 // APSE1 account (issue #78), so the capture notes the measured lifetime and
 // never assumes one.
@@ -33,6 +34,7 @@
 
 import { App, Platform } from 'obsidian';
 import { NoopDebugLogger, type DebugLogger } from './debug-logger';
+import { isTrustedPlaudHost, isTrustedPlaudUrl } from './plaud-hosts';
 import {
 	isLegacyPartition,
 	LEGACY_PLAUD_PARTITION,
@@ -47,7 +49,9 @@ import { MAX_COLLECTED_CANDIDATES } from './token-candidates';
 // client tags its requests `app-platform: web` / `edit-from: web` (see
 // plaud-client-re.ts), so the captured token must come from the web client to
 // match. Verified against a live web.plaud.ai HAR capture on 2026-06-18.
-const PLAUD_LOGIN_URL = 'https://web.plaud.ai';
+// Alpha build: sign in on the new portal so the captured token, api domain,
+// and workspace are the v4 ones. (The prod build uses web.plaud.ai.)
+const PLAUD_LOGIN_URL = 'https://beta.plaud.ai';
 // The partition is persistent (a returning user keeps their Plaud session and
 // does not sign in every time), isolated from Obsidian's own web sessions, and
 // PER VAULT since issue #87. It is derived once per operation from the vault's
@@ -75,9 +79,12 @@ export const PROBE_JS = `(() => {
 	try {
 		var tokens = [];
 		var domain = null;
+		var wsDomain = null;
+		var wsId = null;
+		var deviceId = null;
 		var h = String(location.hostname || '').toLowerCase().replace(/\\.$/, '');
 		var httpsOk = location.protocol === 'https:';
-		if (httpsOk && (h === 'plaud.ai' || (h.length > 9 && h.slice(-9) === '.plaud.ai'))) {
+		if (httpsOk && (h === 'plaud.ai' || (h.length > 9 && h.slice(-9) === '.plaud.ai') || h === 'theplaud.com' || (h.length > 13 && h.slice(-13) === '.theplaud.com'))) {
 			// Collect candidates the same way the bookmarklet does. Plaud's web app
 			// stopped writing a plain 'token' key: the live credential is nested
 			// inside the workspaceList JSON, so a top-level-only read finds nothing
@@ -169,6 +176,23 @@ export const PROBE_JS = `(() => {
 				}
 				if (current) {
 					current = String(current).replace(/^"|"$/g, '');
+					wsId = current;
+					// Shipped 4.0 moved the workspace token out of workspaceList
+					// into a separate pld_<userId>:workspaceTokens map keyed by
+					// workspace id (workspaceList now carries only the domain).
+					// Read and hoist the ACTIVE workspace's access token from
+					// there; the alpha-era workspaceList.workspaceToken read below
+					// still works on older builds.
+					for (var m = 0; m < localStorage.length; m++) {
+						var mk = localStorage.key(m);
+						if (mk === null || mk.slice(-16) !== ':workspaceTokens') { continue; }
+						try {
+							var wmap = JSON.parse(localStorage.getItem(mk));
+							if (wmap && typeof wmap === 'object' && wmap[current] && typeof wmap[current] === 'object') {
+								add(wmap[current].token);
+							}
+						} catch (e) {}
+					}
 					for (var w = 0; w < localStorage.length; w++) {
 						var wk = localStorage.key(w);
 						if (wk === null || wk.slice(-13) !== 'workspaceList') { continue; }
@@ -179,6 +203,11 @@ export const PROBE_JS = `(() => {
 							var entry = list[e];
 							if (entry && typeof entry === 'object' && entry.workspaceId === current) {
 								add(entry.workspaceToken);
+								// Beta keeps the resolved API host ONLY on the active
+								// workspace (no pld_plaud_user_api_domain key), so grab
+								// it here as the fallback for the domain below.
+								if (typeof entry.domain === 'string' && entry.domain) { wsDomain = entry.domain; }
+								else if (typeof entry.api_domain === 'string' && entry.api_domain) { wsDomain = entry.api_domain; }
 							}
 						}
 					}
@@ -191,8 +220,15 @@ export const PROBE_JS = `(() => {
 				try { walk(localStorage.getItem(k), 0); } catch (e) {}
 			}
 			try { domain = localStorage.getItem('pld_plaud_user_api_domain'); } catch (e) {}
+			// Fall back to the active workspace's own domain (beta's only source;
+			// alpha also has the pld_plaud_user_api_domain key, which wins).
+			if ((domain === null || domain === '') && wsDomain) { domain = wsDomain; }
+			try {
+				deviceId = localStorage.getItem('pld_DEVICE_ID');
+				if (deviceId) { deviceId = String(deviceId).replace(/^"|"$/g, ''); }
+			} catch (e) {}
 		}
-		return JSON.stringify({ tokens: tokens, domain: domain, href: location.href });
+		return JSON.stringify({ tokens: tokens, domain: domain, workspaceId: wsId, deviceId: deviceId, href: location.href });
 	} catch (e) {
 		return JSON.stringify({ error: String(e) });
 	}
@@ -209,15 +245,31 @@ export interface PlaudLoginResult {
 	readonly tokens: readonly string[];
 	/** Regional API origin if discoverable, else null. */
 	readonly apiBaseUrl: string | null;
+	/**
+	 * Active workspace id (`ws_...`) for the v4 portal's `x-scope-id` header,
+	 * from the window's `:currentWorkspaceId`. Null when not present (prod
+	 * portal, which has no workspace scoping).
+	 */
+	readonly workspaceId: string | null;
+	/** Device id for the v4 `x-device-id` header, from `pld_DEVICE_ID`. */
+	readonly deviceId: string | null;
 }
 
 export interface PlaudLoginOptions {
 	readonly debugLogger?: DebugLogger;
+	// The Plaud portal URL to load in the sign-in window. Lets a user point the
+	// sign-in at their own regional portal (or the beta portal) instead of a
+	// fixed host, so the token, workspace, region, and API domain are captured
+	// from whichever portal they actually use. Ignored unless it is an https URL
+	// on a trusted Plaud host; otherwise the default portal is loaded.
+	readonly portalUrl?: string;
 }
 
 interface ProbeResult {
 	tokens?: unknown;
 	domain?: string | null;
+	workspaceId?: string | null;
+	deviceId?: string | null;
 	href?: string;
 	error?: string;
 }
@@ -414,6 +466,7 @@ export function openPlaudLogin(
 class PlaudLoginSession {
 	private readonly partition: string;
 	private readonly debugLogger: DebugLogger;
+	private readonly portalUrl: string;
 	private readonly resolve: (result: PlaudLoginResult | null) => void;
 	private win: BrowserWindowLike | null = null;
 	private pollHandle: number | null = null;
@@ -426,6 +479,14 @@ class PlaudLoginSession {
 	) {
 		this.partition = partition;
 		this.debugLogger = options.debugLogger ?? new NoopDebugLogger();
+		// Honor a configured portal only when it is a trusted Plaud https URL;
+		// anything else falls back to the default so a bad setting can never
+		// point the sign-in window (and its token capture) at an untrusted page.
+		this.portalUrl =
+			options.portalUrl !== undefined &&
+			isTrustedPlaudUrl(options.portalUrl)
+				? options.portalUrl
+				: PLAUD_LOGIN_URL;
 		this.resolve = resolve;
 	}
 
@@ -543,7 +604,7 @@ class PlaudLoginSession {
 			this.settle(null);
 		});
 
-		this.win.loadURL(PLAUD_LOGIN_URL).catch((err: unknown) => {
+		this.win.loadURL(this.portalUrl).catch((err: unknown) => {
 			this.note(`failed to load sign-in URL: ${String(err)}`, 'error');
 		});
 		this.note('sign-in window opened');
@@ -588,6 +649,8 @@ class PlaudLoginSession {
 						.filter((v) => v.length > 0)
 				: [];
 			const apiBaseUrl = normalizeApiDomain(probe?.domain);
+			const workspaceId = cleanScopeValue(probe?.workspaceId);
+			const deviceId = cleanScopeValue(probe?.deviceId);
 			// Only ever read the token off a Plaud origin. The window loads
 			// web.plaud.ai, but a login redirect could land it elsewhere; a generic
 			// localStorage `token` on some other origin must never be captured, even
@@ -610,7 +673,7 @@ class PlaudLoginSession {
 				});
 			}
 			if (usable.length > 0 && !this.settled) {
-				this.captureToken(usable, apiBaseUrl);
+				this.captureToken(usable, apiBaseUrl, workspaceId, deviceId);
 			}
 		};
 		void poll();
@@ -623,6 +686,8 @@ class PlaudLoginSession {
 	private captureToken(
 		tokens: readonly string[],
 		apiBaseUrl: string | null,
+		workspaceId: string | null,
+		deviceId: string | null,
 	): void {
 		// Values arrive already trimmed and bearer-stripped by the caller.
 		const values = tokens.filter((value) => value.length > 0);
@@ -640,7 +705,7 @@ class PlaudLoginSession {
 			lifetimeHours: life?.lifetimeHours ?? null,
 			typ: life?.typ ?? null,
 		});
-		this.settle({ tokens: values, apiBaseUrl });
+		this.settle({ tokens: values, apiBaseUrl, workspaceId, deviceId });
 		this.closeWindow();
 	}
 
@@ -740,20 +805,53 @@ export function isPlaudOrigin(href: string | null | undefined): boolean {
 	if (parsed.protocol !== 'https:') {
 		return false;
 	}
-	const host = parsed.hostname.toLowerCase().replace(/\.$/, '');
-	return host === 'plaud.ai' || host.endsWith('.plaud.ai');
+	return isTrustedPlaudHost(parsed.hostname);
+}
+
+// Sanitize a scope value (workspace id / device id) read from the probe into a
+// non-empty trimmed string, or null. These are opaque short identifiers, not
+// origins, so no host validation applies.
+function cleanScopeValue(value: unknown): string | null {
+	if (typeof value !== 'string') {
+		return null;
+	}
+	const trimmed = value.trim();
+	return trimmed.length > 0 ? trimmed : null;
 }
 
 // Normalize the regional host into an https origin, or null when missing or
-// not a trusted Plaud host. Mirrors the client's region allowlist: only ever
-// return a plaud.ai origin.
-function normalizeApiDomain(domain: string | null | undefined): string | null {
+// not a trusted Plaud host. Shares the client's host allowlist via
+// isTrustedPlaudHost, so it returns a plaud.ai or theplaud.com origin and
+// rejects anything else. Exported for unit testing the JSON-unwrap and the
+// host allowlist.
+export function normalizeApiDomain(
+	domain: string | null | undefined,
+): string | null {
 	if (typeof domain !== 'string' || domain.trim().length === 0) {
 		return null;
 	}
-	const candidate = /^https?:\/\//i.test(domain)
-		? domain
-		: `https://${domain}`;
+	let value = domain.trim();
+	// The new portal stores `pld_plaud_user_api_domain` as a JSON object
+	// (`{"domain":"https://...","timestamp":...}`); older builds stored a bare
+	// host string. Unwrap the object form to the inner `domain` before parsing.
+	if (value.startsWith('{')) {
+		try {
+			const parsedObj: unknown = JSON.parse(value);
+			const inner =
+				parsedObj !== null &&
+				typeof parsedObj === 'object' &&
+				typeof (parsedObj as { domain?: unknown }).domain === 'string'
+					? (parsedObj as { domain: string }).domain.trim()
+					: '';
+			if (inner.length === 0) {
+				return null;
+			}
+			value = inner;
+		} catch {
+			return null;
+		}
+	}
+	const candidate = /^https?:\/\//i.test(value) ? value : `https://${value}`;
 	let parsed: URL;
 	try {
 		parsed = new URL(candidate);
@@ -767,8 +865,7 @@ function normalizeApiDomain(domain: string | null | undefined): string | null {
 	) {
 		return null;
 	}
-	const host = parsed.hostname.toLowerCase().replace(/\.$/, '');
-	if (host !== 'plaud.ai' && !host.endsWith('.plaud.ai')) {
+	if (!isTrustedPlaudHost(parsed.hostname)) {
 		return null;
 	}
 	return `https://${parsed.host}`.replace(/\/+$/, '');

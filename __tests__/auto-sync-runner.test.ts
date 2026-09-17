@@ -1,6 +1,10 @@
 import type { PlaudRecordingId, Recording } from '../plaud-client';
-import type { ImportedRecord } from '../vault-index';
+import type { ImportedIndex, ImportedRecord } from '../vault-index';
 import { runAutoSyncTick, type AutoSyncTickDeps } from '../auto-sync-runner';
+
+function emptyIndex(): ImportedIndex {
+	return { byId: new Map(), byInstant: new Map(), byDay: new Map() };
+}
 
 function rec(id: string, versionMs: number): Recording {
 	return {
@@ -19,18 +23,19 @@ function rec(id: string, versionMs: number): Recording {
 
 function idx(
 	entries: ReadonlyArray<readonly [string, number | undefined]>,
-): Map<PlaudRecordingId, ImportedRecord> {
-	return new Map(
+): ImportedIndex {
+	const byId = new Map<PlaudRecordingId, ImportedRecord>(
 		entries.map(([id, v]) => [
 			id as PlaudRecordingId,
-			{ path: `Plaud/${id}.md`, versionMs: v },
+			{ path: `Plaud/${id}.md`, versionMs: v, plaudId: id },
 		]),
 	);
+	return { byId, byInstant: new Map(), byDay: new Map() };
 }
 
 function deps(
 	over: Partial<AutoSyncTickDeps> & { pages: readonly Recording[][] } & {
-		index?: Map<PlaudRecordingId, ImportedRecord>;
+		index?: ImportedIndex;
 	},
 ): {
 	deps: AutoSyncTickDeps;
@@ -50,7 +55,7 @@ function deps(
 			const pageIndex = Math.floor(skip / (over.pageSize ?? 10));
 			return pages[pageIndex] ?? [];
 		},
-		buildIndex: () => over.index ?? new Map(),
+		buildIndex: () => over.index ?? emptyIndex(),
 		importCandidates: async (newRecs, changedRecs) => {
 			importCalls.push({
 				newIds: newRecs.map((r) => r.id),
@@ -121,7 +126,7 @@ describe('runAutoSyncTick', () => {
 
 	it('caps by maxPagesPerTick on a cold index (nothing up to date)', async () => {
 		const { deps: d } = deps({
-			index: new Map(),
+			index: emptyIndex(),
 			pageSize: 2,
 			maxPagesPerTick: 2,
 			pages: [
@@ -137,7 +142,7 @@ describe('runAutoSyncTick', () => {
 
 	it('caps by maxImportsPerTick', async () => {
 		const { deps: d, importCalls } = deps({
-			index: new Map(),
+			index: emptyIndex(),
 			pageSize: 10,
 			maxImportsPerTick: 3,
 			pages: [
@@ -172,7 +177,7 @@ describe('runAutoSyncTick', () => {
 
 	it('excludes ignored recordings from the tick candidates', async () => {
 		const { deps: d, importCalls } = deps({
-			index: new Map(),
+			index: emptyIndex(),
 			pageSize: 10,
 			ignoredIds: new Set(['junk' as PlaudRecordingId]),
 			pages: [[rec('junk', 900), rec('keep', 800)]],
@@ -184,7 +189,7 @@ describe('runAutoSyncTick', () => {
 
 	it('stops on a short page (remote exhausted) without a boundary', async () => {
 		const { deps: d } = deps({
-			index: new Map(),
+			index: emptyIndex(),
 			pageSize: 10,
 			pages: [[rec('a', 9), rec('b', 8)]], // 2 < pageSize 10 -> exhausted
 		});

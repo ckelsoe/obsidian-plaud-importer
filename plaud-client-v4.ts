@@ -1,0 +1,1046 @@
+// v4 Plaud client for the new Plaud portal. Talks to the `file-app/v4`
+// microservice API on the account's resolved regional host (read fresh each
+// call from the captured domain). The plugin picks this client over the prod
+// reverse-engineered client in plaud-client-re.ts when the account is on the
+// new portal (see main.ts usesV4Portal). This module deliberately reuses that
+// client's transport error types and validated content parsers so the two
+// share one code path.
+//
+// Wire shapes captured live 2026-08-15, see the private workspace notes under
+// dev-docs/plaud-importer/plaud-next-portal for the full capture.
+//
+// Like plaud-client-re.ts, this module must stay free of any `obsidian` import
+// so it can be unit-tested with a stub fetcher.
+
+import type {
+	PlaudClient,
+	PlaudDevice,
+	PlaudFolder,
+	PlaudRecordingId,
+	Recording,
+	RecordingFilter,
+	RecordingPage,
+	Summary,
+	Transcript,
+	TranscriptAndSummary,
+} from './plaud-client';
+import type { DebugLogger } from './debug-logger';
+import { isTrustedPlaudHost } from './plaud-hosts';
+import {
+	PlaudApiError,
+	PlaudAuthError,
+	PlaudParseError,
+	parseOutlineBody,
+	parseTranscriptField,
+	type PlaudHttpFetcher,
+	type PlaudHttpResponse,
+	type PlaudTokenProvider,
+} from './plaud-client-re';
+
+const DEFAULT_PAGE_SIZE = 300;
+const DEFAULT_SCOPE_TYPE = 'workspace';
+const DEFAULT_APP_PLATFORM = 'web';
+const DEFAULT_APP_LANGUAGE = 'en';
+
+// The file-detail memo only exists to coalesce the transcript+audio calls made
+// for one recording during a single import. Keep it short so a later re-import
+// in the same session refetches fresh metadata and fresh pre-signed content
+// URLs (which expire) rather than reusing stale ones.
+const DETAIL_CACHE_TTL_MS = 60_000;
+
+// Unit-confusion guards for the millisecond timestamps the v4 API uses (same
+// convention as the prod list endpoint). Kept local so this module does not
+// depend on non-exported internals of plaud-client-re.ts.
+const MIN_PLAUSIBLE_UNIX_MS = 946684800000; // 2000-01-01
+const MAX_PLAUSIBLE_UNIX_MS = 4102444800000; // 2100-01-01
+const MAX_PLAUSIBLE_DURATION_MS = 48 * 60 * 60 * 1000; // 48h
+
+/**
+ * v4 object types seen inside `data.objects[]` of the file-detail response.
+ * Each object carries a pre-signed `content_url` (when generated) plus a
+ * vendor MIME type. POLISHED_TRANSCRIPT is the user-renamed/smoothed variant
+ * and is preferred over the raw TRANSCRIPT when present.
+ */
+const OBJ_TRANSCRIPT = 'TRANSCRIPT';
+const OBJ_POLISHED_TRANSCRIPT = 'POLISHED_TRANSCRIPT';
+const OBJ_SUMMARY = 'SUMMARY';
+const OBJ_OUTLINE = 'OUTLINE';
+const OBJ_AUDIO = 'AUDIO';
+
+export interface PlaudV4ClientOptions {
+	/**
+	 * The account's resolved API host, e.g.
+	 * `https://api-staging-apne1.plaud.ai`. The web app caches this per user in
+	 * `localStorage.pld_plaud_user_api_domain`; the plugin captures it at
+	 * sign-in. Required, v4 has no fixed default host.
+	 *
+	 * Accepts a value or a provider. Pass a provider (e.g. `() =>
+	 * this.settings.apiBaseUrl`) so a host captured AFTER the client is
+	 * constructed (first sign-in) takes effect without reconstruction, exactly
+	 * like the token provider. The host is validated against the plaud.ai
+	 * allowlist on every request, before the bearer is attached.
+	 */
+	readonly baseUrl: string | (() => string);
+	/**
+	 * Active workspace id (`ws_...`), sent as the `x-scope-id` header. Every v4
+	 * data call is workspace-scoped; requests without a valid scope have no
+	 * context. Required. Value or provider (read fresh each request).
+	 */
+	readonly workspaceId: string | (() => string);
+	/** `x-scope-type` header. Defaults to `workspace`. */
+	readonly scopeType?: string;
+	/**
+	 * `x-device-id` header, when the plugin captured one at sign-in. Value or
+	 * provider (read fresh each request).
+	 */
+	readonly deviceId?: string | (() => string | undefined);
+	/**
+	 * `app-platform` / `edit-from` headers. Defaults to `web` (the value the
+	 * web app sends and the value in a web-captured token's `client_id` claim).
+	 * Override only if a non-web token is ever used.
+	 */
+	readonly appPlatform?: string;
+	/** `app-language` header. Defaults to `en`. */
+	readonly appLanguage?: string;
+	/**
+	 * `x-timezone-iana` header. Defaults to the host machine's IANA zone. Used
+	 * by the server for display-time calculations, not by the plugin.
+	 */
+	readonly timezoneIana?: string;
+	/** Page size for the list endpoint. Defaults to 300 (the web app's value). */
+	readonly pageSize?: number;
+	/**
+	 * Optional debug logger. Authorization headers are never handed to it.
+	 */
+	readonly debugLogger?: DebugLogger;
+}
+
+interface FetchApiOptions {
+	readonly method?: 'GET' | 'POST' | 'PATCH';
+	readonly body?: string;
+	readonly allowEmptyBody?: boolean;
+}
+
+export class PlaudV4Client implements PlaudClient {
+	private readonly tokenProvider: PlaudTokenProvider;
+	private readonly fetcher: PlaudHttpFetcher;
+	private readonly baseUrlProvider: () => string;
+	private readonly workspaceIdProvider: () => string;
+	private readonly scopeType: string;
+	private readonly deviceIdProvider: () => string | undefined;
+	private readonly appPlatform: string;
+	private readonly appLanguage: string;
+	private readonly timezoneIana: string;
+	private readonly pageSize: number;
+	private readonly debugLogger: DebugLogger | undefined;
+
+	// Folder names discovered from list items' `parent_folder`. v4 has no flat
+	// `/filetag/` catalog; folder membership rides on each recording's
+	// parent_folder, so we accumulate {folder_id -> name} as we page and serve
+	// it through getFolderCatalog, letting the existing tag->folder resolution
+	// in note-writer work unchanged. folder_id -> name.
+	private readonly folderNames = new Map<string, string>();
+
+	// Single-entry, short-TTL memo of the last file-detail response, so
+	// getAudioTempUrl and getTranscriptAndSummary for the same recording do not
+	// each refetch the detail. Import processes one recording fully before the
+	// next, so a single slot is enough; the TTL keeps a later re-import from
+	// reusing stale metadata or expired pre-signed URLs.
+	private lastDetail: {
+		id: string;
+		data: Record<string, unknown>;
+		at: number;
+	} | null = null;
+
+	constructor(
+		tokenProvider: PlaudTokenProvider,
+		fetcher: PlaudHttpFetcher,
+		options: PlaudV4ClientOptions,
+	) {
+		this.tokenProvider = tokenProvider;
+		this.fetcher = fetcher;
+		// Normalize value-or-provider options into providers read fresh on each
+		// request. The base host is validated against the shared Plaud host
+		// allowlist (isTrustedPlaudHost) per request in resolveBaseUrl (not here),
+		// because it can be captured after construction and must be re-checked
+		// before every bearer send.
+		this.baseUrlProvider = toProvider(options.baseUrl);
+		this.workspaceIdProvider = toProvider(options.workspaceId);
+		this.scopeType = options.scopeType ?? DEFAULT_SCOPE_TYPE;
+		const device = options.deviceId;
+		this.deviceIdProvider =
+			typeof device === 'function' ? device : () => device;
+		this.appPlatform = options.appPlatform ?? DEFAULT_APP_PLATFORM;
+		this.appLanguage = options.appLanguage ?? DEFAULT_APP_LANGUAGE;
+		this.timezoneIana = options.timezoneIana ?? resolveLocalTimezone();
+		this.pageSize = options.pageSize ?? DEFAULT_PAGE_SIZE;
+		this.debugLogger = options.debugLogger;
+	}
+
+	/**
+	 * Resolve and validate the current API host. Read fresh each request so a
+	 * host captured after construction takes effect immediately. Throws (before
+	 * the bearer is attached) if the host is not an https plaud.ai origin.
+	 */
+	private resolveBaseUrl(): string {
+		return assertTrustedPlaudHost(this.baseUrlProvider()).replace(
+			/\/+$/,
+			'',
+		);
+	}
+
+	async listRecordings(
+		filter?: RecordingFilter,
+	): Promise<readonly Recording[]> {
+		const page = await this.listRecordingsPage(filter);
+		return page.recordings;
+	}
+
+	async listRecordingsPage(filter?: RecordingFilter): Promise<RecordingPage> {
+		if (filter?.folderId !== undefined) {
+			throw new PlaudApiError(
+				'folderId filter is not supported by /file-app/v4/recordings/all',
+				undefined,
+				'/file-app/v4/recordings/all',
+			);
+		}
+		// v4 pages with an opaque cursor, not an offset. Reject a non-zero
+		// `skip` loudly rather than silently ignoring it (the RecordingFilter
+		// contract requires this): a caller that still pages with `skip` would
+		// otherwise re-receive page one forever. Callers must page with
+		// `cursor` from the previous page's `nextCursor`.
+		if (filter?.skip !== undefined && filter.skip !== 0) {
+			throw new PlaudApiError(
+				`Offset pagination (skip=${filter.skip}) is not supported by the v4 portal, page with the cursor from the previous page`,
+				undefined,
+				'/file-app/v4/recordings/all',
+			);
+		}
+		// v4 sorts by `created` (recording order) or `updated` (edit order, the
+		// auto-sync signal). Map the shared `sortBy` enum onto v4's names.
+		const sortBy = filter?.sortBy === 'edit_time' ? 'updated' : 'created';
+		const params = new URLSearchParams({
+			sort_by: sortBy,
+			sort_order: 'desc',
+			page_size: String(filter?.limit ?? this.pageSize),
+		});
+		if (filter?.cursor !== undefined && filter.cursor.length > 0) {
+			params.set('cursor', filter.cursor);
+		}
+
+		const endpoint = '/file-app/v4/recordings/all';
+		const url = `${this.resolveBaseUrl()}${endpoint}?${params.toString()}`;
+		const data = await this.fetchApiData(url, endpoint);
+
+		// Require a real array. A missing or reshaped `items` is an API-shape
+		// regression, not an empty account, so surface it rather than silently
+		// reporting zero recordings. (An empty list legitimately sends `[]`.)
+		const rawItems = data['items'];
+		if (!Array.isArray(rawItems)) {
+			throw new PlaudParseError(
+				`Plaud v4 ${endpoint} response has no items array`,
+				endpoint,
+			);
+		}
+		const items: readonly unknown[] = rawItems;
+		const out: Recording[] = [];
+		const rejected: Array<{ index: number; reason: string }> = [];
+		items.forEach((item, index) => {
+			try {
+				const recording = this.parseV4ListItem(item, endpoint);
+				if (matchesFilter(recording, filter)) {
+					out.push(recording);
+				}
+			} catch (err) {
+				if (err instanceof PlaudParseError) {
+					rejected.push({ index, reason: err.message });
+				} else {
+					throw err;
+				}
+			}
+		});
+		if (rejected.length > 0) {
+			const preview = rejected
+				.slice(0, 3)
+				.map((r) => `[${r.index}] ${r.reason}`)
+				.join('; ');
+			const suffix =
+				rejected.length > 3 ? `; +${rejected.length - 3} more` : '';
+			throw new PlaudParseError(
+				`${rejected.length}/${items.length} recordings from ${endpoint} failed validation: ${preview}${suffix}`,
+				endpoint,
+			);
+		}
+
+		// A malformed (non-string) next_cursor falls through to null, ending the
+		// page loop. A cursor that does not advance (the server echoes the one we
+		// sent) would loop the pager forever, so reject it rather than repeat the
+		// same page.
+		const nextCursor = readNonEmptyString(data['next_cursor']) ?? null;
+		if (
+			nextCursor !== null &&
+			filter?.cursor !== undefined &&
+			nextCursor === filter.cursor
+		) {
+			throw new PlaudParseError(
+				`Plaud v4 ${endpoint} returned a non-advancing cursor`,
+				endpoint,
+			);
+		}
+		return { recordings: out, nextCursor };
+	}
+
+	async getFolderCatalog(): Promise<readonly PlaudFolder[]> {
+		// Best-effort: v4 folders ride on each recording's parent_folder rather
+		// than a flat catalog endpoint, so this returns what listing discovered.
+		// If no listing has run yet it is empty, matching the interface contract
+		// that a missing catalog degrades to "no folders resolved".
+		const catalog: PlaudFolder[] = [];
+		for (const [id, name] of this.folderNames) {
+			catalog.push({ id, name });
+		}
+		return catalog;
+	}
+
+	async getDeviceCatalog(): Promise<readonly PlaudDevice[]> {
+		// Best-effort, and empty on v4 by design. The device catalog backs the
+		// recording-source filter, a prod (v3) feature keyed off `/device/list`
+		// and a recording's `serial_number`. The v4 list shape and the
+		// `/device-app/device/list` response were not captured, so rather than
+		// guess a shape this returns none. The interface contract already treats
+		// a missing catalog as "no devices known", so the source filter simply
+		// shows no device names on v4 instead of failing.
+		return [];
+	}
+
+	async getTranscriptAndSummary(
+		id: PlaudRecordingId,
+	): Promise<TranscriptAndSummary> {
+		if (id.length === 0) {
+			throw new PlaudApiError(
+				'getTranscriptAndSummary called with empty id',
+				undefined,
+				'/file-app/v4/files/detail/:id',
+			);
+		}
+		const detail = await this.fetchDetail(id);
+		const objects = readArray(detail['objects']);
+		// v4 keeps images out of the summary body: a summary embed points at a
+		// content id (`c_<hex>`), and relation_content_mapping resolves that id to
+		// a pre-signed image URL. resolveSummary rewrites those markers to real
+		// image embeds so the shared attachment pipeline can download them.
+		const relationContentMapping = readStringMap(
+			detail['relation_content_mapping'],
+		);
+
+		const transcript = await this.resolveTranscript(id, objects);
+		const summary = await this.resolveSummary(
+			id,
+			objects,
+			relationContentMapping,
+		);
+		const chapters = await this.resolveChapters(objects);
+		const aiKeywords = readKeywords(detail['meta']);
+
+		if (this.debugLogger?.enabled === true) {
+			this.debugLogger.log({
+				kind: 'parsed',
+				endpoint: '/getTranscriptAndSummary',
+				message: `v4 detail for ${id}: transcript=${
+					transcript
+						? `${transcript.segments.length} segments`
+						: 'null'
+				}, summary=${
+					summary ? `${summary.text.length} chars` : 'null'
+				}, chapters=${chapters.length}, keywords=${aiKeywords.length}`,
+			});
+		}
+
+		return {
+			transcript,
+			summary,
+			aiKeywords: aiKeywords.length > 0 ? aiKeywords : undefined,
+			chapters: chapters.length > 0 ? chapters : undefined,
+		};
+	}
+
+	async getAudioTempUrl(id: PlaudRecordingId): Promise<string | null> {
+		const detail = await this.fetchDetail(id);
+		const objects = readArray(detail['objects']);
+		const audio = findObject(objects, OBJ_AUDIO);
+		if (audio === undefined) {
+			return null;
+		}
+		return readNonEmptyString(audio['content_url']) ?? null;
+	}
+
+	async updateTitle(id: PlaudRecordingId, _filename: string): Promise<void> {
+		// The v4 rename/write-back endpoint has not been captured yet (it was
+		// not exercised during the read-only recon, and probing it means a live
+		// write to the account). Fail loudly rather than silently no-op so a
+		// caller with autoUpdatePlaudTitle enabled sees a clear message. Wire
+		// this once the endpoint is confirmed.
+		throw new PlaudApiError(
+			`Updating a Plaud title is not yet supported on the v4 portal (recording ${id})`,
+			undefined,
+			'/file-app/v4/files/:id',
+		);
+	}
+
+	// --- internals -------------------------------------------------------
+
+	private async fetchDetail(
+		id: PlaudRecordingId,
+	): Promise<Record<string, unknown>> {
+		if (
+			this.lastDetail !== null &&
+			this.lastDetail.id === id &&
+			Date.now() - this.lastDetail.at < DETAIL_CACHE_TTL_MS
+		) {
+			return this.lastDetail.data;
+		}
+		const endpoint = `/file-app/v4/files/detail/${encodeURIComponent(id)}`;
+		const url = `${this.resolveBaseUrl()}${endpoint}`;
+		const data = await this.fetchApiData(url, endpoint);
+		this.lastDetail = { id, data, at: Date.now() };
+		return data;
+	}
+
+	private async resolveTranscript(
+		id: PlaudRecordingId,
+		objects: readonly unknown[],
+	): Promise<Transcript | null> {
+		// Prefer the polished (user-renamed) transcript when it has been
+		// generated; fall back to the raw one.
+		const polished = findObject(objects, OBJ_POLISHED_TRANSCRIPT);
+		const raw = findObject(objects, OBJ_TRANSCRIPT);
+		const chosen =
+			polished !== undefined &&
+			readNonEmptyString(polished['content_url']) !== undefined
+				? polished
+				: raw;
+		const url =
+			chosen !== undefined
+				? readNonEmptyString(chosen['content_url'])
+				: undefined;
+		if (url === undefined) {
+			return null;
+		}
+		const body = await this.fetchContentJson(url, `transcript for ${id}`);
+		if (body === null) {
+			return null;
+		}
+		return parseTranscriptField(id, body, `transcript for ${id}`);
+	}
+
+	private async resolveSummary(
+		id: PlaudRecordingId,
+		objects: readonly unknown[],
+		relationContentMapping: Readonly<Record<string, string>>,
+	): Promise<Summary | null> {
+		const summaryObj = findObject(objects, OBJ_SUMMARY);
+		const url =
+			summaryObj !== undefined
+				? readNonEmptyString(summaryObj['content_url'])
+				: undefined;
+		if (url === undefined) {
+			return null;
+		}
+		const text = await this.fetchContentText(url, `summary for ${id}`);
+		if (text.trim().length === 0) {
+			return null;
+		}
+		// Resolve any `c_<id>` image markers to real image embeds so the
+		// attachment pipeline downloads and localizes them (v4 puts images here,
+		// not inline in the body). A no-op when the recording has no images.
+		return {
+			id,
+			text: embedV4SummaryImages(text.trim(), relationContentMapping),
+		};
+	}
+
+	private async resolveChapters(
+		objects: readonly unknown[],
+	): Promise<ReturnType<typeof parseOutlineBody>> {
+		const outline = findObject(objects, OBJ_OUTLINE);
+		const url =
+			outline !== undefined
+				? readNonEmptyString(outline['content_url'])
+				: undefined;
+		if (url === undefined) {
+			return [];
+		}
+		const body = await this.fetchContentJson(url, 'outline');
+		if (body === null) {
+			return [];
+		}
+		return parseOutlineBody(body);
+	}
+
+	/**
+	 * GET a v4 API endpoint (authenticated, workspace-scoped) and return the
+	 * unwrapped `data` object. Mirrors plaud-client-re's fetchJson error
+	 * handling: 401 -> PlaudAuthError, other non-2xx -> PlaudApiError, negative
+	 * in-band `status` -> PlaudApiError (or PlaudAuthError when it reads as an
+	 * auth/expiry failure).
+	 */
+	private async fetchApiData(
+		url: string,
+		endpoint: string,
+		options: FetchApiOptions = {},
+	): Promise<Record<string, unknown>> {
+		const json = await this.fetchApi(url, endpoint, options);
+		if (!isRecord(json)) {
+			throw new PlaudParseError(
+				`Plaud v4 ${endpoint} returned a non-object body`,
+				endpoint,
+			);
+		}
+		const data = json['data'];
+		if (!isRecord(data)) {
+			throw new PlaudParseError(
+				`Plaud v4 ${endpoint} response has no data object`,
+				endpoint,
+			);
+		}
+		return data;
+	}
+
+	private async fetchApi(
+		url: string,
+		endpoint: string,
+		options: FetchApiOptions,
+	): Promise<unknown> {
+		const method = options.method ?? 'GET';
+		// Auth is checked before scope. A user who has never signed in has neither
+		// a token nor a workspace, and "sign in" is the actionable message.
+		// Checking the workspace first reported "No workspace selected" as a
+		// retryable network error (PlaudApiError), which reads as a Plaud outage to
+		// someone who has simply not connected yet.
+		const rawToken = this.tokenProvider();
+		if (rawToken === null || rawToken.trim().length === 0) {
+			throw new PlaudAuthError(
+				'not_configured',
+				'No Plaud token configured, sign in to the Plaud portal in the plugin settings',
+				endpoint,
+			);
+		}
+		// A token with no workspace means the sign-in predates workspace capture
+		// (or captured none), not a network fault. Report it as not_configured so
+		// it is not retried as a transient error, and name the fix.
+		const workspaceId = this.workspaceIdProvider();
+		if (workspaceId.trim().length === 0) {
+			throw new PlaudAuthError(
+				'not_configured',
+				`Signed in, but no workspace was captured for ${endpoint}. Sign in to the Plaud portal again to capture your workspace.`,
+				endpoint,
+			);
+		}
+		const token = rawToken.trim().replace(/^bearer\s+/i, '');
+
+		const headers: Record<string, string> = {
+			Accept: 'application/json',
+			Authorization: `Bearer ${token}`,
+			'app-platform': this.appPlatform,
+			'edit-from': this.appPlatform,
+			'app-language': this.appLanguage,
+			'x-scope-type': this.scopeType,
+			'x-scope-id': workspaceId,
+			'x-timezone-iana': this.timezoneIana,
+			'x-request-id': genRequestId(),
+		};
+		const deviceId = this.deviceIdProvider();
+		if (deviceId !== undefined && deviceId.length > 0) {
+			headers['x-device-id'] = deviceId;
+		}
+		if (options.body !== undefined) {
+			headers['Content-Type'] = 'application/json';
+		}
+
+		if (this.debugLogger?.enabled === true) {
+			this.debugLogger.log({
+				kind: 'request',
+				endpoint,
+				message: `${method} ${endpoint}`,
+				// Never log the Authorization header, surface only non-auth
+				// scope headers useful for diagnosing a scope mismatch.
+				payload: {
+					url,
+					method,
+					scopeId: workspaceId,
+					scopeType: this.scopeType,
+				},
+			});
+		}
+
+		let response: PlaudHttpResponse;
+		try {
+			response = await this.fetcher({
+				url,
+				method,
+				headers,
+				body: options.body,
+			});
+		} catch (err) {
+			const cause = err instanceof Error ? err.message : String(err);
+			throw new PlaudApiError(
+				`Plaud v4 ${endpoint} network error: ${cause}`,
+				undefined,
+				endpoint,
+			);
+		}
+
+		if (this.debugLogger?.enabled === true) {
+			this.debugLogger.log({
+				kind: 'response',
+				endpoint,
+				message: `${response.status} from ${endpoint}`,
+				payload: {
+					status: response.status,
+					textSnippet:
+						response.json === null || response.json === undefined
+							? (response.text ?? '').slice(0, 500)
+							: undefined,
+				},
+			});
+		}
+
+		if (response.status === 401) {
+			throw new PlaudAuthError(
+				'token_rejected',
+				`Plaud token rejected by ${endpoint} (401), token is expired or revoked`,
+				endpoint,
+			);
+		}
+		if (response.status === 429) {
+			throw new PlaudApiError(
+				`Plaud rate-limited ${endpoint} (429), retry in a minute`,
+				429,
+				endpoint,
+			);
+		}
+		if (response.status < 200 || response.status >= 300) {
+			const snippet = (response.text ?? '')
+				.slice(0, 200)
+				.replace(/\s+/g, ' ');
+			throw new PlaudApiError(
+				`Plaud v4 ${endpoint} returned HTTP ${response.status}: ${snippet}`,
+				response.status,
+				endpoint,
+			);
+		}
+		if (response.json === null || response.json === undefined) {
+			if (
+				options.allowEmptyBody === true &&
+				(response.text ?? '').trim().length === 0
+			) {
+				return null;
+			}
+			const snippet = (response.text ?? '')
+				.slice(0, 200)
+				.replace(/\s+/g, ' ');
+			throw new PlaudParseError(
+				`Plaud v4 ${endpoint} returned 2xx with no JSON body (got: "${snippet}")`,
+				endpoint,
+			);
+		}
+
+		this.throwOnInBandError(response.json, endpoint);
+		return response.json;
+	}
+
+	/**
+	 * v4 reports failures in-band as an HTTP 200 with a negative top-level
+	 * `status` and a `msg`. Route auth/expiry-shaped failures to PlaudAuthError
+	 * so the UI prompts a reconnect; everything else is a PlaudApiError
+	 * carrying the numeric in-band status.
+	 */
+	private throwOnInBandError(json: unknown, endpoint: string): void {
+		if (!isRecord(json)) {
+			return;
+		}
+		const status = json['status'];
+		if (typeof status !== 'number' || status >= 0) {
+			return;
+		}
+		const msg =
+			readNonEmptyString(json['msg']) ?? `in-band status ${status}`;
+		if (/expired|token|auth|unauthor/i.test(msg)) {
+			throw new PlaudAuthError(
+				'token_rejected',
+				`Plaud v4 ${endpoint} rejected the session: ${msg} (status ${status})`,
+				endpoint,
+			);
+		}
+		throw new PlaudApiError(
+			`Plaud v4 ${endpoint} error: ${msg} (status ${status})`,
+			undefined,
+			endpoint,
+			status,
+		);
+	}
+
+	/**
+	 * Fetch a pre-signed content_url as text (no auth header, the URL carries
+	 * its own signature). A failure here is NOT "content absent": callers only
+	 * reach this with a content_url the detail actually advertised, so a network
+	 * error, an expired 403, or a 5xx must propagate as an error rather than
+	 * resolve to empty. Silently returning empty would let a transient failure
+	 * overwrite an existing note's transcript/summary/chapters on re-import.
+	 * A 2xx with an empty body is a genuine empty and is returned as `''`.
+	 */
+	private async fetchContentText(
+		url: string,
+		label: string,
+	): Promise<string> {
+		let response: PlaudHttpResponse;
+		try {
+			response = await this.fetcher({
+				url,
+				method: 'GET',
+				headers: { Accept: 'text/plain, application/json, */*' },
+			});
+		} catch (err) {
+			const cause = err instanceof Error ? err.message : String(err);
+			throw new PlaudApiError(
+				`Plaud v4 content fetch for ${label} failed: ${cause}`,
+				undefined,
+				label,
+			);
+		}
+		if (response.status < 200 || response.status >= 300) {
+			const snippet = (response.text ?? '')
+				.slice(0, 200)
+				.replace(/\s+/g, ' ');
+			throw new PlaudApiError(
+				`Plaud v4 content fetch for ${label} returned HTTP ${response.status}: ${snippet}`,
+				response.status,
+				label,
+			);
+		}
+		return response.text ?? '';
+	}
+
+	/** Fetch a pre-signed content_url and JSON-parse it. */
+	private async fetchContentJson(
+		url: string,
+		label: string,
+	): Promise<unknown> {
+		const text = await this.fetchContentText(url, label);
+		if (text.trim().length === 0) {
+			return null;
+		}
+		try {
+			return JSON.parse(text);
+		} catch (err) {
+			throw new PlaudParseError(
+				`Plaud v4 content for ${label} is not valid JSON: ${
+					err instanceof Error ? err.message : String(err)
+				}`,
+			);
+		}
+	}
+
+	private parseV4ListItem(raw: unknown, endpoint: string): Recording {
+		if (!isRecord(raw)) {
+			throw new PlaudParseError(
+				'recording item is not an object',
+				endpoint,
+			);
+		}
+		const fileId = readNonEmptyString(raw['file_id']);
+		if (fileId === undefined) {
+			throw new PlaudParseError(
+				'recording item has no file_id',
+				endpoint,
+			);
+		}
+		const title = readNonEmptyString(raw['name']);
+		if (title === undefined) {
+			throw new PlaudParseError(
+				`recording ${fileId} has empty name`,
+				endpoint,
+			);
+		}
+		const createdMs = readFiniteNumber(raw['created_at_show_ms']);
+		if (
+			createdMs === undefined ||
+			createdMs < MIN_PLAUSIBLE_UNIX_MS ||
+			createdMs > MAX_PLAUSIBLE_UNIX_MS
+		) {
+			throw new PlaudParseError(
+				`recording ${fileId} has invalid created_at_show_ms (${String(
+					raw['created_at_show_ms'],
+				)})`,
+				endpoint,
+			);
+		}
+		const durationMs = readFiniteNumber(raw['duration_ms']) ?? 0;
+		if (durationMs < 0 || durationMs > MAX_PLAUSIBLE_DURATION_MS) {
+			throw new PlaudParseError(
+				`recording ${fileId} has invalid duration_ms (${durationMs})`,
+				endpoint,
+			);
+		}
+
+		// Accumulate the folder name so getFolderCatalog can resolve it, and
+		// surface folder membership through `tags` (the id) so note-writer's
+		// existing tag->folder path resolves the name unchanged.
+		let tags: readonly string[] | undefined;
+		const parentFolder = raw['parent_folder'];
+		if (isRecord(parentFolder)) {
+			const folderId = readNonEmptyString(parentFolder['folder_id']);
+			const folderName = readNonEmptyString(parentFolder['name']);
+			if (folderId !== undefined) {
+				if (folderName !== undefined) {
+					this.folderNames.set(folderId, folderName);
+				}
+				tags = [folderId];
+			}
+		}
+
+		const versionMs = readFiniteNumber(raw['version_ms']);
+
+		return {
+			id: fileId as PlaudRecordingId,
+			title,
+			createdAt: new Date(createdMs),
+			endsAt: new Date(createdMs + durationMs),
+			// v4 list items omit the capture time-zone (the detail's meta carries
+			// an IANA zone name, not an offset). Note-writer falls back to the
+			// configured or device zone. Known fidelity gap vs the prod list.
+			captureOffsetMinutes: null,
+			durationSeconds: durationMs / 1000,
+			// Advisory hints only, and note-writer treats transcriptAvailable as
+			// a hard promise: it refuses to write when transcriptAvailable is
+			// true but the transcript comes back null. The v4 list does not
+			// carry per-recording transcript/summary presence (the
+			// file_task_status enum is not yet mapped), so we must NOT
+			// over-advertise. Leave both false; getTranscriptAndSummary is the
+			// authoritative source and writes whatever content actually exists.
+			transcriptAvailable: false,
+			summaryAvailable: false,
+			// ...but "both false" here means UNKNOWN, not "no content". Without
+			// this flag the import runner reads both-false as "nothing to fetch"
+			// and skips every recording (skipped-no-content) before ever calling
+			// getTranscriptAndSummary. Tell it to fetch and let the detail decide.
+			contentAvailabilityUnknown: true,
+			// /recordings/all returns the active list; trash has its own view.
+			isTrashed: false,
+			tags,
+			versionMs,
+			waitPull: false,
+		};
+	}
+}
+
+// --- module-local helpers ----------------------------------------------
+
+function resolveLocalTimezone(): string {
+	try {
+		const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+		return typeof zone === 'string' && zone.length > 0 ? zone : 'UTC';
+	} catch {
+		return 'UTC';
+	}
+}
+
+/**
+ * Validate that a base URL is an https Plaud origin before the client attaches
+ * the bearer token to it. Accepts `plaud.ai` / `*.plaud.ai` and `theplaud.com` /
+ * `*.theplaud.com` (the alpha portal's regional staging hosts, e.g.
+ * `api-apne1.staging.theplaud.com`). Throws PlaudApiError on a
+ * non-https scheme or a host outside that allowlist. Returns the URL unchanged
+ * on success so it can be used inline.
+ */
+export function assertTrustedPlaudHost(baseUrl: string): string {
+	let parsed: URL;
+	try {
+		parsed = new URL(baseUrl);
+	} catch {
+		throw new PlaudApiError(
+			`Invalid Plaud API base URL: ${baseUrl}`,
+			undefined,
+			baseUrl,
+		);
+	}
+	if (parsed.protocol !== 'https:' || !isTrustedPlaudHost(parsed.hostname)) {
+		throw new PlaudApiError(
+			`Refusing to use untrusted Plaud API host "${baseUrl}", must be https and a plaud.ai or theplaud.com domain`,
+			undefined,
+			baseUrl,
+		);
+	}
+	// Reject a URL that carries userinfo (a username or password before the
+	// host): the hostname is trusted, but the credentials would ride along on
+	// every authed request. Mirrors isTrustedPlaudUrl in plaud-hosts.ts.
+	if (parsed.username !== '' || parsed.password !== '') {
+		throw new PlaudApiError(
+			`Refusing a Plaud API URL with embedded credentials: "${baseUrl}"`,
+			undefined,
+			baseUrl,
+		);
+	}
+	return baseUrl;
+}
+
+/**
+ * Normalize a value-or-provider into a provider function that is read fresh on
+ * each request, so a value captured after the client is constructed (first
+ * sign-in) takes effect without reconstruction.
+ */
+function toProvider(valueOrProvider: string | (() => string)): () => string {
+	return typeof valueOrProvider === 'function'
+		? valueOrProvider
+		: () => valueOrProvider;
+}
+
+function genRequestId(): string {
+	// Just a per-request correlation id for the `x-request-id` header; the
+	// server issues its own trace ids. A UUID is unnecessary, so this avoids
+	// the `crypto` global (and the no-global-this lint) and works unchanged in
+	// both the Electron renderer and the node test environment.
+	const rand = () => Math.floor(Math.random() * 0xffffffff).toString(16);
+	return `${Date.now().toString(16)}-${rand()}-${rand()}`;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function readArray(value: unknown): readonly unknown[] {
+	return Array.isArray(value) ? value : [];
+}
+
+function readNonEmptyString(value: unknown): string | undefined {
+	return typeof value === 'string' && value.trim().length > 0
+		? value.trim()
+		: undefined;
+}
+
+function readFiniteNumber(value: unknown): number | undefined {
+	return typeof value === 'number' && Number.isFinite(value)
+		? value
+		: undefined;
+}
+
+function readKeywords(meta: unknown): readonly string[] {
+	if (!isRecord(meta)) {
+		return [];
+	}
+	const raw = meta['keywords'];
+	if (!Array.isArray(raw)) {
+		return [];
+	}
+	const out: string[] = [];
+	for (const k of raw) {
+		const s = readNonEmptyString(k);
+		if (s !== undefined) {
+			out.push(s);
+		}
+	}
+	return out;
+}
+
+/**
+ * Read a JSON object of string values (like `relation_content_mapping`) into a
+ * plain `Record<string, string>`, dropping any non-string or empty entry.
+ */
+function readStringMap(value: unknown): Record<string, string> {
+	if (!isRecord(value)) {
+		return {};
+	}
+	const out: Record<string, string> = {};
+	for (const key of Object.keys(value)) {
+		const v = value[key];
+		if (typeof v === 'string' && v.length > 0) {
+			out[key] = v;
+		}
+	}
+	return out;
+}
+
+/**
+ * Rewrite v4 summary image markers to real image embeds.
+ *
+ * The v4 summary body does not carry image bytes or even a real image URL. It
+ * embeds an image as a markdown link/embed whose target carries a content id
+ * (`c_<32 hex>`), and the file-detail response's `relation_content_mapping`
+ * resolves that id to a pre-signed image URL. This turns each such marker into a
+ * plain `![alt](<signed-url>)` embed, so the SAME attachment pipeline the prod
+ * plugin uses (extractAttachmentAssetsFromSummaryMarkdown -> download -> repoint
+ * to a local `![[...]]`) picks it up with no v4-specific code downstream. A
+ * marker whose id is absent from the map is left untouched. Exported for tests.
+ */
+export function embedV4SummaryImages(
+	summary: string,
+	relationContentMapping: Readonly<Record<string, string>>,
+): string {
+	if (Object.keys(relationContentMapping).length === 0) {
+		return summary;
+	}
+	return summary.replace(
+		/!?\[([^\]]*)\]\(([^)\s]+)\)/g,
+		(whole: string, alt: string, target: string): string => {
+			const idMatch = /c_[0-9a-f]{32}/i.exec(target);
+			if (idMatch === null) {
+				return whole;
+			}
+			const resolved = relationContentMapping[idMatch[0]];
+			if (typeof resolved !== 'string' || resolved.length === 0) {
+				return whole;
+			}
+			// Force the image form: the id resolves to an image, and the source
+			// marker is sometimes a plain link with empty text.
+			return `![${alt}](${resolved})`;
+		},
+	);
+}
+
+/**
+ * Find the first object in a v4 detail `objects[]` array whose `object_type`
+ * matches. Returns the raw record (still un-validated) or undefined.
+ */
+function findObject(
+	objects: readonly unknown[],
+	objectType: string,
+): Record<string, unknown> | undefined {
+	for (const obj of objects) {
+		if (isRecord(obj) && obj['object_type'] === objectType) {
+			return obj;
+		}
+	}
+	return undefined;
+}
+
+/**
+ * Apply the client-side filter dimensions the v4 list endpoint does not do
+ * server-side. Mirrors the prod client's `matchesFilter` for the shared
+ * fields (folderId is rejected earlier).
+ */
+function matchesFilter(
+	recording: Recording,
+	filter?: RecordingFilter,
+): boolean {
+	if (!filter) {
+		return true;
+	}
+	if (
+		filter.hasTranscript !== undefined &&
+		// On v4 the list does not report per-recording transcript presence, so
+		// transcriptAvailable is left false and contentAvailabilityUnknown is
+		// set. Filtering by an unreliable flag would drop every v4 recording
+		// even though the detail fetch is authoritative, so skip the check then.
+		recording.contentAvailabilityUnknown !== true &&
+		recording.transcriptAvailable !== filter.hasTranscript
+	) {
+		return false;
+	}
+	if (filter.since && recording.createdAt < filter.since) {
+		return false;
+	}
+	if (filter.until && recording.createdAt > filter.until) {
+		return false;
+	}
+	return true;
+}

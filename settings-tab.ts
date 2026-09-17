@@ -22,6 +22,7 @@ import {
 } from 'obsidian';
 import { describeTokenLifetime, readTokenLifetime } from './plaud-token';
 import { deviceModelLabel } from './plaud-client';
+import { isTrustedPlaudUrl } from './plaud-hosts';
 import {
 	DEFAULT_NOTE_NAME_TEMPLATE,
 	isValidNoteNameTemplate,
@@ -76,6 +77,7 @@ export interface SettingsTabHost extends Plugin {
 	reauthenticate(): Promise<ReauthOutcome>;
 	pasteTokenFromClipboard(canStore?: () => boolean): Promise<boolean>;
 	clearSignIn(): Promise<{ sessionCleared: boolean }>;
+	rebuildClientForHostChange(): void;
 	openPlaudInBrowser(): void;
 	openBookmarkSetupPage(): Promise<void>;
 	updateRibbonIcon(): void;
@@ -487,11 +489,18 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 		this.renderClearSignInControl(
 			this.makeSetting(containerEl, 'Clear sign-in', CLEAR_SIGN_IN_DESC),
 		);
+		this.renderPortalControl(
+			this.makeSetting(
+				containerEl,
+				'Sign-in portal',
+				'The Plaud portal the sign-in window opens. Defaults to the beta portal. Point it at your regional portal if you use a different one, and the token, workspace, and API region are all detected from wherever you sign in.',
+			),
+		);
 		this.renderRegionControl(
 			this.makeSetting(
 				containerEl,
 				'API region',
-				'Plaud server this vault is connected to. Detected automatically on the first import. EU and other regional accounts switch here on their own, so there is nothing to configure.',
+				'Plaud API host this vault uses (an https plaud.ai or theplaud.com domain). Detected on sign-in; override it here only if a specific regional host is needed.',
 			),
 		);
 
@@ -1165,16 +1174,73 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 		});
 	}
 
-	private renderRegionControl(setting: Setting): void {
-		const host = this.plugin.settings.apiBaseUrl;
-		const isDefault = host === DEFAULT_SETTINGS.apiBaseUrl;
-		const span = setting.controlEl.createSpan({
-			cls: 'plaud-importer-region-host',
-			text: host,
+	// Shared editable-URL field for the sign-in portal and the API region. Both
+	// take an https URL on a trusted Plaud host (isTrustedPlaudUrl, which also
+	// rejects an embedded credential); a blank resets to `fallback`, and an
+	// untrusted value flags the field without saving. Extracted because the two
+	// controls were byte-for-byte the same but for the setting they bind.
+	private renderTrustedUrlField(
+		setting: Setting,
+		opts: {
+			placeholder: string;
+			read: () => string;
+			write: (value: string) => void;
+			fallback: string;
+		},
+	): void {
+		setting.addText((text) => {
+			text.setPlaceholder(opts.placeholder);
+			text.setValue(opts.read());
+			text.onChange(async (value) => {
+				let url = value.trim();
+				while (url.endsWith('/')) {
+					url = url.slice(0, -1);
+				}
+				if (url === '') {
+					opts.write(opts.fallback);
+					await this.plugin.saveSettings();
+					text.inputEl.removeClass('plaud-importer-input-error');
+					return;
+				}
+				if (isTrustedPlaudUrl(url)) {
+					opts.write(url);
+					await this.plugin.saveSettings();
+					text.inputEl.removeClass('plaud-importer-input-error');
+				} else {
+					text.inputEl.addClass('plaud-importer-input-error');
+				}
+			});
 		});
-		span.createSpan({
-			cls: 'plaud-importer-region-note',
-			text: isDefault ? ' (default)' : ' (auto-detected)',
+	}
+
+	private renderRegionControl(setting: Setting): void {
+		// Editable so the beta portal, whose v4 API lives on a regional staging
+		// host, can be pointed at the right host when sign-in did not capture it.
+		// The v4 client reads apiBaseUrl fresh per request, but the prod client
+		// snapshots it, so rebuild the client on change to take effect at once.
+		this.renderTrustedUrlField(setting, {
+			placeholder: DEFAULT_SETTINGS.apiBaseUrl,
+			read: () => this.plugin.settings.apiBaseUrl,
+			write: (value) => {
+				this.plugin.settings.apiBaseUrl = value;
+				this.plugin.rebuildClientForHostChange();
+			},
+			fallback: DEFAULT_SETTINGS.apiBaseUrl,
+		});
+	}
+
+	private renderPortalControl(setting: Setting): void {
+		// The portal the sign-in window loads. Editable so a user on a regional
+		// portal (or the beta portal) signs in there, and the token, workspace,
+		// region, and API domain are all captured from whichever portal they use.
+		// Takes effect on the next sign-in.
+		this.renderTrustedUrlField(setting, {
+			placeholder: DEFAULT_SETTINGS.signInPortalUrl,
+			read: () => this.plugin.settings.signInPortalUrl,
+			write: (value) => {
+				this.plugin.settings.signInPortalUrl = value;
+			},
+			fallback: DEFAULT_SETTINGS.signInPortalUrl,
 		});
 	}
 
@@ -1906,8 +1972,15 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 							this.renderClearSignInControl(setting),
 					},
 					{
+						name: 'Sign-in portal',
+						desc: 'The Plaud portal the sign-in window opens. Defaults to the beta portal. Point it at your regional portal if you use a different one, and the token, workspace, and API region are all detected from wherever you sign in.',
+						searchable: false,
+						render: (setting: Setting) =>
+							this.renderPortalControl(setting),
+					},
+					{
 						name: 'API region',
-						desc: 'Plaud server this vault is connected to. Detected automatically on the first import. EU and other regional accounts switch here on their own, so there is nothing to configure.',
+						desc: 'Plaud API host this vault uses (an https plaud.ai or theplaud.com domain). Detected on sign-in; override it here only if a specific regional host is needed.',
 						searchable: false,
 						render: (setting: Setting) =>
 							this.renderRegionControl(setting),

@@ -1,175 +1,259 @@
 // Vault scanner that surfaces which Plaud recordings already have a note
 // in the configured output folder. The import modal uses this to render
-// an "imported" badge on each recording row. Re-importing remains
-// possible — the badge is purely informational and never blocks the
-// existing duplicate-policy flow.
+// an "imported" badge on each recording row, and auto-sync uses it to skip
+// re-importing. Re-importing remains possible; the badge is informational.
+//
+// Dedup keys, in order of confidence (see stable-key.ts):
+//   byId       CANONICAL recording id -> note. The primary key, and exact.
+//   byInstant  minute-rounded start + duration -> note. Recognizes an
+//              already-imported meeting whose id CHANGED (the v4 portal
+//              re-issued every id). High confidence: a caller may heal the note.
+//   byDay      calendar day + duration -> note. The only key a date-only older
+//              note offers. Used to dedup, never to heal.
+//
+// Canonical id (see canonicalPlaudId): the v4 portal keeps every v3 recording's
+// id and exposes it prefixed, so a v4 recording born in v3 has file_id
+// `of_<v3id>` and resolves in the v4 API by that exact string. An old note may
+// store the bare v3 id (`<v3id>`) or the prefixed form (`of_<v3id>`); both name
+// the same recording. Stripping the `of_` prefix collapses them, so a bare-id
+// note is recognized as already-imported and matched to its recording EXACTLY,
+// with no date guessing. Only `of_` is stripped; `f_`/`f_s_` v4-native ids are
+// opaque and compared as-is.
+// A fallback key shared by two different notes is disabled (stored as `null`) so
+// two meetings can never be merged onto one note.
 //
 // Implementation notes:
-// - We rely on Obsidian's `metadataCache`, which keeps a parsed YAML
-//   frontmatter view of every markdown file in the vault. This is far
-//   cheaper than reading file bytes ourselves, and the cache is already
-//   warm by the time the import modal opens.
+// - We rely on Obsidian's `metadataCache`, a parsed-frontmatter view of every
+//   markdown file, which is already warm when the modal opens.
 // - The scan is limited to files under the configured output folder.
-//   Notes that live elsewhere (older imports written to a different
-//   folder, hand-moved files) are intentionally NOT discovered. The
-//   alternative — scanning every markdown file in the vault — would
-//   bloat the badge logic and surface stale matches that the writer
-//   wouldn't actually clash with anyway.
-// - Returned data is a flat Map keyed by recording id. If the same
-//   `plaud-id` appears in multiple files (a legacy duplication bug or
-//   user copy-paste), the LAST entry wins; this is fine for the badge
-//   use-case because the writer's collision check already refuses to
-//   silently overwrite a note that belongs to a different recording.
+// - Only notes carrying a `plaud-id` are indexed (this plugin's own notes).
 
 import type { App, TFile } from 'obsidian';
 import type { PlaudRecordingId } from './plaud-client';
+import {
+	stableKeysFromFrontmatter,
+	stableKeysFromRecording,
+} from './stable-key';
 
 /**
  * Lightweight pointer back to an imported note. The path is the only
- * load-bearing field — `openLinkText` uses it for click-through.
- * `versionMs` is the stored auto-sync cursor (`plaud-version-ms`): a listed
- * recording whose `version_ms` exceeds it is a CHANGED note to re-import; a
- * missing `versionMs` is treated as current (no re-import) so enabling
- * auto-sync never mass-overwrites a pre-existing library.
+ * load-bearing field; `openLinkText` uses it for click-through. `versionMs` is
+ * the stored auto-sync cursor (`plaud-version-ms`).
  */
 export interface ImportedRecord {
 	readonly path: string;
 	readonly summaryVersion?: string;
 	readonly summaryId?: string;
 	readonly versionMs?: number;
+	/** The note's own `plaud-id`, so a heal can tell whether it is already the
+	 * current id (no rewrite needed) or a stale one. */
+	readonly plaudId?: string;
 }
 
 /**
- * Build a map of `plaud-id` → existing note location by scanning the
- * configured output folder. Caller invokes this once per modal open
- * (and again after every successful import) so the badge state stays
- * in sync without re-reading files.
- *
- * Folder filter rules:
- * - `''` (vault root) matches every markdown file at depth 0.
- * - A nested folder matches itself and all descendants (`folder/sub/...`).
- * - Files outside the folder are skipped.
- *
- * Never throws: a malformed frontmatter entry is silently skipped so a
- * single bad note can never prevent the rest of the index from
- * building. Returns an empty map when the cache has not warmed yet —
- * the modal can call again later if it needs.
+ * The vault index: the primary id map plus two id-independent fallback maps.
+ * A `null` value in a fallback map marks an AMBIGUOUS key (two notes share it);
+ * `findImportedNote` treats that as no match.
  */
-export function buildPlaudIdIndex(
-	app: App,
-	outputFolder: string,
-): Map<PlaudRecordingId, ImportedRecord> {
-	const normalized = normalizeFolder(outputFolder);
-	const out = new Map<PlaudRecordingId, ImportedRecord>();
-	const files = app.vault.getMarkdownFiles();
-	for (const file of files) {
-		if (!fileIsUnder(file, normalized)) continue;
-		const cache = app.metadataCache.getFileCache(file);
-		const rawFm: unknown = cache?.frontmatter;
-		if (!isRecord(rawFm)) continue;
-		const id = pickFrontmatterString(rawFm['plaud-id']);
-		if (id === undefined) continue;
-		const record: ImportedRecord = {
+export interface ImportedIndex {
+	readonly byId: Map<PlaudRecordingId, ImportedRecord>;
+	readonly byInstant: Map<string, ImportedRecord | null>;
+	readonly byDay: Map<string, ImportedRecord | null>;
+}
+
+/** How `findImportedNote` matched, most confident first. */
+export type ImportMatch = 'id' | 'instant' | 'day';
+
+/**
+ * Collapse a recording id to the form shared by every portal that ever issued
+ * it. The v4 portal preserves each v3 recording's id and exposes it as
+ * `of_<v3id>`, so a note that stored the bare v3 id (`<v3id>`) and the current
+ * v4 recording (`of_<v3id>`) are the same meeting. Stripping the single leading
+ * `of_` makes them equal. v4-native ids (`f_...`, `f_s_...`) carry no v3 id and
+ * are returned unchanged. Pure and total.
+ */
+export function canonicalPlaudId(id: string): string {
+	return id.startsWith('of_') ? id.slice(3) : id;
+}
+
+/** The recording fields the finder needs (a subset of `Recording`). */
+export interface RecordingIdentity {
+	readonly id: string;
+	readonly createdAt: Date;
+	readonly durationSeconds: number;
+}
+
+function newIndex(): ImportedIndex {
+	return {
+		byId: new Map<PlaudRecordingId, ImportedRecord>(),
+		byInstant: new Map<string, ImportedRecord | null>(),
+		byDay: new Map<string, ImportedRecord | null>(),
+	};
+}
+
+// Add a note under a fallback key, disabling the key (null) if a DIFFERENT note
+// already claimed it. The same note re-registering the same key is a no-op.
+function addFallback(
+	map: Map<string, ImportedRecord | null>,
+	key: string | null,
+	record: ImportedRecord,
+): void {
+	if (key === null) return;
+	if (!map.has(key)) {
+		map.set(key, record);
+		return;
+	}
+	const current = map.get(key);
+	if (current && current.path !== record.path) {
+		map.set(key, null); // ambiguous: two different notes share this key
+	}
+}
+
+function recordFromFrontmatter(
+	file: TFile,
+	rawFm: Record<string, unknown>,
+): { id: string; record: ImportedRecord } | null {
+	const id = pickFrontmatterString(rawFm['plaud-id']);
+	if (id === undefined) return null;
+	return {
+		id,
+		record: {
 			path: file.path,
+			plaudId: id,
 			summaryVersion: pickFrontmatterString(
 				rawFm['plaud-summary-version'],
 			),
 			summaryId: pickFrontmatterString(rawFm['plaud-summary-id']),
 			versionMs: pickFrontmatterNumber(rawFm['plaud-version-ms']),
-		};
-		out.set(id as PlaudRecordingId, record);
+		},
+	};
+}
+
+function indexNote(
+	index: ImportedIndex,
+	file: TFile,
+	rawFm: Record<string, unknown>,
+): void {
+	const parsed = recordFromFrontmatter(file, rawFm);
+	if (parsed === null) return;
+	// Key by the canonical id so a note storing the bare v3 id and a note storing
+	// the `of_`-prefixed v4 id land on the same key and both match their recording.
+	index.byId.set(
+		canonicalPlaudId(parsed.id) as PlaudRecordingId,
+		parsed.record,
+	);
+	const keys = stableKeysFromFrontmatter(rawFm);
+	addFallback(index.byInstant, keys.instant, parsed.record);
+	addFallback(index.byDay, keys.day, parsed.record);
+}
+
+/**
+ * Build the vault index by scanning the configured output folder. Called once
+ * per modal open and after each import. Never throws: a malformed note is
+ * skipped. Returns an empty index when the cache has not warmed yet.
+ */
+export function buildImportedIndex(
+	app: App,
+	outputFolder: string,
+): ImportedIndex {
+	const normalized = normalizeFolder(outputFolder);
+	const index = newIndex();
+	for (const file of app.vault.getMarkdownFiles()) {
+		if (!fileIsUnder(file, normalized)) continue;
+		const rawFm: unknown =
+			app.metadataCache.getFileCache(file)?.frontmatter;
+		if (!isRecord(rawFm)) continue;
+		indexNote(index, file, rawFm);
 	}
-	return out;
+	return index;
 }
 
 /**
  * Cold-cache check and index build fused into ONE pass over the output folder.
- * The auto-sync tick runs both every tick; done separately they each iterate
- * `getMarkdownFiles()` (and, for a root output folder, the whole vault), so the
- * per-tick cost doubles. This walks the files once: the first in-scope note with
- * a null cache returns `{ isCold: true }` (matching `outputFolderCacheIsCold`)
- * and the partial index is discarded; otherwise it returns the fully built index.
- * Semantically identical to calling `outputFolderCacheIsCold` then
- * `buildPlaudIdIndex`, at half the scan cost.
+ * The first in-scope note with a null cache returns `{ isCold: true }` and the
+ * partial index is discarded; otherwise the fully built index is returned.
  */
 export type OutputFolderIndexState =
 	| { readonly isCold: true }
-	| {
-			readonly isCold: false;
-			readonly index: Map<PlaudRecordingId, ImportedRecord>;
-	  };
+	| { readonly isCold: false; readonly index: ImportedIndex };
 
-export function buildPlaudIdIndexWithColdCheck(
+export function buildImportedIndexWithColdCheck(
 	app: App,
 	outputFolder: string,
 ): OutputFolderIndexState {
 	const normalized = normalizeFolder(outputFolder);
-	const index = new Map<PlaudRecordingId, ImportedRecord>();
+	const index = newIndex();
 	for (const file of app.vault.getMarkdownFiles()) {
 		if (!fileIsUnder(file, normalized)) continue;
 		const cache = app.metadataCache.getFileCache(file);
 		if (cache === null) return { isCold: true };
 		const rawFm: unknown = cache.frontmatter;
 		if (!isRecord(rawFm)) continue;
-		const id = pickFrontmatterString(rawFm['plaud-id']);
-		if (id === undefined) continue;
-		index.set(id as PlaudRecordingId, {
-			path: file.path,
-			summaryVersion: pickFrontmatterString(
-				rawFm['plaud-summary-version'],
-			),
-			summaryId: pickFrontmatterString(rawFm['plaud-summary-id']),
-			versionMs: pickFrontmatterNumber(rawFm['plaud-version-ms']),
-		});
+		indexNote(index, file, rawFm);
 	}
 	return { isCold: false, index };
 }
 
+/**
+ * Find the existing note for a recording: by id, then by the precise instant
+ * key, then by the coarse day key. Returns the match and HOW it matched, or null
+ * when the recording is genuinely new. An `instant`/`day` match means the note's
+ * stored id is stale (the recording id changed); the caller may heal on an
+ * `instant` match (high confidence), never on a `day` match.
+ */
+export function findImportedNote(
+	index: ImportedIndex,
+	recording: RecordingIdentity,
+): { readonly record: ImportedRecord; readonly matchedBy: ImportMatch } | null {
+	const byId = index.byId.get(
+		canonicalPlaudId(recording.id) as PlaudRecordingId,
+	);
+	if (byId !== undefined) {
+		return { record: byId, matchedBy: 'id' };
+	}
+	const keys = stableKeysFromRecording(
+		recording.createdAt.getTime(),
+		recording.durationSeconds,
+	);
+	if (keys.instant !== null) {
+		const hit = index.byInstant.get(keys.instant);
+		if (hit) return { record: hit, matchedBy: 'instant' };
+	}
+	if (keys.day !== null) {
+		const hit = index.byDay.get(keys.day);
+		if (hit) return { record: hit, matchedBy: 'day' };
+	}
+	return null;
+}
+
 function normalizeFolder(folder: string): string {
 	// Match the note writer's normalization: a Windows-style "\Inbox" must
-	// resolve to "Inbox" so the imported-note index finds files under the
-	// folder Obsidian actually created. See normalizeFolderPath in
-	// note-writer.ts for the underlying createFolder/getFolderByPath mismatch.
-	const trimmed = folder
+	// resolve to "Inbox" so the imported-note index finds files under the folder
+	// Obsidian actually created.
+	return folder
 		.trim()
 		.replace(/\\/g, '/')
 		.replace(/^\/+|\/+$/g, '');
-	return trimmed;
 }
 
 function fileIsUnder(file: TFile, folder: string): boolean {
 	if (folder === '') {
 		return true;
 	}
-	const prefix = `${folder}/`;
-	return file.path.startsWith(prefix);
+	return file.path.startsWith(`${folder}/`);
 }
 
 /**
  * True when the metadata cache has NOT finished parsing the notes under the
- * output folder, i.e. at least one note there has no parsed cache yet
- * (getFileCache === null). buildPlaudIdIndex relies on the cache, so a cold
- * cache makes it return empty and every note look new; auto-sync uses this to
- * skip that tick and avoid a mass re-import.
- *
- * It checks cache warmth per file (any note under the folder with a null
- * cache), not "the folder has any markdown". Every note under the folder
- * counts, Plaud or not, which is correct: if ANY in-scope note is still
- * unparsed the cache is not ready and buildPlaudIdIndex is unreliable. For a
- * root output folder ('') "under the folder" means the whole vault, so a single
- * unparsed note anywhere reports cold until the vault finishes loading. Once
- * every in-scope note is parsed it returns false, so it cannot permanently
- * disable sync. Uses the SAME folder normalization + matching as the index
- * (Windows backslashes included). Returns false when the folder has no notes.
+ * output folder (at least one in-scope note has a null cache). The index relies
+ * on the cache, so a cold cache makes it return empty and every note look new;
+ * auto-sync uses this to skip a tick and avoid a mass re-import.
  */
 export function outputFolderCacheIsCold(
 	app: App,
 	outputFolder: string,
 ): boolean {
 	const normalized = normalizeFolder(outputFolder);
-	// Single pass: this runs every auto-sync tick and, for a root output folder,
-	// scans the whole vault. Return as soon as an in-scope note has a null cache;
-	// falling through the loop covers both "no in-scope notes" and "all warm".
 	for (const file of app.vault.getMarkdownFiles()) {
 		if (!fileIsUnder(file, normalized)) continue;
 		if (app.metadataCache.getFileCache(file) === null) return true;
@@ -177,20 +261,16 @@ export function outputFolderCacheIsCold(
 	return false;
 }
 
-// YAML frontmatter values can be parsed as strings or as numbers
-// depending on shape. Only accept strings (after trim + non-empty
-// check); reject everything else so badge state never depends on an
-// ambiguous coercion.
+// Only accept a string frontmatter value (trimmed, non-empty); reject everything
+// else so badge state never depends on an ambiguous coercion.
 function pickFrontmatterString(value: unknown): string | undefined {
 	if (typeof value !== 'string') return undefined;
 	const trimmed = value.trim();
 	return trimmed.length > 0 ? trimmed : undefined;
 }
 
-// plaud-version-ms is written as a raw number, so metadataCache usually
-// surfaces it as a number. Accept a numeric string too (a user or a YAML
-// quirk could quote it), and reject anything non-finite so a malformed marker
-// stays undefined (treated as "current", never a spurious re-import).
+// plaud-version-ms is written as a raw number; accept a numeric string too, and
+// reject anything non-finite so a malformed marker stays undefined.
 function pickFrontmatterNumber(value: unknown): number | undefined {
 	if (typeof value === 'number') {
 		return Number.isFinite(value) ? value : undefined;

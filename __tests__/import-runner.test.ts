@@ -469,6 +469,34 @@ describe('runImport', () => {
 		expect(written).toEqual([]);
 	});
 
+	it('does NOT skip when availability is unknown (v4 list): it fetches and writes', async () => {
+		const vault = makeFakeVault();
+		// The v4 portal list omits per-recording presence, so both flags are
+		// false but contentAvailabilityUnknown is true. The runner must fetch
+		// rather than skip, or every v4 recording imports as empty.
+		const recording = makeRecording({
+			transcriptAvailable: false,
+			summaryAvailable: false,
+			contentAvailabilityUnknown: true,
+		});
+		const { fetchArtifacts, calls } = makeFetch(
+			new Map([[recording.id, makeArtifacts(recording)]]),
+		);
+
+		const outcome = await runImport({
+			recordings: [recording],
+			selection: SELECTION,
+			writer: makeWriter(vault),
+			attachments: makeAttachmentStub().pipeline,
+			options: OPTIONS,
+			fetchArtifacts,
+		});
+
+		expect(outcome.stop).toBe('completed');
+		expect(outcome.results[0]).toMatchObject({ kind: 'written' });
+		expect(calls).toEqual([recording.id]);
+	});
+
 	it('writes a placeholder when Plaud reports the recording unprocessed', async () => {
 		const vault = makeFakeVault();
 		const recording = makeRecording();

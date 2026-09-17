@@ -1,6 +1,6 @@
 import { runInNewContext } from 'vm';
 
-import { PROBE_JS } from '../plaud-login';
+import { PROBE_JS, normalizeApiDomain } from '../plaud-login';
 import { isUsableUserToken } from '../plaud-token';
 import {
 	MAX_COLLECTED_CANDIDATES,
@@ -84,6 +84,8 @@ const CURRENT_WEB_APP: Record<string, string> = {
 interface ProbeOut {
 	tokens?: string[];
 	domain?: string | null;
+	workspaceId?: string | null;
+	deviceId?: string | null;
 	href?: string;
 	error?: string;
 }
@@ -339,5 +341,114 @@ describe('PROBE_JS against the current Plaud web app', () => {
 	it('reads nothing over plain http', () => {
 		const out = runProbe(CURRENT_WEB_APP, 'http://web.plaud.ai/');
 		expect(out.tokens).toEqual([]);
+	});
+});
+
+describe('PROBE_JS v4 scope capture', () => {
+	it('returns the cleaned workspace id, device id, and api domain', () => {
+		const map: Record<string, string> = {
+			...CURRENT_WEB_APP,
+			// Real portal quotes these JSON-string values; the probe strips quotes.
+			'pld_abc:currentWorkspaceId': '"ws_f8EANnTZa8"',
+			pld_DEVICE_ID: '"1bfbd3b642c68958"',
+			pld_plaud_user_api_domain:
+				'{"domain":"https://api-staging-apne1.plaud.ai","timestamp":123}',
+		};
+		const out = runProbe(map, 'https://alpha.plaud.ai/');
+		expect(out.workspaceId).toBe('ws_f8EANnTZa8');
+		expect(out.deviceId).toBe('1bfbd3b642c68958');
+		// domain is returned raw (the JSON blob); normalizeApiDomain unwraps it.
+		expect(out.domain).toContain('api-staging-apne1.plaud.ai');
+	});
+
+	it('returns null scope when the keys are absent', () => {
+		const out = runProbe(CURRENT_WEB_APP, 'https://alpha.plaud.ai/');
+		// CURRENT_WEB_APP has an unquoted currentWorkspaceId and no device id.
+		expect(out.workspaceId).toBe('ws_clF1vOqcHS');
+		expect(out.deviceId).toBeNull();
+	});
+});
+
+describe('normalizeApiDomain', () => {
+	it('unwraps the new portal JSON object form to the inner domain', () => {
+		expect(
+			normalizeApiDomain(
+				'{"domain":"https://api-staging-apne1.plaud.ai","timestamp":123}',
+			),
+		).toBe('https://api-staging-apne1.plaud.ai');
+	});
+
+	it('still accepts a bare host string (prod form)', () => {
+		expect(normalizeApiDomain('api-euc1.plaud.ai')).toBe(
+			'https://api-euc1.plaud.ai',
+		);
+	});
+
+	it('accepts the alpha v4 theplaud.com host so the region auto-detects', () => {
+		// The exact value the alpha portal caches. Before the host allowlists
+		// were unified this was rejected here, so the region never auto-filled
+		// and had to be entered by hand. Both the JSON-object and bare forms.
+		expect(
+			normalizeApiDomain(
+				'{"domain":"https://api-apne1.staging.theplaud.com","timestamp":123}',
+			),
+		).toBe('https://api-apne1.staging.theplaud.com');
+		expect(normalizeApiDomain('api-apne1.staging.theplaud.com')).toBe(
+			'https://api-apne1.staging.theplaud.com',
+		);
+	});
+
+	it('rejects a JSON object whose inner domain is a non-plaud host', () => {
+		expect(
+			normalizeApiDomain('{"domain":"https://evil.example.com"}'),
+		).toBeNull();
+	});
+
+	it('rejects malformed JSON and empty input', () => {
+		expect(normalizeApiDomain('{not json')).toBeNull();
+		expect(normalizeApiDomain('')).toBeNull();
+		expect(normalizeApiDomain(null)).toBeNull();
+	});
+});
+
+describe('PROBE_JS API-domain resolution', () => {
+	const WS = 'ws_clF1vOqcHS';
+
+	it('falls back to the active workspace domain when the api-domain key is absent (beta)', () => {
+		// Beta has NO pld_plaud_user_api_domain key; the resolved host lives only
+		// on the active workspace. The probe must still surface it so the region
+		// auto-detects instead of falling back to the prod default.
+		const beta: Record<string, string> = {
+			'pld_abc:currentWorkspaceId': WS,
+			'pld_abc:workspaceList': JSON.stringify([
+				{
+					workspaceId: WS,
+					workspaceToken: WORKSPACE_TOKEN,
+					domain: 'https://api-test.plaud.ai',
+				},
+			]),
+		};
+		expect(runProbe(beta, 'https://beta.plaud.ai/').domain).toBe(
+			'https://api-test.plaud.ai',
+		);
+	});
+
+	it('prefers the pld_plaud_user_api_domain key over the workspace domain (alpha)', () => {
+		const alpha: Record<string, string> = {
+			pld_plaud_user_api_domain:
+				'{"domain":"https://api-apne1.staging.theplaud.com","timestamp":1}',
+			'pld_abc:currentWorkspaceId': WS,
+			'pld_abc:workspaceList': JSON.stringify([
+				{
+					workspaceId: WS,
+					workspaceToken: WORKSPACE_TOKEN,
+					domain: 'https://api-test.plaud.ai',
+				},
+			]),
+		};
+		// The probe returns the raw key value; normalizeApiDomain unwraps it.
+		expect(runProbe(alpha, 'https://alpha.plaud.ai/').domain).toBe(
+			'{"domain":"https://api-apne1.staging.theplaud.com","timestamp":1}',
+		);
 	});
 });

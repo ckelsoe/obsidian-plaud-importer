@@ -119,6 +119,21 @@ export interface CaptureSettings {
 	secretId: string;
 	signInMethod: SignInMethod;
 	apiBaseUrl: string;
+	// v4 (alpha) workspace scope. Committed atomically with the token/host so a
+	// captured credential never lands on disk paired with a stale scope.
+	plaudWorkspaceId: string;
+	plaudDeviceId: string;
+}
+
+/**
+ * v4 workspace/device the capture surface discovered, committed in the same
+ * mutation batch as the token (like apiBaseUrl). A field left undefined or null
+ * is not written, so a browser/paste capture that has no scope never clears an
+ * earlier window sign-in's.
+ */
+export interface CapturedV4Scope {
+	readonly workspaceId?: string | null;
+	readonly deviceId?: string | null;
 }
 
 /**
@@ -166,6 +181,10 @@ export interface CaptureStoreHost<S extends CaptureSettings> {
 		token: string,
 		baseUrl: string,
 		onBaseUrlChanged: (url: string) => void,
+		// v4 workspace/device to scope this probe. Passed per-probe (not read
+		// from plugin-global state) so overlapping captures never probe one
+		// candidate against another capture's scope. Empty on the prod path.
+		v4Scope: CapturedV4Scope,
 	): Promise<void>;
 }
 
@@ -215,6 +234,9 @@ export class CaptureStore<S extends CaptureSettings> {
 		// time the write happens. Callers with nothing to go stale keep the
 		// default.
 		stillOwns: () => boolean = () => true,
+		// v4 workspace/device to commit atomically with the token, like
+		// apiBaseUrl. Empty on the prod path and on captures with no scope.
+		v4Scope: CapturedV4Scope = {},
 	): Promise<CaptureStoreResult> {
 		const token = rawToken.trim().replace(/^bearer\s+/i, '');
 		if (token.length === 0 || !isUsableUserToken(token)) {
@@ -236,6 +258,7 @@ export class CaptureStore<S extends CaptureSettings> {
 				apiBaseUrl,
 				background,
 				stillOwns,
+				v4Scope,
 			),
 		);
 	}
@@ -268,6 +291,7 @@ export class CaptureStore<S extends CaptureSettings> {
 		apiBaseUrl: string | undefined,
 		background: boolean,
 		stillOwns: () => boolean,
+		v4Scope: CapturedV4Scope,
 	): Promise<CaptureStoreResult> {
 		// The queue guarantees order, not relevance. This caller may have waited
 		// while a newer capture took over, and its own guard was evaluated before
@@ -347,6 +371,18 @@ export class CaptureStore<S extends CaptureSettings> {
 		if (apiBaseUrl !== undefined) {
 			next.apiBaseUrl = apiBaseUrl;
 		}
+		// v4 scope: written in the same batch as the token. `undefined` means
+		// "not observed" (a reconnect/deep-link that did not probe scope) and
+		// leaves the prior scope intact; `null` means "observed absent" (a v3
+		// embedded sign-in that looked and found no workspace) and CLEARS the
+		// scope, so a v3 token is never left paired with the v4 client's stale
+		// workspace; a string sets it.
+		if (v4Scope.workspaceId !== undefined) {
+			next.plaudWorkspaceId = v4Scope.workspaceId ?? '';
+		}
+		if (v4Scope.deviceId !== undefined) {
+			next.plaudDeviceId = v4Scope.deviceId ?? '';
+		}
 		try {
 			await this.host.saveData(next);
 		} catch (err) {
@@ -397,6 +433,12 @@ export class CaptureStore<S extends CaptureSettings> {
 		live.signInMethod = next.signInMethod;
 		if (apiBaseUrl !== undefined) {
 			live.apiBaseUrl = apiBaseUrl;
+		}
+		if (v4Scope.workspaceId !== undefined) {
+			live.plaudWorkspaceId = v4Scope.workspaceId ?? '';
+		}
+		if (v4Scope.deviceId !== undefined) {
+			live.plaudDeviceId = v4Scope.deviceId ?? '';
 		}
 		// EVERY host call below this line is bookkeeping about a store that has
 		// already succeeded. A throw in one must not escape, or the caller
@@ -505,6 +547,9 @@ export class CaptureStore<S extends CaptureSettings> {
 		// to settings on the way in, so a capture that never stores leaves the
 		// configured host untouched.
 		discoveredBaseUrl?: string,
+		// v4 workspace/device the capture surface discovered, handed to the store
+		// so it commits atomically with the token. Empty on the prod path.
+		v4Scope: CapturedV4Scope = {},
 	): Promise<{ stored: boolean; message: string }> {
 		const probeBaseUrl =
 			discoveredBaseUrl ?? this.host.getSettings().apiBaseUrl;
@@ -536,6 +581,7 @@ export class CaptureStore<S extends CaptureSettings> {
 						(url) => {
 							detected.baseUrl = url;
 						},
+						v4Scope,
 					);
 				},
 			);
@@ -576,6 +622,7 @@ export class CaptureStore<S extends CaptureSettings> {
 					discoveredBaseUrl,
 					false,
 					stillOwns,
+					v4Scope,
 				),
 				DEEP_LINK_UNVERIFIED_NOTICE,
 			);
@@ -596,6 +643,7 @@ export class CaptureStore<S extends CaptureSettings> {
 				detected.baseUrl ?? discoveredBaseUrl,
 				false,
 				stillOwns,
+				v4Scope,
 			),
 			DEEP_LINK_SAVED_NOTICE,
 		);
