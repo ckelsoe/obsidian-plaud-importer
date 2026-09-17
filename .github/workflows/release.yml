@@ -75,16 +75,20 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           tag="${GITHUB_REF#refs/tags/}"
-          # A semver pre-release tag is MAJOR.MINOR.PATCH-<identifiers>
-          # (e.g. 0.41.0-beta.1); a stable tag is MAJOR.MINOR.PATCH with no
-          # suffix. Mark only real semver pre-releases as GitHub pre-releases so
-          # they do not become the repo's "latest" release, and so an unrelated
-          # hyphenated tag (e.g. docs-update) is never mistaken for one.
-          # Obsidian's community updater tracks that non-prerelease latest, so
+          # Decide GitHub pre-release status from the tag. A semver pre-release
+          # has a MAJOR.MINOR.PATCH-<identifiers> core (e.g. 0.41.0-beta.1, or
+          # 1.2.3-beta.1+sha.abc); a stable tag is MAJOR.MINOR.PATCH with no
+          # -<identifiers> part. Strip any +build metadata first, then match the
+          # shape. This is a shape gate, not a full semver validator: over-
+          # marking an odd hand-typed tag as a pre-release is the safe direction
+          # (it stays out of the store), and the check never marks a real
+          # pre-release as a stable release. A GitHub pre-release does not become
+          # the repo's "latest", which Obsidian's community updater tracks, so
           # store users are never offered a beta, while BRAT installs
-          # pre-releases and picks it up for opted-in testers.
+          # pre-releases for opted-in testers.
+          core="${tag%%+*}"
           prerelease_flag=""
-          if [[ "$tag" =~ ^[0-9]+\.[0-9]+\.[0-9]+-[0-9A-Za-z.-]+$ ]]; then
+          if [[ "$core" =~ ^[0-9]+\.[0-9]+\.[0-9]+-[0-9A-Za-z.-]+$ ]]; then
             prerelease_flag="--prerelease"
           fi
           if [ -s release-notes.md ]; then
