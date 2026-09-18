@@ -150,7 +150,16 @@ export class PlaudV4Client implements PlaudClient {
 	// names: it changes rarely, so one fetch per plugin session is enough and a
 	// reload clears it. undefined = not yet fetched; an empty array is a valid
 	// cached "no devices" result.
-	private deviceCatalog: readonly PlaudDevice[] | undefined;
+	// Cached device list plus the context it belongs to. workspaceId is a dynamic
+	// provider and the base URL can change, so the cache is keyed on both: a
+	// catalog fetched for one account/host must not be served after a switch.
+	private deviceCatalog:
+		| {
+				readonly baseUrl: string;
+				readonly workspaceId: string;
+				readonly devices: readonly PlaudDevice[];
+		  }
+		| undefined;
 
 	// Single-entry, short-TTL memo of the last file-detail response, so
 	// getAudioTempUrl and getTranscriptAndSummary for the same recording do not
@@ -313,20 +322,33 @@ export class PlaudV4Client implements PlaudClient {
 		return catalog;
 	}
 
+	/**
+	 * The account's paired Plaud devices, for the source chip and `{{device}}`
+	 * token. Cached per (account, host) so a later call in the same session is
+	 * free, but an account or portal switch refetches rather than serving the
+	 * previous account's devices.
+	 */
 	async getDeviceCatalog(): Promise<readonly PlaudDevice[]> {
-		if (this.deviceCatalog !== undefined) {
-			return this.deviceCatalog;
+		const baseUrl = this.resolveBaseUrl();
+		const workspaceId = this.workspaceIdProvider();
+		if (
+			this.deviceCatalog !== undefined &&
+			this.deviceCatalog.baseUrl === baseUrl &&
+			this.deviceCatalog.workspaceId === workspaceId
+		) {
+			return this.deviceCatalog.devices;
 		}
 		// v4 serves the paired-device list at /device-app/device/list, but in the
 		// v3 envelope ({status, msg, data_devices}), not the v4 {status, data}
 		// shape (verified live 2026-09-18: sn/name/model/version_number, the same
 		// PlaudDevice fields). So the whole body goes to the shared v3 parser.
-		// Cached per session like the folder names; a reload clears it.
+		// Cached per (account, host) so an account or portal switch refetches; a
+		// reload clears it too.
 		const endpoint = '/device-app/device/list';
-		const url = `${this.resolveBaseUrl()}${endpoint}`;
+		const url = `${baseUrl}${endpoint}`;
 		const raw = await this.fetchApi(url, endpoint, {});
 		const { devices } = parseDeviceCatalog(raw, endpoint);
-		this.deviceCatalog = devices;
+		this.deviceCatalog = { baseUrl, workspaceId, devices };
 		return devices;
 	}
 
@@ -391,6 +413,13 @@ export class PlaudV4Client implements PlaudClient {
 		return readNonEmptyString(audio['content_url']) ?? null;
 	}
 
+	/**
+	 * Rename a recording on the v4 portal so its title matches the note. Resolves
+	 * the tree node for the file id, then PATCHes the rename endpoint with the
+	 * node's current version for optimistic concurrency. Retries once on a version
+	 * conflict; refuses a blank title. Throws PlaudApiError/PlaudParseError on
+	 * failure so the caller can surface it.
+	 */
 	async updateTitle(id: PlaudRecordingId, filename: string): Promise<void> {
 		const endpoint = '/file-app/v4/nodes/rename/:id';
 		const title = filename.trim();

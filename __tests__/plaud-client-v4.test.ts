@@ -767,3 +767,54 @@ describe('PlaudV4Client.updateTitle', () => {
 		);
 	});
 });
+
+describe('PlaudV4Client.getDeviceCatalog', () => {
+	const deviceListEnvelope = (devices: unknown[]): PlaudHttpResponse =>
+		okJson({ status: 0, msg: 'ok', data_devices: devices });
+	const DEV = {
+		sn: 'SN1',
+		name: 'My NotePin',
+		model: 888,
+		version_number: 1,
+	};
+
+	it('fetches once and reuses the cache for the same account and host', async () => {
+		let calls = 0;
+		const fetcher: PlaudHttpFetcher = async (req) => {
+			if (req.url.includes('/device-app/device/list')) {
+				calls++;
+				return deviceListEnvelope([DEV]);
+			}
+			throw new Error(`no route for ${req.url}`);
+		};
+		const client = makeClient(fetcher);
+
+		const a = await client.getDeviceCatalog();
+		const b = await client.getDeviceCatalog();
+		expect(calls).toBe(1);
+		expect(a).toBe(b);
+		expect(a).toHaveLength(1);
+		expect(a[0]!.name).toBe('My NotePin');
+	});
+
+	it('refetches when the workspace changes (account switch on one client)', async () => {
+		let calls = 0;
+		let ws = 'ws_A';
+		const fetcher: PlaudHttpFetcher = async (req) => {
+			if (req.url.includes('/device-app/device/list')) {
+				calls++;
+				return deviceListEnvelope([{ ...DEV, name: `dev-${calls}` }]);
+			}
+			throw new Error(`no route for ${req.url}`);
+		};
+		const client = makeClient(fetcher, { workspaceId: () => ws });
+
+		const first = await client.getDeviceCatalog();
+		ws = 'ws_B';
+		const second = await client.getDeviceCatalog();
+
+		expect(calls).toBe(2);
+		expect(first[0]!.name).toBe('dev-1');
+		expect(second[0]!.name).toBe('dev-2');
+	});
+});
