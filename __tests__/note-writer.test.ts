@@ -3142,6 +3142,99 @@ describe('NoteWriter', () => {
 		]);
 	});
 
+	describe('title collision between distinct recordings', () => {
+		const BASE = 'Plaud/2026-04-14 Morning standup.md';
+		const SECOND = 'Plaud/2026-04-14 Morning standup 2.md';
+		const THIRD = 'Plaud/2026-04-14 Morning standup 3.md';
+
+		it('disambiguates the filename so a second recording with the same title and date still imports', async () => {
+			const vault = makeFakeVault();
+			// Recording A already imported at the base path.
+			vault.files.set(BASE, '---\nplaud-id: aaa111\n---\n# base\n');
+			const writer = new NoteWriter(vault, {
+				outputFolder: 'Plaud',
+				onDuplicate: 'skip',
+			});
+
+			// Recording B: different id, identical title and date.
+			const outcome = await writer.writeNote(
+				makeRecording({ id: 'bbb222' as PlaudRecordingId }),
+				makeTranscript(),
+				makeSummary(),
+			);
+
+			expect(outcome.status).toBe('created');
+			expect(outcome.path).toBe(SECOND);
+			expect(vault.createdPaths).toEqual([SECOND]);
+			// A's note is untouched.
+			expect(vault.overwrittenPaths).toEqual([]);
+			expect(vault.files.get(BASE)).toContain('plaud-id: aaa111');
+			expect(vault.files.get(SECOND)).toContain('plaud-id: bbb222');
+		});
+
+		it('re-import of the second recording overwrites its own suffixed note, never a third', async () => {
+			const vault = makeFakeVault();
+			vault.files.set(BASE, '---\nplaud-id: aaa111\n---\n# base\n');
+			vault.files.set(SECOND, '---\nplaud-id: bbb222\n---\n# suffixed\n');
+			const writer = new NoteWriter(vault, {
+				outputFolder: 'Plaud',
+				onDuplicate: 'overwrite',
+			});
+
+			const outcome = await writer.writeNote(
+				makeRecording({ id: 'bbb222' as PlaudRecordingId }),
+				makeTranscript(),
+				makeSummary(),
+			);
+
+			expect(outcome.status).toBe('overwritten');
+			expect(outcome.path).toBe(SECOND);
+			expect(vault.overwrittenPaths).toEqual([SECOND]);
+			expect(vault.createdPaths).toEqual([]);
+		});
+
+		it('walks past multiple occupied siblings to the first free suffix', async () => {
+			const vault = makeFakeVault();
+			vault.files.set(BASE, '---\nplaud-id: aaa111\n---\n');
+			vault.files.set(SECOND, '---\nplaud-id: bbb222\n---\n');
+			const writer = new NoteWriter(vault, {
+				outputFolder: 'Plaud',
+				onDuplicate: 'skip',
+			});
+
+			const outcome = await writer.writeNote(
+				makeRecording({ id: 'ccc333' as PlaudRecordingId }),
+				makeTranscript(),
+				makeSummary(),
+			);
+
+			expect(outcome.path).toBe(THIRD);
+			expect(vault.createdPaths).toEqual([THIRD]);
+		});
+
+		it('recognizes a v4 of_ recording as the owner of its v3-era note (no false collision)', async () => {
+			const vault = makeFakeVault();
+			// v3-era note stored the bare id.
+			vault.files.set(BASE, '---\nplaud-id: abc123\n---\n# v3 note\n');
+			const writer = new NoteWriter(vault, {
+				outputFolder: 'Plaud',
+				onDuplicate: 'overwrite',
+			});
+
+			// Same recording, re-imported via the v4 portal as of_<id>.
+			const outcome = await writer.writeNote(
+				makeRecording({ id: 'of_abc123' as PlaudRecordingId }),
+				makeTranscript(),
+				makeSummary(),
+			);
+
+			expect(outcome.status).toBe('overwritten');
+			expect(outcome.path).toBe(BASE);
+			expect(vault.overwrittenPaths).toEqual([BASE]);
+			expect(vault.createdPaths).toEqual([]);
+		});
+	});
+
 	describe('subfolder template', () => {
 		it('omitted template keeps the flat output-folder path', async () => {
 			const vault = makeFakeVault();
@@ -3597,7 +3690,7 @@ describe('NoteWriter', () => {
 	});
 
 	describe('collision detection via plaud-id frontmatter', () => {
-		it('throws NoteWriterError when existing note has a DIFFERENT plaud-id', async () => {
+		it('writes to a disambiguated path when the target holds a DIFFERENT plaud-id, leaving the other note intact', async () => {
 			const vault = makeFakeVault();
 			vault.files.set(
 				'Plaud/2026-04-14 Morning standup.md',
@@ -3608,16 +3701,23 @@ describe('NoteWriter', () => {
 				onDuplicate: 'overwrite',
 			});
 
-			await expect(
-				writer.writeNote(
-					makeRecording(),
-					makeTranscript(),
-					makeSummary(),
-				),
-			).rejects.toBeInstanceOf(NoteWriterError);
+			const outcome = await writer.writeNote(
+				makeRecording(),
+				makeTranscript(),
+				makeSummary(),
+			);
+
+			// The distinct recording gets its own suffixed note instead of a
+			// hard collision; the pre-existing note is never overwritten.
+			expect(outcome.status).toBe('created');
+			expect(outcome.path).toBe('Plaud/2026-04-14 Morning standup 2.md');
+			expect(vault.overwrittenPaths).toEqual([]);
+			expect(
+				vault.files.get('Plaud/2026-04-14 Morning standup.md'),
+			).toContain('plaud-id: DIFFERENT_RECORDING');
 		});
 
-		it('includes both plaud-ids in the collision error message', async () => {
+		it('keeps each recording id on its own note after disambiguation', async () => {
 			const vault = makeFakeVault();
 			vault.files.set(
 				'Plaud/2026-04-14 Morning standup.md',
@@ -3628,13 +3728,19 @@ describe('NoteWriter', () => {
 				onDuplicate: 'skip',
 			});
 
-			await expect(
-				writer.writeNote(
-					makeRecording({ id: 'NEW_ID_99' as never }),
-					makeTranscript(),
-					makeSummary(),
-				),
-			).rejects.toThrow(/OLD_ID_42.*NEW_ID_99/);
+			const outcome = await writer.writeNote(
+				makeRecording({ id: 'NEW_ID_99' as never }),
+				makeTranscript(),
+				makeSummary(),
+			);
+
+			expect(outcome.path).toBe('Plaud/2026-04-14 Morning standup 2.md');
+			expect(
+				vault.files.get('Plaud/2026-04-14 Morning standup.md'),
+			).toContain('plaud-id: OLD_ID_42');
+			expect(
+				vault.files.get('Plaud/2026-04-14 Morning standup 2.md'),
+			).toContain('plaud-id: NEW_ID_99');
 		});
 
 		it('allows overwrite when existing note has the SAME plaud-id (re-import)', async () => {
@@ -5328,7 +5434,7 @@ describe('NoteWriter.writePlaceholderNote', () => {
 		).toBe(false);
 	});
 
-	it('throws a collision error when a note for a DIFFERENT recording occupies the path', async () => {
+	it('writes the placeholder to a disambiguated path when a DIFFERENT recording occupies the base path', async () => {
 		const vault = makeFakeVault();
 		const writer = new NoteWriter(vault, {
 			outputFolder: 'Plaud',
@@ -5339,9 +5445,17 @@ describe('NoteWriter.writePlaceholderNote', () => {
 			'---\nplaud-id: someone-else\n---\n\n# 2026-04-14 Morning standup',
 		);
 
-		await expect(
-			writer.writePlaceholderNote(makeRecording(), 'plaud erred'),
-		).rejects.toThrow(NoteWriterError);
+		const outcome = await writer.writePlaceholderNote(
+			makeRecording(),
+			'plaud erred',
+		);
+
+		expect(outcome.status).toBe('created');
+		expect(outcome.path).toBe('Plaud/2026-04-14 Morning standup 2.md');
+		// The other recording's note is left in place.
+		expect(
+			vault.files.get('Plaud/2026-04-14 Morning standup.md'),
+		).toContain('plaud-id: someone-else');
 	});
 });
 

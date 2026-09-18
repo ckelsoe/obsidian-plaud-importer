@@ -2,6 +2,12 @@
 
 All notable changes to Plaud Importer will be documented in this file.
 
+## [Unreleased]
+
+### Fixed
+
+- **Two recordings with the same title and date both import.** When Plaud captures the same meeting twice, for example two recordings a few seconds apart, they produce the same note filename. The plugin now writes the second one to a numbered name ("... 2") instead of stopping with a filename-collision error, so both import. Each note still carries its own recording id, so re-importing either one updates its own note rather than making a copy.
+
 ## [0.41.0-beta.1] - 2026-09-17
 
 Beta pre-release for the new Plaud portal. Install it through BRAT to help test the move. The stable release is unaffected.
