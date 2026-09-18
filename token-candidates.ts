@@ -37,7 +37,12 @@
 
 import { PlaudApiError, PlaudAuthError } from './plaud-client-re';
 import { isTrustedPlaudUrl } from './plaud-hosts';
-import { isUsableUserToken } from './plaud-token';
+import {
+	decodeJwtHeader,
+	decodeJwtPayload,
+	isUsableUserToken,
+	workspaceIdFromToken,
+} from './plaud-token';
 
 /** localStorage key the Plaud web app uses on the accounts that have one. */
 export const PRIMARY_TOKEN_KEY = 'token';
@@ -246,10 +251,175 @@ export function collectTokenCandidates(
 	return out;
 }
 
+// --- v4 workspace refresh token capture (beta.3) -----------------------------
+//
+// A v4 SSO / browser session's 24h workspace token is refreshed with a BEARER
+// call (plaud-refresh-v4.ts), and the bearer is the workspace REFRESH token
+// (typ WRT) that Plaud stores at sign-in under
+// pld_<uid>:workspaceTokens[<wid>].refreshToken. Capture surfaces collect it the
+// same way they collect the WT: from Plaud's own key namespace, by VALUE, never
+// re-ranked. It is a SEPARATE stream from the WT candidates: the WT capture guard
+// rejects a WRT outright (the data API answers -3901), so the two never mix.
+
+/** JWT header `typ` of the workspace refresh token. */
+const REFRESH_TOKEN_TYP = 'WRT';
+
+/**
+ * How many refresh-token candidates a capture surface collects. Two covers a
+ * single-workspace account with headroom while keeping the deep-link URL under
+ * the Windows shell budget (each WRT is a few hundred bytes). Multi-workspace is
+ * a deferred enhancement; the active workspace's WT is hoisted first and its WRT
+ * is matched to it by `wid`, so two is enough for the common case.
+ */
+export const MAX_COLLECTED_REFRESH = 2;
+
+/**
+ * How many refresh-token candidates the deep-link/paste handler accepts. Higher
+ * than the collect cap because the handler is a trust boundary and enforces its
+ * own limit rather than trusting the sender's.
+ */
+export const MAX_DEEP_LINK_REFRESH = 4;
+
+/**
+ * True when a value is a capturable v4 workspace refresh token: a decodable JWT
+ * whose header `typ` is WRT, with a finite future `exp` and a `ws_` `wid` claim.
+ * The `wid` requirement is what keeps this a v4-only capture: it is how the store
+ * later matches the WRT to the selected v4 workspace token, and a prod (v3) WRT
+ * that carries no `ws_` workspace is never collected.
+ */
+function isCapturedRefreshToken(value: string, nowMs: number): boolean {
+	const header = decodeJwtHeader(value);
+	if (header === null || header.typ !== REFRESH_TOKEN_TYP) {
+		return false;
+	}
+	const payload = decodeJwtPayload(value);
+	if (payload === null) {
+		return false;
+	}
+	const exp = payload.exp;
+	if (
+		typeof exp !== 'number' ||
+		!Number.isFinite(exp) ||
+		exp * 1000 <= nowMs
+	) {
+		return false;
+	}
+	const wid = payload.wid;
+	return typeof wid === 'string' && wid.startsWith('ws_');
+}
+
+/**
+ * Reference implementation of the refresh-token collection the bookmarklet and
+ * the sign-in-window probe do in the browser: pick the live v4 workspace refresh
+ * tokens (typ WRT, future exp, `ws_` wid) out of Plaud's own key namespace, by
+ * value, deduplicated, capped, in stable order. Scoped to `canDescendInto` keys
+ * for the same reason the WT collector is: every collected value is a credential,
+ * and a third-party SDK's refresh JWT must never be swept up. The bookmarklet and
+ * PROBE_JS are hand-minified twins of this, pinned by parity tests.
+ */
+export function collectRefreshCandidates(
+	entries: readonly StoredEntry[],
+	nowMs: number = Date.now(),
+): string[] {
+	const out: string[] = [];
+	let budget = MAX_WALK_NODES;
+	const consider = (value: string): void => {
+		if (out.length >= MAX_COLLECTED_REFRESH) {
+			return;
+		}
+		if (value.length > MAX_CANDIDATE_LENGTH) {
+			return;
+		}
+		const token = normalizeCandidate(value);
+		if (token === null || !isCapturedRefreshToken(token, nowMs)) {
+			return;
+		}
+		if (out.includes(token)) {
+			return;
+		}
+		out.push(token);
+	};
+	const walk = (node: unknown, depth: number): void => {
+		if (
+			depth > MAX_WALK_DEPTH ||
+			budget <= 0 ||
+			out.length >= MAX_COLLECTED_REFRESH
+		) {
+			return;
+		}
+		budget -= 1;
+		if (typeof node === 'string') {
+			consider(node);
+			const trimmed = node.trim();
+			if (
+				trimmed.length <= MAX_CONTAINER_LENGTH &&
+				(trimmed.startsWith('{') || trimmed.startsWith('['))
+			) {
+				try {
+					walk(JSON.parse(trimmed), depth + 1);
+				} catch {
+					// Not JSON after all; already considered above.
+				}
+			}
+			return;
+		}
+		if (Array.isArray(node)) {
+			for (const item of node) {
+				walk(item, depth + 1);
+			}
+			return;
+		}
+		if (node !== null && typeof node === 'object') {
+			for (const value of Object.values(node)) {
+				walk(value, depth + 1);
+			}
+		}
+	};
+	for (const entry of entries) {
+		if (out.length >= MAX_COLLECTED_REFRESH) {
+			break;
+		}
+		if (canDescendInto(entry.key)) {
+			walk(entry.value, 0);
+		}
+	}
+	return out;
+}
+
+/**
+ * Choose the refresh token to store for a just-selected v4 workspace token: the
+ * candidate whose `wid` claim matches the workspace token's own `wid`. Returns
+ * null when the workspace token is not a v4 token (no `ws_` wid, i.e. a v3
+ * session), or when no candidate matches. Matching by `wid` rather than taking
+ * the first candidate is what keeps a multi-workspace account from pairing the WT
+ * with another workspace's refresh token. Pure; `nowMs` is injectable for tests.
+ */
+export function selectRefreshTokenForWorkspace(
+	refreshCandidates: readonly string[],
+	workspaceToken: string,
+	nowMs: number = Date.now(),
+): string | null {
+	const wid = workspaceIdFromToken(workspaceToken);
+	if (wid === null) {
+		return null;
+	}
+	for (const candidate of refreshCandidates) {
+		if (!isCapturedRefreshToken(candidate, nowMs)) {
+			continue;
+		}
+		const payload = decodeJwtPayload(candidate);
+		if (payload !== null && payload.wid === wid) {
+			return candidate;
+		}
+	}
+	return null;
+}
+
 function tokenDeepLinkUrl(
 	candidates: readonly string[],
 	vaultName: string,
 	host: string,
+	refresh: readonly string[],
 ): string {
 	// `vault=` is what makes the link land in the vault running this plugin
 	// rather than in whichever Obsidian window happens to be focused. Encoded
@@ -259,6 +429,14 @@ function tokenDeepLinkUrl(
 	// implementation and the shipped copy produce byte-identical URLs.
 	const vault =
 		vaultName.length > 0 ? `vault=${encodeURIComponent(vaultName)}&` : '';
+	// `refresh=` carries the v4 workspace refresh token(s) (typ WRT) so a browser
+	// session can be renewed in the background. Placed before `host=` and omitted
+	// when empty, so a v3 link (no refresh, no host) is byte-for-byte what it was
+	// before this parameter existed.
+	const refreshParam =
+		refresh.length > 0
+			? `&refresh=${encodeURIComponent(JSON.stringify(refresh))}`
+			: '';
 	// `host=` is the v4 API host the browser session resolved (a v4 token is
 	// bound to its regional host and its workspace rides in the token, so the
 	// host is the only scope the deep link must carry). Appended last and
@@ -267,26 +445,46 @@ function tokenDeepLinkUrl(
 		host.length > 0 ? `&host=${encodeURIComponent(host)}` : '';
 	return `${TOKEN_DEEP_LINK_BASE}?${vault}tokens=${encodeURIComponent(
 		JSON.stringify(candidates),
-	)}${hostParam}`;
+	)}${refreshParam}${hostParam}`;
 }
 
 /**
- * Builds the deep link the bookmarklet navigates to, dropping trailing
+ * Builds the deep link the bookmarklet navigates to, dropping trailing token
  * candidates until the URL fits MAX_DEEP_LINK_URL_LENGTH. Always keeps at
  * least one: a single oversized candidate is still worth attempting, and the
  * bookmarklet's copy/paste fallback covers it if the shell truncates the URL.
- * `host` is the resolved v4 API host, omitted (empty) on the v3 path.
+ * `host` is the resolved v4 API host, omitted (empty) on the v3 path. `refresh`
+ * is the v4 workspace refresh token(s), omitted (empty) on the v3 path; only the
+ * token list is trimmed to fit the budget, since a WT is required to sign in at
+ * all while a refresh token only enables unattended renewal.
  */
 export function buildTokenDeepLink(
 	candidates: readonly string[],
 	vaultName = '',
 	host = '',
+	refresh: readonly string[] = [],
 ): string {
+	// Fit token candidates FIRST, ignoring the refresh tokens. Each candidate is
+	// load-bearing for sign-in (probing exists precisely because an earlier one
+	// may be revoked, so the live credential can be any of them), while a refresh
+	// token only adds unattended renewal, so a candidate is never sacrificed to
+	// keep a refresh token. Trim to the most candidates that fit with NO refresh,
+	// never below one; the single candidate that alone exceeds the budget is the
+	// residual the copy/paste fallback covers.
 	let list = candidates.slice(0, MAX_COLLECTED_CANDIDATES);
-	let url = tokenDeepLinkUrl(list, vaultName, host);
+	let url = tokenDeepLinkUrl(list, vaultName, host, []);
 	while (list.length > 1 && url.length > MAX_DEEP_LINK_URL_LENGTH) {
 		list = list.slice(0, list.length - 1);
-		url = tokenDeepLinkUrl(list, vaultName, host);
+		url = tokenDeepLinkUrl(list, vaultName, host, []);
+	}
+	// Then fill whatever space is left with refresh tokens. Computed against the
+	// FINAL candidate list, so trimming candidates that frees room lets a refresh
+	// token back in rather than dropping it for good.
+	let refreshList = refresh.slice(0, MAX_COLLECTED_REFRESH);
+	url = tokenDeepLinkUrl(list, vaultName, host, refreshList);
+	while (refreshList.length > 0 && url.length > MAX_DEEP_LINK_URL_LENGTH) {
+		refreshList = refreshList.slice(0, refreshList.length - 1);
+		url = tokenDeepLinkUrl(list, vaultName, host, refreshList);
 	}
 	return url;
 }
@@ -338,6 +536,69 @@ export function parseTokenCandidates(params: {
 		}
 	}
 	return out.slice(0, MAX_DEEP_LINK_CANDIDATES);
+}
+
+/**
+ * Parses the deep link's `refresh` parameter into an ordered, deduplicated list
+ * of candidate v4 workspace refresh tokens (typ WRT). Trust boundary, exactly
+ * like parseTokenCandidates: an `obsidian://` URL can be fired by any page, so
+ * every bound is enforced here rather than assumed of the sender. Values are only
+ * shaped here; the store decides which one (if any) to keep by matching `wid`
+ * against the selected workspace token (selectRefreshTokenForWorkspace).
+ */
+export function parseRefreshCandidates(params: {
+	readonly refresh?: unknown;
+	readonly [key: string]: unknown;
+}): string[] {
+	const out: string[] = [];
+	const push = (raw: unknown): void => {
+		if (typeof raw !== 'string' || raw.length > MAX_CANDIDATE_LENGTH) {
+			return;
+		}
+		const token = normalizeCandidate(raw);
+		if (token === null || out.includes(token)) {
+			return;
+		}
+		out.push(token);
+	};
+	const rawList = params.refresh;
+	if (
+		typeof rawList === 'string' &&
+		rawList.length <= MAX_DEEP_LINK_PAYLOAD_LENGTH
+	) {
+		let parsed: unknown = null;
+		try {
+			parsed = JSON.parse(rawList);
+		} catch {
+			parsed = null;
+		}
+		if (Array.isArray(parsed)) {
+			for (const item of parsed.slice(0, MAX_DEEP_LINK_REFRESH)) {
+				push(item);
+			}
+		}
+	}
+	return out.slice(0, MAX_DEEP_LINK_REFRESH);
+}
+
+/**
+ * Extracts the v4 refresh token candidates from a pasted whole deep link (the
+ * bookmarklet's fallback offers the whole link, which carries `&refresh=`).
+ * Returns [] for a bare token or a link with no refresh parameter.
+ */
+export function parseClipboardRefreshCandidates(text: string): string[] {
+	const trimmed = text.trim();
+	if (trimmed.length > MAX_DEEP_LINK_PAYLOAD_LENGTH) {
+		return [];
+	}
+	const marker = `${TOKEN_DEEP_LINK_BASE}?`;
+	if (!trimmed.toLowerCase().startsWith(marker.toLowerCase())) {
+		return [];
+	}
+	const params = new URLSearchParams(trimmed.slice(marker.length));
+	return parseRefreshCandidates({
+		refresh: params.get('refresh') ?? undefined,
+	});
 }
 
 /**
@@ -602,4 +863,4 @@ export function buildSignInBookmarklet(vaultName: string): string {
 
 const SIGN_IN_BOOKMARKLET_TEMPLATE =
 	BOOKMARKLET_SCHEME +
-	"(function(){try{var h=location.hostname.toLowerCase();if(h!=='plaud.ai'&&h.slice(-9)!=='.plaud.ai'){alert('Open this on a Plaud tab (web.plaud.ai) after signing in, then click the bookmark.');return;}var V=encodeURIComponent(String.fromCharCode(__VAULT__));var seg=/^[A-Za-z0-9_-]+$/;var dec=function(s){try{var b=s.replace(/-/g,'+').replace(/_/g,'/');return JSON.parse(atob(b+'='.repeat((4-b.length%4)%4)));}catch(e){return null;}};var now=Date.now();var d=[];var ty=function(t){return t==='WT'||t==='WRT'||t==='JWT'?t:'other';};var pick=function(v){if(typeof v!=='string'||v.length>4096)return null;var t=v.trim().replace(/^bearer +/i,'').trim();var p=t.split('.');if(p.length!==3||!seg.test(p[0])||!seg.test(p[1])||!seg.test(p[2]))return null;var hd=dec(p[0]);var pl=dec(p[1]);if(hd===null||pl===null)return null;if(d.length<12)d.push(ty(hd.typ)+'/'+(typeof pl.client_id)+'/'+(typeof pl.exp==='number'?Math.round((pl.exp*1000-now)/3600000)+'h':'noexp'));if(hd.typ==='WRT')return null;if(typeof pl.client_id!=='string'||pl.client_id.length===0)return null;if(typeof pl.exp!=='number'||!isFinite(pl.exp)||!(pl.exp*1000>now))return null;return t;};var a=[];var add=function(v){var t=pick(v);if(t!==null&&a.indexOf(t)<0&&a.length<5)a.push(t);};var n=4000;var W=function(x,y){if(y>6||n<=0||a.length>=5)return;n=n-1;if(typeof x==='string'){add(x);var s=x.trim();if(s.length<=262144&&(s.charAt(0)==='{'||s.charAt(0)==='[')){try{W(JSON.parse(s),y+1);}catch(e){}}return;}if(x!==null&&typeof x==='object'){for(var q in x){if(Object.prototype.hasOwnProperty.call(x,q))W(x[q],y+1);}}};var P=function(k){return k==='token'||k==='tokenstr'||k.slice(0,4)==='pld_';};W(localStorage.getItem('token'),0);for(var i=0;i<localStorage.length;i++){var k=localStorage.key(i);if(k===null||k==='token')continue;if(P(k))W(localStorage.getItem(k),0);}if(a.length===0){prompt('No usable Plaud sign-in found on this page. Make sure you are signed in to Plaud in this tab, then click the bookmark again. If you ARE signed in and this keeps happening, copy this line and send it to the plugin maintainer. It carries no token and no personal details:','plaud-capture-miss keys='+localStorage.length+' jwts='+d.length+' '+d.join(' '));return;}var ho='';try{var hr=localStorage.getItem('pld_plaud_user_api_domain');if(hr){try{var hj=JSON.parse(hr);ho=(hj&&typeof hj.domain==='string')?hj.domain:hr;}catch(e){ho=hr;}}if(!ho){var cw=null;for(var ci=0;ci<localStorage.length;ci++){var ck=localStorage.key(ci);if(ck&&ck.slice(-19)===':currentWorkspaceId')cw=String(localStorage.getItem(ck)||'').replace(/^\"|\"$/g,'');}if(cw){for(var wi=0;wi<localStorage.length;wi++){var wk=localStorage.key(wi);if(wk&&wk.slice(-13)==='workspaceList'){try{var wl=JSON.parse(localStorage.getItem(wk));for(var we in wl){if(wl[we]&&wl[we].workspaceId===cw&&typeof wl[we].domain==='string')ho=wl[we].domain;}}catch(e){}}}}}}catch(e){ho='';}if(typeof ho!=='string'||ho.slice(0,8)!=='https://')ho='';var hp=ho?'&host='+encodeURIComponent(ho):'';var b='obsidian://plaud-importer-token?vault='+V+'&tokens=';var u=b+encodeURIComponent(JSON.stringify(a))+hp;while(a.length>1&&u.length>1900){a.pop();u=b+encodeURIComponent(JSON.stringify(a))+hp;}location.replace(u);setTimeout(function(){if(document.hasFocus())prompt('Obsidian should have opened and saved your Plaud sign-in. If nothing happened, copy this whole line, then click Paste token from clipboard in the plugin settings:',u);},1500);}catch(e){alert('Could not read the Plaud token: '+e);}})()";
+	"(function(){try{var h=location.hostname.toLowerCase();if(h!=='plaud.ai'&&h.slice(-9)!=='.plaud.ai'){alert('Open this on a Plaud tab (web.plaud.ai) after signing in, then click the bookmark.');return;}var V=encodeURIComponent(String.fromCharCode(__VAULT__));var seg=/^[A-Za-z0-9_-]+$/;var dec=function(s){try{var b=s.replace(/-/g,'+').replace(/_/g,'/');return JSON.parse(atob(b+'='.repeat((4-b.length%4)%4)));}catch(e){return null;}};var now=Date.now();var d=[];var ty=function(t){return t==='WT'||t==='WRT'||t==='JWT'?t:'other';};var ra=[];var pick=function(v){if(typeof v!=='string'||v.length>4096)return null;var t=v.trim().replace(/^bearer +/i,'').trim();var p=t.split('.');if(p.length!==3||!seg.test(p[0])||!seg.test(p[1])||!seg.test(p[2]))return null;var hd=dec(p[0]);var pl=dec(p[1]);if(hd===null||pl===null)return null;if(d.length<12)d.push(ty(hd.typ)+'/'+(typeof pl.client_id)+'/'+(typeof pl.exp==='number'?Math.round((pl.exp*1000-now)/3600000)+'h':'noexp'));if(hd.typ==='WRT'){if(typeof pl.exp==='number'&&isFinite(pl.exp)&&pl.exp*1000>now&&typeof pl.wid==='string'&&pl.wid.slice(0,3)==='ws_'&&ra.indexOf(t)<0&&ra.length<2)ra.push(t);return null;}if(typeof pl.client_id!=='string'||pl.client_id.length===0)return null;if(typeof pl.exp!=='number'||!isFinite(pl.exp)||!(pl.exp*1000>now))return null;return t;};var a=[];var add=function(v){var t=pick(v);if(t!==null&&a.indexOf(t)<0&&a.length<5)a.push(t);};var n=4000;var W=function(x,y){if(y>6||n<=0||(a.length>=5&&ra.length>=2))return;n=n-1;if(typeof x==='string'){add(x);var s=x.trim();if(s.length<=262144&&(s.charAt(0)==='{'||s.charAt(0)==='[')){try{W(JSON.parse(s),y+1);}catch(e){}}return;}if(x!==null&&typeof x==='object'){for(var q in x){if(Object.prototype.hasOwnProperty.call(x,q))W(x[q],y+1);}}};var P=function(k){return k==='token'||k==='tokenstr'||k.slice(0,4)==='pld_';};try{var CW=null;for(var ci=0;ci<localStorage.length;ci++){var cik=localStorage.key(ci);if(cik!==null&&cik.slice(-19)===':currentWorkspaceId')CW=String(localStorage.getItem(cik)||'').replace(/^\"|\"$/g,'');}if(CW){for(var mi=0;mi<localStorage.length;mi++){var mik=localStorage.key(mi);if(mik===null)continue;if(mik.slice(-16)===':workspaceTokens'){try{var wm=JSON.parse(localStorage.getItem(mik));if(wm&&typeof wm==='object'&&wm[CW]&&typeof wm[CW]==='object'){add(wm[CW].token);add(wm[CW].refreshToken);}}catch(e){}}else if(mik.slice(-13)==='workspaceList'){try{var wl2=JSON.parse(localStorage.getItem(mik));if(wl2&&typeof wl2==='object'){for(var we2 in wl2){if(Object.prototype.hasOwnProperty.call(wl2,we2)&&wl2[we2]&&wl2[we2].workspaceId===CW){add(wl2[we2].workspaceToken);add(wl2[we2].refreshToken);}}}}catch(e){}}}}}catch(e){}W(localStorage.getItem('token'),0);for(var i=0;i<localStorage.length;i++){var k=localStorage.key(i);if(k===null||k==='token')continue;if(P(k))W(localStorage.getItem(k),0);}if(a.length===0){prompt('No usable Plaud sign-in found on this page. Make sure you are signed in to Plaud in this tab, then click the bookmark again. If you ARE signed in and this keeps happening, copy this line and send it to the plugin maintainer. It carries no token and no personal details:','plaud-capture-miss keys='+localStorage.length+' jwts='+d.length+' '+d.join(' '));return;}var ho='';try{var hr=localStorage.getItem('pld_plaud_user_api_domain');if(hr){try{var hj=JSON.parse(hr);ho=(hj&&typeof hj.domain==='string')?hj.domain:hr;}catch(e){ho=hr;}}if(!ho){var cw=null;for(var ci=0;ci<localStorage.length;ci++){var ck=localStorage.key(ci);if(ck&&ck.slice(-19)===':currentWorkspaceId')cw=String(localStorage.getItem(ck)||'').replace(/^\"|\"$/g,'');}if(cw){for(var wi=0;wi<localStorage.length;wi++){var wk=localStorage.key(wi);if(wk&&wk.slice(-13)==='workspaceList'){try{var wl=JSON.parse(localStorage.getItem(wk));for(var we in wl){if(wl[we]&&wl[we].workspaceId===cw&&typeof wl[we].domain==='string')ho=wl[we].domain;}}catch(e){}}}}}}catch(e){ho='';}if(typeof ho!=='string'||ho.slice(0,8)!=='https://')ho='';var hp=ho?'&host='+encodeURIComponent(ho):'';var b='obsidian://plaud-importer-token?vault='+V+'&tokens=';var u=b+encodeURIComponent(JSON.stringify(a))+hp;while(a.length>1&&u.length>1900){a.pop();u=b+encodeURIComponent(JSON.stringify(a))+hp;}var rp=ra.length?'&refresh='+encodeURIComponent(JSON.stringify(ra)):'';u=b+encodeURIComponent(JSON.stringify(a))+rp+hp;while(ra.length>0&&u.length>1900){ra.pop();rp=ra.length?'&refresh='+encodeURIComponent(JSON.stringify(ra)):'';u=b+encodeURIComponent(JSON.stringify(a))+rp+hp;}location.replace(u);setTimeout(function(){if(document.hasFocus())prompt('Obsidian should have opened and saved your Plaud sign-in. If nothing happened, copy this whole line, then click Paste token from clipboard in the plugin settings:',u);},1500);}catch(e){alert('Could not read the Plaud token: '+e);}})()";

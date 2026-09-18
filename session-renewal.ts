@@ -17,6 +17,7 @@ import {
 	isUsableUserToken,
 	isWorkspaceToken,
 	readTokenLifetime,
+	workspaceIdFromToken,
 	SHORT_LIFETIME_HOURS,
 } from './plaud-token';
 import { plaudPartition } from './plaud-partition';
@@ -27,6 +28,9 @@ import {
 	extractWorkspaceId,
 	performNetRefresh,
 } from './plaud-refresh-net';
+import { performV4Refresh } from './plaud-refresh-v4';
+import { selectRefreshTokenForWorkspace } from './token-candidates';
+import type { PlaudHttpFetcher } from './plaud-client-re';
 import type { CaptureStoreResult } from './capture-store';
 import type { PlaudImporterSettings } from './settings-types';
 import type { SignInMethod } from './reconnect-routing';
@@ -59,6 +63,14 @@ export interface SessionRenewalHost {
 	/** This vault's Obsidian app id, the input to the sign-in partition. */
 	getAppId(): unknown;
 	readStoredTokenValue(): string;
+	/**
+	 * The stored v4 workspace refresh token (CAPTURED_REFRESH_SECRET_ID), or ''
+	 * when none is stored. The bearer the cookieless v4 refresh (browser session)
+	 * uses; empty for a v3 or a pre-beta.3 session, which is what gates that path.
+	 */
+	readStoredRefreshTokenValue(): string;
+	/** HTTP transport for the cookieless v4 refresh (the plugin's requestUrl adapter). */
+	httpFetch: PlaudHttpFetcher;
 	saveSettings(): Promise<void>;
 	debugLog(entry: DebugEntry): void;
 	/** A notice carrying an action button; tracked so unload can dismiss it. */
@@ -84,6 +96,10 @@ export interface SessionRenewalHost {
 		apiBaseUrl?: string,
 		background?: boolean,
 		stillOwns?: () => boolean,
+		// The rotated v4 refresh token to persist beside the fresh WT (the v4
+		// refresh returns a new one each time). Undefined on the v3
+		// cookie path, which does not carry one through here.
+		refreshToken?: string | null,
 	): Promise<CaptureStoreResult>;
 }
 
@@ -225,29 +241,44 @@ export class SessionRenewal {
 		return plaudPartition(this.host.getAppId());
 	}
 
-	// Gated on the RECORDED sign-in method. The refresh authenticates with the
-	// embedded sign-in window's partition cookies, and only that window ever
-	// populates that partition: SSO completes in the external browser and the
-	// bookmarklet runs in the user's own browser, so neither leaves anything to
-	// authenticate with. Attempting it for them would fail every cycle and
-	// nag; they reconnect manually, by design.
+	// Gated on the RECORDED sign-in method, because the two renewal transports
+	// need different things:
+	//   - 'window': the v3 cookie refresh (plaud-refresh-net) authenticates with
+	//     the embedded sign-in window's partition cookies, and only that window
+	//     populates that partition.
+	//   - 'browser': the v4 cookieless refresh (plaud-refresh-v4) bearers the
+	//     captured workspace refresh token, so it needs a v4 session (a ws_ wid)
+	//     AND a stored refresh token. A prod SSO account (browser, no wid, no
+	//     captured refresh token) matches neither and reconnects manually, by
+	//     design, exactly as before.
 	reconcileRefresh(): void {
 		if (this.sessionRefreshTimeoutId !== undefined) {
 			window.clearTimeout(this.sessionRefreshTimeoutId);
 			this.sessionRefreshTimeoutId = undefined;
 		}
 		if (this.host.isDisposed() || this.sessionRefreshFailed) return;
-		if (this.host.getSettings().signInMethod !== 'window') return;
+		const method = this.host.getSettings().signInMethod;
 		const token = this.host.readStoredTokenValue();
 		if (token.length === 0) return;
 		// Only a workspace token wants this. Minting against a long-lived
 		// credential would trade months of life for 24 hours; see
 		// isWorkspaceToken.
 		if (!isWorkspaceToken(token)) return;
-		// No transport, no renewal. Arming a timer that can only ever return
-		// "unsupported" wastes a wake-up and, worse, lets the settings copy go
-		// on promising a renewal this build cannot perform.
-		if (buildPartitionPost(this.signInPartition()) === null) return;
+		if (method === 'window') {
+			// No transport, no renewal. Arming a timer that can only ever return
+			// "unsupported" wastes a wake-up and, worse, lets the settings copy go
+			// on promising a renewal this build cannot perform.
+			if (buildPartitionPost(this.signInPartition()) === null) return;
+		} else if (method === 'browser') {
+			// v4 only: a browser session with no ws_ workspace is a prod SSO
+			// account, which has no bearer-refresh endpoint here.
+			if (workspaceIdFromToken(token) === null) return;
+			// And only when a refresh token was actually captured (a pre-beta.3
+			// v4 session has none until the user re-signs-in).
+			if (this.host.readStoredRefreshTokenValue().length === 0) return;
+		} else {
+			return;
+		}
 		const delay = computeRefreshDelayMs(token, Date.now());
 		if (delay === null) return;
 		this.sessionRefreshTimeoutId = window.setTimeout(() => {
@@ -289,17 +320,17 @@ export class SessionRenewal {
 		}
 	}
 
-	// Runs the two-step cookie refresh once and stores the result. Returns what
-	// happened so the debug command can report it; the scheduled path reacts to
-	// deferrals and otherwise goes through the state this sets.
+	// Runs one refresh and stores the result. Returns what happened so the debug
+	// command can report it; the scheduled path reacts to deferrals and otherwise
+	// goes through the state this sets. Dispatches on the recorded sign-in method:
+	// a 'browser' (v4) session takes the cookieless bearer path, everything else
+	// the v3 cookie path below.
 	//
 	// No retry, by measurement: step 1 reports `login_total_per_hour: 10`, so a
 	// backoff ladder against a dead session spends the account's whole refresh
 	// budget and can lock it out of renewing at all. One attempt; on failure
 	// pause and prompt Reconnect.
-	async refreshNow(): Promise<
-		'refreshed' | 'unsupported' | 'failed' | 'busy' | 'superseded'
-	> {
+	async refreshNow(): Promise<RefreshOutcome> {
 		if (this.sessionRefreshInFlight) return 'busy';
 		// Never run underneath an open sign-in window. Reconnect CLEARS the
 		// sign-in partition before reopening it, and that partition's cookies
@@ -307,10 +338,13 @@ export class SessionRenewal {
 		// be fighting over the same session. reauthenticate() holds the mirror
 		// of this lock; both are needed, because in the other order the sign-in
 		// window can re-capture the stale pre-refresh token and store it over a
-		// refresh that had already succeeded.
+		// refresh that had already succeeded. The browser path holds the same
+		// lock: a reconnect there re-captures the near-expiry token from the
+		// portal and could store it over a fresh one.
 		if (this.host.isReauthInFlight()) return 'busy';
-		if (this.host.getSettings().signInMethod !== 'window')
-			return 'unsupported';
+		const method = this.host.getSettings().signInMethod;
+		if (method === 'browser') return this.refreshBrowserSessionNow();
+		if (method !== 'window') return 'unsupported';
 		const current = this.host.readStoredTokenValue();
 		if (current.length === 0) return 'unsupported';
 		// A long-lived credential must not be traded for a 24 hour one.
@@ -503,6 +537,214 @@ export class SessionRenewal {
 		}
 	}
 
+	// The v4 (browser) refresh: cookieless, bearering the captured workspace
+	// refresh token against /user-app/auth/workspace/refresh/{wid}. Same
+	// supersede/validate/store discipline as the window path above, minus the
+	// partition (there is none for a browser session) and the region redirect
+	// (v4 has no soft redirect). Reached only from refreshNow, after its busy and
+	// reauth guards, so it may assume no refresh is already in flight.
+	private async refreshBrowserSessionNow(): Promise<RefreshOutcome> {
+		const current = this.host.readStoredTokenValue();
+		if (current.length === 0) return 'unsupported';
+		// A long-lived credential must not be traded for a 24 hour one, and a v3
+		// browser (prod SSO) session has no bearer-refresh endpoint here.
+		if (!isWorkspaceToken(current)) return 'unsupported';
+		const currentWid = workspaceIdFromToken(current);
+		if (currentWid === null) return 'unsupported';
+		// The bearer. Absent for a v4 session captured before beta.3 added the
+		// capture, in which case there is nothing to renew with (the user
+		// re-signs-in to get one).
+		const refreshToken = this.host.readStoredRefreshTokenValue();
+		if (refreshToken.length === 0) return 'unsupported';
+		// Which secret the WT came from, not just its value, so a picker pointed
+		// at a different secret holding the same value is treated as a change.
+		const currentSecretId = this.host.getSettings().secretId;
+		const deviceId = this.host.getSettings().plaudDeviceId.trim();
+		// Held until the fresh token is STORED, not merely fetched, so a sign-in
+		// started during validation cannot re-capture the stale portal token and
+		// write it over the one this call just minted.
+		this.sessionRefreshInFlight = true;
+		try {
+			const result = await performV4Refresh({
+				currentToken: current,
+				refreshToken,
+				baseUrl: this.host.getSettings().apiBaseUrl,
+				deviceId: deviceId.length > 0 ? deviceId : undefined,
+				fetch: this.host.httpFetch,
+				log: (message, payload) => {
+					this.host.debugLog({
+						kind: 'note',
+						endpoint: '/workspace-refresh',
+						message,
+						payload,
+					});
+				},
+			});
+			// A plugin unloaded mid-refresh must not write storage.
+			if (this.host.isDisposed()) return 'failed';
+			// Supersede check FIRST, ahead of both branches, for the same reason as
+			// the window path: a reconnect, a paste, a different linked secret or a
+			// sign out can land while the call is in flight, and neither a success
+			// nor a failure belongs to a credential nobody is using any more. The
+			// refresh token is part of that identity: a concurrent capture can
+			// rotate the WRT while keeping the same WT and secret, and overwriting
+			// that newer bearer with this call's rotation (or failing the new
+			// session on this call's error) would be the same clobber.
+			if (
+				this.host.readStoredTokenValue() !== current ||
+				this.host.getSettings().secretId !== currentSecretId ||
+				this.host.readStoredRefreshTokenValue() !== refreshToken
+			) {
+				this.host.debugLog({
+					kind: 'note',
+					endpoint: '/workspace-refresh',
+					message:
+						'v4 session refresh discarded: the stored credential changed while it ran',
+				});
+				return 'superseded';
+			}
+			// Validate the minted WT before storing: a usable, future-dated
+			// workspace token that MOVED the expiry past the refresh window AND
+			// stays on the SAME workspace. Binding the wid to the original is what
+			// stops a refresh (a stale refresh secret paired with a newly linked WT,
+			// say) from quietly switching the account to another workspace, which
+			// the v4 client would then send as x-scope-id on every call. The rotated
+			// refresh token is bound the same way: it is what the next cycle bears,
+			// and one for a different workspace could not renew this one. The
+			// in-window check refuses a mint already inside the refresh window, which
+			// would store as a success and then re-fire at the 30s floor against the
+			// hourly ceiling.
+			// The rotated refresh token has to be a real, live refresh token for
+			// THIS workspace, not merely a JWT that carries the right wid. Reusing
+			// selectRefreshTokenForWorkspace applies the exact capture-time guard
+			// (typ WRT, future exp, ws_ wid matching the fresh WT), so an expired or
+			// wrong-type value the endpoint might hand back is rejected instead of
+			// stored as the next cycle's unusable bearer.
+			const rotatedRefreshValid =
+				result !== null &&
+				selectRefreshTokenForWorkspace(
+					[result.refreshToken],
+					result.token,
+				) === result.refreshToken;
+			if (
+				result === null ||
+				!isUsableUserToken(result.token) ||
+				!isWorkspaceToken(result.token) ||
+				workspaceIdFromToken(result.token) !== currentWid ||
+				!rotatedRefreshValid ||
+				isRefreshDue(result.token, Date.now())
+			) {
+				this.host.debugLog({
+					kind: 'error',
+					endpoint: '/workspace-refresh',
+					message:
+						result === null
+							? 'v4 session refresh failed: the bearer refresh did not return a token'
+							: !isUsableUserToken(result.token)
+								? 'v4 session refresh failed: the minted value did not pass the capture guard'
+								: !isWorkspaceToken(result.token)
+									? 'v4 session refresh failed: the minted value is not a workspace token'
+									: workspaceIdFromToken(result.token) !==
+										  currentWid
+										? 'v4 session refresh failed: the minted token is for a different workspace'
+										: !rotatedRefreshValid
+											? 'v4 session refresh failed: the rotated refresh token is not a valid refresh token for this workspace'
+											: 'v4 session refresh failed: the minted token is already inside the refresh window',
+				});
+				this.onSessionRefreshFailed();
+				return 'failed';
+			}
+			// Store the fresh WT and the ROTATED refresh token in one
+			// batch. The refresh token is 'browser', with no host or scope change
+			// (v4 has no region redirect and the workspace rides in the token). The
+			// ownership guard is re-run inside the store for the same reason the
+			// window path re-runs it.
+			let stored: CaptureStoreResult;
+			try {
+				stored = await this.host.storeAccessToken(
+					result.token,
+					'browser',
+					undefined,
+					true,
+					() =>
+						!this.host.isDisposed() &&
+						this.host.readStoredTokenValue() === current &&
+						this.host.getSettings().secretId === currentSecretId &&
+						this.host.readStoredRefreshTokenValue() ===
+							refreshToken,
+					result.refreshToken,
+				);
+			} catch (err) {
+				this.host.debugLog({
+					kind: 'error',
+					endpoint: '/workspace-refresh',
+					message:
+						'v4 session refresh failed: storing the fresh token threw',
+					payload: {
+						error: err instanceof Error ? err.message : String(err),
+					},
+				});
+				this.onSessionRefreshFailed();
+				return 'failed';
+			}
+			if (stored.outcome === 'superseded') {
+				this.host.debugLog({
+					kind: 'note',
+					endpoint: '/workspace-refresh',
+					message:
+						'v4 session refresh discarded: the stored credential changed while the store was queued',
+				});
+				return 'superseded';
+			}
+			if (stored.outcome !== 'stored') {
+				this.host.debugLog({
+					kind: 'error',
+					endpoint: '/workspace-refresh',
+					message:
+						stored.outcome === 'save-failed'
+							? 'v4 session refresh failed: the vault would not accept the settings write, so the fresh token was not stored and the previous session is unchanged'
+							: stored.outcome === 'torn'
+								? 'v4 session refresh failed: the settings write landed but the credential write did not, so data.json names a session whose token was never stored'
+								: 'v4 session refresh failed: the minted token did not pass the capture guard at store time',
+				});
+				this.onSessionRefreshFailed();
+				return 'failed';
+			}
+			// The rotated refresh token MUST have landed. The store writes it in a
+			// guarded step (a failed write leaves the WT stored and only degrades
+			// renewal, which is right for a sign-in), so a 'stored' outcome does not
+			// prove the new bearer persisted. Read it back: if the write was
+			// swallowed the secret still holds the OLD bearer, and reporting success
+			// here would clear the failure state and re-arm as healthy while the next
+			// cycle silently bears a spent token. Treat that as a failure so the
+			// user is prompted to reconnect instead.
+			if (
+				this.host.readStoredRefreshTokenValue() !== result.refreshToken
+			) {
+				this.host.debugLog({
+					kind: 'error',
+					endpoint: '/workspace-refresh',
+					message:
+						'v4 session refresh failed: the fresh workspace token was stored but the rotated refresh token was not, so the next renewal has no valid bearer',
+				});
+				this.onSessionRefreshFailed();
+				return 'failed';
+			}
+			this.sessionRefreshFailed = false;
+			this.host.debugLog({
+				kind: 'note',
+				endpoint: '/workspace-refresh',
+				message:
+					'v4 session refresh succeeded; a fresh token is stored',
+			});
+			this.host.resumeAutoSyncIfPaused();
+			// storeAccessToken already reconciled the warning and this schedule.
+			return 'refreshed';
+		} finally {
+			this.sessionRefreshInFlight = false;
+		}
+	}
+
 	// Fire-and-forget settings write, for the paths that are synchronous by
 	// design (timer callbacks, notice handlers) and have no caller to await it.
 	// The catch is not optional here. This exact feature reaches these lines
@@ -651,12 +893,24 @@ export class SessionRenewal {
 		token: string,
 		signInMethod: SignInMethod = this.host.getSettings().signInMethod,
 	): boolean {
-		return (
-			signInMethod === 'window' &&
-			isWorkspaceToken(token) &&
-			buildPartitionPost(this.signInPartition()) !== null &&
-			computeRefreshDelayMs(token, Date.now()) !== null
-		);
+		if (
+			!isWorkspaceToken(token) ||
+			computeRefreshDelayMs(token, Date.now()) === null
+		) {
+			return false;
+		}
+		if (signInMethod === 'window') {
+			return buildPartitionPost(this.signInPartition()) !== null;
+		}
+		if (signInMethod === 'browser') {
+			// A v4 session (ws_ wid) with a captured refresh token to bearer. A
+			// prod SSO browser session has neither and cannot renew here.
+			return (
+				workspaceIdFromToken(token) !== null &&
+				this.host.readStoredRefreshTokenValue().length > 0
+			);
+		}
+		return false;
 	}
 
 	// One-time capture heads-up (issue #78): a short (24h) session is normal

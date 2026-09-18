@@ -41,7 +41,10 @@ import {
 	plaudPartition,
 } from './plaud-partition';
 import { isUsableUserToken, readTokenLifetime } from './plaud-token';
-import { MAX_COLLECTED_CANDIDATES } from './token-candidates';
+import {
+	MAX_COLLECTED_CANDIDATES,
+	MAX_COLLECTED_REFRESH,
+} from './token-candidates';
 
 // Load the same web client the data API expects. The token is platform-typed:
 // a token minted by app.plaud.ai is parsed in a different mode by /file/simple/web
@@ -78,6 +81,7 @@ const POLL_INTERVAL_MS = 1000;
 export const PROBE_JS = `(() => {
 	try {
 		var tokens = [];
+		var rtokens = [];
 		var domain = null;
 		var wsDomain = null;
 		var wsId = null;
@@ -123,7 +127,14 @@ export const PROBE_JS = `(() => {
 				var hd = dec(p[0]);
 				var pl = dec(p[1]);
 				if (hd === null || pl === null) { return; }
-				if (hd.typ === 'WRT') { return; }
+				// A refresh token (typ WRT) is never a data credential, but a v4 one
+				// (future exp, ws_ wid) IS the bearer the background renewal uses, so
+				// collect it into a SEPARATE stream. Same guard as
+				// collectRefreshCandidates / the bookmarklet.
+				if (hd.typ === 'WRT') {
+					if (typeof pl.exp === 'number' && isFinite(pl.exp) && pl.exp * 1000 > Date.now() && typeof pl.wid === 'string' && pl.wid.slice(0, 3) === 'ws_' && rtokens.indexOf(t) < 0 && rtokens.length < ${MAX_COLLECTED_REFRESH}) { rtokens.push(t); }
+					return;
+				}
 				if (typeof pl.client_id !== 'string' || pl.client_id.length === 0) { return; }
 				// isFinite matters, not just the > comparison: a payload can encode
 				// exp as 1e400, which JSON.parse yields as Infinity. That passes a
@@ -136,7 +147,7 @@ export const PROBE_JS = `(() => {
 			};
 			var budget = 4000;
 			var walk = function (x, depth) {
-				if (depth > 6 || budget <= 0 || tokens.length >= ${MAX_COLLECTED_CANDIDATES}) { return; }
+				if (depth > 6 || budget <= 0 || (tokens.length >= ${MAX_COLLECTED_CANDIDATES} && rtokens.length >= ${MAX_COLLECTED_REFRESH})) { return; }
 				budget = budget - 1;
 				if (typeof x === 'string') {
 					add(x);
@@ -190,6 +201,14 @@ export const PROBE_JS = `(() => {
 							var wmap = JSON.parse(localStorage.getItem(mk));
 							if (wmap && typeof wmap === 'object' && wmap[current] && typeof wmap[current] === 'object') {
 								add(wmap[current].token);
+								// Hoist the ACTIVE workspace's refresh token too, ahead
+								// of the generic walk. With 3+ workspaces the walk can
+								// fill the small refresh cap with other workspaces'
+								// tokens before it reaches the active one, and the store
+								// then finds no refresh token matching the selected WT
+								// and disables renewal. add() routes a WRT into the
+								// refresh list, so this guarantees the active one is in.
+								add(wmap[current].refreshToken);
 							}
 						} catch (e) {}
 					}
@@ -203,6 +222,9 @@ export const PROBE_JS = `(() => {
 							var entry = list[e];
 							if (entry && typeof entry === 'object' && entry.workspaceId === current) {
 								add(entry.workspaceToken);
+								// The active workspace's refresh token (alpha-era shape),
+								// hoisted for the same reason as the workspaceTokens map above.
+								add(entry.refreshToken);
 								// Beta keeps the resolved API host ONLY on the active
 								// workspace (no pld_plaud_user_api_domain key), so grab
 								// it here as the fallback for the domain below.
@@ -228,7 +250,7 @@ export const PROBE_JS = `(() => {
 				if (deviceId) { deviceId = String(deviceId).replace(/^"|"$/g, ''); }
 			} catch (e) {}
 		}
-		return JSON.stringify({ tokens: tokens, domain: domain, workspaceId: wsId, deviceId: deviceId, href: location.href });
+		return JSON.stringify({ tokens: tokens, refreshTokens: rtokens, domain: domain, workspaceId: wsId, deviceId: deviceId, href: location.href });
 	} catch (e) {
 		return JSON.stringify({ error: String(e) });
 	}
@@ -243,6 +265,13 @@ export interface PlaudLoginResult {
 	 * which one works. The caller does that selection.
 	 */
 	readonly tokens: readonly string[];
+	/**
+	 * Candidate v4 workspace refresh tokens (typ WRT) read from the window's
+	 * localStorage, for the cookieless background renewal of a browser/SSO
+	 * session. Empty on a v3 sign-in (no `ws_` workspace refresh token exists).
+	 * The store keeps the one whose `wid` matches the selected workspace token.
+	 */
+	readonly refreshTokens: readonly string[];
 	/** Regional API origin if discoverable, else null. */
 	readonly apiBaseUrl: string | null;
 	/**
@@ -267,6 +296,7 @@ export interface PlaudLoginOptions {
 
 interface ProbeResult {
 	tokens?: unknown;
+	refreshTokens?: unknown;
 	domain?: string | null;
 	workspaceId?: string | null;
 	deviceId?: string | null;
@@ -656,6 +686,22 @@ class PlaudLoginSession {
 			// localStorage `token` on some other origin must never be captured, even
 			// though the claim guard would usually reject it too.
 			const onPlaud = isPlaudOrigin(probe?.href);
+			// The v4 workspace refresh tokens, gated on the Plaud origin like the
+			// WT candidates. Shaped here (trim/strip) but not re-validated: the probe
+			// already applied the WRT/ws_-wid guard, and the store re-checks and
+			// matches one to the selected WT by wid.
+			const refreshTokens =
+				onPlaud && Array.isArray(probe?.refreshTokens)
+					? (probe.refreshTokens as unknown[])
+							.filter((v): v is string => typeof v === 'string')
+							.map((v) =>
+								v
+									.trim()
+									.replace(/^bearer\s+/i, '')
+									.trim(),
+							)
+							.filter((v) => v.length > 0)
+					: [];
 			// The capture guard is the gate: it accepts a live long-lived user
 			// token (client_id + future exp) and rejects the neighboring profile/ID
 			// JWT and any already-expired token still sitting in localStorage.
@@ -673,7 +719,13 @@ class PlaudLoginSession {
 				});
 			}
 			if (usable.length > 0 && !this.settled) {
-				this.captureToken(usable, apiBaseUrl, workspaceId, deviceId);
+				this.captureToken(
+					usable,
+					apiBaseUrl,
+					workspaceId,
+					deviceId,
+					refreshTokens,
+				);
 			}
 		};
 		void poll();
@@ -688,6 +740,7 @@ class PlaudLoginSession {
 		apiBaseUrl: string | null,
 		workspaceId: string | null,
 		deviceId: string | null,
+		refreshTokens: readonly string[],
 	): void {
 		// Values arrive already trimmed and bearer-stripped by the caller.
 		const values = tokens.filter((value) => value.length > 0);
@@ -702,10 +755,17 @@ class PlaudLoginSession {
 		this.note('token captured', 'note', {
 			apiBaseUrl,
 			candidates: values.length,
+			refreshCandidates: refreshTokens.length,
 			lifetimeHours: life?.lifetimeHours ?? null,
 			typ: life?.typ ?? null,
 		});
-		this.settle({ tokens: values, apiBaseUrl, workspaceId, deviceId });
+		this.settle({
+			tokens: values,
+			refreshTokens,
+			apiBaseUrl,
+			workspaceId,
+			deviceId,
+		});
 		this.closeWindow();
 	}
 
