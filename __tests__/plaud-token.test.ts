@@ -8,6 +8,7 @@ import {
 	readTokenClientId,
 	readTokenLifetime,
 	SHORT_LIFETIME_HOURS,
+	workspaceIdFromToken,
 } from '../plaud-token';
 
 // Build a minimal unsigned JWT from a header and payload object. The helpers
@@ -452,5 +453,37 @@ describe('formatSessionStatus', () => {
 		expect(
 			formatSessionStatus({ ...base, signInMethod: '', tokenValue: '' }),
 		).toContain('signInMethod: (not recorded)');
+	});
+});
+
+describe('workspaceIdFromToken', () => {
+	const NOW = 1_800_000_000;
+	it('returns the ws_ workspace id from a v4 token wid claim', () => {
+		const v4 = makeJwt(
+			{ typ: 'WT', alg: 'HS256' },
+			{ client_id: 'web', wid: 'ws_abc123', exp: NOW + 3600, ver: 2 },
+		);
+		expect(workspaceIdFromToken(v4)).toBe('ws_abc123');
+	});
+
+	it('returns null for a v3 token with no wid', () => {
+		const v3 = makeJwt(
+			{ typ: 'JWT', alg: 'HS256' },
+			{ client_id: 'web', exp: NOW + 3600 },
+		);
+		expect(workspaceIdFromToken(v3)).toBeNull();
+	});
+
+	it('returns null when wid is present but not a ws_ id', () => {
+		const bad = makeJwt(
+			{ typ: 'WT', alg: 'HS256' },
+			{ client_id: 'web', wid: 'not-a-workspace', exp: NOW + 3600 },
+		);
+		expect(workspaceIdFromToken(bad)).toBeNull();
+	});
+
+	it('returns null for a non-JWT value', () => {
+		expect(workspaceIdFromToken('not.a.jwt-really')).toBeNull();
+		expect(workspaceIdFromToken('')).toBeNull();
 	});
 });

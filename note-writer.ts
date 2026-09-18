@@ -35,6 +35,7 @@ import type {
 	TranscriptSegment,
 } from './plaud-client';
 import { recordingSourceLabel } from './plaud-client';
+import { canonicalPlaudId } from './vault-index';
 
 // -----------------------------------------------------------------------------
 // Errors
@@ -2830,6 +2831,27 @@ async function readPlaudId(
 	}
 }
 
+/**
+ * Upper bound on how many " N" suffixes resolveWritePath will try before giving
+ * up and letting the collision guard fire. Reached only if a base filename is
+ * shared by this many DIFFERENT recordings, which never happens in practice; the
+ * cap only stops a pathological loop.
+ */
+const MAX_FILENAME_DISAMBIGUATION = 999;
+
+/**
+ * Append a " N" disambiguation suffix to a note path, before the `.md`
+ * extension: `folder/2026-09-15 Title.md` -> `folder/2026-09-15 Title 2.md`.
+ * resolveTargetPath always ends the path in `.md`; if a caller ever passes one
+ * that does not, the suffix is appended to the whole string, still yielding a
+ * distinct, stable path.
+ */
+function disambiguateNotePath(basePath: string, suffix: number): string {
+	const stem = basePath.endsWith('.md') ? basePath.slice(0, -3) : basePath;
+	const ext = basePath.endsWith('.md') ? '.md' : '';
+	return `${stem} ${suffix}${ext}`;
+}
+
 // -----------------------------------------------------------------------------
 // NoteWriter class — handles vault-level file creation and duplicate policy.
 // -----------------------------------------------------------------------------
@@ -2975,6 +2997,49 @@ export class NoteWriter {
 	}
 
 	/**
+	 * Resolve the path this recording's note is actually written to,
+	 * disambiguating past a DIFFERENT recording that already owns the base path.
+	 * Two distinct Plaud recordings can share a title and date (Plaud can capture
+	 * the same meeting twice, seconds apart), so their notes sanitize to the same
+	 * filename. Identity is keyed on `plaud-id`, never on the filename, so this is
+	 * cosmetic: the second recording's note gets a " 2" suffix while its stored
+	 * `plaud-id` stays authoritative for dedup and re-import.
+	 *
+	 * Returns the base path unchanged when it is free, already this recording's
+	 * (matched by canonical id, so a v4 `of_<id>` recording still resolves to its
+	 * v3-era note), or holds a note with no `plaud-id` (kept writable to preserve
+	 * the historical overwrite behavior). Otherwise walks " 2", " 3", ... to the
+	 * first free-or-own path. If the suffix budget is exhausted it hands back the
+	 * base path so the caller's collision guard raises the loud, actionable error
+	 * instead of looping.
+	 */
+	private async resolveWritePath(
+		recording: Recording,
+		baseTargetPath: string,
+	): Promise<string> {
+		const wantCanonical = canonicalPlaudId(recording.id);
+		for (let suffix = 1; suffix <= MAX_FILENAME_DISAMBIGUATION; suffix++) {
+			const candidate =
+				suffix === 1
+					? baseTargetPath
+					: disambiguateNotePath(baseTargetPath, suffix);
+			const file = this.vault.getFileByPath(candidate);
+			if (file === null) {
+				return candidate;
+			}
+			const occupantId = await readPlaudId(this.vault, file);
+			if (
+				occupantId === null ||
+				canonicalPlaudId(occupantId) === wantCanonical
+			) {
+				return candidate;
+			}
+			// A different recording owns this path; try the next suffix.
+		}
+		return baseTargetPath;
+	}
+
+	/**
 	 * Find a prior note for this recording. First the exact target path; then,
 	 * if none, the vault-wide lookup that catches an earlier import living in a
 	 * DIFFERENT subfolder (for example after the user edited the subfolder
@@ -3023,7 +3088,14 @@ export class NoteWriter {
 			);
 		}
 		const existingPlaudId = extractPlaudIdFromFrontmatter(existingContent);
-		if (existingPlaudId !== null && existingPlaudId !== recordingId) {
+		// Compare by canonical id so a v4 `of_<id>` recording is recognized as the
+		// owner of its v3-era note (stored under the bare id), not a collision.
+		// resolveWritePath already disambiguates a genuine cross-recording clash;
+		// this guard stays as defense-in-depth for the exhausted-budget fallback.
+		if (
+			existingPlaudId !== null &&
+			canonicalPlaudId(existingPlaudId) !== canonicalPlaudId(recordingId)
+		) {
 			throw new NoteWriterError(
 				`Filename collision at ${notePath}: this note belongs to recording ${existingPlaudId}, not ${recordingId}. Rename one of the source recordings in Plaud or delete the existing note to re-import.`,
 			);
@@ -3044,7 +3116,13 @@ export class NoteWriter {
 		recording: Recording,
 		reason: string,
 	): Promise<PlaceholderWriteOutcome> {
-		const targetPath = await this.resolveTargetPath(recording);
+		const baseTargetPath = await this.resolveTargetPath(recording);
+		// Same title-collision disambiguation as writeNote: a placeholder for one
+		// recording must not land on a different recording's note path.
+		const targetPath = await this.resolveWritePath(
+			recording,
+			baseTargetPath,
+		);
 		const markdown = formatPlaceholderMarkdown(
 			recording,
 			reason,
@@ -3170,9 +3248,16 @@ export class NoteWriter {
 		// so the resolved path stays stable across re-imports. The folder names come
 		// from formatOptions so a {{plaud-folder}} template files the note under its
 		// Plaud folder.
-		const targetPath = await this.resolveTargetPath(
+		const baseTargetPath = await this.resolveTargetPath(
 			recording,
 			formatOptions?.folders,
+		);
+		// Disambiguate past a DIFFERENT recording already at this path, so two
+		// recordings that sanitize to the same filename (same title and date)
+		// both import. Re-imports still match this recording by its own plaud-id.
+		const targetPath = await this.resolveWritePath(
+			recording,
+			baseTargetPath,
 		);
 		const effectiveFormatOptions: FormatMarkdownOptions = {
 			...this.defaultFormatOptions,

@@ -14,7 +14,11 @@
 // -----------------------------------------------------------------------------
 
 import type { PlaudRecordingId, Recording } from './plaud-client';
-import { findImportedNote, type ImportedIndex } from './vault-index';
+import {
+	findImportedNote,
+	recordingAmbiguousKeys,
+	type ImportedIndex,
+} from './vault-index';
 import {
 	PlaudApiError,
 	PlaudAuthError,
@@ -819,6 +823,10 @@ export function filterListView(
 	recordings: readonly Recording[],
 	filter: ListViewFilter,
 ): readonly Recording[] {
+	// Fuzzy keys shared by 2+ recordings in this list: findImportedNote must not
+	// use them, or a new recording sharing a minute-or-day + duration with an
+	// imported one would be hidden as already processed. Computed once per view.
+	const ambiguousKeys = recordingAmbiguousKeys(recordings);
 	return recordings.filter((r) => {
 		if (r.isTrashed && !filter.showTrashed) {
 			return false;
@@ -832,7 +840,11 @@ export function filterListView(
 		) {
 			return false;
 		}
-		const existing = findImportedNote(filter.index, r)?.record;
+		const existing = findImportedNote(
+			filter.index,
+			r,
+			ambiguousKeys,
+		)?.record;
 		if (existing !== undefined) {
 			// Imported. Split by whether Plaud has a newer version than the note.
 			const updated = isUpdateAvailable(r.versionMs, existing.versionMs);

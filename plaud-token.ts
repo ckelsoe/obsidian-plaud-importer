@@ -130,6 +130,23 @@ export function readTokenClientId(value: string): string | null {
 }
 
 /**
+ * Reads the JWT payload `wid` claim, the v4 portal's workspace id (`ws_...`), or
+ * null when the value is not a decodable JWT or carries no `ws_` workspace id.
+ * A v4 token embeds its own workspace, so this recovers the workspace scope for
+ * a sign-in path (external browser, paste, deep link) that did not scrape the
+ * portal's localStorage. A v3 token has no `wid`, so a non-null result also
+ * doubles as "this is a v4 token."
+ */
+export function workspaceIdFromToken(value: string): string | null {
+	const payload = decodeJwtPayload(value);
+	if (payload === null) {
+		return null;
+	}
+	const raw = payload.wid;
+	return typeof raw === 'string' && raw.startsWith('ws_') ? raw : null;
+}
+
+/**
  * Advisory threshold, in hours: a measured issued lifetime at or below this is
  * "short". The 24h tokens issue #78 reported fall under it; every long-lived
  * token observed so far (~137 to ~300 days) is far above it. Advisory only:

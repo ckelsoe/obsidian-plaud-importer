@@ -21,12 +21,15 @@ import {
 	describeTokenLifetime,
 	formatSessionStatus,
 	readTokenLifetime,
+	workspaceIdFromToken,
 } from './plaud-token';
 import { isLegacyPartition } from './plaud-partition';
 import {
 	escapeHtmlAttribute,
 	parseClipboardTokens,
+	parseClipboardV4Host,
 	parseTokenCandidates,
+	parseV4Host,
 	buildSignInBookmarklet,
 } from './token-candidates';
 import {
@@ -339,21 +342,24 @@ export default class PlaudImporterPlugin extends Plugin {
 		// candidate: the real client reads secretStorage, and nothing may be
 		// written to storage before it is validated.
 		probeCandidate: async (token, baseUrl, onBaseUrlChanged, v4Scope) => {
-			// Probe the SAME portal the capture came from. A v4 (new portal)
-			// capture surfaces a workspace id; validate that token against the
-			// v4 endpoint under THIS capture's scope, never plugin-global state,
-			// so overlapping captures never probe one candidate against
-			// another's workspace. A capture with no workspace scope is a prod
-			// (v3) sign-in: probe the prod client, which can learn a regional
-			// host via onBaseUrlChanged. Deciding the portal from the capture's
-			// own scope (not the stored setting) avoids a stale prior scope
-			// misrouting a fresh sign-in.
-			if ((v4Scope.workspaceId ?? '').trim().length > 0) {
+			// Probe the SAME portal the capture came from. The v4 workspace comes
+			// from THIS capture's scope, or from the token's own `wid` claim (a v4
+			// token embeds it), which is what lets an external-browser / paste /
+			// deep-link token probe as v4 even though it did not scrape the
+			// portal. A token with no workspace at all is a prod (v3) sign-in:
+			// probe the prod client, which can learn a regional host via
+			// onBaseUrlChanged. Deciding the portal from the capture and the token
+			// (not stored settings) avoids a stale prior scope misrouting a fresh
+			// sign-in.
+			const probeWorkspaceId =
+				(v4Scope.workspaceId ?? '').trim() ||
+				workspaceIdFromToken(token) ||
+				'';
+			if (probeWorkspaceId.length > 0) {
 				const probe = new PlaudV4Client(() => token, obsidianFetcher, {
 					debugLogger: this.debugLogger,
 					baseUrl,
-					workspaceId: () =>
-						v4Scope.workspaceId ?? this.settings.plaudWorkspaceId,
+					workspaceId: () => probeWorkspaceId,
 					deviceId: () => {
 						// Match commitCapturedToken's null/undefined rule:
 						// undefined = "not observed" (fall back to the stored id);
@@ -675,14 +681,36 @@ export default class PlaudImporterPlugin extends Plugin {
 	}
 
 	/**
-	 * True when this account is signed in to the new Plaud portal (v4), decided
-	 * by whether sign-in captured a workspace id. The v4 API scopes every call
-	 * to a workspace via `x-scope-id`, so a v4 session always has one and a v3
-	 * (prod) session never does. Used to pick the client and the sign-in probe.
-	 * Clearing sign-in clears the workspace id, so this returns false again.
+	 * The active v4 workspace id: the one captured at sign-in when present, else
+	 * the `wid` the current v4 token carries. The v4 API scopes every call to a
+	 * workspace via `x-scope-id`, and a v4 token embeds its own workspace, so the
+	 * token fallback is what lets a sign-in that did NOT scrape the portal's
+	 * localStorage (external browser for Google/Apple SSO, paste, deep link) run
+	 * on the v4 client. Empty for a v3 account (a v3 token has no `wid`).
+	 */
+	private resolvedWorkspaceId(): string {
+		const token = this.app.secretStorage.getSecret(this.settings.secretId);
+		if (token !== null && token.length > 0) {
+			// The token is authoritative for its own session: a v4 token carries
+			// its workspace (`wid`); a v3 token has none, which means v3 even if a
+			// stale workspace from a prior v4 session is still stored. This is
+			// what keeps a v4 -> v3 reconnect from routing a v3 token through the
+			// v4 client on the leftover scope.
+			return workspaceIdFromToken(token) ?? '';
+		}
+		// No token to read (e.g. before a capture commits): fall back to the
+		// stored workspace so a legacy session that stored one is still known.
+		return this.settings.plaudWorkspaceId.trim();
+	}
+
+	/**
+	 * True when this account is on the new Plaud portal (v4). Decided by
+	 * resolvedWorkspaceId, so both a captured workspace and a v4 token's own
+	 * `wid` count. Used to pick the client and the sign-in probe. Clearing
+	 * sign-in clears the workspace and blanks the token, so this returns false.
 	 */
 	private usesV4Portal(): boolean {
-		return this.settings.plaudWorkspaceId.trim().length > 0;
+		return this.resolvedWorkspaceId().length > 0;
 	}
 
 	/**
@@ -724,7 +752,7 @@ export default class PlaudImporterPlugin extends Plugin {
 			this.client = new PlaudV4Client(tokenProvider, obsidianFetcher, {
 				debugLogger: this.debugLogger,
 				baseUrl: () => this.settings.apiBaseUrl,
-				workspaceId: () => this.settings.plaudWorkspaceId,
+				workspaceId: () => this.resolvedWorkspaceId(),
 				deviceId: () =>
 					this.settings.plaudDeviceId.length > 0
 						? this.settings.plaudDeviceId
@@ -2890,12 +2918,21 @@ export default class PlaudImporterPlugin extends Plugin {
 			);
 			return false;
 		}
+		// The v4 host, when the pasted whole deep link carried it. The workspace
+		// comes from the token, so this is the only scope the paste must carry.
+		const host = parseClipboardV4Host(text);
 		// The same guard again, because the probe between here and the store is
 		// a second, longer chance for this paste to go stale.
 		const result = await this.captureStore.storeFirstWorkingCandidate(
 			candidates,
 			canStore,
+			'browser',
+			host.length > 0 ? host : undefined,
 		);
+		if (result.stored && this.usesV4Portal() !== this.clientIsV4) {
+			// A v4 token flips the portal; rebuild so the v4 client runs at once.
+			this.buildClient();
+		}
 		if (!result.stored && result.message.length > 0) {
 			new Notice(result.message);
 		}
@@ -2974,6 +3011,10 @@ export default class PlaudImporterPlugin extends Plugin {
 			new Notice('Plaud sign-in link contained no token.');
 			return;
 		}
+		// The v4 API host the browser session resolved, when the bookmarklet
+		// carried it. A v4 token embeds its own workspace, so the host is the
+		// only scope the deep link must carry; empty on the v3 path.
+		const host = parseV4Host(params);
 		// A deep link is one of the browser-reconnect return channels: when that
 		// flow is waiting, deliver against it (serialized with the paste button
 		// via deliveryInFlight) and run its full follow-through: resume, close
@@ -3001,8 +3042,15 @@ export default class PlaudImporterPlugin extends Plugin {
 					() =>
 						this.browserReconnect === null ||
 						this.browserReconnect === flow,
+					'browser',
+					host.length > 0 ? host : undefined,
 				);
 				if (result.stored) {
+					// A v4 token flips the portal; rebuild so the v4 client runs
+					// without a reload (the workspace comes from the token).
+					if (this.usesV4Portal() !== this.clientIsV4) {
+						this.buildClient();
+					}
 					const done = await this.completeBrowserReconnect(flow);
 					if (done) {
 						return;
@@ -3025,9 +3073,18 @@ export default class PlaudImporterPlugin extends Plugin {
 			new Notice(result.message);
 			return;
 		}
-		const result =
-			await this.captureStore.storeFirstWorkingCandidate(candidates);
+		const result = await this.captureStore.storeFirstWorkingCandidate(
+			candidates,
+			() => true,
+			'browser',
+			host.length > 0 ? host : undefined,
+		);
 		if (result.stored) {
+			// A v4 token flips the portal; rebuild so the v4 client runs without
+			// a reload (the workspace comes from the token).
+			if (this.usesV4Portal() !== this.clientIsV4) {
+				this.buildClient();
+			}
 			// Outside the reconnect flow a fresh token still means the session
 			// is back; a paused auto-sync should not wait for its next trigger.
 			this.resumeAutoSyncIfPaused();

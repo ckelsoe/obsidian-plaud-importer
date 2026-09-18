@@ -36,6 +36,7 @@
 // unit-testable; the caller supplies the probe.
 
 import { PlaudApiError, PlaudAuthError } from './plaud-client-re';
+import { isTrustedPlaudUrl } from './plaud-hosts';
 import { isUsableUserToken } from './plaud-token';
 
 /** localStorage key the Plaud web app uses on the accounts that have one. */
@@ -248,6 +249,7 @@ export function collectTokenCandidates(
 function tokenDeepLinkUrl(
 	candidates: readonly string[],
 	vaultName: string,
+	host: string,
 ): string {
 	// `vault=` is what makes the link land in the vault running this plugin
 	// rather than in whichever Obsidian window happens to be focused. Encoded
@@ -257,9 +259,15 @@ function tokenDeepLinkUrl(
 	// implementation and the shipped copy produce byte-identical URLs.
 	const vault =
 		vaultName.length > 0 ? `vault=${encodeURIComponent(vaultName)}&` : '';
+	// `host=` is the v4 API host the browser session resolved (a v4 token is
+	// bound to its regional host and its workspace rides in the token, so the
+	// host is the only scope the deep link must carry). Appended last and
+	// omitted when unknown, so a v3 link is byte-for-byte what it was before.
+	const hostParam =
+		host.length > 0 ? `&host=${encodeURIComponent(host)}` : '';
 	return `${TOKEN_DEEP_LINK_BASE}?${vault}tokens=${encodeURIComponent(
 		JSON.stringify(candidates),
-	)}`;
+	)}${hostParam}`;
 }
 
 /**
@@ -267,16 +275,18 @@ function tokenDeepLinkUrl(
  * candidates until the URL fits MAX_DEEP_LINK_URL_LENGTH. Always keeps at
  * least one: a single oversized candidate is still worth attempting, and the
  * bookmarklet's copy/paste fallback covers it if the shell truncates the URL.
+ * `host` is the resolved v4 API host, omitted (empty) on the v3 path.
  */
 export function buildTokenDeepLink(
 	candidates: readonly string[],
 	vaultName = '',
+	host = '',
 ): string {
 	let list = candidates.slice(0, MAX_COLLECTED_CANDIDATES);
-	let url = tokenDeepLinkUrl(list, vaultName);
+	let url = tokenDeepLinkUrl(list, vaultName, host);
 	while (list.length > 1 && url.length > MAX_DEEP_LINK_URL_LENGTH) {
 		list = list.slice(0, list.length - 1);
-		url = tokenDeepLinkUrl(list, vaultName);
+		url = tokenDeepLinkUrl(list, vaultName, host);
 	}
 	return url;
 }
@@ -331,6 +341,34 @@ export function parseTokenCandidates(params: {
 }
 
 /**
+ * Extracts the v4 API host the browser session resolved, or '' when absent or
+ * untrusted. A v4 token is bound to its regional host and its workspace rides
+ * inside the token, so this host is the only scope the browser sign-in must
+ * carry; the workspace is read from the token later. Trust boundary: an
+ * `obsidian://` URL can be fired by any page, so the value is accepted only when
+ * it is an https plaud.ai / theplaud.com URL with no userinfo (the same
+ * allowlist the client enforces), and only its origin is returned so a stray
+ * path or query cannot ride along as the base URL.
+ */
+export function parseV4Host(params: {
+	readonly host?: unknown;
+	readonly [key: string]: unknown;
+}): string {
+	const raw = params.host;
+	if (typeof raw !== 'string' || raw.length === 0 || raw.length > 200) {
+		return '';
+	}
+	if (!isTrustedPlaudUrl(raw)) {
+		return '';
+	}
+	try {
+		return new URL(raw).origin;
+	} catch {
+		return '';
+	}
+}
+
+/**
  * Parses whatever the user copied for the manual paste fallback.
  *
  * The bookmarklet's fallback offers the WHOLE deep link, not a single token,
@@ -355,6 +393,24 @@ export function parseClipboardTokens(text: string): string[] {
 		});
 	}
 	return parseTokenCandidates({ token: trimmed });
+}
+
+/**
+ * Extracts the v4 API host from a pasted deep link (the bookmarklet's fallback
+ * offers the whole link, which carries `&host=`). Returns '' for a bare token
+ * or when the host is absent or untrusted. See parseV4Host for the trust checks.
+ */
+export function parseClipboardV4Host(text: string): string {
+	const trimmed = text.trim();
+	if (trimmed.length > MAX_DEEP_LINK_PAYLOAD_LENGTH) {
+		return '';
+	}
+	const marker = `${TOKEN_DEEP_LINK_BASE}?`;
+	if (!trimmed.toLowerCase().startsWith(marker.toLowerCase())) {
+		return '';
+	}
+	const params = new URLSearchParams(trimmed.slice(marker.length));
+	return parseV4Host({ host: params.get('host') ?? undefined });
 }
 
 /**
@@ -546,4 +602,4 @@ export function buildSignInBookmarklet(vaultName: string): string {
 
 const SIGN_IN_BOOKMARKLET_TEMPLATE =
 	BOOKMARKLET_SCHEME +
-	"(function(){try{var h=location.hostname.toLowerCase();if(h!=='plaud.ai'&&h.slice(-9)!=='.plaud.ai'){alert('Open this on a Plaud tab (web.plaud.ai) after signing in, then click the bookmark.');return;}var V=encodeURIComponent(String.fromCharCode(__VAULT__));var seg=/^[A-Za-z0-9_-]+$/;var dec=function(s){try{var b=s.replace(/-/g,'+').replace(/_/g,'/');return JSON.parse(atob(b+'='.repeat((4-b.length%4)%4)));}catch(e){return null;}};var now=Date.now();var d=[];var ty=function(t){return t==='WT'||t==='WRT'||t==='JWT'?t:'other';};var pick=function(v){if(typeof v!=='string'||v.length>4096)return null;var t=v.trim().replace(/^bearer +/i,'').trim();var p=t.split('.');if(p.length!==3||!seg.test(p[0])||!seg.test(p[1])||!seg.test(p[2]))return null;var hd=dec(p[0]);var pl=dec(p[1]);if(hd===null||pl===null)return null;if(d.length<12)d.push(ty(hd.typ)+'/'+(typeof pl.client_id)+'/'+(typeof pl.exp==='number'?Math.round((pl.exp*1000-now)/3600000)+'h':'noexp'));if(hd.typ==='WRT')return null;if(typeof pl.client_id!=='string'||pl.client_id.length===0)return null;if(typeof pl.exp!=='number'||!isFinite(pl.exp)||!(pl.exp*1000>now))return null;return t;};var a=[];var add=function(v){var t=pick(v);if(t!==null&&a.indexOf(t)<0&&a.length<5)a.push(t);};var n=4000;var W=function(x,y){if(y>6||n<=0||a.length>=5)return;n=n-1;if(typeof x==='string'){add(x);var s=x.trim();if(s.length<=262144&&(s.charAt(0)==='{'||s.charAt(0)==='[')){try{W(JSON.parse(s),y+1);}catch(e){}}return;}if(x!==null&&typeof x==='object'){for(var q in x){if(Object.prototype.hasOwnProperty.call(x,q))W(x[q],y+1);}}};var P=function(k){return k==='token'||k==='tokenstr'||k.slice(0,4)==='pld_';};W(localStorage.getItem('token'),0);for(var i=0;i<localStorage.length;i++){var k=localStorage.key(i);if(k===null||k==='token')continue;if(P(k))W(localStorage.getItem(k),0);}if(a.length===0){prompt('No usable Plaud sign-in found on this page. Make sure you are signed in to Plaud in this tab, then click the bookmark again. If you ARE signed in and this keeps happening, copy this line and send it to the plugin maintainer. It carries no token and no personal details:','plaud-capture-miss keys='+localStorage.length+' jwts='+d.length+' '+d.join(' '));return;}var b='obsidian://plaud-importer-token?vault='+V+'&tokens=';var u=b+encodeURIComponent(JSON.stringify(a));while(a.length>1&&u.length>1900){a.pop();u=b+encodeURIComponent(JSON.stringify(a));}location.replace(u);setTimeout(function(){if(document.hasFocus())prompt('Obsidian should have opened and saved your Plaud sign-in. If nothing happened, copy this whole line, then click Paste token from clipboard in the plugin settings:',u);},1500);}catch(e){alert('Could not read the Plaud token: '+e);}})()";
+	"(function(){try{var h=location.hostname.toLowerCase();if(h!=='plaud.ai'&&h.slice(-9)!=='.plaud.ai'){alert('Open this on a Plaud tab (web.plaud.ai) after signing in, then click the bookmark.');return;}var V=encodeURIComponent(String.fromCharCode(__VAULT__));var seg=/^[A-Za-z0-9_-]+$/;var dec=function(s){try{var b=s.replace(/-/g,'+').replace(/_/g,'/');return JSON.parse(atob(b+'='.repeat((4-b.length%4)%4)));}catch(e){return null;}};var now=Date.now();var d=[];var ty=function(t){return t==='WT'||t==='WRT'||t==='JWT'?t:'other';};var pick=function(v){if(typeof v!=='string'||v.length>4096)return null;var t=v.trim().replace(/^bearer +/i,'').trim();var p=t.split('.');if(p.length!==3||!seg.test(p[0])||!seg.test(p[1])||!seg.test(p[2]))return null;var hd=dec(p[0]);var pl=dec(p[1]);if(hd===null||pl===null)return null;if(d.length<12)d.push(ty(hd.typ)+'/'+(typeof pl.client_id)+'/'+(typeof pl.exp==='number'?Math.round((pl.exp*1000-now)/3600000)+'h':'noexp'));if(hd.typ==='WRT')return null;if(typeof pl.client_id!=='string'||pl.client_id.length===0)return null;if(typeof pl.exp!=='number'||!isFinite(pl.exp)||!(pl.exp*1000>now))return null;return t;};var a=[];var add=function(v){var t=pick(v);if(t!==null&&a.indexOf(t)<0&&a.length<5)a.push(t);};var n=4000;var W=function(x,y){if(y>6||n<=0||a.length>=5)return;n=n-1;if(typeof x==='string'){add(x);var s=x.trim();if(s.length<=262144&&(s.charAt(0)==='{'||s.charAt(0)==='[')){try{W(JSON.parse(s),y+1);}catch(e){}}return;}if(x!==null&&typeof x==='object'){for(var q in x){if(Object.prototype.hasOwnProperty.call(x,q))W(x[q],y+1);}}};var P=function(k){return k==='token'||k==='tokenstr'||k.slice(0,4)==='pld_';};W(localStorage.getItem('token'),0);for(var i=0;i<localStorage.length;i++){var k=localStorage.key(i);if(k===null||k==='token')continue;if(P(k))W(localStorage.getItem(k),0);}if(a.length===0){prompt('No usable Plaud sign-in found on this page. Make sure you are signed in to Plaud in this tab, then click the bookmark again. If you ARE signed in and this keeps happening, copy this line and send it to the plugin maintainer. It carries no token and no personal details:','plaud-capture-miss keys='+localStorage.length+' jwts='+d.length+' '+d.join(' '));return;}var ho='';try{var hr=localStorage.getItem('pld_plaud_user_api_domain');if(hr){try{var hj=JSON.parse(hr);ho=(hj&&typeof hj.domain==='string')?hj.domain:hr;}catch(e){ho=hr;}}if(!ho){var cw=null;for(var ci=0;ci<localStorage.length;ci++){var ck=localStorage.key(ci);if(ck&&ck.slice(-19)===':currentWorkspaceId')cw=String(localStorage.getItem(ck)||'').replace(/^\"|\"$/g,'');}if(cw){for(var wi=0;wi<localStorage.length;wi++){var wk=localStorage.key(wi);if(wk&&wk.slice(-13)==='workspaceList'){try{var wl=JSON.parse(localStorage.getItem(wk));for(var we in wl){if(wl[we]&&wl[we].workspaceId===cw&&typeof wl[we].domain==='string')ho=wl[we].domain;}}catch(e){}}}}}}catch(e){ho='';}if(typeof ho!=='string'||ho.slice(0,8)!=='https://')ho='';var hp=ho?'&host='+encodeURIComponent(ho):'';var b='obsidian://plaud-importer-token?vault='+V+'&tokens=';var u=b+encodeURIComponent(JSON.stringify(a))+hp;while(a.length>1&&u.length>1900){a.pop();u=b+encodeURIComponent(JSON.stringify(a))+hp;}location.replace(u);setTimeout(function(){if(document.hasFocus())prompt('Obsidian should have opened and saved your Plaud sign-in. If nothing happened, copy this whole line, then click Paste token from clipboard in the plugin settings:',u);},1500);}catch(e){alert('Could not read the Plaud token: '+e);}})()";

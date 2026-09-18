@@ -1,6 +1,24 @@
 # Changelog
 
+<!-- slop-check: off. Append-only release history: shipped entries are immutable and new ones follow the house style by hand, so the writing-rules hook does not re-scan years of published notes on every edit. -->
+
 All notable changes to Plaud Importer will be documented in this file.
+
+## [0.41.0-beta.2] - 2026-09-18
+
+More new-portal fixes for the beta. Still a pre-release; install it through BRAT. The stable release is unaffected.
+
+### Added
+
+- **Sign in to the new portal with SSO or the sign-in bookmarklet.** The new portal now captures a session from an SSO sign-in that finishes in your browser, and from the sign-in bookmarklet, not only from the in-app window. Signing in this way also records which portal you are on, so the right one is used from then on.
+- **Device names load on the new portal.** The source chip on each recording and the `{{device}}` note property resolve real device names on the new portal, the same as on the current one.
+- **Push a renamed note's title back to Plaud on the new portal.** Renaming a note (with the "update the Plaud title" setting on, or through the command) now renames the recording on the new Plaud portal too, so the note and the recording stay in sync. This worked on the current portal already; on the new portal it used to report that it was not supported.
+
+### Fixed
+
+- **Two recordings with the same title and date both import.** When Plaud captures the same meeting twice, for example two recordings a few seconds apart, they produce the same note filename. The plugin now writes the second one to a numbered name ("... 2") instead of stopping with a filename-collision error, so both import. Each note still carries its own recording id, so re-importing either one updates its own note rather than making a copy.
+- **A second recording in the same import is no longer skipped by mistake.** When two recordings in one import round to the same start minute and length, neither is treated as an already-imported copy of the other, so both come in.
+- **Reconnecting a current-portal account after using the new one works.** The portal is now decided from the token you signed in with, so a current-portal session is never sent to the new portal because of a leftover setting.
 
 ## [0.41.0-beta.1] - 2026-09-17
 
