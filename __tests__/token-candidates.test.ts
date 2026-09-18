@@ -8,16 +8,22 @@ import {
 import {
 	BOOKMARKLET_SCHEME,
 	buildTokenDeepLink,
+	collectRefreshCandidates,
 	collectTokenCandidates,
 	escapeHtmlAttribute,
 	isCredentialRejection,
 	MAX_CANDIDATE_LENGTH,
+	MAX_COLLECTED_REFRESH,
+	MAX_DEEP_LINK_REFRESH,
 	MAX_DEEP_LINK_URL_LENGTH,
 	MAX_WALK_DEPTH,
+	parseClipboardRefreshCandidates,
 	parseClipboardTokens,
 	parseClipboardV4Host,
+	parseRefreshCandidates,
 	parseTokenCandidates,
 	parseV4Host,
+	selectRefreshTokenForWorkspace,
 	selectWorkingCandidate,
 	buildSignInBookmarklet,
 	TOKEN_DEEP_LINK_BASE,
@@ -91,6 +97,38 @@ const EXPIRED_TOKEN = makeJwt(
 	{ alg: 'HS256', typ: 'JWT' },
 	{ sub: 'u1', exp: PAST_EXP, client_id: 'web' },
 );
+
+// --- v4 workspace refresh token fixtures (beta.3) ----------------------------
+// A real v4 workspace token: typ WT with a ws_ wid. Distinct from the hyphenated
+// `ws-1` fixtures above, which do NOT match the ws_ v4 shape.
+const V4_WT = makeJwt(
+	{ alg: 'HS256', typ: 'WT' },
+	{ sub: 'u1', exp: FUTURE_EXP, client_id: 'web', wid: 'ws_abc' },
+);
+// The v4 workspace refresh token for that workspace: typ WRT, future exp, ws_ wid.
+const V4_REFRESH = makeJwt(
+	{ alg: 'HS256', typ: 'WRT' },
+	{ sub: 'u1', exp: FUTURE_EXP, client_id: 'web', wid: 'ws_abc' },
+);
+// A refresh token for a DIFFERENT workspace, to prove wid matching.
+const V4_REFRESH_OTHER = makeJwt(
+	{ alg: 'HS256', typ: 'WRT' },
+	{ sub: 'u1', exp: FUTURE_EXP, client_id: 'web', wid: 'ws_other' },
+);
+// An expired v4 refresh token: must never be collected.
+const V4_REFRESH_EXPIRED = makeJwt(
+	{ alg: 'HS256', typ: 'WRT' },
+	{ sub: 'u1', exp: PAST_EXP, client_id: 'web', wid: 'ws_abc' },
+);
+// The active-workspace v4 sign-in shape: token AND refreshToken sit in the pld_
+// workspaceTokens map, with the api domain in its own key.
+const V4_STORAGE: Record<string, string> = {
+	'pld_u1:currentWorkspaceId': '"ws_abc"',
+	'pld_u1:workspaceTokens': JSON.stringify({
+		ws_abc: { token: V4_WT, refreshToken: V4_REFRESH, expiresAt: 111 },
+	}),
+	pld_plaud_user_api_domain: '{"domain":"https://api-test.plaud.ai"}',
+};
 
 function entries(map: Record<string, string>): StoredEntry[] {
 	return Object.keys(map).map((key) => ({ key, value: map[key] }));
@@ -893,6 +931,147 @@ describe('SIGN_IN_BOOKMARKLET', () => {
 		);
 	});
 
+	it('delivers the v4 refresh token, matching the reference collectors', () => {
+		// The whole delivered URL (tokens + refresh + host) must equal what the
+		// reference collectors + builder produce, so the hand-minified refresh
+		// capture cannot drift from collectRefreshCandidates.
+		const expectedTokens = collectTokenCandidates(
+			entries(V4_STORAGE),
+			NOW_MS,
+		);
+		const expectedRefresh = collectRefreshCandidates(
+			entries(V4_STORAGE),
+			NOW_MS,
+		);
+		expect(expectedTokens).toEqual([V4_WT]);
+		expect(expectedRefresh).toEqual([V4_REFRESH]);
+		expect(runBookmarklet(V4_STORAGE).href).toBe(
+			buildTokenDeepLink(
+				expectedTokens,
+				TEST_VAULT,
+				'https://api-test.plaud.ai',
+				expectedRefresh,
+			),
+		);
+	});
+
+	it('produces a link whose refresh token matches the delivered workspace token', () => {
+		const href = runBookmarklet(V4_STORAGE).href ?? '';
+		const params = Object.fromEntries(
+			new URLSearchParams(href.slice(href.indexOf('?') + 1)),
+		);
+		expect(parseRefreshCandidates(params)).toEqual([V4_REFRESH]);
+		// The store would keep exactly that one for the delivered WT.
+		expect(
+			selectRefreshTokenForWorkspace(
+				parseRefreshCandidates(params),
+				parseTokenCandidates(params)[0],
+				NOW_MS,
+			),
+		).toBe(V4_REFRESH);
+	});
+
+	it('drops the refresh token from the delivered link when it would overflow the shell budget', () => {
+		// A big WT (still under the candidate size cap) that fits alone, plus a big
+		// refresh token that would push the URL over the Windows shell limit. The
+		// refresh token is optional, so it is dropped rather than truncated, and the
+		// bookmarklet does exactly what the reference builder does.
+		const bigWt = makeJwt(
+			{ alg: 'HS256', typ: 'WT' },
+			{
+				client_id: 'web',
+				exp: FUTURE_EXP,
+				wid: 'ws_abc',
+				pad: 'x'.repeat(900),
+			},
+		);
+		const bigWrt = makeJwt(
+			{ alg: 'HS256', typ: 'WRT' },
+			{ exp: FUTURE_EXP, wid: 'ws_abc', pad: 'y'.repeat(900) },
+		);
+		const map = {
+			'pld_u1:workspaceTokens': JSON.stringify({
+				ws_abc: { token: bigWt, refreshToken: bigWrt },
+			}),
+		};
+		const href = runBookmarklet(map).href ?? '';
+		expect(href.length).toBeLessThanOrEqual(MAX_DEEP_LINK_URL_LENGTH);
+		expect(href).not.toContain('&refresh=');
+		expect(href).toBe(
+			buildTokenDeepLink(
+				collectTokenCandidates(entries(map), NOW_MS),
+				TEST_VAULT,
+				'',
+				collectRefreshCandidates(entries(map), NOW_MS),
+			),
+		);
+	});
+
+	it('still captures the refresh token when the access-token cap fills first', () => {
+		// The WT and WRT share one traversal in the bookmarklet. If it stopped at
+		// the access-token cap it would never reach a refresh token sitting behind
+		// five access tokens, and the v4 session would silently lose renewal.
+		const smallWt = (n: number): string =>
+			makeJwt(
+				{ alg: 'HS256', typ: 'WT' },
+				{ client_id: 'web', exp: FUTURE_EXP, wid: `ws_${n}` },
+			);
+		const map: Record<string, string> = {
+			pld_a: smallWt(1),
+			pld_b: smallWt(2),
+			pld_c: smallWt(3),
+			pld_d: smallWt(4),
+			pld_e: smallWt(5),
+			pld_f: V4_REFRESH,
+		};
+		expect(collectTokenCandidates(entries(map), NOW_MS)).toHaveLength(5);
+		expect(collectRefreshCandidates(entries(map), NOW_MS)).toEqual([
+			V4_REFRESH,
+		]);
+		const href = runBookmarklet(map).href ?? '';
+		const params = Object.fromEntries(
+			new URLSearchParams(href.slice(href.indexOf('?') + 1)),
+		);
+		expect(parseRefreshCandidates(params)).toEqual([V4_REFRESH]);
+	});
+
+	it('hoists the active workspace WT and refresh token on a 3+ workspace account', () => {
+		// The active workspace is third. Without hoisting, the small refresh cap
+		// fills with the first two workspaces and the active workspace's WRT is
+		// discarded, disabling renewal even though its WT is the one selected.
+		const wt = (n: number): string =>
+			makeJwt(
+				{ alg: 'HS256', typ: 'WT' },
+				{ client_id: 'web', exp: FUTURE_EXP, wid: `ws_${n}` },
+			);
+		const wrt = (n: number): string =>
+			makeJwt(
+				{ alg: 'HS256', typ: 'WRT' },
+				{ exp: FUTURE_EXP, wid: `ws_${n}` },
+			);
+		const map: Record<string, string> = {
+			'pld_u1:currentWorkspaceId': '"ws_3"',
+			'pld_u1:workspaceTokens': JSON.stringify({
+				ws_1: { token: wt(1), refreshToken: wrt(1) },
+				ws_2: { token: wt(2), refreshToken: wrt(2) },
+				ws_3: { token: wt(3), refreshToken: wrt(3) },
+			}),
+		};
+		const href = runBookmarklet(map).href ?? '';
+		const params = Object.fromEntries(
+			new URLSearchParams(href.slice(href.indexOf('?') + 1)),
+		);
+		const tokens = parseTokenCandidates(params);
+		const refresh = parseRefreshCandidates(params);
+		// The active workspace's WT is offered first, and its WRT survives the cap.
+		expect(tokens[0]).toBe(wt(3));
+		expect(refresh).toContain(wrt(3));
+		// So the store keeps the active workspace's WRT for the selected WT.
+		expect(selectRefreshTokenForWorkspace(refresh, tokens[0], NOW_MS)).toBe(
+			wrt(3),
+		);
+	});
+
 	it('never dead-ends: a miss offers a diagnostic instead of only an alert', () => {
 		// 0.35.0 alerted and returned here, leaving the user with nothing at all
 		// - strictly worse than the pre-deep-link bookmarklet, which at least
@@ -1038,5 +1217,283 @@ describe('buildTokenDeepLink host parity', () => {
 		expect(buildTokenDeepLink(['a.b.c'], 'v', '')).toBe(
 			buildTokenDeepLink(['a.b.c'], 'v'),
 		);
+	});
+});
+
+// --- v4 workspace refresh token capture (beta.3) -----------------------------
+
+describe('collectRefreshCandidates', () => {
+	it('collects a v4 refresh token nested in a pld_ workspaceTokens map', () => {
+		const map = {
+			'pld_u1:workspaceTokens': JSON.stringify({
+				ws_abc: { token: V4_WT, refreshToken: V4_REFRESH },
+			}),
+		};
+		expect(collectRefreshCandidates(entries(map), NOW_MS)).toEqual([
+			V4_REFRESH,
+		]);
+	});
+
+	it('never collects a WT, a v3 WRT (no ws_ wid), or an expired one', () => {
+		const map = {
+			pld_wt: V4_WT, // a workspace token, not a refresh token
+			pld_v3: REFRESH_TOKEN, // typ WRT but no ws_ wid (the prod shape)
+			pld_stale: V4_REFRESH_EXPIRED,
+		};
+		expect(collectRefreshCandidates(entries(map), NOW_MS)).toEqual([]);
+	});
+
+	it('skips a refresh token under a non-Plaud key', () => {
+		// Every collected value is a credential; a third-party key must be ignored
+		// entirely, exactly like the WT collector.
+		expect(
+			collectRefreshCandidates(
+				[{ key: 'refresh', value: V4_REFRESH }],
+				NOW_MS,
+			),
+		).toEqual([]);
+	});
+
+	it('deduplicates and caps at MAX_COLLECTED_REFRESH', () => {
+		const many: StoredEntry[] = [];
+		for (let i = 0; i < MAX_COLLECTED_REFRESH + 3; i += 1) {
+			many.push({
+				key: `pld_r${i}`,
+				value: makeJwt(
+					{ alg: 'HS256', typ: 'WRT' },
+					{ sub: `u${i}`, exp: FUTURE_EXP, wid: `ws_${i}` },
+				),
+			});
+		}
+		expect(collectRefreshCandidates(many, NOW_MS)).toHaveLength(
+			MAX_COLLECTED_REFRESH,
+		);
+	});
+});
+
+describe('selectRefreshTokenForWorkspace', () => {
+	it('picks the candidate whose wid matches the workspace token', () => {
+		expect(
+			selectRefreshTokenForWorkspace(
+				[V4_REFRESH_OTHER, V4_REFRESH],
+				V4_WT,
+				NOW_MS,
+			),
+		).toBe(V4_REFRESH);
+	});
+
+	it('returns null for a v3 workspace token with no ws_ wid', () => {
+		expect(
+			selectRefreshTokenForWorkspace([V4_REFRESH], USER_TOKEN, NOW_MS),
+		).toBeNull();
+	});
+
+	it('returns null when no candidate matches the workspace', () => {
+		expect(
+			selectRefreshTokenForWorkspace([V4_REFRESH_OTHER], V4_WT, NOW_MS),
+		).toBeNull();
+	});
+
+	it('ignores an expired candidate even if its wid matches', () => {
+		expect(
+			selectRefreshTokenForWorkspace([V4_REFRESH_EXPIRED], V4_WT, NOW_MS),
+		).toBeNull();
+	});
+});
+
+describe('parseRefreshCandidates (trust boundary)', () => {
+	it('reads the refresh array', () => {
+		expect(
+			parseRefreshCandidates({
+				refresh: JSON.stringify([V4_REFRESH, V4_REFRESH_OTHER]),
+			}),
+		).toEqual([V4_REFRESH, V4_REFRESH_OTHER]);
+	});
+
+	it('shapes values but does not judge them; the store matches by wid', () => {
+		// A bare value survives parsing; whether it is a usable WRT is decided at
+		// store time. Keeps the trust boundary and the credential guard separate.
+		expect(
+			parseRefreshCandidates({ refresh: JSON.stringify(['a.b.c']) }),
+		).toEqual(['a.b.c']);
+	});
+
+	it('caps the array at MAX_DEEP_LINK_REFRESH', () => {
+		const list = Array.from(
+			{ length: MAX_DEEP_LINK_REFRESH + 4 },
+			(_u, i) =>
+				makeJwt(
+					{ alg: 'HS256', typ: 'WRT' },
+					{ sub: `u${i}`, exp: FUTURE_EXP, wid: `ws_${i}` },
+				),
+		);
+		expect(
+			parseRefreshCandidates({ refresh: JSON.stringify(list) }),
+		).toHaveLength(MAX_DEEP_LINK_REFRESH);
+	});
+
+	it('drops non-strings, empties, and oversized values', () => {
+		// Kept within the MAX_DEEP_LINK_REFRESH cap so the valid one is not sliced
+		// off; the oversized value is dropped by length, the rest by shape.
+		expect(
+			parseRefreshCandidates({
+				refresh: JSON.stringify([
+					1,
+					'A'.repeat(MAX_CANDIDATE_LENGTH + 1),
+					V4_REFRESH,
+					'   ',
+				]),
+			}),
+		).toEqual([V4_REFRESH]);
+	});
+
+	it('returns nothing for a missing, malformed, or non-array parameter', () => {
+		expect(parseRefreshCandidates({})).toEqual([]);
+		expect(parseRefreshCandidates({ refresh: 'not json' })).toEqual([]);
+		expect(
+			parseRefreshCandidates({ refresh: JSON.stringify({ a: 1 }) }),
+		).toEqual([]);
+	});
+});
+
+describe('parseClipboardRefreshCandidates', () => {
+	it('extracts refresh tokens from a pasted whole deep link', () => {
+		const link = buildTokenDeepLink([V4_WT], 'v', '', [V4_REFRESH]);
+		expect(parseClipboardRefreshCandidates(link)).toEqual([V4_REFRESH]);
+	});
+
+	it('returns [] for a bare token or a link with no refresh parameter', () => {
+		expect(parseClipboardRefreshCandidates(V4_WT)).toEqual([]);
+		expect(
+			parseClipboardRefreshCandidates(
+				`${TOKEN_DEEP_LINK_BASE}?tokens=%5B%5D`,
+			),
+		).toEqual([]);
+	});
+});
+
+describe('buildTokenDeepLink refresh parameter', () => {
+	it('appends &refresh= (before &host=) and round-trips the tokens', () => {
+		const url = buildTokenDeepLink(
+			[V4_WT],
+			'v',
+			'https://api-test.plaud.ai',
+			[V4_REFRESH],
+		);
+		// refresh comes before host
+		expect(url.indexOf('&refresh=')).toBeLessThan(url.indexOf('&host='));
+		const params = Object.fromEntries(
+			new URLSearchParams(url.slice(url.indexOf('?') + 1)),
+		);
+		expect(parseRefreshCandidates(params)).toEqual([V4_REFRESH]);
+		expect(parseTokenCandidates(params)).toEqual([V4_WT]);
+	});
+
+	it('omits &refresh= when empty, byte-identical to the pre-refresh link', () => {
+		expect(buildTokenDeepLink(['a.b.c'], 'v', '', [])).toBe(
+			buildTokenDeepLink(['a.b.c'], 'v'),
+		);
+	});
+
+	it('drops the optional refresh tokens before shipping an over-budget URL', () => {
+		// One WT that fits on its own, plus refresh tokens that push the URL past
+		// the shell budget. The WT is required to sign in; the refresh tokens are
+		// not, so they are dropped rather than truncated by the shell.
+		const wt = makeJwt(
+			{ alg: 'HS256', typ: 'WT' },
+			{
+				client_id: 'web',
+				exp: FUTURE_EXP,
+				wid: 'ws_abc',
+				pad: 'x'.repeat(800),
+			},
+		);
+		const bulkyRefresh = (n: number): string =>
+			makeJwt(
+				{ alg: 'HS256', typ: 'WRT' },
+				{ exp: FUTURE_EXP, wid: `ws_${n}`, pad: 'y'.repeat(800) },
+			);
+		const url = buildTokenDeepLink([wt], 'v', '', [
+			bulkyRefresh(1),
+			bulkyRefresh(2),
+		]);
+		expect(url.length).toBeLessThanOrEqual(MAX_DEEP_LINK_URL_LENGTH);
+		expect(url).not.toContain('&refresh=');
+		expect(
+			parseTokenCandidates(
+				Object.fromEntries(
+					new URLSearchParams(url.slice(url.indexOf('?') + 1)),
+				),
+			),
+		).toEqual([wt]);
+	});
+
+	it('keeps refresh tokens that still fit after the token list is trimmed', () => {
+		const url = buildTokenDeepLink([V4_WT], 'v', '', [V4_REFRESH]);
+		expect(url).toContain('&refresh=');
+	});
+
+	it('drops the refresh token before sacrificing a token candidate', () => {
+		// Two token candidates fit together, but not once a refresh token is added.
+		// The candidates are the revocation fallback for sign-in, so the refresh
+		// token (optional) must go first; both candidates are kept.
+		const padded = (n: number): string =>
+			makeJwt(
+				{ alg: 'HS256', typ: 'WT' },
+				{
+					client_id: 'web',
+					exp: FUTURE_EXP,
+					wid: `ws_${n}`,
+					pad: 'x'.repeat(600),
+				},
+			);
+		const wt1 = padded(1);
+		const wt2 = padded(2);
+		const url = buildTokenDeepLink([wt1, wt2], '', '', [
+			makeJwt(
+				{ alg: 'HS256', typ: 'WRT' },
+				{ exp: FUTURE_EXP, wid: 'ws_1', pad: 'y'.repeat(600) },
+			),
+		]);
+		expect(url.length).toBeLessThanOrEqual(MAX_DEEP_LINK_URL_LENGTH);
+		expect(url).not.toContain('&refresh=');
+		const params = Object.fromEntries(
+			new URLSearchParams(url.slice(url.indexOf('?') + 1)),
+		);
+		// Both token candidates survived; only the optional refresh token was cut.
+		expect(parseTokenCandidates(params)).toEqual([wt1, wt2]);
+	});
+
+	it('keeps the refresh token when trimming a large candidate makes room for it', () => {
+		// A small first candidate and a huge second one: the two together do not
+		// fit even without a refresh token, so the huge one is trimmed, and the
+		// remaining room is enough for the small candidate plus the refresh token.
+		// The refresh token must not be dropped for good just because it did not
+		// fit before the candidate was trimmed.
+		const small = makeJwt(
+			{ alg: 'HS256', typ: 'WT' },
+			{ client_id: 'web', exp: FUTURE_EXP, wid: 'ws_1' },
+		);
+		const huge = makeJwt(
+			{ alg: 'HS256', typ: 'WT' },
+			{
+				client_id: 'web',
+				exp: FUTURE_EXP,
+				wid: 'ws_2',
+				pad: 'x'.repeat(1700),
+			},
+		);
+		const refresh = makeJwt(
+			{ alg: 'HS256', typ: 'WRT' },
+			{ exp: FUTURE_EXP, wid: 'ws_1', pad: 'y'.repeat(200) },
+		);
+		const url = buildTokenDeepLink([small, huge], '', '', [refresh]);
+		expect(url.length).toBeLessThanOrEqual(MAX_DEEP_LINK_URL_LENGTH);
+		const params = Object.fromEntries(
+			new URLSearchParams(url.slice(url.indexOf('?') + 1)),
+		);
+		// The huge candidate was trimmed, and the refresh token was kept.
+		expect(parseTokenCandidates(params)).toEqual([small]);
+		expect(parseRefreshCandidates(params)).toEqual([refresh]);
 	});
 });

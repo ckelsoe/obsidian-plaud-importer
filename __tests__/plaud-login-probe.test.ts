@@ -83,6 +83,7 @@ const CURRENT_WEB_APP: Record<string, string> = {
 
 interface ProbeOut {
 	tokens?: string[];
+	refreshTokens?: string[];
 	domain?: string | null;
 	workspaceId?: string | null;
 	deviceId?: string | null;
@@ -450,5 +451,109 @@ describe('PROBE_JS API-domain resolution', () => {
 		expect(runProbe(alpha, 'https://alpha.plaud.ai/').domain).toBe(
 			'{"domain":"https://api-apne1.staging.theplaud.com","timestamp":1}',
 		);
+	});
+});
+
+describe('PROBE_JS v4 refresh token capture', () => {
+	// A ws_ workspace token and its matching ws_ refresh token, in the shipped 4.0
+	// workspaceTokens map shape (token + refreshToken keyed by workspace id).
+	const V4_WT = makeJwt(
+		{ alg: 'HS256', typ: 'WT' },
+		{ sub: 'u1', exp: FUTURE_EXP, client_id: 'web', wid: 'ws_f8EANnTZa8' },
+	);
+	const V4_REFRESH = makeJwt(
+		{ alg: 'HS256', typ: 'WRT' },
+		{
+			sub: 'u1',
+			exp: FUTURE_EXP + 700 * 3600,
+			client_id: 'web',
+			wid: 'ws_f8EANnTZa8',
+		},
+	);
+
+	it('collects the v4 refresh token beside the workspace token', () => {
+		const out = runProbe({
+			'pld_u1:currentWorkspaceId': '"ws_f8EANnTZa8"',
+			'pld_u1:workspaceTokens': JSON.stringify({
+				ws_f8EANnTZa8: { token: V4_WT, refreshToken: V4_REFRESH },
+			}),
+		});
+		expect(out.tokens).toContain(V4_WT);
+		expect(out.refreshTokens).toEqual([V4_REFRESH]);
+	});
+
+	it('never collects a workspace refresh token that carries no ws_ wid', () => {
+		// REFRESH_TOKEN's wid is `ws-1` (hyphen), not a v4 `ws_` workspace, so it
+		// is not a v4 refresh token and must not be captured.
+		const out = runProbe(CURRENT_WEB_APP);
+		expect(out.refreshTokens).toEqual([]);
+	});
+
+	it('returns an empty refresh list for a v3 sign-in with no refresh token', () => {
+		const out = runProbe({ token: LONG_LIVED_TOKEN });
+		expect(out.refreshTokens).toEqual([]);
+	});
+
+	it('hoists the ACTIVE workspace refresh token ahead of the small cap on a 3+ workspace account', () => {
+		// The active workspace is third. Without hoisting, the generic walk fills
+		// the 2-slot refresh cap with the first two workspaces' tokens and the
+		// active one is lost, so the store would find no match and disable renewal.
+		const refreshFor = (n: number): string =>
+			makeJwt(
+				{ alg: 'HS256', typ: 'WRT' },
+				{ sub: 'u1', exp: FUTURE_EXP + 700 * 3600, wid: `ws_${n}` },
+			);
+		const tokenFor = (n: number): string =>
+			makeJwt(
+				{ alg: 'HS256', typ: 'WT' },
+				{
+					sub: 'u1',
+					exp: FUTURE_EXP,
+					client_id: 'web',
+					wid: `ws_${n}`,
+				},
+			);
+		const out = runProbe({
+			'pld_u1:currentWorkspaceId': '"ws_3"',
+			'pld_u1:workspaceTokens': JSON.stringify({
+				ws_1: { token: tokenFor(1), refreshToken: refreshFor(1) },
+				ws_2: { token: tokenFor(2), refreshToken: refreshFor(2) },
+				ws_3: { token: tokenFor(3), refreshToken: refreshFor(3) },
+			}),
+		});
+		// The active workspace's WT is offered first (existing behavior)...
+		expect(out.tokens?.[0]).toBe(tokenFor(3));
+		// ...and its refresh token is captured, at the front, despite the cap.
+		expect(out.refreshTokens).toContain(refreshFor(3));
+		expect(out.refreshTokens?.[0]).toBe(refreshFor(3));
+	});
+
+	it('captures a refresh token even when the access-token cap fills first', () => {
+		// No currentWorkspaceId, so no hoist: the shared walk must keep scanning
+		// past the access-token cap to reach the refresh token behind it.
+		const wt = (n: number): string =>
+			makeJwt(
+				{ alg: 'HS256', typ: 'WT' },
+				{
+					sub: 'u1',
+					exp: FUTURE_EXP,
+					client_id: 'web',
+					wid: `ws_${n}`,
+				},
+			);
+		const map: Record<string, string> = {
+			'pld_a:t': wt(1),
+			'pld_b:t': wt(2),
+			'pld_c:t': wt(3),
+			'pld_d:t': wt(4),
+			'pld_e:t': wt(5),
+			'pld_f:r': makeJwt(
+				{ alg: 'HS256', typ: 'WRT' },
+				{ sub: 'u1', exp: FUTURE_EXP + 700 * 3600, wid: 'ws_6' },
+			),
+		};
+		const out = runProbe(map);
+		expect(out.tokens).toHaveLength(MAX_COLLECTED_CANDIDATES);
+		expect(out.refreshTokens?.length).toBeGreaterThan(0);
 	});
 });

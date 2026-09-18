@@ -50,12 +50,14 @@
 // The partition is now PER VAULT (issue #87) and arrives as an argument rather
 // than a module constant. See plaud-partition.ts.
 //
-// SCOPE, and it is narrow: this works ONLY for sessions captured through the
-// embedded sign-in window, because only that window populates the partition.
-// SSO (which completes in the external browser) and bookmarklet captures leave
-// the partition empty, so the caller gates on the recorded sign-in method and
-// does not attempt this for them. Those users reconnect manually. That is a
-// decision, not an oversight.
+// SCOPE, and it is narrow: this COOKIE refresh works ONLY for sessions captured
+// through the embedded sign-in window, because only that window populates the
+// partition. SSO (which completes in the external browser) and bookmarklet
+// captures leave the partition empty, so the caller gates on the recorded
+// sign-in method and does not attempt THIS path for them. That is a decision,
+// not an oversight. A v4 SSO/browser session is not left to reconnect manually:
+// it renews through the cookieless BEARER path in plaud-refresh-v4.ts instead,
+// which the caller routes to for signInMethod 'browser'.
 //
 // And it is not indefinite. Refreshing rotates the 30 day user refresh token
 // but does NOT extend its expiry (measured: `urt_expire_at` unchanged across a

@@ -4,6 +4,14 @@
 
 All notable changes to Plaud Importer will be documented in this file.
 
+## [0.41.0-beta.3] - 2026-09-18
+
+More new-portal fixes for the beta. Still a pre-release; install it through BRAT. The stable release is unaffected.
+
+### Added
+
+- **Background renewal for a new-portal Google or Apple sign-in.** A session captured from an SSO or bookmarklet sign-in on the new portal used to last only about a day and then ask you to sign in again. The plugin now captures what it needs at sign-in and renews that session in the background for about a month, the same as an email sign-in does. Sign in again through your browser or the bookmarklet once to pick this up, and re-drag the bookmark from Set up bookmark so it captures the new piece. A current-portal account is unaffected.
+
 ## [0.41.0-beta.2] - 2026-09-18
 
 More new-portal fixes for the beta. Still a pre-release; install it through BRAT. The stable release is unaffected.

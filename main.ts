@@ -26,8 +26,10 @@ import {
 import { isLegacyPartition } from './plaud-partition';
 import {
 	escapeHtmlAttribute,
+	parseClipboardRefreshCandidates,
 	parseClipboardTokens,
 	parseClipboardV4Host,
+	parseRefreshCandidates,
 	parseTokenCandidates,
 	parseV4Host,
 	buildSignInBookmarklet,
@@ -88,6 +90,7 @@ import {
 import {
 	CaptureStore,
 	CAPTURED_SECRET_ID,
+	CAPTURED_REFRESH_SECRET_ID,
 	type ReauthOutcome,
 } from './capture-store';
 import {
@@ -264,6 +267,8 @@ export default class PlaudImporterPlugin extends Plugin {
 		isDisposed: () => this.disposed,
 		getAppId: () => this.app.appId,
 		readStoredTokenValue: () => this.readStoredTokenValue(),
+		readStoredRefreshTokenValue: () => this.readStoredRefreshTokenValue(),
+		httpFetch: obsidianFetcher,
 		saveSettings: () => this.saveSettings(),
 		debugLog: (entry) => this.debugLogger.log(entry),
 		showActionNotice: (message, actionLabel, run) =>
@@ -277,13 +282,25 @@ export default class PlaudImporterPlugin extends Plugin {
 			await clearPlaudLoginSession(this.app);
 		},
 		resumeAutoSyncIfPaused: () => this.resumeAutoSyncIfPaused(),
-		storeAccessToken: (raw, method, baseUrl, background, stillOwns) =>
+		storeAccessToken: (
+			raw,
+			method,
+			baseUrl,
+			background,
+			stillOwns,
+			refreshToken,
+		) =>
 			this.captureStore.storeAccessToken(
 				raw,
 				method,
 				baseUrl,
 				background,
 				stillOwns,
+				// No v4 scope change on a background refresh (v4 has no region
+				// redirect and the workspace rides in the token); pass the rotated
+				// refresh token through as the last argument.
+				undefined,
+				refreshToken,
 			),
 	});
 	// The auto-sync auth-pause "Reconnect" prompt, held for the same reason as
@@ -536,15 +553,21 @@ export default class PlaudImporterPlugin extends Plugin {
 		// this is the only way a user on a support thread can produce a debug
 		// log showing what it actually did. checkCallback hides it entirely
 		// unless debug logging is on AND this session is one the refresh can
-		// serve, so it never advertises a renewal SSO and bookmarklet users
-		// cannot receive.
+		// serve (canRenewCredential), so it appears for a renewable session (an
+		// email window session, or a new-portal browser session with a captured
+		// refresh token) and never for one that cannot renew.
 		this.addCommand({
 			id: 'debug-refresh-session',
 			name: 'Debug: refresh the session now',
 			checkCallback: (checking) => {
+				// Shown only when this session can actually be renewed in the
+				// background: a v3 window session with the cookie transport, or a
+				// v4 browser session with a captured refresh token. canRenewCredential
+				// owns that decision, so the command never advertises a renewal an
+				// SSO or bookmarklet session cannot perform.
 				if (
 					!this.settings.debug ||
-					this.settings.signInMethod !== 'window'
+					!this.canRenewCredential(this.readStoredTokenValue())
 				) {
 					return false;
 				}
@@ -844,6 +867,16 @@ export default class PlaudImporterPlugin extends Plugin {
 		return id.length > 0
 			? (this.app.secretStorage.getSecret(id) ?? '')
 			: '';
+	}
+
+	// Reads the stored v4 workspace refresh token (the bearer the cookieless v4
+	// renewal uses), or '' when none is stored. Its own fixed secret id, unlike
+	// the WT which is addressed through the user-selectable secretId picker: the
+	// refresh token is never something the user links by hand.
+	readStoredRefreshTokenValue(): string {
+		return (
+			this.app.secretStorage.getSecret(CAPTURED_REFRESH_SECRET_ID) ?? ''
+		);
 	}
 
 	// Thin wrapper over the pure formatSessionStatus in plaud-token.ts (where
@@ -2739,6 +2772,7 @@ export default class PlaudImporterPlugin extends Plugin {
 		for (const id of new Set([
 			this.settings.secretId,
 			CAPTURED_SECRET_ID,
+			CAPTURED_REFRESH_SECRET_ID,
 			LEGACY_REFRESH_SECRET_ID,
 		])) {
 			if (id.length > 0) {
@@ -2850,6 +2884,11 @@ export default class PlaudImporterPlugin extends Plugin {
 					workspaceId: result.workspaceId,
 					deviceId: result.deviceId,
 				},
+				// The v4 workspace refresh token(s) the window read. The store
+				// keeps the one whose wid matches the selected WT and clears the
+				// secret when none matches (a v3/prod window sign-in), so a stale
+				// single-use WRT never lingers.
+				result.refreshTokens,
 			);
 			if (!outcome.stored) {
 				// An empty message means the plugin unloaded or a newer sign-in owns
@@ -2921,6 +2960,8 @@ export default class PlaudImporterPlugin extends Plugin {
 		// The v4 host, when the pasted whole deep link carried it. The workspace
 		// comes from the token, so this is the only scope the paste must carry.
 		const host = parseClipboardV4Host(text);
+		// The v4 refresh token(s), when the pasted whole deep link carried them.
+		const refreshCandidates = parseClipboardRefreshCandidates(text);
 		// The same guard again, because the probe between here and the store is
 		// a second, longer chance for this paste to go stale.
 		const result = await this.captureStore.storeFirstWorkingCandidate(
@@ -2928,6 +2969,8 @@ export default class PlaudImporterPlugin extends Plugin {
 			canStore,
 			'browser',
 			host.length > 0 ? host : undefined,
+			{},
+			refreshCandidates,
 		);
 		if (result.stored && this.usesV4Portal() !== this.clientIsV4) {
 			// A v4 token flips the portal; rebuild so the v4 client runs at once.
@@ -3015,6 +3058,8 @@ export default class PlaudImporterPlugin extends Plugin {
 		// carried it. A v4 token embeds its own workspace, so the host is the
 		// only scope the deep link must carry; empty on the v3 path.
 		const host = parseV4Host(params);
+		// The v4 refresh token(s) the bookmarklet carried, for background renewal.
+		const refreshCandidates = parseRefreshCandidates(params);
 		// A deep link is one of the browser-reconnect return channels: when that
 		// flow is waiting, deliver against it (serialized with the paste button
 		// via deliveryInFlight) and run its full follow-through: resume, close
@@ -3044,6 +3089,8 @@ export default class PlaudImporterPlugin extends Plugin {
 						this.browserReconnect === flow,
 					'browser',
 					host.length > 0 ? host : undefined,
+					{},
+					refreshCandidates,
 				);
 				if (result.stored) {
 					// A v4 token flips the portal; rebuild so the v4 client runs
@@ -3078,6 +3125,8 @@ export default class PlaudImporterPlugin extends Plugin {
 			() => true,
 			'browser',
 			host.length > 0 ? host : undefined,
+			{},
+			refreshCandidates,
 		);
 		if (result.stored) {
 			// A v4 token flips the portal; rebuild so the v4 client runs without

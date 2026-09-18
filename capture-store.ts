@@ -10,12 +10,24 @@
  */
 import { Notice } from 'obsidian';
 import { isUsableUserToken } from './plaud-token';
-import { selectWorkingCandidate } from './token-candidates';
+import {
+	selectRefreshTokenForWorkspace,
+	selectWorkingCandidate,
+} from './token-candidates';
 import type { SignInMethod } from './reconnect-routing';
 
 // Stable SecretStorage id for a token captured by the in-app sign-in flow.
 // Re-running sign-in overwrites it, mirroring "replace my token".
 export const CAPTURED_SECRET_ID = 'plaud-importer-token';
+
+// Stable SecretStorage id for the v4 workspace REFRESH token (typ WRT) captured
+// beside the workspace token, the bearer the cookieless background renewal uses
+// (plaud-refresh-v4.ts). Distinct from LEGACY_REFRESH_SECRET_ID in main.ts, which
+// is the retired pre-0.32.0 refresh token kept only as a routing signal. This one
+// rotates on every refresh, so the store overwrites it each time; sign-out blanks
+// it. A capture that finds no matching refresh token clears it, so a stale WRT
+// from a prior session cannot linger.
+export const CAPTURED_REFRESH_SECRET_ID = 'plaud-importer-workspace-refresh';
 
 // Deep-link result notices. Held in consts because the strings are shown from
 // two code paths (during a browser reconnect and standalone) and must stay
@@ -237,6 +249,12 @@ export class CaptureStore<S extends CaptureSettings> {
 		// v4 workspace/device to commit atomically with the token, like
 		// apiBaseUrl. Empty on the prod path and on captures with no scope.
 		v4Scope: CapturedV4Scope = {},
+		// The v4 workspace refresh token to store beside the WT. `undefined` (the
+		// default, and every v3/window path) leaves any prior refresh secret
+		// intact; `null` clears it (a v4 capture that found no matching refresh
+		// token, so a stale WRT cannot linger); a string sets it. See
+		// commitCapturedToken.
+		refreshToken: string | null | undefined = undefined,
 	): Promise<CaptureStoreResult> {
 		const token = rawToken.trim().replace(/^bearer\s+/i, '');
 		if (token.length === 0 || !isUsableUserToken(token)) {
@@ -259,6 +277,7 @@ export class CaptureStore<S extends CaptureSettings> {
 				background,
 				stillOwns,
 				v4Scope,
+				refreshToken,
 			),
 		);
 	}
@@ -292,6 +311,7 @@ export class CaptureStore<S extends CaptureSettings> {
 		background: boolean,
 		stillOwns: () => boolean,
 		v4Scope: CapturedV4Scope,
+		refreshToken: string | null | undefined,
 	): Promise<CaptureStoreResult> {
 		// The queue guarantees order, not relevance. This caller may have waited
 		// while a newer capture took over, and its own guard was evaluated before
@@ -467,6 +487,23 @@ export class CaptureStore<S extends CaptureSettings> {
 				);
 			}
 		};
+		// The v4 workspace refresh token, beside the WT. Guarded (not part of the
+		// atomic credential write): a failed refresh-secret write leaves the WT
+		// stored and working, only unattended renewal is unavailable, which
+		// degrades to the ordinary reconnect prompt. `undefined` leaves any prior
+		// refresh secret intact (v3/window captures never pass one); `null` blanks
+		// it (a v4 capture that found no matching refresh token, so a stale
+		// stale WRT from a prior session cannot be bearer'd against the new
+		// WT); a string sets it. Written BEFORE the reconciles below so the refresh
+		// schedule and the capture heads-up see the credential they describe.
+		if (refreshToken !== undefined) {
+			guarded('workspace refresh-token store', () =>
+				this.host.setSecret(
+					CAPTURED_REFRESH_SECRET_ID,
+					refreshToken ?? '',
+				),
+			);
+		}
 		// Blank any legacy WRT from a previous session so it cannot shadow the
 		// recorded method. After the commit, like the credential: a capture that
 		// never stored must not clear the session it failed to replace.
@@ -550,9 +587,25 @@ export class CaptureStore<S extends CaptureSettings> {
 		// v4 workspace/device the capture surface discovered, handed to the store
 		// so it commits atomically with the token. Empty on the prod path.
 		v4Scope: CapturedV4Scope = {},
+		// v4 workspace refresh token candidates the capture surface collected. When
+		// provided (a v4-capable path, even as an empty list), the store keeps the
+		// one whose `wid` matches the SELECTED workspace token and clears the secret
+		// when none matches. `undefined` (a caller that never looked) leaves any
+		// prior refresh secret intact.
+		refreshCandidates: readonly string[] | undefined = undefined,
 	): Promise<{ stored: boolean; message: string }> {
 		const probeBaseUrl =
 			discoveredBaseUrl ?? this.host.getSettings().apiBaseUrl;
+		// Resolve the refresh token to store for whichever WT is chosen: the
+		// candidate matching that WT's workspace, or null (clear) when the capture
+		// looked and found none. `undefined` when the caller passed no candidates,
+		// which leaves the prior refresh secret untouched. Done per chosen token,
+		// not once up front, because the selected candidate is only known after the
+		// probe and the unreachable-single path picks a different one.
+		const resolveRefresh = (chosen: string): string | null | undefined =>
+			refreshCandidates === undefined
+				? undefined
+				: selectRefreshTokenForWorkspace(refreshCandidates, chosen);
 		// The region redirect a probe may follow is captured locally instead of
 		// being persisted by the client's own callback: an unvalidated
 		// candidate must not rewrite the configured API host. It is handed to
@@ -623,6 +676,7 @@ export class CaptureStore<S extends CaptureSettings> {
 					false,
 					stillOwns,
 					v4Scope,
+					resolveRefresh(selection.usable[0]),
 				),
 				DEEP_LINK_UNVERIFIED_NOTICE,
 			);
@@ -644,6 +698,7 @@ export class CaptureStore<S extends CaptureSettings> {
 				false,
 				stillOwns,
 				v4Scope,
+				resolveRefresh(token),
 			),
 			DEEP_LINK_SAVED_NOTICE,
 		);
