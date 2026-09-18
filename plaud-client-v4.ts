@@ -30,6 +30,7 @@ import {
 	PlaudApiError,
 	PlaudAuthError,
 	PlaudParseError,
+	parseDeviceCatalog,
 	parseOutlineBody,
 	parseTranscriptField,
 	type PlaudHttpFetcher,
@@ -140,6 +141,11 @@ export class PlaudV4Client implements PlaudClient {
 	// it through getFolderCatalog, letting the existing tag->folder resolution
 	// in note-writer work unchanged. folder_id -> name.
 	private readonly folderNames = new Map<string, string>();
+	// Per-session cache of the paired-device list, same rationale as the folder
+	// names: it changes rarely, so one fetch per plugin session is enough and a
+	// reload clears it. undefined = not yet fetched; an empty array is a valid
+	// cached "no devices" result.
+	private deviceCatalog: readonly PlaudDevice[] | undefined;
 
 	// Single-entry, short-TTL memo of the last file-detail response, so
 	// getAudioTempUrl and getTranscriptAndSummary for the same recording do not
@@ -303,14 +309,20 @@ export class PlaudV4Client implements PlaudClient {
 	}
 
 	async getDeviceCatalog(): Promise<readonly PlaudDevice[]> {
-		// Best-effort, and empty on v4 by design. The device catalog backs the
-		// recording-source filter, a prod (v3) feature keyed off `/device/list`
-		// and a recording's `serial_number`. The v4 list shape and the
-		// `/device-app/device/list` response were not captured, so rather than
-		// guess a shape this returns none. The interface contract already treats
-		// a missing catalog as "no devices known", so the source filter simply
-		// shows no device names on v4 instead of failing.
-		return [];
+		if (this.deviceCatalog !== undefined) {
+			return this.deviceCatalog;
+		}
+		// v4 serves the paired-device list at /device-app/device/list, but in the
+		// v3 envelope ({status, msg, data_devices}), not the v4 {status, data}
+		// shape (verified live 2026-09-18: sn/name/model/version_number, the same
+		// PlaudDevice fields). So the whole body goes to the shared v3 parser.
+		// Cached per session like the folder names; a reload clears it.
+		const endpoint = '/device-app/device/list';
+		const url = `${this.resolveBaseUrl()}${endpoint}`;
+		const raw = await this.fetchApi(url, endpoint, {});
+		const { devices } = parseDeviceCatalog(raw, endpoint);
+		this.deviceCatalog = devices;
+		return devices;
 	}
 
 	async getTranscriptAndSummary(

@@ -11,6 +11,7 @@ import {
 	canonicalPlaudId,
 	findImportedNote,
 	outputFolderCacheIsCold,
+	recordingAmbiguousKeys,
 	type RecordingIdentity,
 } from '../vault-index';
 
@@ -364,6 +365,56 @@ describe('buildImportedIndex fallback keys + findImportedNote', () => {
 			rec('brand-new', '2026-09-01T10:00:00Z', 123),
 		);
 		expect(match).toBeNull();
+	});
+});
+
+describe('recordingAmbiguousKeys + findImportedNote recording-side guard', () => {
+	// The note the two colliding recordings would both fuzzy-match.
+	const NOTE = {
+		'plaud-id': 'old-v3-id',
+		'start-time': '2026-08-07T14:52:11-04:00',
+		date: '2026-08-07',
+		'duration-seconds': 600,
+	};
+
+	it('flags only the keys shared by 2+ recordings', () => {
+		const a = rec('a', '2026-08-07T18:52:11Z', 600);
+		const b = rec('b', '2026-08-07T18:52:41Z', 600); // same minute + duration
+		const c = rec('c', '2026-08-07T19:30:00Z', 999); // shares nothing
+		// a and b share both their instant and day key; c shares neither.
+		expect(recordingAmbiguousKeys([a, b, c]).size).toBe(2);
+		expect(recordingAmbiguousKeys([a, c]).size).toBe(0);
+	});
+
+	it('does NOT fuzzy-match a new recording whose key another recording shares', () => {
+		const index = buildImportedIndex(
+			makeApp([['Plaud/a.md', NOTE]]),
+			'Plaud',
+		);
+		// Two new recordings collide on the note's instant/day key; neither
+		// resolves by id, so a fuzzy match cannot tell which one the note is.
+		const a = rec('f_new_a', '2026-08-07T18:52:11Z', 600);
+		const b = rec('f_new_b', '2026-08-07T18:52:41Z', 600);
+		const ambiguous = recordingAmbiguousKeys([a, b]);
+		// Without the guard, `a` fuzzy-matches the note and would be skipped.
+		expect(findImportedNote(index, a)?.matchedBy).toBe('instant');
+		// With it, both are treated as new (imported) rather than one silently
+		// dropped as already imported.
+		expect(findImportedNote(index, a, ambiguous)).toBeNull();
+		expect(findImportedNote(index, b, ambiguous)).toBeNull();
+	});
+
+	it('still matches by exact id even when the key is recording-ambiguous', () => {
+		const index = buildImportedIndex(
+			makeApp([['Plaud/a.md', NOTE]]),
+			'Plaud',
+		);
+		const sameId = rec('old-v3-id', '2026-08-07T18:52:11Z', 600);
+		const other = rec('f_other', '2026-08-07T18:52:41Z', 600);
+		const ambiguous = recordingAmbiguousKeys([sameId, other]);
+		expect(findImportedNote(index, sameId, ambiguous)?.matchedBy).toBe(
+			'id',
+		);
 	});
 });
 

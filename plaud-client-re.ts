@@ -1474,7 +1474,7 @@ function isRawDevice(value: unknown): value is RawDevice {
 // rather than aborting the whole parse: the device list is best-effort filter
 // enrichment, so one bad device must not cost the rest their names. Only a
 // structurally-wrong envelope (missing/!array `data_devices`) throws.
-function parseDeviceCatalog(
+export function parseDeviceCatalog(
 	raw: unknown,
 	endpoint: string,
 ): { devices: readonly PlaudDevice[]; skipped: number } {

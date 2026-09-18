@@ -14,7 +14,11 @@
 // -----------------------------------------------------------------------------
 
 import type { PlaudRecordingId, Recording } from './plaud-client';
-import { findImportedNote, type ImportedIndex } from './vault-index';
+import {
+	findImportedNote,
+	recordingAmbiguousKeys,
+	type ImportedIndex,
+} from './vault-index';
 import {
 	categoryAllowsReauth,
 	filterVisibleRecordings,
@@ -61,11 +65,16 @@ export type AutoSyncClassification =
 
 /** Shared empty ignore set so callers that pass none avoid allocating one. */
 const NO_IGNORED_IDS: ReadonlySet<PlaudRecordingId> = new Set();
+const NO_AMBIGUOUS_KEYS: ReadonlySet<string> = new Set<string>();
 
 export function classifyRecording(
 	recording: Recording,
 	index: ImportedIndex,
 	ignoredIds: ReadonlySet<PlaudRecordingId> = NO_IGNORED_IDS,
+	// Fuzzy keys shared by 2+ recordings in the tick (see recordingAmbiguousKeys):
+	// findImportedNote skips a fuzzy match on them so a new recording is not
+	// misclassified as already imported and never synced.
+	ambiguousKeys: ReadonlySet<string> = NO_AMBIGUOUS_KEYS,
 ): AutoSyncClassification {
 	// Ignore wins over every other state: an ignored recording must never be
 	// imported by auto-sync, even if it is new or has changed in Plaud.
@@ -90,7 +99,7 @@ export function classifyRecording(
 	) {
 		return 'skipped-wait-pull';
 	}
-	const match = findImportedNote(index, recording);
+	const match = findImportedNote(index, recording, ambiguousKeys);
 	if (match === null) {
 		return 'new';
 	}
@@ -157,6 +166,9 @@ export function selectAutoSyncCandidates(
 ): SelectCandidatesResult {
 	// Never import trash. filterVisibleRecordings preserves order.
 	const visible = filterVisibleRecordings(page, false);
+	// Fuzzy keys shared by 2+ recordings in this page, so classifyRecording does
+	// not fuzzy-match a new recording onto a note that belongs to another.
+	const ambiguousKeys = recordingAmbiguousKeys(visible);
 	const candidates: AutoSyncCandidate[] = [];
 	// The frontier is reached only if the page has at least one recording and
 	// every one of them is an `up-to-date-boundary`. Any candidate, legacy
@@ -177,7 +189,12 @@ export function selectAutoSyncCandidates(
 			allProvenUpToDate = false;
 			continue;
 		}
-		const classification = classifyRecording(recording, index, ignoredIds);
+		const classification = classifyRecording(
+			recording,
+			index,
+			ignoredIds,
+			ambiguousKeys,
+		);
 		if (classification === 'new' || classification === 'changed') {
 			candidates.push({ recording, kind: classification });
 			allProvenUpToDate = false;

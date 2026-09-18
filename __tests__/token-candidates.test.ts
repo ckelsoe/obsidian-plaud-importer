@@ -15,7 +15,9 @@ import {
 	MAX_DEEP_LINK_URL_LENGTH,
 	MAX_WALK_DEPTH,
 	parseClipboardTokens,
+	parseClipboardV4Host,
 	parseTokenCandidates,
+	parseV4Host,
 	selectWorkingCandidate,
 	buildSignInBookmarklet,
 	TOKEN_DEEP_LINK_BASE,
@@ -771,6 +773,37 @@ describe('SIGN_IN_BOOKMARKLET', () => {
 		expect(run.href).toContain(`vault=${TEST_VAULT}&`);
 	});
 
+	it('carries the v4 host from pld_plaud_user_api_domain (alpha shape)', () => {
+		const run = runBookmarklet({
+			token: USER_TOKEN,
+			pld_plaud_user_api_domain: '{"domain":"https://api-test.plaud.ai"}',
+		});
+		expect(run.href).toContain(
+			`&host=${encodeURIComponent('https://api-test.plaud.ai')}`,
+		);
+	});
+
+	it('resolves the v4 host from the active workspace (beta shape, no domain key)', () => {
+		const run = runBookmarklet({
+			token: USER_TOKEN,
+			'pld_u1:currentWorkspaceId': '"ws_abc"',
+			'pld_u1:workspaceList': JSON.stringify({
+				'0': {
+					workspaceId: 'ws_abc',
+					domain: 'https://api-test.plaud.ai',
+				},
+			}),
+		});
+		expect(run.href).toContain(
+			`&host=${encodeURIComponent('https://api-test.plaud.ai')}`,
+		);
+	});
+
+	it('omits host on a v3 account that exposes none', () => {
+		const run = runBookmarklet({ token: USER_TOKEN });
+		expect(run.href).not.toContain('&host=');
+	});
+
 	it('survives the percent-decoding a javascript: URL gets before it runs', () => {
 		// A browser percent-decodes a javascript: URL BEFORE evaluating it, so a
 		// baked-in %27 would arrive as a real quote and end the string early,
@@ -940,5 +973,70 @@ describe('SIGN_IN_BOOKMARKLET', () => {
 			USER_TOKEN,
 			WORKSPACE_TOKEN,
 		]);
+	});
+});
+
+describe('parseV4Host (trust boundary)', () => {
+	it('returns the origin of a trusted https plaud host', () => {
+		expect(parseV4Host({ host: 'https://api-test.plaud.ai' })).toBe(
+			'https://api-test.plaud.ai',
+		);
+		expect(
+			parseV4Host({ host: 'https://api-apne1.staging.theplaud.com' }),
+		).toBe('https://api-apne1.staging.theplaud.com');
+	});
+
+	it('strips any path or query, keeping only the origin', () => {
+		expect(
+			parseV4Host({ host: 'https://api-test.plaud.ai/evil?x=1' }),
+		).toBe('https://api-test.plaud.ai');
+	});
+
+	it('rejects an untrusted host, http, userinfo, or a non-string', () => {
+		expect(parseV4Host({ host: 'https://evil.example.com' })).toBe('');
+		expect(parseV4Host({ host: 'http://api-test.plaud.ai' })).toBe('');
+		expect(parseV4Host({ host: 'https://u:p@api-test.plaud.ai' })).toBe(''); // gitleaks:allow
+		expect(parseV4Host({ host: 'plaud.ai' })).toBe('');
+		expect(parseV4Host({})).toBe('');
+		expect(parseV4Host({ host: 123 })).toBe('');
+	});
+});
+
+describe('parseClipboardV4Host', () => {
+	it('extracts the host from a pasted whole deep link', () => {
+		const link =
+			'obsidian://plaud-importer-token?vault=v&tokens=%5B%5D&host=' +
+			encodeURIComponent('https://api-test.plaud.ai');
+		expect(parseClipboardV4Host(link)).toBe('https://api-test.plaud.ai');
+	});
+
+	it('returns empty for a bare token or a link with no host', () => {
+		expect(parseClipboardV4Host('eyJ.abc.def')).toBe('');
+		expect(
+			parseClipboardV4Host(
+				'obsidian://plaud-importer-token?tokens=%5B%5D',
+			),
+		).toBe('');
+	});
+});
+
+describe('buildTokenDeepLink host parity', () => {
+	it('appends &host= last and matches the bookmarklet URL shape', () => {
+		const url = buildTokenDeepLink(
+			['a.b.c'],
+			'v',
+			'https://api-test.plaud.ai',
+		);
+		expect(
+			url.endsWith(
+				'&host=' + encodeURIComponent('https://api-test.plaud.ai'),
+			),
+		).toBe(true);
+	});
+
+	it('omits host when empty, byte-identical to the pre-host link', () => {
+		expect(buildTokenDeepLink(['a.b.c'], 'v', '')).toBe(
+			buildTokenDeepLink(['a.b.c'], 'v'),
+		);
 	});
 });

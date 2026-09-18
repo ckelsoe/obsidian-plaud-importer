@@ -19,6 +19,7 @@ import {
 	buildImportedIndex,
 	canonicalPlaudId,
 	findImportedNote,
+	recordingAmbiguousKeys,
 	type ImportedIndex,
 	type ImportedRecord,
 } from './vault-index';
@@ -879,8 +880,11 @@ export class ImportModal extends Modal {
 					newRows,
 					this.listViewFilter(),
 				);
+				const ambiguousKeys = recordingAmbiguousKeys(
+					this.currentRecordings,
+				);
 				for (const rec of visibleNew) {
-					this.renderRow(this.listEl, rec);
+					this.renderRow(this.listEl, rec, ambiguousKeys);
 				}
 			}
 			this.updateIntroCount();
@@ -1247,8 +1251,9 @@ export class ImportModal extends Modal {
 		this.emptyStateEl = listEl.createDiv({
 			cls: 'plaud-importer-empty-state plaud-importer-hidden',
 		});
+		const ambiguousKeys = recordingAmbiguousKeys(this.currentRecordings);
 		for (const rec of visible) {
-			this.renderRow(listEl, rec);
+			this.renderRow(listEl, rec, ambiguousKeys);
 		}
 		// Footer sits BELOW the scroll list (a sibling, not a child) so the
 		// load-more status and spinner stay pinned in view rather than
@@ -1407,7 +1412,11 @@ export class ImportModal extends Modal {
 		this.renderList();
 	}
 
-	private renderRow(listEl: HTMLElement, rec: Recording): void {
+	private renderRow(
+		listEl: HTMLElement,
+		rec: Recording,
+		ambiguousKeys: ReadonlySet<string>,
+	): void {
 		// Keep newly appended rows above the auto-load sentinel so the
 		// sentinel stays the last child of the scroll list — its
 		// intersection with the bottom is what drives paging.
@@ -1446,7 +1455,11 @@ export class ImportModal extends Modal {
 		});
 		titleRow.createDiv({ text: rec.title, cls: 'plaud-importer-title' });
 
-		const existing = findImportedNote(this.importedIndex, rec)?.record;
+		const existing = findImportedNote(
+			this.importedIndex,
+			rec,
+			ambiguousKeys,
+		)?.record;
 		if (existing !== undefined) {
 			this.renderImportedBadge(titleRow, existing);
 			// Manual-import cue: this note is stale (the recording changed in

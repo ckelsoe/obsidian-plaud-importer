@@ -201,9 +201,18 @@ export function buildImportedIndexWithColdCheck(
  * stored id is stale (the recording id changed); the caller may heal on an
  * `instant` match (high confidence), never on a `day` match.
  */
+const NO_AMBIGUOUS_KEYS: ReadonlySet<string> = new Set<string>();
+
 export function findImportedNote(
 	index: ImportedIndex,
 	recording: RecordingIdentity,
+	// Fuzzy keys carried by more than one recording in the current batch (see
+	// recordingAmbiguousKeys). A fuzzy match on such a key cannot tell WHICH
+	// recording the note belongs to, so it is skipped: matching would wrongly
+	// mark a genuinely new recording as already imported and drop it. The exact
+	// canonical-id match is unaffected. Defaults to none, for callers that match
+	// a single recording with no batch context.
+	ambiguousKeys: ReadonlySet<string> = NO_AMBIGUOUS_KEYS,
 ): { readonly record: ImportedRecord; readonly matchedBy: ImportMatch } | null {
 	const byId = index.byId.get(
 		canonicalPlaudId(recording.id) as PlaudRecordingId,
@@ -215,15 +224,48 @@ export function findImportedNote(
 		recording.createdAt.getTime(),
 		recording.durationSeconds,
 	);
-	if (keys.instant !== null) {
+	if (keys.instant !== null && !ambiguousKeys.has(keys.instant)) {
 		const hit = index.byInstant.get(keys.instant);
 		if (hit) return { record: hit, matchedBy: 'instant' };
 	}
-	if (keys.day !== null) {
+	if (keys.day !== null && !ambiguousKeys.has(keys.day)) {
 		const hit = index.byDay.get(keys.day);
 		if (hit) return { record: hit, matchedBy: 'day' };
 	}
 	return null;
+}
+
+/**
+ * The fuzzy (instant/day) keys carried by more than one recording in
+ * `recordings`. Pass the result to findImportedNote so a fuzzy match is used
+ * only when the key identifies exactly one recording; otherwise a genuinely new
+ * recording that merely shares a minute-or-day and duration with an imported
+ * one would be skipped as already imported. Mirrors the migration planner's
+ * one-recording-per-key guard. The exact canonical-id match never depends on
+ * this, so a v4 recording that resolves by id is unaffected.
+ */
+export function recordingAmbiguousKeys(
+	recordings: readonly RecordingIdentity[],
+): ReadonlySet<string> {
+	const counts = new Map<string, number>();
+	const bump = (k: string | null): void => {
+		if (k !== null) counts.set(k, (counts.get(k) ?? 0) + 1);
+	};
+	for (const r of recordings) {
+		const keys = stableKeysFromRecording(
+			r.createdAt.getTime(),
+			r.durationSeconds,
+		);
+		bump(keys.instant);
+		bump(keys.day);
+	}
+	const ambiguous = new Set<string>();
+	for (const [key, n] of counts) {
+		if (n > 1) {
+			ambiguous.add(key);
+		}
+	}
+	return ambiguous;
 }
 
 function normalizeFolder(folder: string): string {
