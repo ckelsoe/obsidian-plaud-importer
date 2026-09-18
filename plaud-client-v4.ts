@@ -49,6 +49,11 @@ const DEFAULT_APP_LANGUAGE = 'en';
 // URLs (which expire) rather than reusing stale ones.
 const DETAIL_CACHE_TTL_MS = 60_000;
 
+// In-band status the v4 rename endpoint returns when the `origin_version` sent
+// does not match the node's current version (optimistic concurrency). We re-read
+// the node's version and retry once.
+const NODE_VERSION_CONFLICT = -1800313;
+
 // Unit-confusion guards for the millisecond timestamps the v4 API uses (same
 // convention as the prod list endpoint). Kept local so this module does not
 // depend on non-exported internals of plaud-client-re.ts.
@@ -386,17 +391,83 @@ export class PlaudV4Client implements PlaudClient {
 		return readNonEmptyString(audio['content_url']) ?? null;
 	}
 
-	async updateTitle(id: PlaudRecordingId, _filename: string): Promise<void> {
-		// The v4 rename/write-back endpoint has not been captured yet (it was
-		// not exercised during the read-only recon, and probing it means a live
-		// write to the account). Fail loudly rather than silently no-op so a
-		// caller with autoUpdatePlaudTitle enabled sees a clear message. Wire
-		// this once the endpoint is confirmed.
-		throw new PlaudApiError(
-			`Updating a Plaud title is not yet supported on the v4 portal (recording ${id})`,
-			undefined,
-			'/file-app/v4/files/:id',
-		);
+	async updateTitle(id: PlaudRecordingId, filename: string): Promise<void> {
+		const endpoint = '/file-app/v4/nodes/rename/:id';
+		const title = filename.trim();
+		if (title.length === 0) {
+			throw new PlaudApiError(
+				`Refusing to write an empty Plaud title for recording ${id}`,
+				undefined,
+				endpoint,
+			);
+		}
+		// The rename targets the tree NODE (not the file), and the body carries
+		// the node's CURRENT version as `origin_version` for optimistic
+		// concurrency. Read that version fresh (never the coalescing detail cache)
+		// so a stale value is not rejected as -1800313; on a genuine concurrent
+		// bump, re-read once and retry.
+		for (let attempt = 0; attempt < 2; attempt++) {
+			const { nodeId, version } = await this.fetchNodeForRename(id);
+			const url = `${this.resolveBaseUrl()}/file-app/v4/nodes/rename/${encodeURIComponent(
+				nodeId,
+			)}`;
+			try {
+				await this.fetchApi(url, endpoint, {
+					method: 'PATCH',
+					body: JSON.stringify({
+						name: title,
+						origin_version: version,
+					}),
+				});
+				// The title changed on Plaud, so any cached detail for this
+				// recording is now stale; drop it so a later read reflects it.
+				if (this.lastDetail?.id === id) {
+					this.lastDetail = null;
+				}
+				return;
+			} catch (err) {
+				if (
+					attempt === 0 &&
+					err instanceof PlaudApiError &&
+					err.inBandStatus === NODE_VERSION_CONFLICT
+				) {
+					continue;
+				}
+				throw err;
+			}
+		}
+	}
+
+	/**
+	 * Read the tree node id and its current `version_ms` for a recording, fresh
+	 * (bypassing the detail cache). The rename endpoint keys on the node, not the
+	 * file id, and rejects a stale version, so `updateTitle` always reads this
+	 * immediately before the write.
+	 */
+	private async fetchNodeForRename(
+		id: PlaudRecordingId,
+	): Promise<{ nodeId: string; version: number }> {
+		const endpoint = '/file-app/v4/files/detail/:id';
+		const url = `${this.resolveBaseUrl()}/file-app/v4/files/detail/${encodeURIComponent(
+			id,
+		)}`;
+		const data = await this.fetchApiData(url, endpoint);
+		const node = data['node'];
+		if (!isRecord(node)) {
+			throw new PlaudParseError(
+				`Plaud v4 ${endpoint} response has no node to rename`,
+				endpoint,
+			);
+		}
+		const nodeId = readNonEmptyString(node['node_id']);
+		const version = node['version_ms'];
+		if (nodeId === undefined || typeof version !== 'number') {
+			throw new PlaudParseError(
+				`Plaud v4 ${endpoint} node is missing node_id or version_ms`,
+				endpoint,
+			);
+		}
+		return { nodeId, version };
 	}
 
 	// --- internals -------------------------------------------------------

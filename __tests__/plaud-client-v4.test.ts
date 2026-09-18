@@ -32,6 +32,7 @@ function detailEnvelope(
 	overrides: {
 		objects?: unknown[];
 		keywords?: unknown;
+		node?: Record<string, unknown>;
 	} = {},
 ): PlaudHttpResponse {
 	const objects = overrides.objects ?? [
@@ -60,8 +61,11 @@ function detailEnvelope(
 		status: 0,
 		data: {
 			node: {
+				node_id: 'n_sp_f1',
+				version_ms: 1755200500000,
 				name: 'Meeting',
 				folder: { folder_id: 'fld1', name: 'Recordings' },
+				...overrides.node,
 			},
 			meta: {
 				file_id: 'f1',
@@ -665,6 +669,101 @@ describe('embedV4SummaryImages', () => {
 		expect(embedV4SummaryImages('plain text', map)).toBe('plain text');
 		expect(embedV4SummaryImages(`[](https://x/view?id=${CID})`, {})).toBe(
 			`[](https://x/view?id=${CID})`,
+		);
+	});
+});
+
+describe('PlaudV4Client.updateTitle', () => {
+	const renameOk = okJson({
+		status: 0,
+		data: { items: [], parent_items: [], failed: [], warnings: [] },
+	});
+	const renameConflict = okJson({
+		status: -1800313,
+		msg: 'node version conflict',
+	});
+
+	it('renames the node with name + origin_version and workspace scope', async () => {
+		const { fetcher, requestFor } = routingFetcher([
+			{ match: '/files/detail/', response: detailEnvelope() },
+			{ match: '/nodes/rename/', response: renameOk },
+		]);
+		const client = makeClient(fetcher);
+
+		await client.updateTitle(ID, '  New Title  ');
+
+		const req = requestFor('/nodes/rename/')!;
+		expect(req.method).toBe('PATCH');
+		expect(req.url).toContain('/file-app/v4/nodes/rename/n_sp_f1');
+		expect(JSON.parse(req.body!)).toEqual({
+			name: 'New Title',
+			origin_version: 1755200500000,
+		});
+		expect(req.headers['Authorization']).toBe('Bearer eyJfake.token.value');
+		expect(req.headers['x-scope-id']).toBe('ws_test');
+		expect(req.headers['x-scope-type']).toBe('workspace');
+	});
+
+	it('throws without any write when the title is blank', async () => {
+		const { fetcher, requests } = routingFetcher([
+			{ match: '/files/detail/', response: detailEnvelope() },
+			{ match: '/nodes/rename/', response: renameOk },
+		]);
+		const client = makeClient(fetcher);
+
+		await expect(client.updateTitle(ID, '   ')).rejects.toBeInstanceOf(
+			PlaudApiError,
+		);
+		expect(requests()).toHaveLength(0);
+	});
+
+	it('re-reads a fresh version and retries once on a node version conflict', async () => {
+		let detailCalls = 0;
+		let renameCalls = 0;
+		const fetcher: PlaudHttpFetcher = async (req) => {
+			if (req.url.includes('/files/detail/')) {
+				detailCalls++;
+				return detailEnvelope({
+					node: { version_ms: detailCalls === 1 ? 100 : 200 },
+				});
+			}
+			if (req.url.includes('/nodes/rename/')) {
+				renameCalls++;
+				return renameCalls === 1 ? renameConflict : renameOk;
+			}
+			throw new Error(`no route for ${req.url}`);
+		};
+		const client = makeClient(fetcher);
+
+		await client.updateTitle(ID, 'New Title');
+		expect(detailCalls).toBe(2);
+		expect(renameCalls).toBe(2);
+	});
+
+	it('propagates the conflict when the retry also conflicts', async () => {
+		const { fetcher } = routingFetcher([
+			{ match: '/files/detail/', response: detailEnvelope() },
+			{ match: '/nodes/rename/', response: renameConflict },
+		]);
+		const client = makeClient(fetcher);
+
+		await expect(client.updateTitle(ID, 'New Title')).rejects.toMatchObject(
+			{ inBandStatus: -1800313 },
+		);
+	});
+
+	it('throws a parse error when the detail node has no node_id', async () => {
+		const { fetcher } = routingFetcher([
+			{
+				match: '/files/detail/',
+				response: detailEnvelope({ node: { node_id: undefined } }),
+			},
+			{ match: '/nodes/rename/', response: renameOk },
+		]);
+		const client = makeClient(fetcher);
+
+		await expect(client.updateTitle(ID, 'New Title')).rejects.toThrow(
+			/node_id or version_ms/,
 		);
 	});
 });

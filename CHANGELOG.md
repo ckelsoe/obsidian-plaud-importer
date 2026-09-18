@@ -4,6 +4,10 @@ All notable changes to Plaud Importer will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **Push a renamed note's title back to Plaud on the new portal.** Renaming a note (with the "update the Plaud title" setting on, or through the command) now renames the recording on the new Plaud portal too, so the note and the recording stay in sync. This worked on the current portal already; on the new portal it used to report that it was not supported.
+
 ### Fixed
 
 - **Two recordings with the same title and date both import.** When Plaud captures the same meeting twice, for example two recordings a few seconds apart, they produce the same note filename. The plugin now writes the second one to a numbered name ("... 2") instead of stopping with a filename-collision error, so both import. Each note still carries its own recording id, so re-importing either one updates its own note rather than making a copy.
