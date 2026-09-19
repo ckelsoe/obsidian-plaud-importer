@@ -231,6 +231,7 @@ describe('PlaudV4Client.listRecordingsPage', () => {
 		expect(rec.endsAt.getTime()).toBe(1755200000000 + 4803000);
 		expect(rec.durationSeconds).toBe(4803);
 		expect(rec.tags).toEqual(['fld1']);
+		expect(rec.systemFolderType).toBe(1);
 		expect(rec.versionMs).toBe(1755200500000);
 		expect(rec.captureOffsetMinutes).toBeNull();
 		expect(rec.isTrashed).toBe(false);

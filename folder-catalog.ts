@@ -91,3 +91,30 @@ export function folderNameToTag(name: string): string {
 		.replace(/-+/g, '-')
 		.replace(/^-+|-+$/g, '');
 }
+
+/**
+ * A recording's location when it sits in a Plaud SYSTEM bucket rather than a real
+ * user folder. Keyed on `Recording.systemFolderType` (v4
+ * `parent_folder.system_folder_type`): the three known built-in buckets get a
+ * plain status word; any other nonzero type falls back to Plaud's own folder name
+ * (never a guessed label), or `system` when that name is blank. Only called for a
+ * nonzero type; a real folder (0 or undefined) uses `plaud-folder` + a tag
+ * instead. Written to the note's `plaud-location` frontmatter.
+ */
+export function normalizePlaudLocation(
+	systemFolderType: number,
+	folderName?: string,
+): string {
+	switch (systemFolderType) {
+		case 1:
+			return 'unfiled';
+		case 2:
+			return 'import';
+		case 5:
+			return 'conflict';
+		default: {
+			const name = (folderName ?? '').trim();
+			return name.length > 0 ? name : 'system';
+		}
+	}
+}

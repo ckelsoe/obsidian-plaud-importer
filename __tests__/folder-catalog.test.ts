@@ -1,6 +1,7 @@
 import {
 	buildFolderNameMap,
 	folderNameToTag,
+	normalizePlaudLocation,
 	resolveFolderNames,
 } from '../folder-catalog';
 import type { PlaudFolder } from '../plaud-client';
@@ -124,5 +125,22 @@ describe('folderNameToTag', () => {
 	it('returns empty string when nothing usable remains', () => {
 		expect(folderNameToTag('!!!')).toBe('');
 		expect(folderNameToTag('   ')).toBe('');
+	});
+});
+
+describe('normalizePlaudLocation', () => {
+	it('maps the known system folder types to status words', () => {
+		expect(normalizePlaudLocation(1, 'Recordings')).toBe('unfiled');
+		expect(normalizePlaudLocation(2, 'Import')).toBe('import');
+		expect(normalizePlaudLocation(5, 'Conflict File')).toBe('conflict');
+	});
+
+	it("falls back to Plaud's own folder name for an unknown system type", () => {
+		expect(normalizePlaudLocation(3, 'Archive')).toBe('Archive');
+	});
+
+	it('falls back to "system" when an unknown type has no usable name', () => {
+		expect(normalizePlaudLocation(9, '   ')).toBe('system');
+		expect(normalizePlaudLocation(9, undefined)).toBe('system');
 	});
 });

@@ -399,6 +399,59 @@ describe('runImport', () => {
 		expect(anyMark).toBe(false);
 	});
 
+	it('writes plaud-location (not a folder tag) for a recording in a system bucket', async () => {
+		const vault = makeFakeVault();
+		const recording = makeRecording({
+			tags: ['id-rec'],
+			systemFolderType: 1,
+		});
+		const { fetchArtifacts } = makeFetch(
+			new Map([[recording.id, makeArtifacts(recording)]]),
+		);
+
+		await runImport({
+			recordings: [recording],
+			selection: SELECTION,
+			writer: makeWriter(vault),
+			attachments: makeAttachmentStub().pipeline,
+			options: OPTIONS,
+			fetchArtifacts,
+			fetchFolderCatalog: async () => [
+				{ id: 'id-rec', name: 'Recordings' },
+			],
+		});
+
+		const note = [...vault.files.values()][0]!;
+		expect(note).toMatch(/^plaud-location: unfiled$/m);
+		expect(note).not.toMatch(/^plaud-folder:/m);
+	});
+
+	it('keeps plaud-folder + a folder tag for a real folder (systemFolderType 0)', async () => {
+		const vault = makeFakeVault();
+		const recording = makeRecording({
+			tags: ['id-work'],
+			systemFolderType: 0,
+		});
+		const { fetchArtifacts } = makeFetch(
+			new Map([[recording.id, makeArtifacts(recording)]]),
+		);
+
+		await runImport({
+			recordings: [recording],
+			selection: SELECTION,
+			writer: makeWriter(vault),
+			attachments: makeAttachmentStub().pipeline,
+			options: OPTIONS,
+			fetchArtifacts,
+			fetchFolderCatalog: async () => [{ id: 'id-work', name: 'Work' }],
+		});
+
+		const note = [...vault.files.values()][0]!;
+		expect(note).toMatch(/^plaud-folder:/m);
+		expect(note).toContain('Work');
+		expect(note).not.toMatch(/^plaud-location:/m);
+	});
+
 	// Issue #16: folder ids resolve to names in both plaud-folder: and tags:.
 	it('resolves folder ids to names: plaud-folder set, tags use names not ids', async () => {
 		const vault = makeFakeVault();

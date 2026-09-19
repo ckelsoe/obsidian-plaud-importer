@@ -941,10 +941,18 @@ export class PlaudV4Client implements PlaudClient {
 		// surface folder membership through `tags` (the id) so note-writer's
 		// existing tag->folder path resolves the name unchanged.
 		let tags: readonly string[] | undefined;
+		let systemFolderType: number | undefined;
 		const parentFolder = raw['parent_folder'];
 		if (isRecord(parentFolder)) {
 			const folderId = readNonEmptyString(parentFolder['folder_id']);
 			const folderName = readNonEmptyString(parentFolder['name']);
+			// Plaud's folder classification: 0 = real user folder, nonzero = a
+			// built-in system bucket (1 Recordings/unfiled, 2 Import, 5 Conflict).
+			// Import routes a nonzero value to `plaud-location` instead of a folder
+			// tag so the default bucket does not become a `#recordings` tag.
+			systemFolderType = readFiniteNumber(
+				parentFolder['system_folder_type'],
+			);
 			if (folderId !== undefined) {
 				if (folderName !== undefined) {
 					this.folderNames.set(folderId, folderName);
@@ -982,6 +990,7 @@ export class PlaudV4Client implements PlaudClient {
 			// /recordings/all returns the active list; trash has its own view.
 			isTrashed: false,
 			tags,
+			systemFolderType,
 			versionMs,
 			waitPull: false,
 		};
