@@ -2313,6 +2313,30 @@ describe('formatMarkdown', () => {
 		expect(md).not.toContain('## Screenshots');
 	});
 
+	it('writes plaud-location and no plaud-folder for a system-bucket recording', () => {
+		const md = formatMarkdown(
+			makeRecording(),
+			makeTranscript(),
+			makeSummary(),
+			undefined,
+			{ plaudLocation: 'unfiled' },
+		);
+		expect(md).toMatch(/^plaud-location: unfiled$/m);
+		expect(md).not.toMatch(/^plaud-folder:/m);
+	});
+
+	it('writes plaud-folder and no plaud-location for a real folder', () => {
+		const md = formatMarkdown(
+			makeRecording(),
+			makeTranscript(),
+			makeSummary(),
+			undefined,
+			{ folders: ['Work'] },
+		);
+		expect(md).toMatch(/^plaud-folder:/m);
+		expect(md).not.toMatch(/^plaud-location:/m);
+	});
+
 	it('builds the Open in Plaud link from formatPlaudWebUrl for the recording ID', () => {
 		const md = formatMarkdown(
 			makeRecording({

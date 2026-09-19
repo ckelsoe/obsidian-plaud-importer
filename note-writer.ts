@@ -1439,6 +1439,7 @@ export const RESERVED_FRONTMATTER_KEYS: ReadonlySet<string> = new Set([
 	'speakers',
 	'tags',
 	'plaud-folder',
+	'plaud-location',
 	'keywords',
 	'source',
 	'plaud-version-ms',
@@ -1626,6 +1627,7 @@ export function formatFrontmatter(
 	fallbackTimezone = '',
 	deviceNames: ReadonlyMap<string, string> = new Map(),
 	webBaseUrl: string = PLAUD_WEB_URL_V3,
+	plaudLocation = '',
 ): string {
 	const duration = Number.isFinite(recording.durationSeconds)
 		? Math.max(0, Math.floor(recording.durationSeconds))
@@ -1712,6 +1714,14 @@ export function formatFrontmatter(
 	// filed recordings; unfiled ones get no key.
 	if (folders && folders.length > 0) {
 		entries.set('plaud-folder', yamlArray(folders));
+	}
+	// A system-bucket recording (unfiled/import/conflict) records its Plaud
+	// location here instead of a `plaud-folder` + tag, so the built-in bucket is
+	// queryable (Dataview `WHERE plaud-location = "unfiled"`) without polluting the
+	// tag pane. Import sets this only for a nonzero system_folder_type, and only
+	// then is `folders` empty, so the two are mutually exclusive by construction.
+	if (plaudLocation.trim().length > 0) {
+		entries.set('plaud-location', yamlScalar(plaudLocation.trim()));
 	}
 	// AI keywords demoted from tags by the tag-mode setting. A plain
 	// frontmatter property is searchable and Dataview-queryable but does
@@ -2512,6 +2522,14 @@ export interface FormatMarkdownOptions {
 	 */
 	readonly folders?: readonly string[];
 	/**
+	 * Plaud location for a recording that sits in a SYSTEM bucket rather than a
+	 * real folder (`unfiled`/`import`/`conflict`, or Plaud's own name for an
+	 * unknown system type). Written to `plaud-location:`. Import sets this instead
+	 * of `folders` for a system-bucket recording, so the two never both appear.
+	 * Empty or omitted emits no line. See `normalizePlaudLocation`.
+	 */
+	readonly plaudLocation?: string;
+	/**
 	 * Extra Plaud AI template outputs (Key Points, Daily Journal, etc.) to
 	 * render in the note as a `## Template outputs` block. Empty or omitted
 	 * renders no block. Independent of `includeSummary`: these mirror the
@@ -2616,6 +2634,7 @@ export function formatMarkdown(
 			options.fallbackTimezone ?? '',
 			options.deviceNames,
 			webBase,
+			options.plaudLocation ?? '',
 		),
 		'',
 		`# ${expandedTitle}`,

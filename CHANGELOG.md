@@ -4,6 +4,12 @@
 
 All notable changes to Plaud Importer will be documented in this file.
 
+## [Unreleased]
+
+### Changed
+
+- **Unfiled recordings no longer get a "Recordings" folder tag.** On the new portal, a recording you have not filed sits in Plaud's built-in "Recordings" bucket, and the plugin was tagging every such note `#recordings` and setting `plaud-folder: Recordings`, which is noise, not a folder you chose. Those notes now carry `plaud-location: unfiled` instead (and `import` or `conflict` for Plaud's other system buckets), with no folder tag. A recording you actually filed into a folder is unchanged: it keeps its folder tag and `plaud-folder`. This makes `WHERE plaud-location = "unfiled"` a clean review-queue query in Dataview. A current-portal account is unaffected.
+
 ## [0.41.0-beta.4] - 2026-09-19
 
 More new-portal fixes for the beta. Still a pre-release; install it through BRAT. The stable release is unaffected.

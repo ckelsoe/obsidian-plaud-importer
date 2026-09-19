@@ -404,6 +404,17 @@ export interface Recording {
 	readonly folderId?: string;
 	readonly tags?: readonly string[];
 	/**
+	 * Plaud's classification of the recording's parent folder (v4
+	 * `parent_folder.system_folder_type`). 0 (or undefined, incl. every v3
+	 * recording) means a real user folder. A nonzero value is a built-in system
+	 * bucket, not a folder the user filed into: 1 = "Recordings" (the default
+	 * UNFILED bucket), 2 = "Import", 5 = "Conflict File". Import uses this to write
+	 * `plaud-location` (unfiled/import/conflict) instead of a `plaud-folder` + tag
+	 * for system-bucket recordings, so Plaud's plumbing buckets never pollute the
+	 * tag pane. Optional; the v3 list has no such field.
+	 */
+	readonly systemFolderType?: number;
+	/**
 	 * Plaud's edit version for the recording, in unix milliseconds (the list's
 	 * `version_ms`, equal to `edit_time * 1000`). Advances whenever the
 	 * recording is edited or (re)processed in Plaud. Auto-sync stores this in

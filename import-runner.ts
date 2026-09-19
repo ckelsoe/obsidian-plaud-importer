@@ -31,6 +31,7 @@ import {
 import {
 	buildFolderNameMap,
 	folderNameToTag,
+	normalizePlaudLocation,
 	resolveFolderNames,
 } from './folder-catalog';
 import {
@@ -317,9 +318,26 @@ export async function runImport(
 					},
 				);
 			}
-			const folderTags = folderNames
-				.map(folderNameToTag)
-				.filter((tag) => tag.length > 0);
+			// A recording in a Plaud SYSTEM bucket (nonzero system_folder_type) is
+			// not filed in a real folder: record its location
+			// (unfiled/import/conflict) as plaud-location and emit no folder tag or
+			// plaud-folder, so the default "Recordings" bucket never becomes a
+			// `#recordings` tag. A real folder (0/undefined, incl. every v3
+			// recording) keeps the folder tag + plaud-folder unchanged.
+			const isSystemFolder =
+				typeof recording.systemFolderType === 'number' &&
+				recording.systemFolderType !== 0;
+			const plaudLocation = isSystemFolder
+				? normalizePlaudLocation(
+						recording.systemFolderType as number,
+						folderNames[0],
+					)
+				: '';
+			const folderTags = isSystemFolder
+				? []
+				: folderNames
+						.map(folderNameToTag)
+						.filter((tag) => tag.length > 0);
 			// DD-004: combine Plaud's AI-generated keyword list (from
 			// /file/detail/), the recording's folder-derived tags, and the
 			// user's custom tags before the note is rendered. buildNoteTags
@@ -339,7 +357,13 @@ export async function runImport(
 				includeTranscript: selection.includeTranscript,
 				includeSummary: selection.includeSummary,
 				keywords: tagResult.keywords,
-				folders: folderNames,
+				// A system-bucket recording gets plaud-location, not plaud-folder;
+				// the two are mutually exclusive. folderNames still feeds the
+				// location label above (e.g. an unknown system type falls back to
+				// Plaud's own name).
+				folders: isSystemFolder ? undefined : folderNames,
+				plaudLocation:
+					plaudLocation.length > 0 ? plaudLocation : undefined,
 				consumerNotes,
 				marks: selection.includeScreenshots ? marks : undefined,
 				deviceNames,
