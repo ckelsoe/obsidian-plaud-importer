@@ -27,3 +27,37 @@ export function preferWindowForReconnect(
 		return false;
 	}
 }
+
+/**
+ * Extra guidance to append to a Reconnect prompt for a Google or Apple (SSO)
+ * session. Plaud does not give the plugin what an SSO session needs to renew, so
+ * those sessions are short and end without warning, which is the reason a
+ * `browser` user keeps having to sign in. Point them at the durable fix: add a
+ * password to their Plaud account and use email sign-in, which the plugin renews
+ * for about 30 days. Returns a leading-space string so callers can concatenate
+ * it directly. Empty for an email/window session and for an unrecorded method
+ * (no reliable signal to nag on). Exported and pure for unit testing.
+ */
+export function ssoReconnectHint(method: SignInMethod): string {
+	return method === 'browser'
+		? ' Google and Apple sign-ins cannot be renewed by the plugin, so this session was short. For a session that lasts about 30 days, add a password to your Plaud account and use email sign-in.'
+		: '';
+}
+
+/**
+ * Plain-English name of the sign-in method for the settings connection status,
+ * so a user can see at a glance which flow their current session came from.
+ * Empty for an unrecorded method (a pre-0.32.0 session, or none), where the
+ * status line simply shows no method rather than guessing. Exported and pure for
+ * unit testing.
+ */
+export function describeSignInMethod(method: SignInMethod): string {
+	switch (method) {
+		case 'browser':
+			return 'Google or Apple (SSO)';
+		case 'window':
+			return 'email and password';
+		default:
+			return '';
+	}
+}

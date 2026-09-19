@@ -34,6 +34,7 @@ import type { PlaudHttpFetcher } from './plaud-client-re';
 import type { CaptureStoreResult } from './capture-store';
 import type { PlaudImporterSettings } from './settings-types';
 import type { SignInMethod } from './reconnect-routing';
+import { ssoReconnectHint } from './reconnect-routing';
 
 /** What one renewal attempt did. Reported by the debug command verbatim. */
 export type RefreshOutcome =
@@ -215,10 +216,12 @@ export class SessionRenewal {
 			hoursLeft > 48
 				? `${Math.round(hoursLeft / 24)} days`
 				: `${hoursLeft} hour${hoursLeft === 1 ? '' : 's'}`;
+		const baseMessage = decision.expired
+			? 'Your Plaud session has expired. Reconnect to keep imports and auto-sync running.'
+			: `Your Plaud session expires in about ${timeLeft}. Reconnect now to avoid an interruption.`;
 		this.sessionExpiryNotice = this.host.showActionNotice(
-			decision.expired
-				? 'Your Plaud session has expired. Reconnect to keep imports and auto-sync running.'
-				: `Your Plaud session expires in about ${timeLeft}. Reconnect now to avoid an interruption.`,
+			baseMessage +
+				ssoReconnectHint(this.host.getSettings().signInMethod),
 			'Reconnect',
 			() => this.reconnectFreshFromExpiryNotice(),
 		);

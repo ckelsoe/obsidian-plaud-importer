@@ -4,6 +4,12 @@
 
 All notable changes to Plaud Importer will be documented in this file.
 
+## [Unreleased]
+
+### Added
+
+- **Settings now show which sign-in method your session used, and reconnect prompts explain the Google/Apple limit.** The connection status under "Plaud token" says "Signed in with email and password" or "Signed in with Google or Apple (SSO)", so you can see at a glance where your current session came from. When a Google or Apple session lapses, the reconnect notice now explains that the plugin cannot renew those sessions and points you to the durable fix: add a password to your Plaud account and use email sign-in, which renews for about 30 days.
+
 ## [0.41.0-beta.5] - 2026-09-19
 
 More new-portal fixes for the beta. Still a pre-release; install it through BRAT. The stable release is unaffected.
