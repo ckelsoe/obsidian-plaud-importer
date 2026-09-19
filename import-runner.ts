@@ -269,11 +269,19 @@ export async function runImport(
 				nestedAssetLinks,
 				consumerNotes,
 				marks,
+				additionalSummaries,
 			} = await deps.fetchArtifacts(recording.id);
-			const summaryLinkedAttachments =
+			// Extract embedded image markers from EVERY summary body (the primary
+			// plus each additional summary such as SUMMARY_BETA), so a second
+			// summary's images download and get repointed like the primary's.
+			const summaryLinkedAttachments = [
+				summary?.text ?? null,
+				...(additionalSummaries ?? []).map((s) => s.text),
+			].flatMap((text) =>
 				deps.attachments.extractAttachmentAssetsFromSummaryMarkdown(
-					summary?.text ?? null,
-				);
+					text,
+				),
+			);
 			// Marks (screenshots) become attachments so the same download +
 			// inline-embed repoint pipeline localizes them; the dedicated `mark`
 			// dataType routes them past the managed attachments section (note-writer
@@ -366,6 +374,9 @@ export async function runImport(
 					plaudLocation.length > 0 ? plaudLocation : undefined,
 				consumerNotes,
 				marks: selection.includeScreenshots ? marks : undefined,
+				additionalSummaries: selection.includeSummary
+					? additionalSummaries
+					: undefined,
 				deviceNames,
 			};
 			const selectedChapters = selection.includeTranscript

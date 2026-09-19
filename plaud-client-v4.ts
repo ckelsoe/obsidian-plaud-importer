@@ -13,6 +13,7 @@
 // so it can be unit-tested with a stub fetcher.
 
 import type {
+	AdditionalSummary,
 	PlaudClient,
 	PlaudDevice,
 	PlaudFolder,
@@ -379,11 +380,8 @@ export class PlaudV4Client implements PlaudClient {
 		);
 
 		const transcript = await this.resolveTranscript(id, objects);
-		const summary = await this.resolveSummary(
-			id,
-			objects,
-			relationContentMapping,
-		);
+		const { primary: summary, additional: additionalSummaries } =
+			await this.resolveSummaries(id, objects, relationContentMapping);
 		const chapters = await this.resolveChapters(objects);
 		const marks = await this.resolveMarks(
 			id,
@@ -402,7 +400,7 @@ export class PlaudV4Client implements PlaudClient {
 						: 'null'
 				}, summary=${
 					summary ? `${summary.text.length} chars` : 'null'
-				}, chapters=${chapters.length}, marks=${marks.length}, keywords=${aiKeywords.length}`,
+				}, additionalSummaries=${additionalSummaries.length}, chapters=${chapters.length}, marks=${marks.length}, keywords=${aiKeywords.length}`,
 			});
 		}
 
@@ -412,6 +410,10 @@ export class PlaudV4Client implements PlaudClient {
 			aiKeywords: aiKeywords.length > 0 ? aiKeywords : undefined,
 			chapters: chapters.length > 0 ? chapters : undefined,
 			marks: marks.length > 0 ? marks : undefined,
+			additionalSummaries:
+				additionalSummaries.length > 0
+					? additionalSummaries
+					: undefined,
 		};
 	}
 
@@ -557,16 +559,85 @@ export class PlaudV4Client implements PlaudClient {
 		return parseTranscriptField(id, body, `transcript for ${id}`);
 	}
 
-	private async resolveSummary(
+	/**
+	 * Resolve the recording's summaries. A v4 recording can carry more than one
+	 * summary object (the classic SUMMARY plus e.g. SUMMARY_BETA); the pull-all
+	 * rule says every summary the user selected comes down, not just the first.
+	 * The classic SUMMARY is the primary (returned in `summary`); each other
+	 * summary is an AdditionalSummary with a heading derived from its object type.
+	 * When there is no classic SUMMARY the first summary object becomes primary. A
+	 * content fetch failure propagates (like the transcript resolver) so a
+	 * transient error never silently drops a summary.
+	 */
+	private async resolveSummaries(
 		id: PlaudRecordingId,
 		objects: readonly unknown[],
 		relationContentMapping: Readonly<Record<string, string>>,
-	): Promise<Summary | null> {
-		const summaryObj = findObject(objects, OBJ_SUMMARY);
-		const url =
-			summaryObj !== undefined
-				? readNonEmptyString(summaryObj['content_url'])
-				: undefined;
+	): Promise<{
+		primary: Summary | null;
+		additional: readonly AdditionalSummary[];
+	}> {
+		const summaryObjs = objects.filter(
+			(o): o is Record<string, unknown> =>
+				isRecord(o) &&
+				isSummaryObjectType(o['object_type']) &&
+				readNonEmptyString(o['content_url']) !== undefined,
+		);
+		// Primary-first: prefer the classic SUMMARY, else the first summary object.
+		const classic = summaryObjs.find(
+			(o) => o['object_type'] === OBJ_SUMMARY,
+		);
+		const ordered =
+			classic !== undefined
+				? [classic, ...summaryObjs.filter((o) => o !== classic)]
+				: summaryObjs;
+		const primaryObj = ordered[0];
+		const primaryText =
+			primaryObj !== undefined
+				? await this.fetchSummaryText(
+						id,
+						primaryObj,
+						relationContentMapping,
+					)
+				: null;
+		const primary: Summary | null =
+			primaryText !== null ? { id, text: primaryText } : null;
+
+		const additional: AdditionalSummary[] = [];
+		const usedHeadings = new Set<string>(['Summary']);
+		for (const obj of ordered.slice(1)) {
+			const text = await this.fetchSummaryText(
+				id,
+				obj,
+				relationContentMapping,
+			);
+			if (text === null) {
+				continue;
+			}
+			additional.push({
+				heading: uniqueSummaryHeading(
+					summaryHeadingFor(obj['object_type']),
+					usedHeadings,
+				),
+				text,
+			});
+		}
+		return { primary, additional };
+	}
+
+	/**
+	 * Fetch one summary object's content_url and resolve its `c_<id>` image
+	 * markers to embeds (v4 puts summary images here, not inline in the body, so
+	 * the shared attachment pipeline can download and localize them). Returns null
+	 * when the object has no url or the body is empty. Throws (does not swallow) on
+	 * a fetch failure so a transient error never silently drops a summary.
+	 */
+	private async fetchSummaryText(
+		id: PlaudRecordingId,
+		obj: Record<string, unknown>,
+		relationContentMapping: Readonly<Record<string, string>>,
+	): Promise<string | null> {
+		const url = readNonEmptyString(obj['content_url']);
 		if (url === undefined) {
 			return null;
 		}
@@ -574,13 +645,7 @@ export class PlaudV4Client implements PlaudClient {
 		if (text.trim().length === 0) {
 			return null;
 		}
-		// Resolve any `c_<id>` image markers to real image embeds so the
-		// attachment pipeline downloads and localizes them (v4 puts images here,
-		// not inline in the body). A no-op when the recording has no images.
-		return {
-			id,
-			text: embedV4SummaryImages(text.trim(), relationContentMapping),
-		};
+		return embedV4SummaryImages(text.trim(), relationContentMapping);
 	}
 
 	private async resolveChapters(
@@ -1212,6 +1277,50 @@ export function parseMarkMemoArray(
 	}
 	out.sort((a, b) => a.offsetSeconds - b.offsetSeconds);
 	return out;
+}
+
+/**
+ * True when a v4 detail object is a summary: the classic `SUMMARY` or any
+ * `SUMMARY_*` variant (e.g. `SUMMARY_BETA`). Used to gather every summary the
+ * user selected, not just the first (the pull-all-artifacts rule).
+ */
+function isSummaryObjectType(objectType: unknown): boolean {
+	return (
+		objectType === OBJ_SUMMARY ||
+		(typeof objectType === 'string' && objectType.startsWith('SUMMARY_'))
+	);
+}
+
+/**
+ * Section heading for a summary object's type. The classic `SUMMARY` renders as
+ * "Summary"; a variant renders as "Summary (<suffix>)" (e.g. `SUMMARY_BETA` ->
+ * "Summary (beta)"). Exported for tests.
+ */
+export function summaryHeadingFor(objectType: unknown): string {
+	if (typeof objectType !== 'string' || objectType === OBJ_SUMMARY) {
+		return 'Summary';
+	}
+	const suffix = objectType.startsWith('SUMMARY_')
+		? objectType.slice('SUMMARY_'.length)
+		: objectType;
+	const pretty = suffix.toLowerCase().replace(/_/g, ' ').trim();
+	return pretty.length > 0 ? `Summary (${pretty})` : 'Summary';
+}
+
+/**
+ * Disambiguate a repeated summary heading with a numeric suffix ("Summary (beta)",
+ * "Summary (beta) 2", ...) so two summaries never share a heading. Records the
+ * chosen heading in `used`.
+ */
+function uniqueSummaryHeading(base: string, used: Set<string>): string {
+	let heading = base;
+	let n = 2;
+	while (used.has(heading)) {
+		heading = `${base} ${n}`;
+		n += 1;
+	}
+	used.add(heading);
+	return heading;
 }
 
 /**

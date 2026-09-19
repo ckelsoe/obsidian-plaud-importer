@@ -2337,6 +2337,44 @@ describe('formatMarkdown', () => {
 		expect(md).not.toMatch(/^plaud-location:/m);
 	});
 
+	it('renders each additional summary as its own section after the primary', () => {
+		const md = formatMarkdown(
+			makeRecording(),
+			makeTranscript(),
+			makeSummary(),
+			undefined,
+			{
+				additionalSummaries: [
+					{ heading: 'Summary (beta)', text: 'Beta body here.' },
+				],
+			},
+		);
+		const primary = md.indexOf('## Summary\n');
+		const beta = md.indexOf('## Summary (beta)');
+		const transcript = md.indexOf('> [!note]- Transcript');
+		expect(primary).toBeGreaterThanOrEqual(0);
+		expect(beta).toBeGreaterThan(primary);
+		expect(beta).toBeLessThan(transcript);
+		expect(md).toContain('Beta body here.');
+	});
+
+	it('omits additional summaries when the summary artifact is excluded', () => {
+		const md = formatMarkdown(
+			makeRecording(),
+			makeTranscript(),
+			makeSummary(),
+			undefined,
+			{
+				includeSummary: false,
+				additionalSummaries: [
+					{ heading: 'Summary (beta)', text: 'Beta body here.' },
+				],
+			},
+		);
+		expect(md).not.toContain('## Summary (beta)');
+		expect(md).not.toContain('Beta body here.');
+	});
+
 	it('builds the Open in Plaud link from formatPlaudWebUrl for the recording ID', () => {
 		const md = formatMarkdown(
 			makeRecording({

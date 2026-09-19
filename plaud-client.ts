@@ -86,6 +86,27 @@ export interface TranscriptAndSummary {
 	 * pipeline downloads them into the note's `-assets` folder.
 	 */
 	readonly marks?: readonly PlaudMark[];
+	/**
+	 * Summaries BEYOND the primary one in `summary`. A v4 recording can carry more
+	 * than one summary object (e.g. the classic `SUMMARY` plus a `SUMMARY_BETA`),
+	 * and when the user selects the Summary artifact ALL of them are imported, not
+	 * just the first. The primary (`SUMMARY`, or the first summary when there is no
+	 * classic one) stays in `summary`; every other summary lands here with its own
+	 * section `heading` (e.g. "Summary (beta)"). Left undefined when the recording
+	 * has only one summary or the source provides no extras (the v3 client).
+	 */
+	readonly additionalSummaries?: readonly AdditionalSummary[];
+}
+
+/**
+ * A summary beyond the primary one (see `TranscriptAndSummary.additionalSummaries`).
+ * `heading` is the note section title derived from the summary's object type
+ * (e.g. `SUMMARY_BETA` -> "Summary (beta)"); `text` is the markdown body, already
+ * image-resolved by the client. Rendered as its own `## <heading>` section.
+ */
+export interface AdditionalSummary {
+	readonly heading: string;
+	readonly text: string;
 }
 
 /**
