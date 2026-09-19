@@ -688,6 +688,11 @@ export default class PlaudImporterPlugin extends Plugin {
 			this.sessionRenewal.reconcileExpiryWarning();
 			// And the silent refresh, for window sessions that can use it.
 			this.sessionRenewal.reconcileRefresh();
+			// Verify the stored session is still accepted by Plaud, not just that
+			// its token decodes: an SSO session revoked early otherwise looks
+			// healthy until the first import fails. Fire-and-forget (one read-only
+			// call); it prompts a reconnect only on a real auth rejection.
+			void this.validateStoredSessionOnStartup();
 			// One-time heads-up when this vault's sign-in moved partitions (#87).
 			this.notePerVaultSignInChange();
 			// A vault whose id the host did not supply falls back to the old
@@ -1860,6 +1865,67 @@ export default class PlaudImporterPlugin extends Plugin {
 		this.autoSyncState = nextAutoSyncState(this.autoSyncState, 'ok');
 		this.logAutoSync('auto-sync resumed after re-auth');
 		this.scheduleFollowUpTick();
+	}
+
+	/**
+	 * On startup, verify the stored session is actually accepted by Plaud, not
+	 * just that the token still decodes as valid. A Google or Apple (SSO) session
+	 * can be revoked server-side within hours while the token looks fine, and the
+	 * claim-based expiry warning does not fire until ~2h before the 24h exp, so
+	 * without this a user opens Obsidian to a dead session and only learns of it
+	 * when an import fails. One read-only call: a still-good session clears any
+	 * stale auth pause, an auth rejection surfaces the same SSO-aware Reconnect
+	 * prompt the auto-sync pause uses (one click re-signs and resumes), and a
+	 * transient error is ignored so a network blip does not nag on launch.
+	 */
+	private async validateStoredSessionOnStartup(): Promise<void> {
+		if (this.disposed || this.client === undefined) return;
+		// Never race an in-flight sign-in, and do not spend a call on a token
+		// that already drives its own prompt: a missing, unreadable, or
+		// claim-expired token is owned by the sign-in control and expiry warning.
+		if (this.reauthInFlight) return;
+		const value = this.readStoredTokenValue();
+		if (value.length === 0) return;
+		const life = readTokenLifetime(value);
+		if (life === null || life.remainingMs <= 0) return;
+
+		let outcome: 'ok' | 'reauth' | 'other';
+		try {
+			await this.client.listRecordings({ limit: 1 });
+			outcome = 'ok';
+		} catch (err) {
+			outcome = categoryAllowsReauth(classifyError(err).category)
+				? 'reauth'
+				: 'other';
+		}
+		// State can change across the await: a reconnect, a sign-in, unload, or a
+		// background refresh (which runs under sessionRefreshInFlight, NOT
+		// reauthInFlight) may have replaced the credential. If the stored token is
+		// no longer the one this call validated, the result is stale: ignore it so
+		// a -419 from a now-superseded token cannot false-prompt a reconnect over a
+		// session that just healed.
+		if (
+			this.disposed ||
+			this.reauthInFlight ||
+			this.readStoredTokenValue() !== value
+		) {
+			return;
+		}
+		if (outcome === 'ok') {
+			// Genuinely live: lift any stale auth pause left by a prior run.
+			this.resumeAutoSyncIfPaused();
+			return;
+		}
+		// Only an auth rejection is actionable; a transient error retries on next
+		// use rather than prompting a reconnect the user does not need.
+		if (outcome === 'other') return;
+		this.clearAutoSyncPauseNotice();
+		this.autoSyncPauseNotice = this.showActionNotice(
+			'Your Plaud session has ended. Reconnect to keep importing.' +
+				ssoReconnectHint(this.settings.signInMethod),
+			'Reconnect',
+			() => this.reconnectFromNotice(),
+		);
 	}
 
 	/**
