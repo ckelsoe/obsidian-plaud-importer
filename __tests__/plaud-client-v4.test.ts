@@ -1,6 +1,7 @@
 import {
 	PlaudV4Client,
 	embedV4SummaryImages,
+	parseMarkMemoArray,
 	type PlaudV4ClientOptions,
 } from '../plaud-client-v4';
 import {
@@ -133,6 +134,41 @@ const OUTLINE_BODY = JSON.stringify([
 ]);
 
 const SUMMARY_BODY = '# Summary\n\n- Key point one\n- Key point two\n';
+
+const MARKS_URL = 'https://s3.example/marks?sig=abc';
+// Deliberately out of timestamp order to exercise the parser's sort. Round
+// millisecond values keep offsetSeconds exact for equality assertions.
+const MARK_BODY = JSON.stringify([
+	{ timestamp: 3000, mark_type: 2, picture_link: 'c_03' },
+	{ timestamp: 1000, mark_type: 2, picture_link: 'c_01' },
+	{ timestamp: 2000, mark_type: 2, picture_link: 'c_02' },
+]);
+const MARK_RCM: Record<string, string> = {
+	c_01: 'https://s3.example/mark1.png?sig=a',
+	c_02: 'https://s3.example/mark2.png?sig=b',
+	c_03: 'https://s3.example/mark3.png?sig=c',
+};
+
+// A detail response carrying a MARK_MEMO object plus the relation_content_mapping
+// that resolves its picture_link ids. Summary is present so the note is non-empty.
+function detailWithMarks(): PlaudHttpResponse {
+	return okJson({
+		status: 0,
+		data: {
+			node: { node_id: 'n_sp_f1', version_ms: 1, name: 'Meeting' },
+			meta: { file_id: 'f1', keywords: [] },
+			objects: [
+				{
+					object_type: 'MARK_MEMO',
+					mime_type: 'application/json',
+					content_url: MARKS_URL,
+				},
+				{ object_type: 'SUMMARY', content_url: SUMMARY_URL },
+			],
+			relation_content_mapping: MARK_RCM,
+		},
+	});
+}
 
 // A routing fetcher that returns canned responses by URL substring and records
 // every request so header/scope assertions are possible.
@@ -424,6 +460,49 @@ describe('PlaudV4Client.getTranscriptAndSummary', () => {
 			PlaudApiError,
 		);
 	});
+
+	it('parses MARK_MEMO screenshots, resolves ids, and sorts by offset', async () => {
+		const { fetcher } = routingFetcher([
+			{ match: '/files/detail/', response: detailWithMarks() },
+			{ match: 'marks', response: okText(MARK_BODY) },
+			{ match: 'summary', response: okText(SUMMARY_BODY) },
+		]);
+		const client = makeClient(fetcher);
+		const result = await client.getTranscriptAndSummary(ID);
+		expect(result.marks).toBeDefined();
+		expect(result.marks).toHaveLength(3);
+		expect(result.marks!.map((m) => m.offsetSeconds)).toEqual([1, 2, 3]);
+		expect(result.marks!.map((m) => m.url)).toEqual([
+			'https://s3.example/mark1.png?sig=a',
+			'https://s3.example/mark2.png?sig=b',
+			'https://s3.example/mark3.png?sig=c',
+		]);
+		expect(result.marks![0]!.markType).toBe(2);
+	});
+
+	it('omits marks when the recording has no MARK_MEMO object', async () => {
+		const { fetcher } = detailRoutes();
+		const client = makeClient(fetcher);
+		const result = await client.getTranscriptAndSummary(ID);
+		expect(result.marks).toBeUndefined();
+	});
+
+	it('throws (does not silently drop) when the MARK_MEMO content_url fails', async () => {
+		// Mirrors the transcript/summary guard: a transient failure must not
+		// resolve to "no marks" and overwrite an existing note's screenshots.
+		const { fetcher } = routingFetcher([
+			{ match: '/files/detail/', response: detailWithMarks() },
+			{
+				match: 'marks',
+				response: { status: 503, json: null, text: 'down' },
+			},
+			{ match: 'summary', response: okText(SUMMARY_BODY) },
+		]);
+		const client = makeClient(fetcher);
+		await expect(client.getTranscriptAndSummary(ID)).rejects.toBeInstanceOf(
+			PlaudApiError,
+		);
+	});
 });
 
 // Audio ---------------------------------------------------------------------
@@ -670,6 +749,61 @@ describe('embedV4SummaryImages', () => {
 		expect(embedV4SummaryImages(`[](https://x/view?id=${CID})`, {})).toBe(
 			`[](https://x/view?id=${CID})`,
 		);
+	});
+});
+
+describe('parseMarkMemoArray', () => {
+	const MAP: Record<string, string> = {
+		c_a: 'https://s3.example/a.png',
+		c_b: 'https://s3.example/b.png',
+	};
+
+	it('resolves picture ids, converts ms to seconds, and sorts by offset', () => {
+		const marks = parseMarkMemoArray(
+			[
+				{ timestamp: 2000, mark_type: 2, picture_link: 'c_b' },
+				{ timestamp: 1000, mark_type: 2, picture_link: 'c_a' },
+			],
+			MAP,
+		);
+		expect(marks).toEqual([
+			{ offsetSeconds: 1, url: 'https://s3.example/a.png', markType: 2 },
+			{ offsetSeconds: 2, url: 'https://s3.example/b.png', markType: 2 },
+		]);
+	});
+
+	it('drops entries whose picture_link is missing or does not resolve', () => {
+		const marks = parseMarkMemoArray(
+			[
+				{ timestamp: 1000, mark_type: 2 },
+				{ timestamp: 1000, mark_type: 2, picture_link: 'c_missing' },
+				{ timestamp: 1000, mark_type: 2, picture_link: 'c_a' },
+			],
+			MAP,
+		);
+		expect(marks).toHaveLength(1);
+		expect(marks[0]!.url).toBe('https://s3.example/a.png');
+	});
+
+	it('clamps a missing or out-of-range timestamp to 0', () => {
+		const marks = parseMarkMemoArray(
+			[{ picture_link: 'c_a' }, { timestamp: -5, picture_link: 'c_b' }],
+			MAP,
+		);
+		expect(marks.map((m) => m.offsetSeconds)).toEqual([0, 0]);
+	});
+
+	it('omits markType when it is not a finite number', () => {
+		const marks = parseMarkMemoArray(
+			[{ picture_link: 'c_a', mark_type: 'photo' }],
+			MAP,
+		);
+		expect(marks[0]!.markType).toBeUndefined();
+	});
+
+	it('returns [] for a non-array body', () => {
+		expect(parseMarkMemoArray({}, MAP)).toEqual([]);
+		expect(parseMarkMemoArray(null, MAP)).toEqual([]);
 	});
 });
 

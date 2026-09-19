@@ -37,6 +37,7 @@ import {
 	classifyError,
 	categoryAllowsReauth,
 	isPlaudUnprocessedError,
+	PLAUD_MARK_DATA_TYPE,
 	type ImportResult,
 	type ArtifactSelection,
 	type ImportModalOptions,
@@ -266,14 +267,37 @@ export async function runImport(
 				attachments,
 				nestedAssetLinks,
 				consumerNotes,
+				marks,
 			} = await deps.fetchArtifacts(recording.id);
 			const summaryLinkedAttachments =
 				deps.attachments.extractAttachmentAssetsFromSummaryMarkdown(
 					summary?.text ?? null,
 				);
+			// Marks (screenshots) become attachments so the same download +
+			// inline-embed repoint pipeline localizes them; the dedicated `mark`
+			// dataType routes them past the managed attachments section (note-writer
+			// renders them in `## Screenshots`). Only when the screenshots artifact
+			// is selected.
+			const markAttachments: readonly AttachmentAsset[] =
+				selection.includeScreenshots && marks !== undefined
+					? marks.map((mark) => ({
+							dataType: PLAUD_MARK_DATA_TYPE,
+							url: mark.url,
+						}))
+					: [];
+			// Marks are the merge BASE so they win the URL dedup. A screenshot the
+			// user also embedded in the summary would otherwise survive as a generic
+			// `summary_link` asset and get skipped when Other attachments is off,
+			// stranding the note with an expiring remote URL. mergeAttachmentAssets
+			// keeps the base on a URL collision, and markAttachments is non-empty
+			// only when Screenshots is selected, so mark-wins never routes an asset
+			// through a disabled gate.
 			const mergedAttachments = deps.attachments.mergeAttachmentAssets(
-				attachments ?? [],
-				summaryLinkedAttachments,
+				markAttachments,
+				deps.attachments.mergeAttachmentAssets(
+					attachments ?? [],
+					summaryLinkedAttachments,
+				),
 			);
 			// Issue #16: a recording's `tags` are its raw filetag_id_list (opaque
 			// folder ids). Resolve them to folder names via the catalog before
@@ -317,6 +341,7 @@ export async function runImport(
 				keywords: tagResult.keywords,
 				folders: folderNames,
 				consumerNotes,
+				marks: selection.includeScreenshots ? marks : undefined,
 				deviceNames,
 			};
 			const selectedChapters = selection.includeTranscript
@@ -350,7 +375,8 @@ export async function runImport(
 			if (
 				(selection.includeAttachments ||
 					selection.includeMindmap ||
-					selection.includeCard) &&
+					selection.includeCard ||
+					selection.includeScreenshots) &&
 				writeOutcome.status !== 'skipped' &&
 				mergedAttachments.length > 0
 			) {
@@ -372,7 +398,8 @@ export async function runImport(
 					reason: !(
 						selection.includeAttachments ||
 						selection.includeMindmap ||
-						selection.includeCard
+						selection.includeCard ||
+						selection.includeScreenshots
 					)
 						? 'attachments disabled by artifact selection'
 						: writeOutcome.status === 'skipped'

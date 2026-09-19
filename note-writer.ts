@@ -29,6 +29,7 @@ import { moment } from 'obsidian';
 import type {
 	Chapter,
 	ConsumerNote,
+	PlaudMark,
 	Recording,
 	Summary,
 	Transcript,
@@ -2325,6 +2326,47 @@ function formatConsumerNotesSection(
 	return parts.join('\n').trim();
 }
 
+/**
+ * Format a mark's offset into the recording (in seconds) as a compact clock
+ * label: `M:SS` under an hour, `H:MM:SS` past it. Used as the caption above each
+ * screenshot so the reader can find the moment in the transcript.
+ */
+function formatMarkTimestamp(offsetSeconds: number): string {
+	const total = Math.max(0, Math.floor(offsetSeconds));
+	const hours = Math.floor(total / 3600);
+	const minutes = Math.floor((total % 3600) / 60);
+	const seconds = total % 60;
+	const pad = (n: number): string => String(n).padStart(2, '0');
+	return hours > 0
+		? `${hours}:${pad(minutes)}:${pad(seconds)}`
+		: `${minutes}:${pad(seconds)}`;
+}
+
+/**
+ * Render the recording's marks (screenshots) as a `## Screenshots` section. Each
+ * mark is a bold timestamp caption followed by an inline image embed pointing at
+ * its pre-signed URL. The attachment pipeline downloads those images into the
+ * note's `-assets` folder and rewrites each inline embed to a local `![[...]]`
+ * wikilink (rewriteInlineSummaryEmbeds), so the timestamp caption is what carries
+ * the moment after the embed target is localized. Callers pass a non-empty list
+ * only when the screenshots artifact is selected.
+ */
+function formatMarksSection(marks: readonly PlaudMark[]): string {
+	const parts: string[] = ['## Screenshots', ''];
+	for (const mark of marks) {
+		const label = formatMarkTimestamp(mark.offsetSeconds);
+		// The embed target must be the mark's exact URL so the attachment
+		// importer's inline-embed rewrite (keyed on that URL) can repoint it.
+		parts.push(
+			`**${label}**`,
+			'',
+			`![Screenshot at ${label}](${mark.url})`,
+			'',
+		);
+	}
+	return parts.join('\n').trim();
+}
+
 interface CodeFence {
 	readonly marker: '`' | '~';
 	readonly length: number;
@@ -2477,6 +2519,14 @@ export interface FormatMarkdownOptions {
 	 */
 	readonly consumerNotes?: readonly ConsumerNote[];
 	/**
+	 * Screenshots ("marks") the user captured during the recording, rendered as a
+	 * `## Screenshots` block with each image labelled by its offset into the
+	 * recording. Empty or omitted renders no block. The caller passes these only
+	 * when the screenshots artifact is selected; the attachment pipeline downloads
+	 * the images and repoints the inline embeds to the local `-assets` copies.
+	 */
+	readonly marks?: readonly PlaudMark[];
+	/**
 	 * `{{...}}` template for the note's H1 (see buildNoteName). Must match the
 	 * template the writer uses for the filename so the two stay in sync. Omitted
 	 * reproduces `YYYY-MM-DD <title>`.
@@ -2606,6 +2656,10 @@ export function formatMarkdown(
 	const consumerNotes = options.consumerNotes ?? [];
 	if (consumerNotes.length > 0) {
 		parts.push(formatConsumerNotesSection(consumerNotes), '');
+	}
+	const marks = options.marks ?? [];
+	if (marks.length > 0) {
+		parts.push(formatMarksSection(marks), '');
 	}
 	if (transcriptSection.length > 0) {
 		parts.push('---', '', transcriptSection, '');

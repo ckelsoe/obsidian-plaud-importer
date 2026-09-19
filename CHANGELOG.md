@@ -4,6 +4,14 @@
 
 All notable changes to Plaud Importer will be documented in this file.
 
+## [0.41.0-beta.4] - 2026-09-19
+
+More new-portal fixes for the beta. Still a pre-release; install it through BRAT. The stable release is unaffected.
+
+### Added
+
+- **Screenshots you took during a recording now import.** On the new portal, photos captured while a recording was running (Plaud calls them marks) were dropped. They now download into the note's attachments folder and appear in a Screenshots section, each labelled with the time into the recording it was taken. A new Screenshots toggle in settings and a Screenshots checkbox in "review artifacts first" control it, on by default like the other images. Recordings without screenshots are unaffected.
+
 ## [0.41.0-beta.3] - 2026-09-18
 
 More new-portal fixes for the beta. Still a pre-release; install it through BRAT. The stable release is unaffected.

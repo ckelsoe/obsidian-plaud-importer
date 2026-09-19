@@ -143,6 +143,7 @@ export interface ImportModalOptions extends NoteWriterOptions {
 	readonly defaultIncludeAttachments?: boolean;
 	readonly defaultIncludeMindmap?: boolean;
 	readonly defaultIncludeCard?: boolean;
+	readonly defaultIncludeScreenshots?: boolean;
 	readonly defaultIncludeAudio?: boolean;
 	/**
 	 * Optional token provider used for follow-up attachment fetches that
@@ -862,8 +863,20 @@ export interface ArtifactSelection {
 	readonly includeAttachments: boolean;
 	readonly includeMindmap: boolean;
 	readonly includeCard: boolean;
+	/** Screenshots ("marks") captured during the recording (v4 MARK_MEMO). */
+	readonly includeScreenshots: boolean;
 	readonly includeAudio: boolean;
 }
+
+/**
+ * `AttachmentAsset.dataType` the import runner stamps on a recording's marks
+ * (screenshots) so the attachment importer routes them to the dedicated `mark`
+ * kind: gated by the screenshots selection, downloaded, and repointed inline
+ * WITHOUT a managed "Images and Attachments" entry (note-writer already renders
+ * them in a `## Screenshots` section). Lives here in the shared core so the
+ * runner and the importer agree on the exact string without a module cycle.
+ */
+export const PLAUD_MARK_DATA_TYPE = 'plaud_mark';
 
 /**
  * Five-button per-duplicate prompt used when the user has chosen "Ask

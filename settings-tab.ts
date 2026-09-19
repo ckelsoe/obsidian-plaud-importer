@@ -618,6 +618,12 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 		);
 		this.addToggleRow(
 			containerEl,
+			'Screenshots',
+			'Checked by default in import actions when a recording has screenshots you captured during it.',
+			'defaultIncludeScreenshots',
+		);
+		this.addToggleRow(
+			containerEl,
 			'Audio',
 			'Off by default. Downloads the original recording audio (about 15 MB per hour) for every recording you import, which can grow your vault by gigabytes and slow Obsidian Sync and backups. Leave off unless you want the audio in your vault.',
 			'defaultIncludeAudio',
@@ -2134,6 +2140,14 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 						name: 'Card',
 						desc: 'Checked by default in import actions when a card artifact is available.',
 						control: { type: 'toggle', key: 'defaultIncludeCard' },
+					},
+					{
+						name: 'Screenshots',
+						desc: 'Checked by default in import actions when a recording has screenshots you captured during it.',
+						control: {
+							type: 'toggle',
+							key: 'defaultIncludeScreenshots',
+						},
 					},
 					{
 						name: 'Audio',
