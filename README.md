@@ -1,5 +1,7 @@
 # Plaud Importer
 
+<!-- slop-check: off. Hand-written public README with an established voice (intentional em dashes per the repo writing rule "leave existing em dashes alone"); the writing-rules hook is file-level only and would otherwise block every edit on that historical prose. New prose added here still follows the writing rules by hand. -->
+
 [![CI](https://img.shields.io/github/actions/workflow/status/ckelsoe/obsidian-plaud-importer/ci.yml?branch=main&label=CI&logo=github)](https://github.com/ckelsoe/obsidian-plaud-importer/actions/workflows/ci.yml) [![Release](https://img.shields.io/github/actions/workflow/status/ckelsoe/obsidian-plaud-importer/release.yml?label=Release&logo=github)](https://github.com/ckelsoe/obsidian-plaud-importer/actions/workflows/release.yml) [![GitHub Downloads](https://img.shields.io/github/downloads/ckelsoe/obsidian-plaud-importer/total?logo=github&label=Downloads)](https://github.com/ckelsoe/obsidian-plaud-importer/releases) [![GitHub Stars](https://img.shields.io/github/stars/ckelsoe/obsidian-plaud-importer?style=flat&logo=github&label=Stars)](https://github.com/ckelsoe/obsidian-plaud-importer) [![Obsidian](https://img.shields.io/badge/Obsidian-v1.11.4%2B-7C3AED?logo=obsidian&logoColor=white)](https://obsidian.md) [![License](https://img.shields.io/github/license/ckelsoe/obsidian-plaud-importer)](https://github.com/ckelsoe/obsidian-plaud-importer/blob/main/LICENSE) [![Latest Release](https://img.shields.io/github/v/release/ckelsoe/obsidian-plaud-importer?label=Latest)](https://github.com/ckelsoe/obsidian-plaud-importer/releases/latest)
 
 > ## ⚠️ Early Alpha
@@ -50,12 +52,13 @@ Plaud does not offer an official API yet, so this plugin works by using Plaud's 
 - **Test connection** — a button in settings makes one lightweight call to Plaud and tells you whether your token works, so you can confirm you are signed in (or learn you need to sign in again) without running a full import.
 - **Lists your recent Plaud recordings** in a modal with scroll-to-load pagination.
 - **Lets you pick which to import** via checkboxes — single or multi-select.
-- **Per-recording artifact selection** — before a multi-import you can tick/untick transcript, summary, attachments, mindmap, and card independently.
+- **Per-recording artifact selection** — before a multi-import you can tick/untick transcript, summary, attachments, mindmap, card, and screenshots independently.
 - **Writes one markdown note per recording** with:
   - YAML frontmatter (Plaud ID, date, start and end time, duration, speakers, tags, Plaud web URL), with times written in each recording's own capture time zone, plus a layered set of optional fields surfaced from Plaud's flat GPT-5 schema (`plaud-headline`, `plaud-category`, `plaud-industry`, `plaud-language`, `plaud-template`, `plaud-model`, `plaud-note-id`, `plaud-summary-id`, `plaud-summary-version`) — emitted only when present, never load-bearing.
-  - Plaud's AI summary
+  - Plaud's AI summary, plus any additional summaries the recording has (such as a newer beta summary on the new portal), each in its own section
   - An `AI Suggestions` section pulled from Plaud's `ai_suggestion` field when the response includes one (separate from the main summary)
   - A `Template outputs` section that renders any extra AI templates you generated in Plaud (Key Points, Daily Journal, Meeting Summary, and so on), one foldable subsection per template, instead of dropping them as unreadable `.bin` attachments
+  - A `Screenshots` section with any photos you captured during the recording (new portal), each labelled with its time into the recording and downloaded into the note's assets folder
   - An inline chapter index with jump-links into the transcript
   - A heading-based transcript section with per-chapter `Back to Chapters` links
   - An `Open in Plaud` link under the H1 for quick round-tripping
