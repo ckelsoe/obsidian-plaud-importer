@@ -52,6 +52,7 @@ import {
 	type StoredDevice,
 } from './settings-types';
 import type { SignInMethod } from './reconnect-routing';
+import { describeSignInMethod } from './reconnect-routing';
 import type { BufferedDebugLogger } from './debug-logger';
 
 /**
@@ -770,6 +771,13 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 		const statusEl = setting.descEl.createDiv({
 			cls: 'plaud-importer-signin-status',
 		});
+		// Which sign-in method this session came from, in plain English. Shown for
+		// any stored token (including an expired one, so a user can see WHY a
+		// Google/Apple session lapsed). Empty when nothing is stored or the method
+		// was not recorded (a pre-0.32.0 session).
+		const methodEl = setting.descEl.createDiv({
+			cls: 'plaud-importer-signin-method',
+		});
 		// Second line, under the status: what renewal this session gets. Its
 		// text is set by refreshStatus below, and is empty when nothing is
 		// connected so an unconnected plugin makes no renewal promise at all.
@@ -805,6 +813,14 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 			statusEl.toggleClass(
 				'plaud-importer-signin-ok',
 				stored && !expired && !unreadable,
+			);
+			const methodLabel = describeSignInMethod(
+				this.plugin.settings.signInMethod,
+			);
+			methodEl.setText(
+				stored && methodLabel !== ''
+					? `Signed in with ${methodLabel}.`
+					: '',
 			);
 			const connected = stored && !expired && !unreadable;
 			const canRenew = this.plugin.canRenewCredential(value);

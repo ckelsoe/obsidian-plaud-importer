@@ -85,6 +85,7 @@ import {
 } from './auto-sync';
 import {
 	preferWindowForReconnect,
+	ssoReconnectHint,
 	type SignInMethod,
 } from './reconnect-routing';
 import {
@@ -1761,7 +1762,8 @@ export default class PlaudImporterPlugin extends Plugin {
 				const lead =
 					classification.category === 'not-configured'
 						? 'Plaud auto-sync paused: no Plaud token is configured.'
-						: 'Plaud auto-sync paused: your session expired.';
+						: 'Plaud auto-sync paused: your session expired.' +
+							ssoReconnectHint(this.settings.signInMethod);
 				// Lifecycle re-check AFTER this method's awaits, not just at its
 				// top: onunload hides every sticky action notice and clears the
 				// set, so a duration-0 prompt created after that sweep is
@@ -2275,7 +2277,8 @@ export default class PlaudImporterPlugin extends Plugin {
 			// click to fix rather than a trip to settings and back.
 			if (categoryAllowsReauth(classification.category)) {
 				this.showActionNotice(
-					'Plaud importer: backfill needs a Plaud session.',
+					'Plaud importer: backfill needs a Plaud session.' +
+						ssoReconnectHint(this.settings.signInMethod),
 					'Reconnect and retry',
 					// Pass the retry as the post-reconnect continuation so it runs on
 					// BOTH the embedded (email) path and the async browser (SSO) path;
