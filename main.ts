@@ -1047,6 +1047,7 @@ export default class PlaudImporterPlugin extends Plugin {
 			defaultIncludeAttachments: this.settings.defaultIncludeAttachments,
 			defaultIncludeMindmap: this.settings.defaultIncludeMindmap,
 			defaultIncludeCard: this.settings.defaultIncludeCard,
+			defaultIncludeScreenshots: this.settings.defaultIncludeScreenshots,
 			defaultIncludeAudio: this.settings.defaultIncludeAudio,
 			tagMode: this.settings.tagMode,
 			customTags: this.settings.customTags,
@@ -1565,6 +1566,8 @@ export default class PlaudImporterPlugin extends Plugin {
 				this.settings.defaultIncludeAttachments !== false,
 			includeMindmap: this.settings.defaultIncludeMindmap !== false,
 			includeCard: this.settings.defaultIncludeCard !== false,
+			includeScreenshots:
+				this.settings.defaultIncludeScreenshots !== false,
 			includeAudio: this.settings.defaultIncludeAudio === true,
 		};
 	}

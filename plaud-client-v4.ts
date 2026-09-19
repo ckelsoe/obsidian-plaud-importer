@@ -16,6 +16,7 @@ import type {
 	PlaudClient,
 	PlaudDevice,
 	PlaudFolder,
+	PlaudMark,
 	PlaudRecordingId,
 	Recording,
 	RecordingFilter,
@@ -72,6 +73,11 @@ const OBJ_POLISHED_TRANSCRIPT = 'POLISHED_TRANSCRIPT';
 const OBJ_SUMMARY = 'SUMMARY';
 const OBJ_OUTLINE = 'OUTLINE';
 const OBJ_AUDIO = 'AUDIO';
+// Screenshots ("marks") the user captured during the recording. Its
+// `content_url` is a JSON array of `{ timestamp, mark_type, picture_link }`
+// entries; each `picture_link` is a `c_<hex>` id that `relation_content_mapping`
+// resolves to a pre-signed image URL (see parseMarkMemoArray).
+const OBJ_MARK_MEMO = 'MARK_MEMO';
 
 export interface PlaudV4ClientOptions {
 	/**
@@ -379,6 +385,11 @@ export class PlaudV4Client implements PlaudClient {
 			relationContentMapping,
 		);
 		const chapters = await this.resolveChapters(objects);
+		const marks = await this.resolveMarks(
+			id,
+			objects,
+			relationContentMapping,
+		);
 		const aiKeywords = readKeywords(detail['meta']);
 
 		if (this.debugLogger?.enabled === true) {
@@ -391,7 +402,7 @@ export class PlaudV4Client implements PlaudClient {
 						: 'null'
 				}, summary=${
 					summary ? `${summary.text.length} chars` : 'null'
-				}, chapters=${chapters.length}, keywords=${aiKeywords.length}`,
+				}, chapters=${chapters.length}, marks=${marks.length}, keywords=${aiKeywords.length}`,
 			});
 		}
 
@@ -400,6 +411,7 @@ export class PlaudV4Client implements PlaudClient {
 			summary,
 			aiKeywords: aiKeywords.length > 0 ? aiKeywords : undefined,
 			chapters: chapters.length > 0 ? chapters : undefined,
+			marks: marks.length > 0 ? marks : undefined,
 		};
 	}
 
@@ -587,6 +599,36 @@ export class PlaudV4Client implements PlaudClient {
 			return [];
 		}
 		return parseOutlineBody(body);
+	}
+
+	/**
+	 * Resolve the recording's marks (screenshots) from the MARK_MEMO object. The
+	 * object's `content_url` is a JSON array of `{ timestamp, mark_type,
+	 * picture_link }`; parseMarkMemoArray resolves each `picture_link` id to a
+	 * pre-signed image URL via `relationContentMapping`. Returns [] when the
+	 * recording has no MARK_MEMO object or no content_url. A transient
+	 * content-fetch failure propagates (like the transcript/summary resolvers)
+	 * rather than resolving to []: dropping the marks silently would let a
+	 * re-import overwrite an existing note's screenshots with nothing.
+	 */
+	private async resolveMarks(
+		id: PlaudRecordingId,
+		objects: readonly unknown[],
+		relationContentMapping: Readonly<Record<string, string>>,
+	): Promise<readonly PlaudMark[]> {
+		const markObj = findObject(objects, OBJ_MARK_MEMO);
+		const url =
+			markObj !== undefined
+				? readNonEmptyString(markObj['content_url'])
+				: undefined;
+		if (url === undefined) {
+			return [];
+		}
+		const body = await this.fetchContentJson(url, `marks for ${id}`);
+		if (body === null) {
+			return [];
+		}
+		return parseMarkMemoArray(body, relationContentMapping);
 	}
 
 	/**
@@ -1107,6 +1149,60 @@ export function embedV4SummaryImages(
 			return `![${alt}](${resolved})`;
 		},
 	);
+}
+
+/**
+ * Parse the MARK_MEMO content array (the JSON body fetched from the MARK_MEMO
+ * object's `content_url`) into `PlaudMark`s. Each raw entry is
+ * `{ timestamp, mark_type, picture_link }` (verified live, read-only,
+ * 2026-09-18): `picture_link` is a `c_<hex>` content id that
+ * `relationContentMapping` resolves to a pre-signed image URL, and `timestamp`
+ * is the mark's offset into the recording in milliseconds. An entry whose
+ * `picture_link` is missing or does not resolve is dropped (there is nothing to
+ * download). `timestamp` is converted to seconds and, when missing or out of a
+ * plausible range, clamped to 0 rather than dropping the screenshot (the image
+ * is the point; its label is secondary). Marks are returned sorted by offset.
+ * Exported for tests.
+ */
+export function parseMarkMemoArray(
+	body: unknown,
+	relationContentMapping: Readonly<Record<string, string>>,
+): readonly PlaudMark[] {
+	if (!Array.isArray(body)) {
+		return [];
+	}
+	const out: PlaudMark[] = [];
+	for (const entry of body) {
+		if (!isRecord(entry)) {
+			continue;
+		}
+		const pictureLink = readNonEmptyString(entry['picture_link']);
+		if (pictureLink === undefined) {
+			continue;
+		}
+		const url = relationContentMapping[pictureLink];
+		if (typeof url !== 'string' || url.length === 0) {
+			continue;
+		}
+		const rawTimestamp = readFiniteNumber(entry['timestamp']);
+		const offsetMs =
+			rawTimestamp !== undefined &&
+			rawTimestamp >= 0 &&
+			rawTimestamp <= MAX_PLAUSIBLE_DURATION_MS
+				? rawTimestamp
+				: 0;
+		const markTypeRaw = entry['mark_type'];
+		out.push({
+			offsetSeconds: offsetMs / 1000,
+			url,
+			markType:
+				typeof markTypeRaw === 'number' && Number.isFinite(markTypeRaw)
+					? markTypeRaw
+					: undefined,
+		});
+	}
+	out.sort((a, b) => a.offsetSeconds - b.offsetSeconds);
+	return out;
 }
 
 /**

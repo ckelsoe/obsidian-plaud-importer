@@ -77,6 +77,15 @@ export interface TranscriptAndSummary {
 	 * attachment. Left undefined when the recording has none.
 	 */
 	readonly consumerNotes?: readonly ConsumerNote[];
+	/**
+	 * Screenshots ("marks") the user captured during the recording, each a
+	 * pre-signed image URL plus its offset into the recording. Populated by the
+	 * v4 client from the file-detail's `MARK_MEMO` object; left undefined when the
+	 * recording has no marks or the source does not provide them (the v3 client).
+	 * Note-writer renders these as a Screenshots section and the attachment
+	 * pipeline downloads them into the note's `-assets` folder.
+	 */
+	readonly marks?: readonly PlaudMark[];
 }
 
 /**
@@ -106,6 +115,39 @@ export interface Chapter {
 	readonly title: string;
 	readonly startSeconds: number;
 	readonly endSeconds?: number;
+}
+
+/**
+ * One "mark" a user captured during a recording: a screenshot/photo taken at a
+ * point in the recording. On the v4 portal these live in the file-detail's
+ * `MARK_MEMO` object, whose `content_url` is a JSON array of
+ * `{ timestamp, mark_type, picture_link }` entries; `picture_link` is a content
+ * id the detail's `relation_content_mapping` resolves to a pre-signed image URL.
+ * Shape verified live (read-only) 2026-09-18: every entry carried a resolvable
+ * `picture_link` and `mark_type` 2 (photo). The v3 client does not produce these.
+ */
+export interface PlaudMark {
+	/**
+	 * Offset of the mark from the recording's start, in seconds. The wire value
+	 * is milliseconds; the parser converts it to seconds to match
+	 * `TranscriptSegment.startSeconds`. Used only to label the image with its
+	 * position in the recording, so a missing or implausible value is clamped to
+	 * 0 rather than dropping the screenshot.
+	 */
+	readonly offsetSeconds: number;
+	/**
+	 * Pre-signed image URL for the screenshot, resolved from the entry's
+	 * `picture_link` content id via `relation_content_mapping`. It carries its
+	 * own signature, so download it WITHOUT the Plaud bearer (like every other
+	 * pre-signed content URL). Short-lived: download at import time.
+	 */
+	readonly url: string;
+	/**
+	 * Plaud's `mark_type` discriminator (2 = photo/screenshot on every recording
+	 * observed live). Kept for diagnostics and possible future differentiation;
+	 * the parser keys off a resolvable `picture_link`, not this value.
+	 */
+	readonly markType?: number;
 }
 
 export interface AttachmentAsset {

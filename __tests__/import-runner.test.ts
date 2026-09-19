@@ -14,6 +14,7 @@ import {
 import { PlaudApiError, PlaudAuthError } from '../plaud-client-re';
 import type { ArtifactSelection, ImportModalOptions } from '../import-core';
 import type {
+	AttachmentAsset,
 	PlaudRecordingId,
 	Recording,
 	Summary,
@@ -137,6 +138,7 @@ const SELECTION: ArtifactSelection = {
 	includeAttachments: true,
 	includeMindmap: true,
 	includeCard: true,
+	includeScreenshots: true,
 	includeAudio: false,
 };
 
@@ -145,12 +147,13 @@ const OPTIONS: ImportModalOptions = {
 	onDuplicate: 'skip',
 };
 
-function makeAttachmentStub(): {
+function makeAttachmentStub(summaryLinked: readonly AttachmentAsset[] = []): {
 	pipeline: AttachmentPipeline;
 	importCalls: Array<{
 		notePath: string;
 		replaceExisting: boolean;
 		recordingId: string;
+		attachments: readonly AttachmentAsset[];
 	}>;
 	audioCalls: Array<{ notePath: string; audioUrl: string }>;
 } {
@@ -158,19 +161,36 @@ function makeAttachmentStub(): {
 		notePath: string;
 		replaceExisting: boolean;
 		recordingId: string;
+		attachments: readonly AttachmentAsset[];
 	}> = [];
 	const audioCalls: Array<{ notePath: string; audioUrl: string }> = [];
 	const pipeline: AttachmentPipeline = {
-		extractAttachmentAssetsFromSummaryMarkdown: () => [],
-		mergeAttachmentAssets: (base, extra) => [...base, ...extra],
+		extractAttachmentAssetsFromSummaryMarkdown: () => summaryLinked,
+		// Faithful to the real merge: base wins on a URL collision.
+		mergeAttachmentAssets: (base, extra) => {
+			const out = [...base];
+			const seen = new Set(base.map((a) => a.url));
+			for (const a of extra) {
+				if (!seen.has(a.url)) {
+					seen.add(a.url);
+					out.push(a);
+				}
+			}
+			return out;
+		},
 		importAttachmentsForNote: async (
 			notePath,
-			_attachments,
+			attachments,
 			_selection,
 			replaceExisting,
 			recordingId,
 		) => {
-			importCalls.push({ notePath, replaceExisting, recordingId });
+			importCalls.push({
+				notePath,
+				replaceExisting,
+				recordingId,
+				attachments,
+			});
 		},
 		importAudioForNote: async (notePath, audioUrl) => {
 			audioCalls.push({ notePath, audioUrl });
@@ -273,6 +293,110 @@ describe('runImport', () => {
 		expect(calls).toEqual([recording.id]);
 		expect(starts).toEqual([[1, 1]]);
 		expect(written).toEqual([recording.id]);
+	});
+
+	it('threads marks into the note Screenshots section and hands the images to the attachment pipeline', async () => {
+		const vault = makeFakeVault();
+		const recording = makeRecording();
+		const marks = [
+			{
+				offsetSeconds: 30,
+				url: 'https://s3.example/shot1.png?sig=1',
+				markType: 2,
+			},
+		];
+		const { fetchArtifacts } = makeFetch(
+			new Map([[recording.id, makeArtifacts(recording, { marks })]]),
+		);
+		const { pipeline, importCalls } = makeAttachmentStub();
+
+		const outcome = await runImport({
+			recordings: [recording],
+			selection: SELECTION, // includeScreenshots: true
+			writer: makeWriter(vault),
+			attachments: pipeline,
+			options: OPTIONS,
+			fetchArtifacts,
+		});
+
+		expect(outcome.stop).toBe('completed');
+		const note = [...vault.files.values()][0]!;
+		expect(note).toContain('## Screenshots');
+		expect(note).toContain(
+			'![Screenshot at 0:30](https://s3.example/shot1.png?sig=1)',
+		);
+		const markAsset = importCalls[0]!.attachments.find(
+			(a) => a.url === 'https://s3.example/shot1.png?sig=1',
+		);
+		expect(markAsset).toBeDefined();
+		expect(markAsset!.dataType).toBe('plaud_mark');
+	});
+
+	it('keeps a mark that shares a URL with a summary image downloadable when Other attachments is off', async () => {
+		// A screenshot the user also embedded in the summary resolves to the same
+		// URL through both paths. Mark-wins dedup must keep it as a `plaud_mark` so
+		// it downloads under the (enabled) Screenshots gate, not as a generic
+		// summary asset that the disabled Other-attachments gate would skip.
+		const vault = makeFakeVault();
+		const recording = makeRecording();
+		const sharedUrl = 'https://s3.example/shared.png?sig=1';
+		const marks = [{ offsetSeconds: 10, url: sharedUrl, markType: 2 }];
+		const { fetchArtifacts } = makeFetch(
+			new Map([[recording.id, makeArtifacts(recording, { marks })]]),
+		);
+		const { pipeline, importCalls } = makeAttachmentStub([
+			{ dataType: 'summary_link', url: sharedUrl },
+		]);
+
+		await runImport({
+			recordings: [recording],
+			selection: {
+				...SELECTION,
+				includeAttachments: false,
+				includeScreenshots: true,
+			},
+			writer: makeWriter(vault),
+			attachments: pipeline,
+			options: OPTIONS,
+			fetchArtifacts,
+		});
+
+		const merged = importCalls[0]!.attachments;
+		const forShared = merged.filter((a) => a.url === sharedUrl);
+		expect(forShared).toHaveLength(1);
+		expect(forShared[0]!.dataType).toBe('plaud_mark');
+	});
+
+	it('omits screenshots and queues no mark images when includeScreenshots is off', async () => {
+		const vault = makeFakeVault();
+		const recording = makeRecording();
+		const marks = [
+			{
+				offsetSeconds: 30,
+				url: 'https://s3.example/shot1.png?sig=1',
+				markType: 2,
+			},
+		];
+		const { fetchArtifacts } = makeFetch(
+			new Map([[recording.id, makeArtifacts(recording, { marks })]]),
+		);
+		const { pipeline, importCalls } = makeAttachmentStub();
+
+		await runImport({
+			recordings: [recording],
+			selection: { ...SELECTION, includeScreenshots: false },
+			writer: makeWriter(vault),
+			attachments: pipeline,
+			options: OPTIONS,
+			fetchArtifacts,
+		});
+
+		const note = [...vault.files.values()][0]!;
+		expect(note).not.toContain('## Screenshots');
+		const anyMark = importCalls
+			.flatMap((c) => c.attachments)
+			.some((a) => a.dataType === 'plaud_mark');
+		expect(anyMark).toBe(false);
 	});
 
 	// Issue #16: folder ids resolve to names in both plaud-folder: and tags:.

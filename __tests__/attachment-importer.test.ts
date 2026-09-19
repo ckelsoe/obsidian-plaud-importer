@@ -105,6 +105,29 @@ describe('rewriteInlineSummaryEmbeds', () => {
 		expect(out).not.toContain('](permanent/');
 	});
 
+	it('repoints a Screenshots-section mark embed at its downloaded copy', () => {
+		// Marks render in note-writer as `![Screenshot at M:SS](<signed-url>)`;
+		// the importer downloads the image and repoints that inline embed at the
+		// local copy, keyed on the exact signed URL. The `**M:SS**` caption above
+		// it (not asserted here) is what carries the timestamp after the rewrite.
+		const signedUrl = 'https://s3.example/screenshot.png?sig=xyz';
+		const body =
+			'## Screenshots\n\n**0:30**\n\n![Screenshot at 0:30](' +
+			signedUrl +
+			')\n';
+		const out = rewriteInlineSummaryEmbeds(
+			body,
+			new Map([
+				[signedUrl, 'Meetings/Standup-assets/00ec8400-screenshot.png'],
+			]),
+		);
+		expect(out).toContain(
+			'![[Meetings/Standup-assets/00ec8400-screenshot.png]]',
+		);
+		expect(out).toContain('**0:30**');
+		expect(out).not.toContain('](https://s3.example/');
+	});
+
 	it('leaves an unmapped embed untouched (external image the user referenced)', () => {
 		const body = '![diagram](https://example.com/diagram.png)\n';
 		const out = rewriteInlineSummaryEmbeds(

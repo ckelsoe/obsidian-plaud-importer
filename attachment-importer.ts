@@ -8,6 +8,7 @@ import {
 import type { AttachmentAsset } from './plaud-client';
 import { NoopDebugLogger, type DebugLogger } from './debug-logger';
 import type { ArtifactSelection } from './import-core';
+import { PLAUD_MARK_DATA_TYPE } from './import-core';
 
 // Plaud host bases used to resolve relative asset paths into absolute
 // download candidates. The API host can vary by region (EU accounts get
@@ -18,7 +19,7 @@ import type { ArtifactSelection } from './import-core';
 const DEFAULT_PLAUD_API_BASE = 'https://api.plaud.ai';
 const PLAUD_WEB_BASE = 'https://web.plaud.ai';
 
-type AttachmentKind = 'generic' | 'mindmap' | 'card';
+type AttachmentKind = 'generic' | 'mindmap' | 'card' | 'mark';
 type RenderedAsset = {
 	readonly path: string;
 	readonly isImage: boolean;
@@ -30,6 +31,7 @@ type AttachmentNamingCounters = {
 	cardFile: number;
 	genericImage: number;
 	genericFile: number;
+	markImage: number;
 };
 
 export interface AttachmentImporterOptions {
@@ -132,6 +134,7 @@ export class AttachmentImporter {
 			cardFile: 0,
 			genericImage: 0,
 			genericFile: 0,
+			markImage: 0,
 		};
 		const idPrefix = this.getAttachmentIdPrefix(recordingId);
 		let htmlMindmapCandidates = 0;
@@ -419,7 +422,17 @@ export class AttachmentImporter {
 								existingPath,
 							},
 						);
-						if (this.isImageExtension(ext)) {
+						if (kind === 'mark') {
+							// Marks are rendered in note-writer's `## Screenshots`
+							// section; repoint that inline embed to the local copy but
+							// never add a managed "Images and Attachments" entry.
+							if (this.isImageExtension(ext)) {
+								summaryEmbedRewrites.set(
+									asset.url,
+									existingPath,
+								);
+							}
+						} else if (this.isImageExtension(ext)) {
 							summaryEmbedRewrites.set(asset.url, existingPath);
 							pushRenderedAsset(kind, existingPath, true);
 						} else {
@@ -446,7 +459,14 @@ export class AttachmentImporter {
 						attachmentPath,
 						byteLength: bytes.byteLength,
 					});
-					if (this.isImageExtension(ext)) {
+					if (kind === 'mark') {
+						// Marks are rendered in note-writer's `## Screenshots`
+						// section; repoint that inline embed to the local copy but
+						// never add a managed "Images and Attachments" entry.
+						if (this.isImageExtension(ext)) {
+							summaryEmbedRewrites.set(asset.url, attachmentPath);
+						}
+					} else if (this.isImageExtension(ext)) {
 						summaryEmbedRewrites.set(asset.url, attachmentPath);
 						pushRenderedAsset(kind, attachmentPath, true);
 					} else {
@@ -543,7 +563,7 @@ export class AttachmentImporter {
 			),
 		);
 		if (selection.includeMindmap && mindmapAssets.length === 0) {
-			const kindCounts = { generic: 0, mindmap: 0, card: 0 };
+			const kindCounts = { generic: 0, mindmap: 0, card: 0, mark: 0 };
 			for (const asset of attachments) {
 				const k = this.classifyAttachmentKind(asset);
 				kindCounts[k] += 1;
@@ -869,6 +889,12 @@ export class AttachmentImporter {
 		name: string | undefined,
 		url: string,
 	): AttachmentKind {
+		// Marks are tagged with an exact dataType by the import runner, so match it
+		// precisely rather than by substring (a pre-signed image URL must not be
+		// misread as a mark, and a mark must not be reclassified as mindmap/card).
+		if (dataType === PLAUD_MARK_DATA_TYPE) {
+			return 'mark';
+		}
 		const haystack = `${dataType} ${name ?? ''} ${url}`.toLowerCase();
 		if (
 			haystack.includes('mindmap') ||
@@ -914,6 +940,8 @@ export class AttachmentImporter {
 				return selection.includeMindmap;
 			case 'card':
 				return selection.includeCard;
+			case 'mark':
+				return selection.includeScreenshots;
 			default:
 				return selection.includeAttachments;
 		}
@@ -955,6 +983,12 @@ export class AttachmentImporter {
 			return counters.cardFile === 1
 				? 'card-file'
 				: `card-file${counters.cardFile}`;
+		}
+		if (kind === 'mark' && isImage) {
+			counters.markImage += 1;
+			return counters.markImage === 1
+				? 'screenshot'
+				: `screenshot${counters.markImage}`;
 		}
 		if (isImage) {
 			counters.genericImage += 1;

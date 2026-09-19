@@ -120,6 +120,7 @@ interface ArtifactAvailability {
 	readonly attachmentsCount: number;
 	readonly mindmapCount: number;
 	readonly cardCount: number;
+	readonly screenshotsCount: number;
 	// Unlike the other artifacts, audio is not discovered from the preflight
 	// bundle: Plaud serves original audio for every recording, and the
 	// temp-url is resolved lazily at import time (and null-handled if absent).
@@ -185,6 +186,12 @@ class ArtifactSelectionModal extends Modal {
 		);
 		this.renderOption(
 			contentEl,
+			'Screenshots',
+			'includeScreenshots',
+			this.availability.screenshotsCount,
+		);
+		this.renderOption(
+			contentEl,
 			'Other attachments',
 			'includeAttachments',
 			this.availability.attachmentsCount,
@@ -234,6 +241,10 @@ class ArtifactSelectionModal extends Modal {
 			type: 'checkbox',
 			cls: 'plaud-importer-checkbox',
 		});
+		// The visible text sits in a sibling div, so the input has no accessible
+		// name on its own. Name it after the artifact so a screen reader can
+		// identify each checkbox (applies to every option this helper renders).
+		checkbox.setAttribute('aria-label', label);
 		checkbox.checked = this.selection[key];
 		checkbox.disabled = availableCount === 0;
 		const labelWrap = row.createDiv({ cls: 'plaud-importer-label' });
@@ -1651,6 +1662,8 @@ export class ImportModal extends Modal {
 			includeMindmap:
 				this.noteWriterOptions.defaultIncludeMindmap !== false,
 			includeCard: this.noteWriterOptions.defaultIncludeCard !== false,
+			includeScreenshots:
+				this.noteWriterOptions.defaultIncludeScreenshots !== false,
 			// Opt-in: audio defaults OFF unless the user turned the setting on,
 			// so use === true rather than the "on unless false" idiom above.
 			includeAudio: this.noteWriterOptions.defaultIncludeAudio === true,
@@ -1692,6 +1705,9 @@ export class ImportModal extends Modal {
 				includeMindmap:
 					defaults.includeMindmap && availability.mindmapCount > 0,
 				includeCard: defaults.includeCard && availability.cardCount > 0,
+				includeScreenshots:
+					defaults.includeScreenshots &&
+					availability.screenshotsCount > 0,
 				includeAudio:
 					defaults.includeAudio && availability.audioCount > 0,
 			};
@@ -1734,6 +1750,7 @@ export class ImportModal extends Modal {
 		let attachmentsCount = 0;
 		let mindmapCount = 0;
 		let cardCount = 0;
+		let screenshotsCount = 0;
 		const diagnostics: Array<Record<string, unknown>> = [];
 		for (const recording of selected) {
 			const bundle = this.artifactCache.get(recording.id);
@@ -1742,6 +1759,9 @@ export class ImportModal extends Modal {
 			}
 			if (bundle.summary !== null) summaryCount += 1;
 			if (bundle.transcript !== null) transcriptCount += 1;
+			if (bundle.marks !== undefined && bundle.marks.length > 0) {
+				screenshotsCount += 1;
+			}
 			const assets = bundle.attachments ?? [];
 			if (
 				assets.some(
@@ -1770,7 +1790,7 @@ export class ImportModal extends Modal {
 				cardCount += 1;
 			}
 			if (this.noteWriterOptions.debugLogger?.enabled === true) {
-				const kindCounts = { generic: 0, mindmap: 0, card: 0 };
+				const kindCounts = { generic: 0, mindmap: 0, card: 0, mark: 0 };
 				for (const asset of assets) {
 					const kind = this.attachments.classifyAttachmentKind(asset);
 					kindCounts[kind] += 1;
@@ -1797,6 +1817,7 @@ export class ImportModal extends Modal {
 			attachmentsCount,
 			mindmapCount,
 			cardCount,
+			screenshotsCount,
 			// Every recording has downloadable audio in Plaud; the temp-url is
 			// resolved lazily at import (and null-handled), so all selected
 			// recordings count as audio-available.

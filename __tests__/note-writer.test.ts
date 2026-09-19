@@ -2265,6 +2265,54 @@ describe('formatMarkdown', () => {
 		expect(md).not.toContain('## AI Suggestions');
 	});
 
+	it('renders a Screenshots section with timestamps and image embeds when marks are present', () => {
+		const md = formatMarkdown(
+			makeRecording(),
+			makeTranscript(),
+			makeSummary(),
+			undefined,
+			{
+				marks: [
+					{
+						offsetSeconds: 30,
+						url: 'https://s3.example/a.png?sig=1',
+						markType: 2,
+					},
+					{
+						offsetSeconds: 3725,
+						url: 'https://s3.example/b.png?sig=2',
+						markType: 2,
+					},
+				],
+			},
+		);
+		const summaryH2 = md.indexOf('## Summary');
+		const screenshotsH2 = md.indexOf('## Screenshots');
+		const callout = md.indexOf('> [!note]- Transcript');
+		// Between the summary block and the transcript.
+		expect(screenshotsH2).toBeGreaterThan(summaryH2);
+		expect(screenshotsH2).toBeLessThan(callout);
+		// M:SS under an hour, H:MM:SS past it, and the exact embed target so the
+		// attachment importer's inline-embed rewrite can repoint it.
+		expect(md).toContain('**0:30**');
+		expect(md).toContain(
+			'![Screenshot at 0:30](https://s3.example/a.png?sig=1)',
+		);
+		expect(md).toContain('**1:02:05**');
+		expect(md).toContain(
+			'![Screenshot at 1:02:05](https://s3.example/b.png?sig=2)',
+		);
+	});
+
+	it('omits the Screenshots section when there are no marks', () => {
+		const md = formatMarkdown(
+			makeRecording(),
+			makeTranscript(),
+			makeSummary(),
+		);
+		expect(md).not.toContain('## Screenshots');
+	});
+
 	it('builds the Open in Plaud link from formatPlaudWebUrl for the recording ID', () => {
 		const md = formatMarkdown(
 			makeRecording({

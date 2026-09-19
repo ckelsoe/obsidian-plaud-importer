@@ -124,6 +124,10 @@ export interface PlaudImporterSettings {
 	defaultIncludeAttachments: boolean;
 	defaultIncludeMindmap: boolean;
 	defaultIncludeCard: boolean;
+	// Screenshots ("marks") the user captured during a recording (v4 MARK_MEMO).
+	// On by default like the other image artifacts; only recordings that have
+	// marks are affected.
+	defaultIncludeScreenshots: boolean;
 	// Download the original recording audio (Opus/Ogg) as a note attachment.
 	// Off by default and the only default-false artifact: audio is large
 	// (~15 MB per recording-hour) and grows the vault fast, so it is strictly
@@ -259,6 +263,7 @@ export const DEFAULT_SETTINGS: PlaudImporterSettings = {
 	defaultIncludeAttachments: true,
 	defaultIncludeMindmap: true,
 	defaultIncludeCard: true,
+	defaultIncludeScreenshots: true,
 	defaultIncludeAudio: false,
 	foldTranscript: true,
 	transcriptHeaderLevel: 4,
