@@ -4,7 +4,9 @@
 
 All notable changes to Plaud Importer will be documented in this file.
 
-## [Unreleased]
+## [0.41.0-beta.5] - 2026-09-19
+
+More new-portal fixes for the beta. Still a pre-release; install it through BRAT. The stable release is unaffected.
 
 ### Changed
 
