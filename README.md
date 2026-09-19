@@ -1,6 +1,6 @@
 # Plaud Importer
 
-<!-- slop-check: off. Hand-written public README with an established voice (intentional em dashes per the repo writing rule "leave existing em dashes alone"); the writing-rules hook is file-level only and would otherwise block every edit on that historical prose. New prose added here still follows the writing rules by hand. -->
+<!-- slop-check: off. Em dashes and AI filler are kept out of this file by hand. The file-level hook is off only because it has two unfixable false positives here: the H1 is the product name "Plaud Importer" (a proper noun the sentence-case rule rejects), and its rule-of-three heuristic fires on factual enumerations that are the tail of longer lists (e.g. a six-item artifact list). New prose here still follows the writing rules by hand. -->
 
 [![CI](https://img.shields.io/github/actions/workflow/status/ckelsoe/obsidian-plaud-importer/ci.yml?branch=main&label=CI&logo=github)](https://github.com/ckelsoe/obsidian-plaud-importer/actions/workflows/ci.yml) [![Release](https://img.shields.io/github/actions/workflow/status/ckelsoe/obsidian-plaud-importer/release.yml?label=Release&logo=github)](https://github.com/ckelsoe/obsidian-plaud-importer/actions/workflows/release.yml) [![GitHub Downloads](https://img.shields.io/github/downloads/ckelsoe/obsidian-plaud-importer/total?logo=github&label=Downloads)](https://github.com/ckelsoe/obsidian-plaud-importer/releases) [![GitHub Stars](https://img.shields.io/github/stars/ckelsoe/obsidian-plaud-importer?style=flat&logo=github&label=Stars)](https://github.com/ckelsoe/obsidian-plaud-importer) [![Obsidian](https://img.shields.io/badge/Obsidian-v1.11.4%2B-7C3AED?logo=obsidian&logoColor=white)](https://obsidian.md) [![License](https://img.shields.io/github/license/ckelsoe/obsidian-plaud-importer)](https://github.com/ckelsoe/obsidian-plaud-importer/blob/main/LICENSE) [![Latest Release](https://img.shields.io/github/v/release/ckelsoe/obsidian-plaud-importer?label=Latest)](https://github.com/ckelsoe/obsidian-plaud-importer/releases/latest)
 
@@ -8,20 +8,20 @@
 >
 > **This plugin is in early alpha and under active development.** Expect bugs, UI changes between releases, and occasional rough edges. It talks to an **undocumented, reverse-engineered Plaud web API** that Plaud can change at any time.
 >
-> Before installing, please read **[What to know before you install](#what-to-know-before-you-install)** — it explains the main tradeoffs in plain language, and exactly what the plugin will and will not touch in your vault.
+> Before installing, please read **[What to know before you install](#what-to-know-before-you-install)**. It explains the main tradeoffs in plain language, and exactly what the plugin will and will not touch in your vault.
 >
-> No warranty — use at your own risk, and you may want to test in a non-critical vault first.
+> No warranty. Use at your own risk, and you may want to test in a non-critical vault first.
 >
 > ### Please report issues
 >
-> I use this plugin myself every day, so I often catch breakage quickly — but I am one person on one account, and Plaud can change their API for some accounts or regions before it affects mine. **If something breaks for you, an issue report is the single biggest help**, and may be the first signal I get.
+> I use this plugin myself every day, so I often catch breakage quickly, but I am one person on one account, and Plaud can change their API for some accounts or regions before it affects mine. **If something breaks for you, an issue report is the single biggest help**, and may be the first signal I get.
 >
 > 1. **File a GitHub issue** at [ckelsoe/obsidian-plaud-importer/issues](https://github.com/ckelsoe/obsidian-plaud-importer/issues).
 > 2. Include your **Obsidian version**, **plugin version**, **OS**, and **steps to reproduce**.
-> 3. Attach a **debug log** — see [Capturing a debug log](#capturing-a-debug-log) below. Auth headers are redacted automatically.
+> 3. Attach a **debug log**. See [Capturing a debug log](#capturing-a-debug-log) below. Auth headers are redacted automatically.
 > 4. Attach a screenshot or the generated note if the output looks wrong.
 >
-> Feature requests and API-shape observations are welcome too — open an issue or discussion.
+> Feature requests and API-shape observations are welcome too. Open an issue or discussion.
 
 Import meeting recordings, AI summaries, transcripts, and attachments from [Plaud.AI](https://www.plaud.ai/) into your Obsidian vault as markdown notes.
 
@@ -34,27 +34,27 @@ Plaud does not offer an official API yet, so this plugin works by using Plaud's 
 ### The tradeoffs
 
 - **It can break when Plaud changes their website or API.** There is no official, supported API, so Plaud can change how their service works at any time and an import may suddenly stop working. *Why it works this way:* it is the only way to get your recordings into Obsidian today. *What protects you:* the plugin shows a clear error instead of writing broken notes, and when Plaud ships an official API the plugin will move to it.
-- **Your sign-in token is like a key to your whole Plaud account.** The plugin stores the session token your login uses — it is not a limited, read-only key. *Why:* that is the only credential Plaud's web service provides. *What protects you:* it is kept in Obsidian's secure secret storage, never written to your settings file, never logged, and never sent anywhere except Plaud.
+- **Your sign-in token is like a key to your whole Plaud account.** The plugin stores the session token your login uses. It is not a limited, read-only key. *Why:* that is the only credential Plaud's web service provides. *What protects you:* it is kept in Obsidian's secure secret storage, never written to your settings file, never logged, and never sent anywhere except Plaud.
 - **You sign in through Plaud's own website.** Clicking **Sign in** opens Plaud's real site in a separate window so you can log in normally; Google and Apple logins use your normal browser instead (see [Connect your Plaud account](#connect-your-plaud-account)). *Why:* you never hand your password to the plugin. *What protects you:* the plugin reads only the token your logged-in session already uses; your password is typed into Plaud's own page, not the plugin.
 - **It is an unofficial tool, not affiliated with Plaud.** *What protects you:* it reads only your own data, and only when you ask it to. Following Plaud's terms of service is your responsibility.
 - **Desktop only.** Sign-in and import rely on desktop features that Obsidian Mobile does not provide.
 
 ### What it will not do
 
-- It only **adds** notes and attachments inside the output folder you choose, and never edits or deletes anything outside that folder. (To spot already-imported recordings it does read the frontmatter of notes inside your output folder — see [Permissions and access](#permissions-and-access).)
+- It only **adds** notes and attachments inside the output folder you choose, and never edits or deletes anything outside that folder. (To spot already-imported recordings it does read the frontmatter of notes inside your output folder. See [Permissions and access](#permissions-and-access).)
 - It replaces an already-imported note only when **you** choose Overwrite (or confirm it under "Ask each time").
-- It does not rewrite Plaud's transcript or summary text — it renders Plaud's own data into a note.
+- It does not rewrite Plaud's transcript or summary text. It renders Plaud's own data into a note.
 - The only change it can make in your **Plaud account** is a recording's **title**, and only if you turn on the optional title write-back and either confirm the prompt or opt into automatic updates (see [Renaming recordings](#renaming-recordings)). It never edits or deletes anything else in Plaud. With that setting off, the plugin is read-only against Plaud.
 
 ## What it does
 
-- **One-click sign-in** — connect your Plaud account from settings without copying a token from the browser console. A sign-in window opens, you log in to Plaud normally, and your session token is captured automatically. Your password is never seen by the plugin. (Manual token paste is still available as a fallback.)
-- **Test connection** — a button in settings makes one lightweight call to Plaud and tells you whether your token works, so you can confirm you are signed in (or learn you need to sign in again) without running a full import.
+- **One-click sign-in.** Connect your Plaud account from settings without copying a token from the browser console. A sign-in window opens, you log in to Plaud normally, and your session token is captured automatically. Your password is never seen by the plugin. (Manual token paste is still available as a fallback.)
+- **Test connection.** A button in settings makes one lightweight call to Plaud and tells you whether your token works, so you can confirm you are signed in (or learn you need to sign in again) without running a full import.
 - **Lists your recent Plaud recordings** in a modal with scroll-to-load pagination.
-- **Lets you pick which to import** via checkboxes — single or multi-select.
-- **Per-recording artifact selection** — before a multi-import you can tick/untick transcript, summary, attachments, mindmap, card, and screenshots independently.
+- **Lets you pick which to import** via checkboxes, single or multi-select.
+- **Per-recording artifact selection.** Before a multi-import you can tick/untick transcript, summary, attachments, mindmap, card, and screenshots independently.
 - **Writes one markdown note per recording** with:
-  - YAML frontmatter (Plaud ID, date, start and end time, duration, speakers, tags, Plaud web URL), with times written in each recording's own capture time zone, plus a layered set of optional fields surfaced from Plaud's flat GPT-5 schema (`plaud-headline`, `plaud-category`, `plaud-industry`, `plaud-language`, `plaud-template`, `plaud-model`, `plaud-note-id`, `plaud-summary-id`, `plaud-summary-version`) — emitted only when present, never load-bearing.
+  - YAML frontmatter (Plaud ID, date, start and end time, duration, speakers, tags, Plaud web URL), with times written in each recording's own capture time zone, plus a layered set of optional fields surfaced from Plaud's flat GPT-5 schema (`plaud-headline`, `plaud-category`, `plaud-industry`, `plaud-language`, `plaud-template`, `plaud-model`, `plaud-note-id`, `plaud-summary-id`, `plaud-summary-version`), emitted only when present, never load-bearing.
   - Plaud's AI summary, plus any additional summaries the recording has (such as a newer beta summary on the new portal), each in its own section
   - An `AI Suggestions` section pulled from Plaud's `ai_suggestion` field when the response includes one (separate from the main summary)
   - A `Template outputs` section that renders any extra AI templates you generated in Plaud (Key Points, Daily Journal, Meeting Summary, and so on), one foldable subsection per template, instead of dropping them as unreadable `.bin` attachments
@@ -66,7 +66,7 @@ Plaud does not offer an official API yet, so this plugin works by using Plaud's 
 - **Optional audio download.** Turn on **Audio** to save each recording's original audio next to the note and embed it as a playable clip under an `Audio` heading. Off by default because audio is large (roughly 15 MB per hour). Missing or expired audio never fails an import.
 - **Background auto-sync (optional, off by default).** Checks Plaud on a schedule and imports new recordings automatically, and re-imports recordings you changed in Plaud (edited transcript, corrected speaker names). A re-import overwrites that note and its artifacts with Plaud's current version; unchanged notes are never touched. See [Auto-sync](#auto-sync).
 - **Placeholder notes for unprocessed recordings.** When Plaud has a recording but no transcript or summary yet, the importer writes a small placeholder note (recording ID plus a link back to Plaud) instead of a bare failure, and a later import replaces it automatically. Optional, on by default.
-- **Organize into dated subfolders** — an optional path template (for example `{{YYYY-MM}}`) files notes into per-month, per-week, or per-quarter folders built from the recording date, instead of one flat folder. Attachments follow their note.
+- **Organize into dated subfolders.** An optional path template (for example `{{YYYY-MM}}`) files notes into per-month, per-week, or per-quarter folders built from the recording date, instead of one flat folder. Attachments follow their note.
 - **Configurable note names.** A note-name template (the same Moment date formats as the subfolder setting, plus a `{{title}}` token) puts the recording date wherever you want it and formats every note name the same way. A Plaud title with no date gets a `YYYY-MM-DD` prefix so notes sort chronologically. The default reproduces the previous `YYYY-MM-DD <title>` naming, so nothing changes unless you set it.
 - **Rename a recording from Obsidian.** A **Rename recording** command and a **Rename imported recording** right-click item rename a note and its `-assets` folder together, keeping embedded images valid. Renaming a Plaud note in the file explorer also moves its assets folder to match. And when you rename a recording in Plaud, the note and its assets folder are renamed on the next sync instead of leaving a stale-named note behind.
 - **Optionally sync a rename back to Plaud (off by default).** When you rename a recording in Obsidian, the plugin can update that recording's title in Plaud so the two stay in sync. This is opt-in and the only thing the plugin ever writes back to Plaud; with it off, renames stay entirely local. See [Renaming recordings](#renaming-recordings).
@@ -74,13 +74,13 @@ Plaud does not offer an official API yet, so this plugin works by using Plaud's 
 - **Filter the import list, and ignore recordings you never want.** A filter bar at the top of the import dialog hides recordings you have already imported (on by default), so the list shows what is left to import instead of everything. Separate toggles also hide update-available, ignored, and trashed recordings. Each row has an eye button to **ignore** a recording (a junk or personal clip): ignored recordings drop out of the list and are skipped by background auto-sync, and ignoring works even on recordings you never imported. Recordings in Plaud's trash show a **Trashed** badge when you choose to show them.
 - **Import only from selected recording sources.** Choose which of your paired Plaud devices to import from, and whether to include recordings made in the Plaud app or imported, so a device you keep for personal recordings stays out of your vault. Applies to manual import and background auto-sync alike, off by default. See [Recording sources](#recording-sources).
 - **Resume an interrupted import.** If your Plaud session expires partway through a multi-select import, the run stops at the first recording that fails to authenticate, keeps what it already imported, and lets you sign in again right there; a **Resume remaining** button then finishes the recordings that were left.
-- **Duplicate handling** is configurable — Skip, Overwrite, or Ask each time. "Ask each time" prompts per file with an explicit warning that the existing note body AND its `-assets` folder will be replaced; in a multi-select import you can escalate to "Overwrite all remaining" / "Skip all remaining" or cancel the batch.
-- **Transcript folding** — imported notes open with the transcript section collapsed by default so the summary is what you see first. Toggleable in settings.
-- **Debug log** — opt-in in-memory buffer of API requests/responses for troubleshooting; auth headers are never captured.
+- **Duplicate handling** is configurable: Skip, Overwrite, or Ask each time. "Ask each time" prompts per file with an explicit warning that the existing note body AND its `-assets` folder will be replaced; in a multi-select import you can escalate to "Overwrite all remaining" / "Skip all remaining" or cancel the batch.
+- **Transcript folding.** Imported notes open with the transcript section collapsed by default so the summary is what you see first. Toggleable in settings.
+- **Debug log.** An opt-in in-memory buffer of API requests/responses for troubleshooting; auth headers are never captured.
 
 ## Requirements
 
-- **Obsidian 1.11.4 or newer** — required for the `SecretStorage` / `SecretComponent` APIs used to handle the Plaud token securely.
+- **Obsidian 1.11.4 or newer.** Required for the `SecretStorage` / `SecretComponent` APIs used to handle the Plaud token securely.
 - **Desktop only** (`isDesktopOnly: true`). The authentication path depends on Electron APIs (including the separate sign-in window) that are not available on Obsidian Mobile. This restriction will be lifted when Plaud ships a public OAuth API (see [Plaud API status](#plaud-api-status) below).
 - **A Plaud.AI account** with access to the recordings you want to import.
 
@@ -96,7 +96,7 @@ Plaud does not offer an official API yet, so this plugin works by using Plaud's 
 
 ### Via BRAT (beta and pre-release versions)
 
-[BRAT](https://github.com/TfTHacker/obsidian42-brat) installs and auto-updates plugins straight from GitHub — useful before this plugin lands in the catalog, or to track pre-release builds.
+[BRAT](https://github.com/TfTHacker/obsidian42-brat) installs and auto-updates plugins straight from GitHub. It is handy before this plugin lands in the catalog, or for tracking pre-release builds.
 
 1. Install **Obsidian42 - BRAT** from the Obsidian community plugins catalog and enable it.
 2. Open the command palette and run **BRAT: Add a beta plugin for testing**.
@@ -117,7 +117,7 @@ Open **Settings → Community plugins → Plaud Importer** and configure:
 
 ### Connect your Plaud account
 
-The plugin reads your recordings using your Plaud web-session token. **You never give the plugin your Plaud password** — you sign in to Plaud directly, and the plugin captures only the session token your logged-in session already uses.
+The plugin reads your recordings using your Plaud web-session token. **You never give the plugin your Plaud password.** You sign in to Plaud directly, and the plugin captures only the session token your logged-in session already uses.
 
 Because Plaud has no official API, which method works depends on **how you log in to Plaud**. Pick the one that matches your account. Both store your token the same way; the difference is only how the token is captured.
 
@@ -243,9 +243,9 @@ The title sent to Plaud is your new note name exactly, so Plaud matches what you
 
 What the importer does when a note for a recording already exists in the output folder:
 
-- **Skip** — leave the existing note untouched. The importer reports it as `skipped` in the summary.
-- **Overwrite** — replace the existing note body and clear its matching `-assets` folder before re-downloading. A confirmation modal fires once per import batch before any overwrite happens.
-- **Ask each time** (default) — prompt per duplicate at write time. The modal shows the recording title and the exact target path, warns that the existing note AND its `-assets` folder will be replaced, and offers Overwrite, Skip, or (in multi-item batches) Overwrite all remaining, Skip all remaining, and Cancel import.
+- **Skip.** Leave the existing note untouched. The importer reports it as `skipped` in the summary.
+- **Overwrite.** Replace the existing note body and clear its matching `-assets` folder before re-downloading. A confirmation modal fires once per import batch before any overwrite happens.
+- **Ask each time** (default). Prompt per duplicate at write time. The modal shows the recording title and the exact target path, warns that the existing note AND its `-assets` folder will be replaced, and offers Overwrite, Skip, or (in multi-item batches) Overwrite all remaining, Skip all remaining, and Cancel import.
 
 ### Default artifact selection
 
@@ -277,14 +277,14 @@ The filter applies to both manual import and auto-sync. It uses blocklist behavi
 
 ### Tags and keywords
 
-- **Tag mode** — which sources land in each note's `tags:` frontmatter: no tags, your custom tags only, Plaud tags (the default), or all (which also adds Plaud's AI keywords as `plaud/...` tags).
-- **Custom tags** — comma-separated tags added to every imported note. Defaults to `plaud-meeting`.
-- **Keep AI keywords as note property** — when AI keywords are kept out of `tags:`, optionally write them to a `keywords:` property instead. **Off by default**: Plaud's keyword list can run to hundreds of low-value entries per recording, which buries the tags that matter and adds noise to every note. Turn it on if you want the full list.
+- **Tag mode.** Chooses which sources land in each note's `tags:` frontmatter: no tags, your custom tags only, Plaud tags (the default), or all (which also adds Plaud's AI keywords as `plaud/...` tags).
+- **Custom tags.** Comma-separated tags added to every imported note. Defaults to `plaud-meeting`.
+- **Keep AI keywords as note property.** When AI keywords are kept out of `tags:`, optionally write them to a `keywords:` property instead. **Off by default**: Plaud's keyword list can run to hundreds of low-value entries per recording, which buries the tags that matter and adds noise to every note. Turn it on if you want the full list.
 
 ### Transcript rendering
 
-- **Fold transcript by default** — imported notes open with the transcript heading collapsed so the summary is what you see first.
-- **Transcript heading level** — which H-level the wrapping `Transcript` heading uses (chapters render one level deeper). Pick what fits your note style.
+- **Fold transcript by default.** Imported notes open with the transcript heading collapsed so the summary is what you see first.
+- **Transcript heading level.** Sets which H-level the wrapping `Transcript` heading uses (chapters render one level deeper). Pick what fits your note style.
 
 ### Unprocessed and trashed recordings
 
@@ -334,7 +334,7 @@ The listing and `/ai/transsumm/{id}` endpoints were informed by prior community 
 
 What this means for you:
 
-- **The plugin may break without warning** if Plaud changes URL shapes, response schemas, or authentication. When it breaks, the import modal will surface a clear error (auth failure, parse error, HTTP 4xx/5xx) rather than silently corrupt notes — but some releases may need to wait for a plugin update.
+- **The plugin may break without warning** if Plaud changes URL shapes, response schemas, or authentication. When it breaks, the import modal will surface a clear error (auth failure, parse error, HTTP 4xx/5xx) rather than silently corrupt notes, but some releases may need to wait for a plugin update.
 - **Your Plaud token is a full web-session JWT**, not a scoped API key. Treat it with the same care as your Plaud password. The plugin stores it in Obsidian's `SecretStorage`, never in `data.json`, and never logs it.
 - **When Plaud ships a public OAuth API**, this plugin will switch to that surface and deprecate the reverse-engineered path. A separate `OAuthPlaudClient` stub is already stubbed in the codebase for the migration. The mobile-only restriction (`isDesktopOnly`) exists because of the current auth path and will be re-evaluated at that point.
 
@@ -342,7 +342,7 @@ I am actively monitoring Plaud's developer announcements and [waitlist](https://
 
 ## Permissions and access
 
-Plaud Importer is desktop-only, runs on your device, and has no telemetry or maintainer server — it talks only to Plaud, and only when you ask it to. Obsidian's plugin scan discloses a few capabilities. Here is exactly what each is and why it exists:
+Plaud Importer is desktop-only, runs on your device, and has no telemetry or maintainer server. It talks only to Plaud, and only when you ask it to. Obsidian's plugin scan discloses a few capabilities. Here is exactly what each is and why it exists:
 
 - **Network access to Plaud.** The plugin calls Plaud's web API (`api.plaud.ai`, or your regional host) to list and fetch your recordings, summaries, transcripts, and attachments, and downloads attachment files from the CDN hosts Plaud's responses point at. It contacts no other third party, and only when you trigger an import, scroll to load more recordings, or download attachments. The one write it can make to Plaud is updating a recording's **title**, and only when you enable the optional title write-back and confirm or opt into automatic updates (see [Renaming recordings](#renaming-recordings)); with that setting off, every call to Plaud is read-only.
 - **Sign-in window.** When you click **Sign in**, the plugin opens Plaud's own website (`web.plaud.ai`) in a separate window so you can log in normally. For Google or Apple logins, you sign in through your normal web browser instead and hand the token back with a bookmarklet. Either way, your password is entered into Plaud's page and is never seen by the plugin; it reads only the session tokens your logged-in session already holds, checks them against Plaud to find the one that works, and stores that one via `SecretStorage`. The sign-in runs in a private session isolated from Obsidian's other web views.
@@ -356,11 +356,11 @@ See [PRIVACY.md](./PRIVACY.md) for the full privacy policy and liability disclai
 
 ## Troubleshooting
 
-- **"No Plaud token configured"** — re-check the Plaud token field in settings. If your token expired, [connect your Plaud account](#connect-your-plaud-account) again (click **Sign in**).
-- **"Plaud rejected your token"** — your web session likely expired or you signed out of Plaud. Click **Sign in** again to refresh the token (or re-paste it manually), then use **Test connection** to confirm it works.
-- **"Could not reach Plaud.AI"** — network or DNS issue on your side, or Plaud is down. Retry from the modal's **Retry** button.
-- **"Plaud returned data in an unexpected shape"** — Plaud changed their API. File an issue with the debug log attached (see [Debug logging](#debug-logging)).
-- **Import silently "skipped"** — your duplicate handling was set to Skip and the note already existed. Switch to **Ask each time** (default since 0.2.0) or **Overwrite**.
+- **"No Plaud token configured"**. Re-check the Plaud token field in settings. If your token expired, [connect your Plaud account](#connect-your-plaud-account) again (click **Sign in**).
+- **"Plaud rejected your token"**. Your web session likely expired or you signed out of Plaud. Click **Sign in** again to refresh the token (or re-paste it manually), then use **Test connection** to confirm it works.
+- **"Could not reach Plaud.AI"**. Network or DNS issue on your side, or Plaud is down. Retry from the modal's **Retry** button.
+- **"Plaud returned data in an unexpected shape"**. Plaud changed their API. File an issue with the debug log attached (see [Debug logging](#debug-logging)).
+- **Import silently "skipped"**. Your duplicate handling was set to Skip and the note already existed. Switch to **Ask each time** (default since 0.2.0) or **Overwrite**.
 - **A brand-new recording will not import yet.** A recording does not become available to import until you have opened Plaud (web or app) and its cloud has finished finalizing the recording. Until then the plugin cannot see it. Open Plaud, let it finish processing, then run the import again. This is a Plaud-side step, not a plugin limitation.
 
 ## Community
@@ -381,7 +381,7 @@ See [`CONTRIBUTING.md`](./CONTRIBUTING.md) for local build and test instructions
 
 ## License
 
-MIT — see [`LICENSE`](./LICENSE).
+MIT. See [`LICENSE`](./LICENSE).
 
 ## Acknowledgments
 
