@@ -165,7 +165,16 @@ function makeAttachmentStub(summaryLinked: readonly AttachmentAsset[] = []): {
 	}> = [];
 	const audioCalls: Array<{ notePath: string; audioUrl: string }> = [];
 	const pipeline: AttachmentPipeline = {
-		extractAttachmentAssetsFromSummaryMarkdown: () => summaryLinked,
+		// Minimal real extraction: any inline `![](url)` embed in a summary body
+		// becomes a summary_image asset, so a test can assert that a SECOND
+		// summary's images are extracted alongside the base summaryLinked set.
+		extractAttachmentAssetsFromSummaryMarkdown: (md) => {
+			const out = [...summaryLinked];
+			for (const m of (md ?? '').matchAll(/!\[[^\]]*\]\(([^)\s]+)\)/g)) {
+				out.push({ dataType: 'summary_image', url: m[1]! });
+			}
+			return out;
+		},
 		// Faithful to the real merge: base wins on a URL collision.
 		mergeAttachmentAssets: (base, extra) => {
 			const out = [...base];
@@ -424,6 +433,75 @@ describe('runImport', () => {
 		const note = [...vault.files.values()][0]!;
 		expect(note).toMatch(/^plaud-location: unfiled$/m);
 		expect(note).not.toMatch(/^plaud-folder:/m);
+	});
+
+	it('renders additional summaries and extracts their images for download', async () => {
+		const vault = makeFakeVault();
+		const recording = makeRecording();
+		const betaImg = 'https://s3.example/beta-shot.png?sig=1';
+		const { fetchArtifacts } = makeFetch(
+			new Map([
+				[
+					recording.id,
+					makeArtifacts(recording, {
+						additionalSummaries: [
+							{
+								heading: 'Summary (beta)',
+								text: `Beta body.\n\n![](${betaImg})`,
+							},
+						],
+					}),
+				],
+			]),
+		);
+		const { pipeline, importCalls } = makeAttachmentStub();
+
+		await runImport({
+			recordings: [recording],
+			selection: SELECTION,
+			writer: makeWriter(vault),
+			attachments: pipeline,
+			options: OPTIONS,
+			fetchArtifacts,
+		});
+
+		const note = [...vault.files.values()][0]!;
+		expect(note).toContain('## Summary (beta)');
+		expect(note).toContain('Beta body.');
+		// The second summary's image was extracted and handed to the downloader.
+		const queued = importCalls
+			.flatMap((c) => c.attachments)
+			.some((a) => a.url === betaImg);
+		expect(queued).toBe(true);
+	});
+
+	it('drops additional summaries when the summary artifact is deselected', async () => {
+		const vault = makeFakeVault();
+		const recording = makeRecording();
+		const { fetchArtifacts } = makeFetch(
+			new Map([
+				[
+					recording.id,
+					makeArtifacts(recording, {
+						additionalSummaries: [
+							{ heading: 'Summary (beta)', text: 'Beta body.' },
+						],
+					}),
+				],
+			]),
+		);
+
+		await runImport({
+			recordings: [recording],
+			selection: { ...SELECTION, includeSummary: false },
+			writer: makeWriter(vault),
+			attachments: makeAttachmentStub().pipeline,
+			options: OPTIONS,
+			fetchArtifacts,
+		});
+
+		const note = [...vault.files.values()][0]!;
+		expect(note).not.toContain('## Summary (beta)');
 	});
 
 	it('keeps plaud-folder + a folder tag for a real folder (systemFolderType 0)', async () => {

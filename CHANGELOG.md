@@ -10,6 +10,10 @@ All notable changes to Plaud Importer will be documented in this file.
 
 - **Unfiled recordings no longer get a "Recordings" folder tag.** On the new portal, a recording you have not filed sits in Plaud's built-in "Recordings" bucket, and the plugin was tagging every such note `#recordings` and setting `plaud-folder: Recordings`, which is noise, not a folder you chose. Those notes now carry `plaud-location: unfiled` instead (and `import` or `conflict` for Plaud's other system buckets), with no folder tag. A recording you actually filed into a folder is unchanged: it keeps its folder tag and `plaud-folder`. This makes `WHERE plaud-location = "unfiled"` a clean review-queue query in Dataview. A current-portal account is unaffected.
 
+### Fixed
+
+- **All of a recording's summaries import, not just the first.** On the new portal a recording can carry more than one summary (for example the classic summary plus a newer beta summary), and the plugin was keeping only the first and dropping the rest. Now every summary comes down when you import the Summary artifact: the main one under `## Summary` as before, and each additional one in its own section (for example `## Summary (beta)`), with its images downloaded like the main summary's. A recording with a single summary is unchanged.
+
 ## [0.41.0-beta.4] - 2026-09-19
 
 More new-portal fixes for the beta. Still a pre-release; install it through BRAT. The stable release is unaffected.

@@ -2,6 +2,7 @@ import {
 	PlaudV4Client,
 	embedV4SummaryImages,
 	parseMarkMemoArray,
+	summaryHeadingFor,
 	type PlaudV4ClientOptions,
 } from '../plaud-client-v4';
 import {
@@ -134,6 +135,24 @@ const OUTLINE_BODY = JSON.stringify([
 ]);
 
 const SUMMARY_BODY = '# Summary\n\n- Key point one\n- Key point two\n';
+
+const SUMMARY_BETA_URL = 'https://s3.example/summary-beta?sig=abc';
+const SUMMARY_BETA_BODY = '# Beta\n\n- Bullet a\n- Bullet b\n- Bullet c\n';
+
+// A detail carrying two summary objects: the classic SUMMARY and a SUMMARY_BETA.
+function detailWithTwoSummaries(): PlaudHttpResponse {
+	return okJson({
+		status: 0,
+		data: {
+			node: { node_id: 'n_sp_f1', version_ms: 1, name: 'Meeting' },
+			meta: { file_id: 'f1', keywords: [] },
+			objects: [
+				{ object_type: 'SUMMARY', content_url: SUMMARY_URL },
+				{ object_type: 'SUMMARY_BETA', content_url: SUMMARY_BETA_URL },
+			],
+		},
+	});
+}
 
 const MARKS_URL = 'https://s3.example/marks?sig=abc';
 // Deliberately out of timestamp order to exercise the parser's sort. Round
@@ -455,6 +474,43 @@ describe('PlaudV4Client.getTranscriptAndSummary', () => {
 				response: { status: 403, json: null, text: 'expired' },
 			},
 			{ match: 'outline', response: okText(OUTLINE_BODY) },
+		]);
+		const client = makeClient(fetcher);
+		await expect(client.getTranscriptAndSummary(ID)).rejects.toBeInstanceOf(
+			PlaudApiError,
+		);
+	});
+
+	it('pulls all summaries: SUMMARY primary plus SUMMARY_BETA as an additional', async () => {
+		const { fetcher } = routingFetcher([
+			{ match: '/files/detail/', response: detailWithTwoSummaries() },
+			{ match: 'summary-beta', response: okText(SUMMARY_BETA_BODY) },
+			{ match: 'summary', response: okText(SUMMARY_BODY) },
+		]);
+		const client = makeClient(fetcher);
+		const result = await client.getTranscriptAndSummary(ID);
+		expect(result.summary?.text).toContain('Key point one');
+		expect(result.additionalSummaries).toHaveLength(1);
+		expect(result.additionalSummaries![0]!.heading).toBe('Summary (beta)');
+		expect(result.additionalSummaries![0]!.text).toContain('Bullet a');
+	});
+
+	it('leaves additionalSummaries undefined when only one summary exists', async () => {
+		const { fetcher } = detailRoutes();
+		const client = makeClient(fetcher);
+		const result = await client.getTranscriptAndSummary(ID);
+		expect(result.summary).not.toBeNull();
+		expect(result.additionalSummaries).toBeUndefined();
+	});
+
+	it('throws (does not drop a summary) when an additional summary fetch fails', async () => {
+		const { fetcher } = routingFetcher([
+			{ match: '/files/detail/', response: detailWithTwoSummaries() },
+			{
+				match: 'summary-beta',
+				response: { status: 503, json: null, text: 'down' },
+			},
+			{ match: 'summary', response: okText(SUMMARY_BODY) },
 		]);
 		const client = makeClient(fetcher);
 		await expect(client.getTranscriptAndSummary(ID)).rejects.toBeInstanceOf(
@@ -805,6 +861,24 @@ describe('parseMarkMemoArray', () => {
 	it('returns [] for a non-array body', () => {
 		expect(parseMarkMemoArray({}, MAP)).toEqual([]);
 		expect(parseMarkMemoArray(null, MAP)).toEqual([]);
+	});
+});
+
+describe('summaryHeadingFor', () => {
+	it('labels the classic SUMMARY as "Summary"', () => {
+		expect(summaryHeadingFor('SUMMARY')).toBe('Summary');
+	});
+
+	it('labels a variant as "Summary (<suffix>)"', () => {
+		expect(summaryHeadingFor('SUMMARY_BETA')).toBe('Summary (beta)');
+		expect(summaryHeadingFor('SUMMARY_QUICK_TAKE')).toBe(
+			'Summary (quick take)',
+		);
+	});
+
+	it('falls back to "Summary" for a non-string or unprefixed type', () => {
+		expect(summaryHeadingFor(undefined)).toBe('Summary');
+		expect(summaryHeadingFor(42)).toBe('Summary');
 	});
 });
 

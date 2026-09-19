@@ -27,6 +27,7 @@
 
 import { moment } from 'obsidian';
 import type {
+	AdditionalSummary,
 	Chapter,
 	ConsumerNote,
 	PlaudMark,
@@ -2545,6 +2546,14 @@ export interface FormatMarkdownOptions {
 	 */
 	readonly marks?: readonly PlaudMark[];
 	/**
+	 * Summaries beyond the primary one, each rendered as its own `## <heading>`
+	 * section right after the main Summary block (e.g. "## Summary (beta)"). The
+	 * caller passes these only when the Summary artifact is selected, and only the
+	 * v4 client produces them (a recording with more than one summary object).
+	 * Empty or omitted renders no extra section.
+	 */
+	readonly additionalSummaries?: readonly AdditionalSummary[];
+	/**
 	 * `{{...}}` template for the note's H1 (see buildNoteName). Must match the
 	 * template the writer uses for the filename so the two stay in sync. Omitted
 	 * reproduces `YYYY-MM-DD <title>`.
@@ -2670,6 +2679,23 @@ export function formatMarkdown(
 				offsetMinutes,
 			).trim();
 			parts.push('## AI Suggestions', '', renderedSuggestion, '');
+		}
+		// Every OTHER summary the recording carries (e.g. SUMMARY_BETA), each its
+		// own section. Rendered like the primary (same body normalization and
+		// placeholder substitution) so a reader sees them as peer summaries. Their
+		// image markers are extracted and downloaded by the import runner exactly
+		// like the primary summary's.
+		for (const extra of options.additionalSummaries ?? []) {
+			const body = formatSummaryBody({
+				id: recording.id,
+				text: substitutePlaudPlaceholders(
+					extra.text,
+					recording,
+					transcript,
+					offsetMinutes,
+				),
+			});
+			parts.push(`## ${extra.heading}`, '', body, '');
 		}
 	}
 	const consumerNotes = options.consumerNotes ?? [];
