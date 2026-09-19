@@ -1898,8 +1898,19 @@ export default class PlaudImporterPlugin extends Plugin {
 				? 'reauth'
 				: 'other';
 		}
-		// State can change across the await (a reconnect, a sign-in, or unload).
-		if (this.disposed || this.reauthInFlight) return;
+		// State can change across the await: a reconnect, a sign-in, unload, or a
+		// background refresh (which runs under sessionRefreshInFlight, NOT
+		// reauthInFlight) may have replaced the credential. If the stored token is
+		// no longer the one this call validated, the result is stale: ignore it so
+		// a -419 from a now-superseded token cannot false-prompt a reconnect over a
+		// session that just healed.
+		if (
+			this.disposed ||
+			this.reauthInFlight ||
+			this.readStoredTokenValue() !== value
+		) {
+			return;
+		}
 		if (outcome === 'ok') {
 			// Genuinely live: lift any stale auth pause left by a prior run.
 			this.resumeAutoSyncIfPaused();
