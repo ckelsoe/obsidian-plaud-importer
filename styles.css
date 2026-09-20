@@ -301,31 +301,30 @@
 }
 
 /* Google/Apple (SSO) limitation note under the sign-in status. Rendered for
-   every session but hidden unless the stored session came from the SSO flow;
-   the plugin toggles plaud-importer-hidden in refreshStatus. */
-.plaud-importer-sso-note.plaud-importer-hidden {
-	display: none;
-}
-
+   every session; the plugin toggles the shared plaud-importer-hidden class in
+   refreshStatus so it shows only for a stored SSO session. */
 .plaud-importer-sso-note-headline {
 	margin-top: 0.4em;
 	font-size: var(--font-ui-smaller);
 	color: var(--text-warning);
 }
 
-.plaud-importer-sso-note-detail {
+/* Shared collapsible disclosure: the sign-in note detail, the browser steps,
+   and the SSO limitation note. The summary is the clickable toggle; the body
+   holds the content revealed on expand. */
+.plaud-importer-disclosure {
 	margin-top: 0.15em;
 	font-size: var(--font-ui-smaller);
 	color: var(--text-muted);
 	line-height: 1.5;
 }
 
-.plaud-importer-sso-note-detail summary {
+.plaud-importer-disclosure summary {
 	cursor: pointer;
 	color: var(--text-accent);
 }
 
-.plaud-importer-sso-note-detail > div {
+.plaud-importer-disclosure-body {
 	margin-top: 0.25em;
 }
 
@@ -351,12 +350,17 @@
 	color: var(--text-muted);
 }
 
-/* Explanatory note under the "Sign in" heading */
+/* Explanatory note under the "Sign in" heading: a visible teaser plus a
+   collapsed disclosure (see .plaud-importer-disclosure). */
 .plaud-importer-signin-note {
 	margin: 0.25em 0 0.5em 0;
 	color: var(--text-muted);
 	font-size: var(--font-ui-smaller);
 	line-height: 1.5;
+}
+
+.plaud-importer-signin-note-summary {
+	margin: 0;
 }
 
 /* Numbered steps under the "Sign in with your browser" setting */
@@ -405,7 +409,7 @@
 }
 
 /* Let the template field fill the row; buttons wrap after it when space runs out. */
-.plaud-importer-stacked-row .setting-item-control input[type="text"] {
+.plaud-importer-stacked-row .setting-item-control input[type='text'] {
 	flex: 1 1 16em;
 }
 
@@ -813,7 +817,7 @@
 	cursor: pointer;
 }
 
-.plaud-importer-source-row input[type="checkbox"] {
+.plaud-importer-source-row input[type='checkbox'] {
 	margin-top: 0.2em;
 }
 
@@ -837,7 +841,6 @@
 	background: var(--background-modifier-hover);
 	color: var(--text-muted);
 }
-
 
 .plaud-importer-input-error {
 	border-color: var(--text-error);

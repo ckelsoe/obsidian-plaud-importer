@@ -89,11 +89,37 @@ export interface SettingsTabHost extends Plugin {
 	canRenewCredential(token: string, signInMethod?: SignInMethod): boolean;
 }
 
-// Explanatory note shown under the "Sign in" heading. Held in a const so it can
+// The always-visible teaser above the collapsed sign-in note. Carries the
+// actionable cue (which method, how long) so a user who never expands the
+// detail still picks the right method.
+const SIGN_IN_SUMMARY =
+	'Two ways to sign in, depending on how you log in to Plaud. Email sign-in stays connected for about 30 days; a Google or Apple (SSO) sign-in is short and unreliable, so prefer email. Expand for the full details.';
+
+// The collapsed detail under the "Sign in" heading. Held in a const so it can
 // name Plaud/Google/Apple plainly: the sentence-case lint only inspects string
 // literals written directly at a setText/createEl call, not a referenced const.
 const SIGN_IN_NOTE =
 	"Plaud has no official API, so this plugin relies on their internal one. That makes sign-in fragile, and it may stop working when Plaud changes that internal API. We expect this whole process to get much simpler once Plaud releases an official API. There are two ways to sign in, depending on how you log in to Plaud. Use 'Sign in with email' if you log in with an email address and password. Use 'Sign in with Google or Apple' if you use single sign-on (SSO) through a Google or Apple account. How long you stay signed in depends on the method and which Plaud portal your account is on. An email sign-in renews itself in the background for about 30 days before asking you to sign in again. A Google or Apple sign-in is short and unreliable: Plaud can end it early, within hours, and the plugin cannot keep it alive, so you would have to sign in again often. To avoid that, add a password to your Plaud account and use email sign-in instead. The status line under Plaud token shows your session's actual expiry and whether background renewal is active for it. When the session lapses the plugin shows a one-click Reconnect that reopens the sign-in matching your account.";
+
+// A native <details> disclosure: a clickable summary that reveals a body,
+// keeping a long block out of the way until the reader asks for it. The summary
+// carries a matching aria-label like every other raw control in this tab, and
+// the body element is returned so the caller fills it with text or richer
+// content (a list). One implementation shared by the sign-in note, the browser
+// steps, and the SSO limitation note.
+function createDisclosure(
+	parent: HTMLElement,
+	toggleLabel: string,
+): HTMLElement {
+	const details = parent.createEl('details', {
+		cls: 'plaud-importer-disclosure',
+	});
+	details.createEl('summary', {
+		text: toggleLabel,
+		attr: { 'aria-label': toggleLabel },
+	});
+	return details.createDiv({ cls: 'plaud-importer-disclosure-body' });
+}
 
 // Automatic-sync toggle description. ONE constant consumed by both settings
 // paths (the 1.13+ declarative definitions and the 1.12 imperative display()
@@ -801,17 +827,9 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 				cls: 'plaud-importer-sso-note-headline',
 				text: ssoNote.headline,
 			});
-			const ssoDetails = ssoNoteEl.createEl('details', {
-				cls: 'plaud-importer-sso-note-detail',
-			});
-			// aria-label matches the visible text so the accessible name and the
-			// on-screen label agree, and the raw control carries an explicit
-			// label like every other one in this tab.
-			ssoDetails.createEl('summary', {
-				text: ssoNote.toggleLabel,
-				attr: { 'aria-label': ssoNote.toggleLabel },
-			});
-			ssoDetails.createDiv({ text: ssoNote.detail });
+			createDisclosure(ssoNoteEl, ssoNote.toggleLabel).setText(
+				ssoNote.detail,
+			);
 		}
 		const refreshStatus = (): void => {
 			// Decode on demand from the currently linked secret rather than
@@ -929,10 +947,20 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 	}
 
 	private renderSignInIntro(setting: Setting): void {
-		setting.descEl.createEl('p', {
+		const wrap = setting.descEl.createDiv({
 			cls: 'plaud-importer-signin-note',
-			text: SIGN_IN_NOTE,
 		});
+		// The teaser stays visible so a new user still gets the which-method,
+		// how-long cue without a click; the full background sits behind the
+		// disclosure so it does not wall off the whole Sign in section.
+		wrap.createEl('p', {
+			cls: 'plaud-importer-signin-note-summary',
+			text: SIGN_IN_SUMMARY,
+		});
+		createDisclosure(
+			wrap,
+			'How sign-in works and how long it lasts',
+		).setText(SIGN_IN_NOTE);
 	}
 
 	private renderSigninControl(setting: Setting): void {
@@ -988,7 +1016,13 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 	private renderBrowserSignInControl(setting: Setting): void {
 		// Buttons sit below the description, side by side. See styles.css.
 		setting.settingEl.addClass('plaud-importer-browser-signin');
-		const steps = setting.descEl.createEl('ol', {
+		// The step-by-step is only needed once you have chosen this flow, so it
+		// sits behind a disclosure instead of padding the description for
+		// everyone; the setting's own description says what the flow is for.
+		const steps = createDisclosure(
+			setting.descEl,
+			'Show the step-by-step',
+		).createEl('ol', {
 			cls: 'plaud-importer-browser-steps',
 		});
 		// Built from a variable array so the steps can name the buttons and
