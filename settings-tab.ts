@@ -52,7 +52,7 @@ import {
 	type StoredDevice,
 } from './settings-types';
 import type { SignInMethod } from './reconnect-routing';
-import { describeSignInMethod } from './reconnect-routing';
+import { describeSignInMethod, ssoLimitationNote } from './reconnect-routing';
 import type { BufferedDebugLogger } from './debug-logger';
 
 /**
@@ -93,7 +93,7 @@ export interface SettingsTabHost extends Plugin {
 // name Plaud/Google/Apple plainly: the sentence-case lint only inspects string
 // literals written directly at a setText/createEl call, not a referenced const.
 const SIGN_IN_NOTE =
-	"Plaud has no official API, so this plugin relies on their internal one. That makes sign-in fragile, and it may stop working when Plaud changes that internal API. We expect this whole process to get much simpler once Plaud releases an official API. There are two ways to sign in, depending on how you log in to Plaud. Use 'Sign in with email' if you log in with an email address and password. Use 'Sign in with Google or Apple' if you use single sign-on (SSO) through a Google or Apple account. How long you stay signed in depends on the method and which Plaud portal your account is on. An email sign-in renews itself in the background for about 30 days before asking you to sign in again. A Google or Apple sign-in renews the same way on the new portal; on the current portal it cannot be renewed and usually lasts about 24 hours, so there you can add a password to your Plaud account and use the email sign-in instead. The status line under Plaud token shows your session's actual expiry and whether background renewal is active for it. When the session lapses the plugin shows a one-click Reconnect that reopens the sign-in matching your account.";
+	"Plaud has no official API, so this plugin relies on their internal one. That makes sign-in fragile, and it may stop working when Plaud changes that internal API. We expect this whole process to get much simpler once Plaud releases an official API. There are two ways to sign in, depending on how you log in to Plaud. Use 'Sign in with email' if you log in with an email address and password. Use 'Sign in with Google or Apple' if you use single sign-on (SSO) through a Google or Apple account. How long you stay signed in depends on the method and which Plaud portal your account is on. An email sign-in renews itself in the background for about 30 days before asking you to sign in again. A Google or Apple sign-in is short and unreliable: Plaud can end it early, within hours, and the plugin cannot keep it alive, so you would have to sign in again often. To avoid that, add a password to your Plaud account and use email sign-in instead. The status line under Plaud token shows your session's actual expiry and whether background renewal is active for it. When the session lapses the plugin shows a one-click Reconnect that reopens the sign-in matching your account.";
 
 // Automatic-sync toggle description. ONE constant consumed by both settings
 // paths (the 1.13+ declarative definitions and the 1.12 imperative display()
@@ -784,6 +784,35 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 		const renewalEl = setting.descEl.createDiv({
 			cls: 'plaud-importer-signin-renewal',
 		});
+		// Google/Apple (SSO) limitation note. Plaud revokes SSO sessions
+		// server-side within hours and gives the plugin nothing to renew them
+		// with, so an SSO user needs to know why they keep getting signed out.
+		// The short headline is always visible; the fuller "why + fix" sits
+		// behind a native disclosure so email users and the compact default view
+		// stay uncluttered. Built once with the browser-case copy; refreshStatus
+		// toggles VISIBILITY (not content) so only a stored SSO session shows it,
+		// and expanding the disclosure survives an unrelated redraw.
+		const ssoNoteEl = setting.descEl.createDiv({
+			cls: 'plaud-importer-sso-note',
+		});
+		const ssoNote = ssoLimitationNote('browser');
+		if (ssoNote) {
+			ssoNoteEl.createDiv({
+				cls: 'plaud-importer-sso-note-headline',
+				text: ssoNote.headline,
+			});
+			const ssoDetails = ssoNoteEl.createEl('details', {
+				cls: 'plaud-importer-sso-note-detail',
+			});
+			// aria-label matches the visible text so the accessible name and the
+			// on-screen label agree, and the raw control carries an explicit
+			// label like every other one in this tab.
+			ssoDetails.createEl('summary', {
+				text: ssoNote.toggleLabel,
+				attr: { 'aria-label': ssoNote.toggleLabel },
+			});
+			ssoDetails.createDiv({ text: ssoNote.detail });
+		}
 		const refreshStatus = (): void => {
 			// Decode on demand from the currently linked secret rather than
 			// caching a measurement: the picker below links arbitrary secret
@@ -824,10 +853,14 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 			);
 			const connected = stored && !expired && !unreadable;
 			const canRenew = this.plugin.canRenewCredential(value);
-			// Three states, not two. Folding "renewal stopped after a failure"
+			// Four states, not two. Folding "renewal stopped after a failure"
 			// into "this sign-in cannot renew" describes the wrong cause and
 			// sends the user to the wrong remedy: the first is fixed by
 			// reconnecting, the second is simply how that sign-in method works.
+			// A Google/Apple (browser) session the scheduler WILL try to renew
+			// still gets no 30-day promise here: Plaud can end it early server
+			// side, so the SSO note below carries this session's story instead of
+			// a renewal line that would over-promise.
 			renewalEl.setText(
 				!connected
 					? ''
@@ -835,7 +868,16 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 						? 'This sign-in cannot renew itself in the background. Reconnect when the session lapses.'
 						: this.plugin.sessionRenewalPaused
 							? 'Automatic renewal stopped after a failed attempt. Reconnect to restart it.'
-							: 'Renews itself in the background for about 30 days, then asks you to sign in again.',
+							: this.plugin.settings.signInMethod === 'browser'
+								? ''
+								: 'Renews itself in the background for about 30 days, then asks you to sign in again.',
+			);
+			// Only a stored Google/Apple (SSO) session gets the limitation note;
+			// email/window sessions renew fine and an unrecorded method has no
+			// reliable signal to nag on.
+			ssoNoteEl.toggleClass(
+				'plaud-importer-hidden',
+				!(stored && this.plugin.settings.signInMethod === 'browser'),
 			);
 		};
 		this.signinRefresh = refreshStatus;

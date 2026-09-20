@@ -61,3 +61,25 @@ export function describeSignInMethod(method: SignInMethod): string {
 			return '';
 	}
 }
+
+/**
+ * The settings sign-in-status note for a Google or Apple (SSO) session: a short
+ * headline shown at all times plus a fuller explanation the user expands on
+ * demand. Returns null for an email/window session and for an unrecorded method,
+ * so the sessions that renew fine show nothing extra. Plaud revokes SSO sessions
+ * server-side within hours and gives the plugin nothing to renew them with, so
+ * an SSO user needs to see why they keep getting signed out and the durable fix
+ * (email sign-in). The copy is centralized here rather than written at the
+ * createEl call so it stays consistent with ssoReconnectHint and is unit
+ * testable. Pure.
+ */
+export function ssoLimitationNote(
+	method: SignInMethod,
+): { headline: string; toggleLabel: string; detail: string } | null {
+	if (method !== 'browser') return null;
+	return {
+		headline: 'Google and Apple sessions end early, without warning.',
+		toggleLabel: 'Why this happens and how to fix it',
+		detail: 'Plaud does not give the plugin what a Google or Apple session needs to renew, so it stays short and can end within hours. For a session that lasts about 30 days, add a password to your Plaud account and sign in with email.',
+	};
+}

@@ -887,11 +887,15 @@ export class SessionRenewal {
 	// months of life for 24 hours), a build that can reach the partition, and
 	// an expiry the scheduler can compute a wake-up from. Runtime state
 	// (disposed, a failed attempt, a pause) is deliberately NOT in here;
-	// callers report those separately. Every user-facing claim about renewal
-	// routes through here so the copy cannot disagree with what the scheduler
-	// actually does. signInMethod is a parameter because capture surfaces are
-	// not serialized (issue #86): a capture notice must describe the capture
-	// it belongs to even if a concurrent capture rewrites settings meanwhile.
+	// callers report those separately. A window (email) session's renewal copy
+	// routes through here so it cannot disagree with what the scheduler does. A
+	// browser (Google/Apple) session is the deliberate exception: this can
+	// return true so the scheduler still ATTEMPTS renewal, but the copy never
+	// promises the session lasts, because Plaud can revoke an SSO session
+	// server-side within hours regardless. signInMethod is a parameter because
+	// capture surfaces are not serialized (issue #86): a capture notice must
+	// describe the capture it belongs to even if a concurrent capture rewrites
+	// settings meanwhile.
 	canRenewCredential(
 		token: string,
 		signInMethod: SignInMethod = this.host.getSettings().signInMethod,
@@ -940,9 +944,11 @@ export class SessionRenewal {
 			hours === 1 ? '' : 's'
 		}.`;
 		new Notice(
-			canRenew
-				? `${issued} The plugin renews it in the background for about 30 days, then asks you to sign in again.`
-				: `${issued} The plugin will ask you to sign in again when it expires.`,
+			signInMethod === 'browser'
+				? `${issued} Plaud can end a Google or Apple session early, so the plugin cannot keep it alive reliably. Add a password to your Plaud account and use email sign-in for a session that lasts about 30 days.`
+				: canRenew
+					? `${issued} The plugin renews it in the background for about 30 days, then asks you to sign in again.`
+					: `${issued} The plugin will ask you to sign in again when it expires.`,
 			12000,
 		);
 	}

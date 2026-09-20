@@ -300,6 +300,35 @@
 	color: var(--text-muted);
 }
 
+/* Google/Apple (SSO) limitation note under the sign-in status. Rendered for
+   every session but hidden unless the stored session came from the SSO flow;
+   the plugin toggles plaud-importer-hidden in refreshStatus. */
+.plaud-importer-sso-note.plaud-importer-hidden {
+	display: none;
+}
+
+.plaud-importer-sso-note-headline {
+	margin-top: 0.4em;
+	font-size: var(--font-ui-smaller);
+	color: var(--text-warning);
+}
+
+.plaud-importer-sso-note-detail {
+	margin-top: 0.15em;
+	font-size: var(--font-ui-smaller);
+	color: var(--text-muted);
+	line-height: 1.5;
+}
+
+.plaud-importer-sso-note-detail summary {
+	cursor: pointer;
+	color: var(--text-accent);
+}
+
+.plaud-importer-sso-note-detail > div {
+	margin-top: 0.25em;
+}
+
 /* Result line under the "Test connection" setting */
 .plaud-importer-test-status {
 	margin-top: 0.35em;

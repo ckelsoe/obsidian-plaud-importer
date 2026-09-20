@@ -2,6 +2,7 @@ import {
 	preferWindowForReconnect,
 	ssoReconnectHint,
 	describeSignInMethod,
+	ssoLimitationNote,
 } from '../reconnect-routing';
 
 // Reconnect must reopen the surface that can actually re-auth the account:
@@ -73,5 +74,22 @@ describe('describeSignInMethod', () => {
 
 	it('is empty for an unrecorded method', () => {
 		expect(describeSignInMethod('')).toBe('');
+	});
+});
+
+describe('ssoLimitationNote', () => {
+	it('returns headline, toggle label, and detail for a browser session', () => {
+		const note = ssoLimitationNote('browser');
+		expect(note).not.toBeNull();
+		// Non-null assertion is safe: the line above fails the test otherwise.
+		expect(note!.headline).toMatch(/Google and Apple/);
+		expect(note!.toggleLabel.length).toBeGreaterThan(0);
+		expect(note!.detail).toMatch(/add a password/);
+		expect(note!.detail).toMatch(/email/);
+	});
+
+	it('is null for an email (window) session and an unrecorded method', () => {
+		expect(ssoLimitationNote('window')).toBeNull();
+		expect(ssoLimitationNote('')).toBeNull();
 	});
 });
