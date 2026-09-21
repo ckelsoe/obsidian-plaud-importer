@@ -154,13 +154,14 @@ Use this if you log in to Plaud with **single sign-on (SSO) through a Google or 
 1. Back in the plugin settings, click **Launch sign-in to capture token**. A short reminder pops up; read it and click **Open my browser now**. Plaud opens in your browser.
 2. Sign in to Plaud with Google or Apple if you are not already signed in.
 3. **Click the Plaud → Obsidian bookmark** you saved. Your browser asks whether to open Obsidian; allow it. Obsidian saves the token and the **Plaud token** status changes to **"connected."**
-4. Once it says connected, **close that Plaud browser tab, and do not use Plaud's Log Out.** Logging out ends the same session Obsidian is holding, so it would sign you out here too.
 
 If your browser holds more than one saved Plaud sign-in, the plugin tries them against Plaud and keeps the one that actually works, so you do not have to know which is which.
 
 **If Obsidian does not open in step 3**, the bookmark falls back to showing a line of text in a pop-up box. Select the whole line, copy it (Ctrl+C or Cmd+C), switch back to Obsidian, and click **Paste token from clipboard**. That line carries the same sign-ins the bookmark would have sent, so the plugin still picks the one that works.
 
 If nothing at all happens when you click the bookmark, make sure you are signed in to Plaud in that tab first, then click the bookmark again.
+
+Once the **Plaud token** status shows **"connected"**, **close that Plaud browser tab, and do not use Plaud's Log Out.** Logging out ends the same session Obsidian is holding, so it would sign you out here too.
 
 **Starting over:** the **Clear sign-in** button clears the plugin's stored token and its own embedded sign-in session, so you can connect a different account or recover from a stuck state. It does not sign you out of Plaud in your normal web browser.
 
