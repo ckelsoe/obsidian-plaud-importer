@@ -44,6 +44,7 @@ export class BrowserSignInModal extends Modal {
 			'Sign in to Plaud if you are not already. Google, Apple, and password all work in a real browser.',
 			"Click the 'Plaud → Obsidian' bookmark on your bookmarks bar (the one you saved during setup). Your browser asks to open Obsidian; allow it, and the token is saved for you.",
 			"If Obsidian does not open, the bookmark shows a line of text in a box instead. Copy the whole line, come back here, and click 'Paste token from clipboard'.",
+			'Once Obsidian has your token, close that Plaud browser tab, and do not use Log Out in Plaud. Logging out ends the session for Obsidian too.',
 		];
 		for (const line of lines) {
 			ol.createEl('li', { text: line });

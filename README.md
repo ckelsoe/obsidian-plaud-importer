@@ -161,6 +161,8 @@ If your browser holds more than one saved Plaud sign-in, the plugin tries them a
 
 If nothing at all happens when you click the bookmark, make sure you are signed in to Plaud in that tab first, then click the bookmark again.
 
+Once the **Plaud token** status shows **"connected"**, **close that Plaud browser tab, and do not use Plaud's Log Out.** Logging out ends the same session Obsidian is holding, so it would sign you out here too.
+
 **Starting over:** the **Clear sign-in** button clears the plugin's stored token and its own embedded sign-in session, so you can connect a different account or recover from a stuck state. It does not sign you out of Plaud in your normal web browser.
 
 How long a sign-in lasts depends on the sign-in method. A session from the email sign-in window renews itself in the background for about 30 days, then asks you to sign in again. A session captured from a Google or Apple login cannot be renewed by the plugin, and on many accounts it lasts only about 24 hours, which is why adding a password to your account (see the tip above) is the recommended path for Google and Apple users. The plugin settings show your session's actual expiry in the status line under **Plaud token**, and when the plugin can tell your session is short, it says so at sign-in. When imports stop working, sign in again with the method for your account. If a session lapses during background auto-sync, the pause notice's **Reconnect** button reopens the right sign-in for your account type, so an SSO account is not sent to the email window where Google and Apple logins do not work.

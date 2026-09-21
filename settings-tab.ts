@@ -955,8 +955,9 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 		const stepLines = [
 			"First time only: click 'Set up bookmark'. A web page opens. Drag the big button onto your browser's bookmarks bar (the strip near the top of the window). If you already have an older Plaud → Obsidian bookmark, replace it with this one.",
 			"Click 'Launch sign-in to capture token'. A short reminder pops up, then your browser opens.",
-			'In the browser: sign in to Plaud if needed, then click the bookmark you saved. Your browser asks to open Obsidian; allow it, and the token is saved for you. Done! If the token stops working later, do steps 2 and 3 again.',
+			'In the browser: sign in to Plaud if needed, then click the bookmark you saved. Your browser asks to open Obsidian; allow it, and the token is saved for you.',
 			"Only if Obsidian did not open: the bookmark shows a line of text in a box instead. Copy the whole line, come back to Obsidian, and click 'Paste token from clipboard'.",
+			'Once the token is saved, close that Plaud browser tab so Obsidian holds the session on its own, and do not use Log Out in Plaud. Logging out ends the session for Obsidian too.',
 		];
 		for (const line of stepLines) {
 			steps.createEl('li', { text: line });
