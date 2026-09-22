@@ -6,6 +6,10 @@ All notable changes to Plaud Importer will be documented in this file.
 
 ## [Unreleased]
 
+## [0.41.0-beta.6] - 2026-09-22
+
+Clearer Google and Apple (SSO) sign-in guidance and session handling. Still a pre-release; install it through BRAT. The stable release is unaffected.
+
 ### Added
 
 - **Settings now show which sign-in method your session used, and reconnect prompts explain the Google/Apple limit.** The connection status under "Plaud token" says "Signed in with email and password" or "Signed in with Google or Apple (SSO)", so you can see at a glance where your current session came from. When a Google or Apple session lapses, the reconnect notice now explains that Google and Apple sessions are less reliable than email and points you to the steadier fix: add a password to your Plaud account and use email sign-in, which renews for about 30 days.
@@ -14,6 +18,7 @@ All notable changes to Plaud Importer will be documented in this file.
 ### Changed
 
 - **The browser sign-in steps now tell you to close the Plaud tab, not log out.** After Obsidian saves your token, close that Plaud browser tab and do not use Plaud's Log Out. Logging out ends the same session Obsidian is holding, so it would sign you out here too. The reminder appears in both the settings sign-in steps and the pop-up shown when you launch the browser.
+- **The Google and Apple (SSO) session guidance now matches how the plugin actually behaves.** The settings help, the reconnect prompt, and the README no longer say those sessions cannot be renewed or end within hours. The plugin now tries to renew a Google or Apple session in the background, but Plaud can still end one on its own, so email stays the steadier path.
 
 ## [0.41.0-beta.5] - 2026-09-19
 
