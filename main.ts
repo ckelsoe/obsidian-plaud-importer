@@ -1870,7 +1870,7 @@ export default class PlaudImporterPlugin extends Plugin {
 	/**
 	 * On startup, verify the stored session is actually accepted by Plaud, not
 	 * just that the token still decodes as valid. A Google or Apple (SSO) session
-	 * can be revoked server-side within hours while the token looks fine, and the
+	 * can be revoked server-side while the token looks fine, and the
 	 * claim-based expiry warning does not fire until ~2h before the 24h exp, so
 	 * without this a user opens Obsidian to a dead session and only learns of it
 	 * when an import fails. One read-only call: a still-good session clears any
