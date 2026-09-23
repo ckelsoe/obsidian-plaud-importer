@@ -501,9 +501,12 @@ export async function runImport(
 			// Apply transcript folding AFTER all post-write mutations
 			// (including attachment section insertion) so the saved
 			// heading line always matches the final file layout.
+			// The callout placement has no heading to fold; the callout collapses
+			// itself.
 			if (
 				writeOutcome.status !== 'skipped' &&
-				options.foldTranscript !== false
+				options.foldTranscript !== false &&
+				options.transcriptPlacement !== 'callout'
 			) {
 				await deps.applyFold?.(writeOutcome.path);
 			}

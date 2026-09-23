@@ -26,6 +26,11 @@ import {
 	formatPlaudWebUrl,
 	formatTimestamp,
 	formatTranscriptSection,
+	formatTranscriptCallout,
+	formatTranscriptFileMarkdown,
+	isTranscriptPlacement,
+	transcriptFilePathFor,
+	TRANSCRIPT_FILE_MARKER,
 	groupTranscriptByChapters,
 	isValidNoteNameTemplate,
 	isValidReplacementChar,
@@ -5972,5 +5977,529 @@ describe('note name and subfolder in the capture zone', () => {
 				-240,
 			),
 		).toBe('2026/08/07');
+	});
+});
+
+// Transcript placement (#115 callout, #70 separate file) ---------------------
+
+describe('transcript placement', () => {
+	const chapters: readonly Chapter[] = [
+		{ title: 'Opening', startSeconds: 0 },
+		{ title: 'Close', startSeconds: 14 },
+	];
+
+	describe('isTranscriptPlacement', () => {
+		it('accepts the four layouts', () => {
+			for (const value of [
+				'heading',
+				'callout',
+				'file-embed',
+				'file-link',
+			]) {
+				expect(isTranscriptPlacement(value)).toBe(true);
+			}
+		});
+
+		it('rejects anything else', () => {
+			for (const value of ['', 'file', 'Heading', 4, null, undefined]) {
+				expect(isTranscriptPlacement(value)).toBe(false);
+			}
+		});
+	});
+
+	describe('formatTranscriptCallout', () => {
+		it('keeps chapters inside one callout with no headings or links', () => {
+			const transcript = makeTranscript();
+			const out = formatTranscriptCallout(
+				transcript,
+				groupTranscriptByChapters(transcript, chapters),
+			);
+			const lines = out.split('\n');
+			expect(lines[0]).toBe('> [!note]- Transcript');
+			// Every line is inside the callout, so nothing escapes it.
+			expect(lines.every((line) => line.startsWith('>'))).toBe(true);
+			// Obsidian does not index headings inside a callout, so none are used.
+			expect(lines.some((line) => /^>\s*#/.test(line))).toBe(false);
+			expect(out).not.toContain('[[');
+			expect(out).not.toContain('^plaud-chapters');
+			expect(out).toContain('> **Chapters**');
+			expect(out).toContain('> - **[00:00]** Opening');
+			expect(out).toContain('> - **[00:14]** Close');
+			expect(out).toContain('> **00:00 Opening**');
+			expect(out).toContain('> **00:14 Close**');
+			expect(out).toContain(
+				'> **[00:00]** Charles: Thanks for making time.',
+			);
+			expect(out).toContain(
+				'> **[00:14]** Mary: Of course, glad to be here.',
+			);
+		});
+
+		it('is the flat callout when there are no chapters', () => {
+			const transcript = makeTranscript();
+			expect(formatTranscriptCallout(transcript, [])).toBe(
+				formatTranscriptSection(transcript, [], 4),
+			);
+		});
+
+		it('says so when there is no transcript', () => {
+			expect(formatTranscriptCallout(null, [])).toBe(
+				'> [!note]- Transcript\n> _No transcript available._',
+			);
+		});
+	});
+
+	describe('formatMarkdown', () => {
+		const notePath = 'Plaud/2026-04-14 Morning standup.md';
+
+		it('renders the callout layout in place of the heading', () => {
+			const md = formatMarkdown(
+				makeRecording(),
+				makeTranscript(),
+				makeSummary(),
+				chapters,
+				{ transcriptPlacement: 'callout' },
+			);
+			expect(md).toContain('> [!note]- Transcript');
+			expect(md).not.toMatch(/^#{1,6} Transcript$/m);
+			expect(md).not.toMatch(/^#{1,6} 00:00 Opening$/m);
+		});
+
+		it('embeds the transcript file under a heading for file-embed', () => {
+			const md = formatMarkdown(
+				makeRecording(),
+				makeTranscript(),
+				makeSummary(),
+				chapters,
+				{ transcriptPlacement: 'file-embed', notePath },
+			);
+			expect(md).toContain(
+				'#### Transcript\n\n![[Plaud/2026-04-14 Morning standup-assets/Transcript]]',
+			);
+			// The transcript text itself lives in the other file.
+			expect(md).not.toContain('Thanks for making time.');
+		});
+
+		it('links to the transcript file for file-link', () => {
+			const md = formatMarkdown(
+				makeRecording(),
+				makeTranscript(),
+				makeSummary(),
+				undefined,
+				{
+					transcriptPlacement: 'file-link',
+					notePath,
+					transcriptHeaderLevel: 2,
+				},
+			);
+			expect(md).toContain(
+				'## Transcript\n\n[[Plaud/2026-04-14 Morning standup-assets/Transcript|Open the transcript]]',
+			);
+			expect(md).not.toContain('Thanks for making time.');
+		});
+
+		it('falls back to the heading layout without a note path', () => {
+			const withFile = formatMarkdown(
+				makeRecording(),
+				makeTranscript(),
+				makeSummary(),
+				chapters,
+				{ transcriptPlacement: 'file-embed' },
+			);
+			const heading = formatMarkdown(
+				makeRecording(),
+				makeTranscript(),
+				makeSummary(),
+				chapters,
+			);
+			expect(withFile).toBe(heading);
+		});
+
+		it('keeps an empty transcript in the note rather than an empty file', () => {
+			const md = formatMarkdown(
+				makeRecording(),
+				makeTranscript({ segments: [] }),
+				makeSummary(),
+				undefined,
+				{ transcriptPlacement: 'file-link', notePath },
+			);
+			expect(md).toContain('_No transcript available._');
+			expect(md).not.toContain('Open the transcript');
+		});
+
+		it('keeps the transcript in the note when the path has # or ^', () => {
+			const heading = formatMarkdown(
+				makeRecording(),
+				makeTranscript(),
+				makeSummary(),
+				chapters,
+			);
+			for (const path of ['Plaud/Roadmap #1.md', 'Plaud/Q^3.md']) {
+				const md = formatMarkdown(
+					makeRecording(),
+					makeTranscript(),
+					makeSummary(),
+					chapters,
+					{ transcriptPlacement: 'file-link', notePath: path },
+				);
+				expect(md).toBe(heading);
+			}
+		});
+
+		it('treats an unknown placement as the heading layout', () => {
+			const md = formatMarkdown(
+				makeRecording(),
+				makeTranscript(),
+				makeSummary(),
+				chapters,
+				{
+					transcriptPlacement: 'sideways' as unknown as 'heading',
+				},
+			);
+			expect(md).toContain('#### Transcript');
+		});
+	});
+
+	describe('formatTranscriptFileMarkdown', () => {
+		it('links back to the note and uses real chapter headings', () => {
+			const transcript = makeTranscript();
+			const out = formatTranscriptFileMarkdown(
+				transcript,
+				groupTranscriptByChapters(transcript, chapters),
+				'Plaud/2026-04-14 Morning standup.md',
+			);
+			// The ownership marker comes first, then the H1.
+			expect(
+				out.startsWith(`${TRANSCRIPT_FILE_MARKER}\n\n# Transcript\n`),
+			).toBe(true);
+			expect(out).toContain(
+				'[[Plaud/2026-04-14 Morning standup|2026-04-14 Morning standup]]',
+			);
+			expect(out).toContain('## Chapters');
+			expect(out).toContain('## 00:00 Opening');
+			expect(out).toContain('- [[#00:00 Opening|**[00:00]** Opening]]');
+			// Exactly one H1: the wrapper heading is not repeated.
+			expect(out.match(/^# /gm)).toHaveLength(1);
+		});
+
+		it('writes plain lines when there are no chapters', () => {
+			const out = formatTranscriptFileMarkdown(
+				makeTranscript(),
+				[],
+				'Morning standup.md',
+			);
+			expect(out).toContain(
+				'**[00:00]** Charles: Thanks for making time.\n\n**[00:14]** Mary: Of course, glad to be here.',
+			);
+			expect(out).not.toContain('> ');
+			expect(out).toContain('[[Morning standup|Morning standup]]');
+		});
+	});
+
+	describe('NoteWriter', () => {
+		const NOTE = 'Plaud/2026-04-14 Morning standup.md';
+		const TRANSCRIPT =
+			'Plaud/2026-04-14 Morning standup-assets/Transcript.md';
+
+		it('derives the transcript path from the note path', () => {
+			expect(transcriptFilePathFor(NOTE)).toBe(TRANSCRIPT);
+		});
+
+		it('writes the transcript file next to the note for file-embed', async () => {
+			const vault = makeFakeVault();
+			const writer = new NoteWriter(vault, {
+				outputFolder: 'Plaud',
+				onDuplicate: 'overwrite',
+				transcriptPlacement: 'file-embed',
+			});
+			const outcome = await writer.writeNote(
+				makeRecording(),
+				makeTranscript(),
+				makeSummary(),
+				chapters,
+			);
+			expect(outcome.status).toBe('created');
+			expect(
+				vault.folders.has('Plaud/2026-04-14 Morning standup-assets'),
+			).toBe(true);
+			const file = vault.files.get(TRANSCRIPT) ?? '';
+			expect(file).toContain('## 00:00 Opening');
+			expect(file).toContain('Thanks for making time.');
+			expect(vault.files.get(NOTE)).toContain(
+				'![[Plaud/2026-04-14 Morning standup-assets/Transcript]]',
+			);
+			// The file is not a recording note, so dedup never mistakes it for one.
+			expect(file).not.toContain('plaud-id');
+		});
+
+		it('rewrites the transcript file on re-import', async () => {
+			const vault = makeFakeVault();
+			const writer = new NoteWriter(vault, {
+				outputFolder: 'Plaud',
+				onDuplicate: 'overwrite',
+				transcriptPlacement: 'file-link',
+			});
+			await writer.writeNote(
+				makeRecording(),
+				makeTranscript(),
+				makeSummary(),
+			);
+			const outcome = await writer.writeNote(
+				makeRecording(),
+				makeTranscript({
+					segments: [
+						{
+							startSeconds: 0,
+							endSeconds: 5,
+							speaker: 'Mary',
+							text: 'Corrected line.',
+						},
+					],
+				}),
+				makeSummary(),
+			);
+			expect(outcome.status).toBe('overwritten');
+			expect(vault.overwrittenPaths).toContain(TRANSCRIPT);
+			expect(vault.files.get(TRANSCRIPT)).toContain('Corrected line.');
+			expect(vault.files.get(TRANSCRIPT)).not.toContain(
+				'Thanks for making time.',
+			);
+		});
+
+		it('does not touch the transcript file when the note is skipped', async () => {
+			const vault = makeFakeVault();
+			await new NoteWriter(vault, {
+				outputFolder: 'Plaud',
+				onDuplicate: 'overwrite',
+				transcriptPlacement: 'file-embed',
+			}).writeNote(makeRecording(), makeTranscript(), makeSummary());
+			const before = vault.files.get(TRANSCRIPT);
+			const outcome = await new NoteWriter(vault, {
+				outputFolder: 'Plaud',
+				onDuplicate: 'skip',
+				transcriptPlacement: 'file-embed',
+			}).writeNote(
+				makeRecording(),
+				makeTranscript({ segments: [] }),
+				makeSummary(),
+			);
+			expect(outcome.status).toBe('skipped');
+			expect(vault.files.get(TRANSCRIPT)).toBe(before);
+		});
+
+		it('writes no transcript file for the in-note layouts', async () => {
+			for (const placement of ['heading', 'callout'] as const) {
+				const vault = makeFakeVault();
+				await new NoteWriter(vault, {
+					outputFolder: 'Plaud',
+					onDuplicate: 'overwrite',
+					transcriptPlacement: placement,
+				}).writeNote(makeRecording(), makeTranscript(), makeSummary());
+				expect(vault.files.has(TRANSCRIPT)).toBe(false);
+			}
+		});
+
+		it('writes no transcript file when the transcript is excluded or empty', async () => {
+			const excluded = makeFakeVault();
+			await new NoteWriter(excluded, {
+				outputFolder: 'Plaud',
+				onDuplicate: 'overwrite',
+				transcriptPlacement: 'file-embed',
+				includeTranscript: false,
+			}).writeNote(makeRecording(), makeTranscript(), makeSummary());
+			expect(excluded.files.has(TRANSCRIPT)).toBe(false);
+
+			const empty = makeFakeVault();
+			await new NoteWriter(empty, {
+				outputFolder: 'Plaud',
+				onDuplicate: 'overwrite',
+				transcriptPlacement: 'file-embed',
+			}).writeNote(
+				makeRecording(),
+				makeTranscript({ segments: [] }),
+				makeSummary(),
+			);
+			expect(empty.files.has(TRANSCRIPT)).toBe(false);
+		});
+
+		it('points the note and the file at the migrated path after a title change', async () => {
+			const OLD = 'Plaud/2026-04-14 Old title.md';
+			const NEW = 'Plaud/2026-04-14 New title.md';
+			const vault = makeFakeVault();
+			vault.files.set(OLD, '---\nplaud-id: abc123\n---\n# old\n');
+			vault.folders.add('Plaud');
+			const writer = new NoteWriter(vault, {
+				outputFolder: 'Plaud',
+				onDuplicate: 'overwrite',
+				transcriptPlacement: 'file-link',
+				existingPathForPlaudId: (id) => (id === 'abc123' ? OLD : null),
+				migrateExistingNote: async (oldPath, newPath) => {
+					const c = vault.files.get(oldPath) ?? '';
+					vault.files.delete(oldPath);
+					vault.files.set(newPath, c);
+				},
+			});
+			const outcome = await writer.writeNote(
+				makeRecording({ title: 'New title' }),
+				makeTranscript(),
+				makeSummary(),
+			);
+			expect(outcome.path).toBe(NEW);
+			expect(vault.files.get(NEW)).toContain(
+				'[[Plaud/2026-04-14 New title-assets/Transcript|Open the transcript]]',
+			);
+			const file =
+				vault.files.get(
+					'Plaud/2026-04-14 New title-assets/Transcript.md',
+				) ?? '';
+			expect(file).toContain(
+				'[[Plaud/2026-04-14 New title|2026-04-14 New title]]',
+			);
+			expect(
+				vault.files.has(
+					'Plaud/2026-04-14 Old title-assets/Transcript.md',
+				),
+			).toBe(false);
+		});
+
+		it('trashes a leftover transcript file when the layout moves back into the note', async () => {
+			const vault = makeFakeVault();
+			await new NoteWriter(vault, {
+				outputFolder: 'Plaud',
+				onDuplicate: 'overwrite',
+				transcriptPlacement: 'file-embed',
+			}).writeNote(makeRecording(), makeTranscript(), makeSummary());
+			expect(vault.files.has(TRANSCRIPT)).toBe(true);
+
+			const trashed: string[] = [];
+			const outcome = await new NoteWriter(vault, {
+				outputFolder: 'Plaud',
+				onDuplicate: 'overwrite',
+				transcriptPlacement: 'callout',
+				trashFile: async (path) => {
+					trashed.push(path);
+					vault.files.delete(path);
+				},
+			}).writeNote(makeRecording(), makeTranscript(), makeSummary());
+
+			expect(outcome.status).toBe('overwritten');
+			expect(trashed).toEqual([TRANSCRIPT]);
+			expect(vault.files.get(NOTE)).toContain('> [!note]- Transcript');
+		});
+
+		it('trashes a leftover transcript file when the transcript is excluded', async () => {
+			const vault = makeFakeVault();
+			await new NoteWriter(vault, {
+				outputFolder: 'Plaud',
+				onDuplicate: 'overwrite',
+				transcriptPlacement: 'file-link',
+			}).writeNote(makeRecording(), makeTranscript(), makeSummary());
+			const trashed: string[] = [];
+			await new NoteWriter(vault, {
+				outputFolder: 'Plaud',
+				onDuplicate: 'overwrite',
+				transcriptPlacement: 'file-link',
+				includeTranscript: false,
+				trashFile: async (path) => {
+					trashed.push(path);
+				},
+			}).writeNote(makeRecording(), makeTranscript(), makeSummary());
+			expect(trashed).toEqual([TRANSCRIPT]);
+		});
+
+		it('never trashes the transcript file it just wrote, or one that is absent', async () => {
+			const vault = makeFakeVault();
+			const trashed: string[] = [];
+			const trashFile = async (path: string): Promise<void> => {
+				trashed.push(path);
+			};
+			await new NoteWriter(vault, {
+				outputFolder: 'Plaud',
+				onDuplicate: 'overwrite',
+				transcriptPlacement: 'heading',
+				trashFile,
+			}).writeNote(makeRecording(), makeTranscript(), makeSummary());
+			await new NoteWriter(vault, {
+				outputFolder: 'Plaud',
+				onDuplicate: 'overwrite',
+				transcriptPlacement: 'file-embed',
+				trashFile,
+			}).writeNote(makeRecording(), makeTranscript(), makeSummary());
+			expect(trashed).toEqual([]);
+			expect(vault.files.has(TRANSCRIPT)).toBe(true);
+		});
+
+		it('refuses to overwrite a Transcript.md the plugin did not write', async () => {
+			const vault = makeFakeVault();
+			vault.folders.add('Plaud');
+			vault.folders.add('Plaud/2026-04-14 Morning standup-assets');
+			vault.files.set(TRANSCRIPT, 'My own notes.');
+			const writer = new NoteWriter(vault, {
+				outputFolder: 'Plaud',
+				onDuplicate: 'overwrite',
+				transcriptPlacement: 'file-embed',
+			});
+			await expect(
+				writer.writeNote(
+					makeRecording(),
+					makeTranscript(),
+					makeSummary(),
+				),
+			).rejects.toThrow('was not created by Plaud Importer');
+			expect(vault.files.get(TRANSCRIPT)).toBe('My own notes.');
+			// Transcript first: a failed transcript write leaves no note behind
+			// that links to it, so the next import retries both.
+			expect(vault.files.has(NOTE)).toBe(false);
+		});
+
+		it('never trashes a Transcript.md the plugin did not write', async () => {
+			const vault = makeFakeVault();
+			vault.files.set(TRANSCRIPT, 'My own notes.');
+			const trashed: string[] = [];
+			await new NoteWriter(vault, {
+				outputFolder: 'Plaud',
+				onDuplicate: 'overwrite',
+				transcriptPlacement: 'callout',
+				trashFile: async (path) => {
+					trashed.push(path);
+				},
+			}).writeNote(makeRecording(), makeTranscript(), makeSummary());
+			expect(trashed).toEqual([]);
+		});
+
+		it('writes the transcript file before the note', async () => {
+			const vault = makeFakeVault();
+			await new NoteWriter(vault, {
+				outputFolder: 'Plaud',
+				onDuplicate: 'overwrite',
+				transcriptPlacement: 'file-link',
+			}).writeNote(makeRecording(), makeTranscript(), makeSummary());
+			expect(vault.createdPaths).toEqual([TRANSCRIPT, NOTE]);
+		});
+
+		it('reports no fold target for the callout layout, even with chapters', async () => {
+			const vault = makeFakeVault();
+			const outcome = await new NoteWriter(vault, {
+				outputFolder: 'Plaud',
+				onDuplicate: 'skip',
+				transcriptPlacement: 'callout',
+			}).writeNote(
+				makeRecording(),
+				makeTranscript(),
+				makeSummary(),
+				chapters,
+			);
+			expect(expectCreatedOutcome(outcome).foldInfo).toBeUndefined();
+		});
+
+		it('folds the heading above an embedded transcript file', async () => {
+			const vault = makeFakeVault();
+			const outcome = await new NoteWriter(vault, {
+				outputFolder: 'Plaud',
+				onDuplicate: 'skip',
+				transcriptPlacement: 'file-embed',
+			}).writeNote(makeRecording(), makeTranscript(), makeSummary());
+			expect(expectCreatedOutcome(outcome).foldInfo).toBeDefined();
+		});
 	});
 });

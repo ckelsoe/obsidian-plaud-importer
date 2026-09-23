@@ -4,8 +4,10 @@ import {
 	TFolder,
 	requestUrl,
 	type RequestUrlResponse,
+	type TAbstractFile,
 } from 'obsidian';
 import type { AttachmentAsset } from './plaud-client';
+import { TRANSCRIPT_FILE_NAME } from './note-writer';
 import { NoopDebugLogger, type DebugLogger } from './debug-logger';
 import type { ArtifactSelection } from './import-core';
 import { PLAUD_MARK_DATA_TYPE } from './import-core';
@@ -836,17 +838,9 @@ export class AttachmentImporter {
 	}
 
 	private async clearAttachmentFolder(folder: TFolder): Promise<void> {
-		const children = [...folder.children];
-		for (const child of children) {
-			if (child instanceof TFile) {
-				await this.app.fileManager.trashFile(child);
-				continue;
-			}
-			if (child instanceof TFolder) {
-				await this.clearAttachmentFolder(child);
-				await this.app.fileManager.trashFile(child);
-			}
-		}
+		await clearAttachmentFolder(folder, (file) =>
+			this.app.fileManager.trashFile(file),
+		);
 	}
 
 	private responseToArrayBuffer(
@@ -1486,30 +1480,11 @@ export class AttachmentImporter {
 		return this.insertSectionBeforeTranscript(content, section);
 	}
 
-	/**
-	 * Insert a managed section just before the note's real transcript.
-	 * Anchors on the LAST `Transcript` heading: it is always the real
-	 * transcript (the final section). A consumer_note template output that
-	 * renders a `### Transcript`/`#### Transcript` heading earlier in the
-	 * note must not capture the anchor and split the Template outputs block.
-	 * Shared by the attachments and audio sections.
-	 */
 	private insertSectionBeforeTranscript(
 		content: string,
 		section: string,
 	): string {
-		const re = /\n#{1,6} Transcript\s*\n/g;
-		let insertAt = -1;
-		let match: RegExpExecArray | null;
-		while ((match = re.exec(content)) !== null) {
-			insertAt = match.index;
-		}
-		if (insertAt !== -1) {
-			const before = content.slice(0, insertAt).replace(/\s+$/, '');
-			const after = content.slice(insertAt).replace(/^\s*/, '');
-			return `${before}\n\n${section}\n\n${after}\n`;
-		}
-		return `${content}\n\n${section}\n`;
+		return insertSectionBeforeTranscript(content, section);
 	}
 
 	private stripManagedAudioSection(content: string): string {
@@ -1520,6 +1495,62 @@ export class AttachmentImporter {
 			/\n## Audio\n\n_Original recording audio downloaded from Plaud at import time\._\n\n!\[\[[^\n]*\]\]\n?/,
 			'\n',
 		);
+	}
+}
+
+/**
+ * Insert a managed section just before the note's real transcript.
+ * Anchors on the LAST `Transcript` heading or `[!note]- Transcript` callout
+ * (the callout layout, and any transcript without chapters, has no heading).
+ * The last match is always the real transcript (the final section). A
+ * consumer_note template output that renders a `### Transcript`/`#### Transcript`
+ * heading earlier in the note must not capture the anchor and split the
+ * Template outputs block. With no anchor the section is appended. Shared by
+ * the attachments and audio sections.
+ */
+export function insertSectionBeforeTranscript(
+	content: string,
+	section: string,
+): string {
+	const re = /\n(?:#{1,6} Transcript|> \[!note\]- Transcript)\s*\n/g;
+	let insertAt = -1;
+	let match: RegExpExecArray | null;
+	while ((match = re.exec(content)) !== null) {
+		insertAt = match.index;
+	}
+	if (insertAt !== -1) {
+		const before = content.slice(0, insertAt).replace(/\s+$/, '');
+		const after = content.slice(insertAt).replace(/^\s*/, '');
+		return `${before}\n\n${section}\n\n${after}\n`;
+	}
+	return `${content}\n\n${section}\n`;
+}
+
+/**
+ * Trash everything in a note's `-assets` folder before a re-import refreshes
+ * its attachments, EXCEPT the managed transcript file at the top level. That
+ * file (separate-file transcript layout) is not an attachment, and the note
+ * writer has already rewritten it for this import, so trashing it would leave
+ * the note's transcript link broken. Nested folders are cleared and trashed.
+ */
+export async function clearAttachmentFolder(
+	folder: TFolder,
+	trash: (file: TAbstractFile) => Promise<void>,
+	keepTranscriptFile = true,
+): Promise<void> {
+	const children = [...folder.children];
+	for (const child of children) {
+		if (child instanceof TFile) {
+			if (keepTranscriptFile && child.name === TRANSCRIPT_FILE_NAME) {
+				continue;
+			}
+			await trash(child);
+			continue;
+		}
+		if (child instanceof TFolder) {
+			await clearAttachmentFolder(child, trash, false);
+			await trash(child);
+		}
 	}
 }
 

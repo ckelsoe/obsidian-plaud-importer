@@ -25,7 +25,7 @@
 
 Import meeting recordings, AI summaries, transcripts, and attachments from [Plaud.AI](https://www.plaud.ai/) into your Obsidian vault as markdown notes.
 
-Each recording becomes a single note with frontmatter metadata, a Plaud-generated summary, and a heading-based transcript section with chapter navigation. Images, mind-maps, and other Plaud artifacts land in a matching `-assets` folder next to the note.
+Each recording becomes a single note with frontmatter metadata, a Plaud-generated summary, and the transcript with chapter navigation. You choose whether the transcript sits under a heading, in a collapsed callout, or in its own file. Images, mind-maps, and other Plaud artifacts land in a matching `-assets` folder next to the note.
 
 ## What to know before you install
 
@@ -59,8 +59,7 @@ Plaud does not offer an official API yet, so this plugin works by using Plaud's 
   - An `AI Suggestions` section pulled from Plaud's `ai_suggestion` field when the response includes one (separate from the main summary)
   - A `Template outputs` section that renders any extra AI templates you generated in Plaud (Key Points, Daily Journal, Meeting Summary, and so on), one foldable subsection per template, instead of dropping them as unreadable `.bin` attachments
   - A `Screenshots` section with any photos you captured during the recording (new portal), each labelled with its time into the recording and downloaded into the note's assets folder
-  - An inline chapter index with jump-links into the transcript
-  - A heading-based transcript section with per-chapter `Back to Chapters` links
+  - The transcript, laid out the way you pick in settings (see [Transcript rendering](#transcript-rendering)). The default is a heading-based section with a chapter index that jumps to each chapter, and `Back to Chapters` links
   - An `Open in Plaud` link under the H1 for quick round-tripping
 - **Downloads attachments** (images, mind-map PNGs, card PNGs, other files) into a `<note-name>-assets/` folder and references them from the note.
 - **Optional audio download.** Turn on **Audio** to save each recording's original audio next to the note and embed it as a playable clip under an `Audio` heading. Off by default because audio is large (roughly 15 MB per hour). Missing or expired audio never fails an import.
@@ -75,7 +74,7 @@ Plaud does not offer an official API yet, so this plugin works by using Plaud's 
 - **Import only from selected recording sources.** Choose which of your paired Plaud devices to import from, and whether to include recordings made in the Plaud app or imported, so a device you keep for personal recordings stays out of your vault. Applies to manual import and background auto-sync alike, off by default. See [Recording sources](#recording-sources).
 - **Resume an interrupted import.** If your Plaud session expires partway through a multi-select import, the run stops at the first recording that fails to authenticate, keeps what it already imported, and lets you sign in again right there; a **Resume remaining** button then finishes the recordings that were left.
 - **Duplicate handling** is configurable: Skip, Overwrite, or Ask each time. "Ask each time" prompts per file with an explicit warning that the existing note body AND its `-assets` folder will be replaced; in a multi-select import you can escalate to "Overwrite all remaining" / "Skip all remaining" or cancel the batch.
-- **Transcript folding.** Imported notes open with the transcript section collapsed by default so the summary is what you see first. Toggleable in settings.
+- **Transcript layout and folding.** Put the transcript under a heading, in a collapsed callout, or in its own file (embedded or linked). Imported notes open with the transcript collapsed by default so the summary is what you see first. Both are in settings.
 - **Debug log.** An opt-in in-memory buffer of API requests/responses for troubleshooting; auth headers are never captured.
 
 ## Requirements
@@ -285,8 +284,15 @@ The filter applies to both manual import and auto-sync. It uses blocklist behavi
 
 ### Transcript rendering
 
-- **Fold transcript by default.** Imported notes open with the transcript heading collapsed so the summary is what you see first.
-- **Transcript heading level.** Sets which H-level the wrapping `Transcript` heading uses (chapters render one level deeper). Pick what fits your note style.
+- **Transcript layout.** Where each note's transcript goes:
+  - **In the note, under a heading** (default). A `Transcript` heading with a chapter index that jumps to each chapter heading.
+  - **In the note, in a collapsed callout.** Keeps the transcript out of the note's heading outline. Chapters show as a plain list and bold titles, with no jump links, because Obsidian cannot jump to a chapter inside a collapsed callout.
+  - **Separate file, embedded in the note.** The transcript goes in `Transcript.md` in the note's `-assets` folder and is embedded under the note's `Transcript` heading, so it still reads inline. In the file, chapters are real headings with working links.
+  - **Separate file, linked from the note.** Same file, but the note only links to it, so the note stays short.
+
+  The layout applies to notes you import or re-import after you change it. Existing notes keep their layout until they are re-imported. The plugin rewrites `Transcript.md` on every re-import, so edit the note rather than that file. If you switch back to an in-note layout, re-importing the note moves its old `Transcript.md` to the trash. A note whose name contains `#` or `^` keeps its transcript in the note under a heading, because Obsidian cannot link to a file whose path contains those characters.
+- **Fold transcript by default.** Imported notes open with the transcript heading collapsed so the summary is what you see first. The callout layout is always collapsed, so this does not apply to it.
+- **Transcript heading level.** Sets which H-level the `Transcript` heading uses (in the heading layout, chapters render one level deeper). Not used by the callout layout.
 
 ### Unprocessed and trashed recordings
 

@@ -304,6 +304,12 @@ export class TFile {
 	extension = '';
 }
 
+export class TFolder {
+	path = '';
+	name = '';
+	children: Array<TFile | TFolder> = [];
+}
+
 /** Network stub. Tests that need a response should jest.mock this per suite. */
 export function requestUrl(_options: unknown): never {
 	throw new Error(

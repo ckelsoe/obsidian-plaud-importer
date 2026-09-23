@@ -6,6 +6,14 @@ All notable changes to Plaud Importer will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **Choose where the transcript goes.** A new "Transcript layout" setting under Transcript rendering has four options. "Under a heading" is the existing layout and stays the default. "In a collapsed callout" puts the whole transcript in one collapsed callout, so it stays out of the note's heading outline (#115). Chapters there show as a plain list and bold titles, because Obsidian cannot jump to a chapter inside a collapsed callout. "Separate file, embedded" and "Separate file, linked" write the transcript to `Transcript.md` in the note's `-assets` folder and embed or link it from the note, which keeps long notes short (#70). In that file, chapters are real headings with working links. The layout applies to notes you import or re-import after changing it, and switching back to an in-note layout moves the old `Transcript.md` to the trash on re-import. A note whose name contains `#` or `^` keeps its transcript in the note, because Obsidian cannot link to a file under such a name.
+
+### Fixed
+
+- **Attachments and audio now land above a transcript that has no chapters.** For a recording without chapters, the Images and Attachments and Audio sections were added after the transcript instead of before it. They now go before it, as they already did for recordings with chapters.
+
 ## [0.41.0] - 2026-09-23
 
 Support for the new Plaud portal. This stable release brings together the six 0.41.0 betas, which shipped through BRAT from 2026-09-17 to 2026-09-22. The beta entries below have the full detail.

@@ -120,6 +120,42 @@ export class NoteWriterCancelledError extends Error {
  */
 export type HeadingLevel = 1 | 2 | 3 | 4 | 5 | 6;
 
+/**
+ * Where a recording's transcript goes (#115, #70):
+ *   - 'heading': in the note under a `Transcript` heading (the original layout).
+ *   - 'callout': in the note inside one collapsed `[!note]- Transcript` callout.
+ *   - 'file-embed': in its own file in the note's `-assets` folder, embedded in
+ *     the note so it still reads inline.
+ *   - 'file-link': in its own file, with only a link to it in the note.
+ */
+export type TranscriptPlacement =
+	'heading' | 'callout' | 'file-embed' | 'file-link';
+
+const TRANSCRIPT_PLACEMENTS: readonly string[] = [
+	'heading',
+	'callout',
+	'file-embed',
+	'file-link',
+] satisfies readonly TranscriptPlacement[];
+
+export function isTranscriptPlacement(
+	value: unknown,
+): value is TranscriptPlacement {
+	return typeof value === 'string' && TRANSCRIPT_PLACEMENTS.includes(value);
+}
+
+/** Name of the managed transcript file inside a note's `-assets` folder. */
+export const TRANSCRIPT_FILE_NAME = 'Transcript.md';
+
+/**
+ * Hidden Obsidian comment the plugin writes into every managed transcript
+ * file. It proves the file is ours, so a same-named file the user made is
+ * never overwritten or trashed. Obsidian comment syntax, so reading view
+ * hides it.
+ */
+export const TRANSCRIPT_FILE_MARKER =
+	'%% plaud-importer: managed transcript %%';
+
 export interface NoteWriterOptions {
 	readonly outputFolder: string;
 	/**
@@ -203,6 +239,14 @@ export interface NoteWriterOptions {
 		oldNotePath: string,
 		newNotePath: string,
 	) => Promise<void>;
+	/**
+	 * Optional capability to move a vault file to the trash. When supplied, a
+	 * write whose note no longer references the separate transcript file (the
+	 * layout changed to an in-note one, or the transcript was excluded or
+	 * empty) trashes the stale `Transcript.md`. When omitted, a stale file is
+	 * left in place.
+	 */
+	readonly trashFile?: (path: string) => Promise<void>;
 	readonly onDuplicate: DuplicatePolicy;
 	/**
 	 * Required when `onDuplicate === 'prompt'`. Invoked per duplicate
@@ -235,6 +279,11 @@ export interface NoteWriterOptions {
 	 * point for a "supporting content" section.
 	 */
 	readonly transcriptHeaderLevel?: HeadingLevel;
+	/**
+	 * Where the transcript goes. Defaults to 'heading' (the original layout)
+	 * when omitted or invalid. See `TranscriptPlacement`.
+	 */
+	readonly transcriptPlacement?: TranscriptPlacement;
 }
 
 /**
@@ -2268,6 +2317,103 @@ export function formatTranscriptSection(
 }
 
 /**
+ * Render the transcript as ONE collapsed `[!note]- Transcript` callout, chapters
+ * included (#115). Chapter titles become bold lines and the chapter index is a
+ * plain list, never headings or links: Obsidian does not index headings inside a
+ * callout, keeps only one block id per callout, and does not expand a collapsed
+ * callout when a link targets something inside it (all verified live), so
+ * in-callout navigation cannot work. Without chapters this is the flat callout.
+ */
+export function formatTranscriptCallout(
+	transcript: Transcript | null,
+	groups: readonly TranscriptChapterGroup[],
+): string {
+	if (!transcript || transcript.segments.length === 0) {
+		return '> [!note]- Transcript\n> _No transcript available._';
+	}
+	const populated = groups.filter((group) => group.segments.length > 0);
+	if (populated.length === 0) {
+		return formatFlatTranscriptCallout(transcript.segments);
+	}
+	const lines: string[] = ['> [!note]- Transcript'];
+	const index = groups
+		.filter((group) => group.chapter.title.trim().length > 0)
+		.map(
+			(group) =>
+				`> - **[${formatTimestamp(group.chapter.startSeconds)}]** ${group.chapter.title.trim()}`,
+		);
+	if (index.length > 0) {
+		lines.push('> **Chapters**', '>', ...index, '>', '> ---');
+	}
+	for (const group of populated) {
+		lines.push('>', `> **${chapterHeadingText(group.chapter)}**`, '>');
+		for (const segment of group.segments) {
+			lines.push(formatTranscriptLine(segment));
+		}
+	}
+	return lines.join('\n');
+}
+
+/**
+ * Link (or embed) to a vault file by its full path. Callers only pass paths
+ * without `#` or `^`: Obsidian splits every link target at those characters
+ * (wikilink and Markdown link alike, verified live), so such a path cannot be
+ * linked at all. `effectiveTranscriptPlacement` keeps those notes inline.
+ */
+function vaultFileLink(path: string, display: string, embed: boolean): string {
+	const target = path.replace(/\.md$/i, '');
+	return embed ? `![[${target}]]` : `[[${target}|${display}]]`;
+}
+
+/**
+ * Body of the separate transcript file (#70): an H1, a link back to the
+ * recording's note, then the transcript. Chapters render as real headings
+ * (H2) with working chapter links, since this is a plain note of its own;
+ * without chapters the segments are plain lines. `notePath` is the vault path
+ * of the main note (with `.md`).
+ */
+export function formatTranscriptFileMarkdown(
+	transcript: Transcript,
+	groups: readonly TranscriptChapterGroup[],
+	notePath: string,
+): string {
+	const noteBase = notePath.replace(/\.md$/i, '');
+	const noteName = noteBase.slice(noteBase.lastIndexOf('/') + 1);
+	const chaptered = formatTranscriptSection(transcript, groups, 1);
+	const body = chaptered.startsWith('# Transcript')
+		? chaptered.slice('# Transcript'.length).replace(/^\n+/, '')
+		: transcript.segments.map(formatTranscriptEntry).join('\n\n');
+	return [
+		TRANSCRIPT_FILE_MARKER,
+		'',
+		'# Transcript',
+		'',
+		`Transcript of ${vaultFileLink(notePath, noteName, false)}. The plugin rewrites this file on re-import, so edits here are lost.`,
+		'',
+		body,
+		'',
+	].join('\n');
+}
+
+/**
+ * The transcript section of the MAIN note when the transcript lives in its own
+ * file: a `Transcript` heading (so the fold setting and the attachments anchor
+ * keep working) over an embed or a plain link to that file.
+ */
+export function formatTranscriptFileReference(
+	transcriptPath: string,
+	placement: 'file-embed' | 'file-link',
+	headerLevel: HeadingLevel,
+): string {
+	const reference = vaultFileLink(
+		transcriptPath,
+		'Open the transcript',
+		placement === 'file-embed',
+	);
+	return `${'#'.repeat(headerLevel)} Transcript\n\n${reference}`;
+}
+
+/**
  * Render a single transcript segment as a plain-paragraph markdown line
  * (no callout `>` prefix). Used by the chaptered path, where segments
  * live directly under a chapter heading.
@@ -2500,6 +2646,14 @@ export interface FormatMarkdownOptions {
 	readonly includeTranscript?: boolean;
 	readonly includeSummary?: boolean;
 	readonly transcriptHeaderLevel?: HeadingLevel;
+	/** Where the transcript goes. Omitted or invalid means 'heading'. */
+	readonly transcriptPlacement?: TranscriptPlacement;
+	/**
+	 * Vault path of the note being rendered. Required to reference the separate
+	 * transcript file ('file-embed'/'file-link'); without it those placements
+	 * fall back to 'heading'. The writer fills it in; direct callers may omit it.
+	 */
+	readonly notePath?: string;
 	/**
 	 * Origin of the web portal for this account's `plaud-url` permalink and the
 	 * "Open in Plaud" link. A v3 (prod) account uses `https://web.plaud.ai`, a
@@ -2601,6 +2755,53 @@ export interface FormatMarkdownOptions {
 	readonly deviceNames?: ReadonlyMap<string, string>;
 }
 
+/**
+ * The placement actually used for one render. A separate-file placement needs
+ * the note's path and a non-empty transcript; without either it falls back to
+ * 'heading', so an empty transcript never produces a file holding nothing. It
+ * also falls back when the note's path contains `#` or `^` (note names may keep
+ * both): Obsidian cannot link to a file under such a path, so the transcript
+ * stays in the note rather than behind a broken link.
+ */
+export function effectiveTranscriptPlacement(
+	transcript: Transcript | null,
+	options: Pick<FormatMarkdownOptions, 'transcriptPlacement' | 'notePath'>,
+): TranscriptPlacement {
+	const placement = isTranscriptPlacement(options.transcriptPlacement)
+		? options.transcriptPlacement
+		: 'heading';
+	if (placement !== 'file-embed' && placement !== 'file-link') {
+		return placement;
+	}
+	const hasSegments = transcript !== null && transcript.segments.length > 0;
+	const linkable =
+		options.notePath !== undefined && !/[#^]/.test(options.notePath);
+	return hasSegments && linkable ? placement : 'heading';
+}
+
+function renderTranscriptSection(
+	transcript: Transcript | null,
+	groups: readonly TranscriptChapterGroup[],
+	headerLevel: HeadingLevel,
+	options: FormatMarkdownOptions,
+): string {
+	const placement = effectiveTranscriptPlacement(transcript, options);
+	if (placement === 'callout') {
+		return formatTranscriptCallout(transcript, groups);
+	}
+	if (
+		(placement === 'file-embed' || placement === 'file-link') &&
+		options.notePath !== undefined
+	) {
+		return formatTranscriptFileReference(
+			transcriptFilePathFor(options.notePath),
+			placement,
+			headerLevel,
+		);
+	}
+	return formatTranscriptSection(transcript, groups, headerLevel);
+}
+
 export function formatMarkdown(
 	recording: Recording,
 	transcript: Transcript | null,
@@ -2627,7 +2828,7 @@ export function formatMarkdown(
 	);
 	const groups = groupTranscriptByChapters(transcript, chapters);
 	const transcriptSection = includeTranscript
-		? formatTranscriptSection(transcript, groups, headerLevel)
+		? renderTranscriptSection(transcript, groups, headerLevel, options)
 		: '';
 	const parts: string[] = [
 		formatFrontmatter(
@@ -2820,6 +3021,11 @@ export function assetsFolderPathFor(notePath: string): string {
 	return notePath.replace(/\.md$/i, '-assets');
 }
 
+/** Path of a note's managed transcript file (placement 'file-embed'/'file-link'). */
+export function transcriptFilePathFor(notePath: string): string {
+	return `${assetsFolderPathFor(notePath)}/${TRANSCRIPT_FILE_NAME}`;
+}
+
 export interface RenameRecordingNoteResult {
 	/** The note's path after the cascade (always `newNotePath`). */
 	readonly notePath: string;
@@ -2976,6 +3182,7 @@ export class NoteWriter {
 		oldNotePath: string,
 		newNotePath: string,
 	) => Promise<void>;
+	private readonly trashFile?: (path: string) => Promise<void>;
 	private readonly onDuplicate: DuplicatePolicy;
 	private readonly promptOnDuplicate?: DuplicatePromptCallback;
 	private readonly defaultFormatOptions: FormatMarkdownOptions;
@@ -3028,12 +3235,14 @@ export class NoteWriter {
 			: '-';
 		this.existingPathForPlaudId = options.existingPathForPlaudId;
 		this.migrateExistingNote = options.migrateExistingNote;
+		this.trashFile = options.trashFile;
 		this.onDuplicate = options.onDuplicate;
 		this.promptOnDuplicate = options.promptOnDuplicate;
 		this.defaultFormatOptions = {
 			includeTranscript: options.includeTranscript,
 			includeSummary: options.includeSummary,
 			transcriptHeaderLevel: options.transcriptHeaderLevel,
+			transcriptPlacement: options.transcriptPlacement,
 			noteNameTemplate: this.noteNameTemplate,
 			datetimeTemplate: this.datetimeTemplate,
 			fallbackTimezone: this.fallbackTimezone,
@@ -3291,12 +3500,14 @@ export class NoteWriter {
 		);
 		// `transcriptHeadingLine` is null when the markdown lacks a wrapping
 		// transcript heading (no chapters, transcript excluded, or empty-segment
-		// fallback), which the caller treats as "no fold state to apply".
+		// fallback), which the caller treats as "no fold state to apply". The
+		// callout placement has no heading at all, so skip the search there: it
+		// would otherwise match a template output's own `Transcript` heading.
 		const headerLevel: HeadingLevel = options.transcriptHeaderLevel ?? 4;
-		const transcriptHeadingLine = findTranscriptHeadingLine(
-			markdown,
-			headerLevel,
-		);
+		const transcriptHeadingLine =
+			effectiveTranscriptPlacement(transcript, options) === 'callout'
+				? null
+				: findTranscriptHeadingLine(markdown, headerLevel);
 		const foldInfo: WriteFoldInfo | undefined =
 			transcriptHeadingLine !== null
 				? {
@@ -3379,12 +3590,24 @@ export class NoteWriter {
 
 		if (existing === null) {
 			// Fresh note: nothing to preserve, so build with no existing frontmatter.
+			const createOptions: FormatMarkdownOptions = {
+				...effectiveFormatOptions,
+				notePath: targetPath,
+			};
 			const { markdown, foldInfo } = this.buildNote(
 				recording,
 				transcript,
 				summary,
 				chapters,
-				effectiveFormatOptions,
+				createOptions,
+			);
+			// Transcript file first: if it fails, no note is created that links
+			// to a missing file, and the next import retries both.
+			await this.writeTranscriptFile(
+				recording,
+				transcript,
+				chapters,
+				createOptions,
 			);
 			try {
 				await this.vault.create(targetPath, markdown);
@@ -3395,6 +3618,11 @@ export class NoteWriter {
 					}`,
 				);
 			}
+			await this.removeStaleTranscriptFile(
+				recording,
+				transcript,
+				createOptions,
+			);
 			return { status: 'created', path: targetPath, foldInfo };
 		}
 
@@ -3408,15 +3636,24 @@ export class NoteWriter {
 			notePath,
 			recording.id,
 		);
+		// The note ends up at targetPath when it is migrated below, otherwise it
+		// stays at notePath. The transcript-file reference must name that final
+		// location, so resolve it before rendering.
+		const finalPath =
+			notePath !== targetPath && this.migrateExistingNote
+				? targetPath
+				: notePath;
+		const overwriteOptions: FormatMarkdownOptions = {
+			...effectiveFormatOptions,
+			existingFrontmatter: extractFrontmatterValues(existingContent),
+			notePath: finalPath,
+		};
 		const { markdown, foldInfo } = this.buildNote(
 			recording,
 			transcript,
 			summary,
 			chapters,
-			{
-				...effectiveFormatOptions,
-				existingFrontmatter: extractFrontmatterValues(existingContent),
-			},
+			overwriteOptions,
 		);
 
 		// Real content always supersedes a placeholder stub: if the existing
@@ -3504,6 +3741,20 @@ export class NoteWriter {
 			writePath = targetPath;
 		}
 
+		// The transcript file is written after any migration (which moves the
+		// assets folder) and before the note, so the note never references a
+		// transcript file that failed to write.
+		const finalOptions: FormatMarkdownOptions = {
+			...overwriteOptions,
+			notePath: writePath,
+		};
+		await this.writeTranscriptFile(
+			recording,
+			transcript,
+			chapters,
+			finalOptions,
+		);
+
 		// Overwrite path — use process so the write is atomic and
 		// respects any other plugin's read-modify-write of the same
 		// file. The callback ignores the previous content by design: we
@@ -3517,7 +3768,125 @@ export class NoteWriter {
 				}`,
 			);
 		}
+		await this.removeStaleTranscriptFile(
+			recording,
+			transcript,
+			finalOptions,
+		);
 		return { status: 'overwritten', path: writePath, foldInfo };
+	}
+
+	/**
+	 * Whether this write's note references the separate transcript file.
+	 */
+	private usesTranscriptFile(
+		transcript: Transcript | null,
+		options: FormatMarkdownOptions,
+	): boolean {
+		if (options.includeTranscript === false || transcript === null) {
+			return false;
+		}
+		const placement = effectiveTranscriptPlacement(transcript, options);
+		return placement === 'file-embed' || placement === 'file-link';
+	}
+
+	/**
+	 * Read the file at the transcript path and report whether this plugin
+	 * wrote it (it carries TRANSCRIPT_FILE_MARKER). A same-named file the user
+	 * made is never overwritten or trashed.
+	 */
+	private async isManagedTranscriptFile(file: FileLike): Promise<boolean> {
+		const content = await this.vault.read(file);
+		return content.includes(TRANSCRIPT_FILE_MARKER);
+	}
+
+	/**
+	 * Write (or rewrite) the managed transcript file in the note's `-assets`
+	 * folder when the placement is 'file-embed' or 'file-link'; no-op
+	 * otherwise. Callers run it BEFORE writing the note. Refuses to replace a
+	 * `Transcript.md` this plugin did not write.
+	 */
+	private async writeTranscriptFile(
+		recording: Recording,
+		transcript: Transcript | null,
+		chapters: readonly Chapter[] | undefined,
+		options: FormatMarkdownOptions,
+	): Promise<void> {
+		const notePath = options.notePath;
+		if (
+			notePath === undefined ||
+			transcript === null ||
+			!this.usesTranscriptFile(transcript, options)
+		) {
+			return;
+		}
+		const path = transcriptFilePathFor(notePath);
+		const content = formatTranscriptFileMarkdown(
+			transcript,
+			groupTranscriptByChapters(transcript, chapters),
+			notePath,
+		);
+		try {
+			await this.ensureFolder(assetsFolderPathFor(notePath));
+			const existing = this.vault.getFileByPath(path);
+			if (existing === null) {
+				await this.vault.create(path, content);
+				return;
+			}
+			if (!(await this.isManagedTranscriptFile(existing))) {
+				throw new NoteWriterError(
+					`${path} already exists and was not created by Plaud Importer, so it was left alone. Rename or move it, then import recording ${recording.id} again.`,
+				);
+			}
+			await this.vault.process(existing, () => content);
+		} catch (cause) {
+			if (cause instanceof NoteWriterError) {
+				throw cause;
+			}
+			throw new NoteWriterError(
+				`Failed to write the transcript file ${path} for recording ${recording.id}: ${
+					cause instanceof Error ? cause.message : String(cause)
+				}`,
+			);
+		}
+	}
+
+	/**
+	 * After the note is written: when it no longer references the transcript
+	 * file (in-note layout, or the transcript excluded or empty), move a
+	 * leftover managed `Transcript.md` to the trash. Needs the injected trash
+	 * capability; never touches a file this plugin did not write.
+	 */
+	private async removeStaleTranscriptFile(
+		recording: Recording,
+		transcript: Transcript | null,
+		options: FormatMarkdownOptions,
+	): Promise<void> {
+		const notePath = options.notePath;
+		if (
+			this.trashFile === undefined ||
+			notePath === undefined ||
+			this.usesTranscriptFile(transcript, options)
+		) {
+			return;
+		}
+		const path = transcriptFilePathFor(notePath);
+		try {
+			const existing = this.vault.getFileByPath(path);
+			if (
+				existing === null ||
+				!(await this.isManagedTranscriptFile(existing))
+			) {
+				return;
+			}
+			await this.trashFile(path);
+		} catch (cause) {
+			throw new NoteWriterError(
+				`Failed to remove the old transcript file ${path} for recording ${recording.id}: ${
+					cause instanceof Error ? cause.message : String(cause)
+				}`,
+			);
+		}
 	}
 
 	/**
