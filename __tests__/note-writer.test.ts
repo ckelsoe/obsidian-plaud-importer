@@ -34,6 +34,7 @@ import {
 	groupTranscriptByChapters,
 	isValidNoteNameTemplate,
 	isValidReplacementChar,
+	previewNoteFileName,
 	migrateLegacyDateTemplate,
 	mergeTagSources,
 	buildNoteTags,
@@ -6527,5 +6528,88 @@ describe('transcript placement', () => {
 			}).writeNote(makeRecording(), makeTranscript(), makeSummary());
 			expect(expectCreatedOutcome(outcome).foldInfo).toBeDefined();
 		});
+	});
+});
+
+// # and ^ in names -----------------------------------------------------------
+// Obsidian splits every link target at # and ^, so a note (or its -assets
+// folder) whose name contains them cannot be linked or embedded by path.
+
+describe('# and ^ in note names', () => {
+	it('sanitizeFilename replaces # and ^ with the replacement character', () => {
+		expect(sanitizeFilename('Roadmap #1 ^draft')).toBe('Roadmap -1 -draft');
+		expect(sanitizeFilename('Roadmap #1', '_')).toBe('Roadmap _1');
+	});
+
+	it('rejects # and ^ as the replacement character', () => {
+		expect(isValidReplacementChar('#')).toBe(false);
+		expect(isValidReplacementChar('^')).toBe(false);
+	});
+
+	it('keeps a stored note-name template that contains # valid', () => {
+		// Rejecting it would make the writer fall back to the default template
+		// and rename every note.
+		expect(isValidNoteNameTemplate('{{YYYY-MM-DD}} #mtg {{title}}')).toBe(
+			true,
+		);
+	});
+
+	it('previews the file name the writer will use', () => {
+		const raw = buildNoteName(
+			TEMPLATE_PREVIEW_TITLE,
+			TEMPLATE_PREVIEW_DATE,
+			'{{YYYY}} # {{title}}',
+		);
+		expect(raw).toContain(' # ');
+		const preview = previewNoteFileName('{{YYYY}} # {{title}}', '_');
+		expect(preview).toBe(raw.replace('#', '_'));
+	});
+
+	it('writes a #-titled recording under a linkable name, with its transcript file', async () => {
+		const vault = makeFakeVault();
+		const outcome = await new NoteWriter(vault, {
+			outputFolder: 'Plaud',
+			onDuplicate: 'overwrite',
+			transcriptPlacement: 'file-link',
+		}).writeNote(
+			makeRecording({ title: 'Roadmap #1' }),
+			makeTranscript(),
+			makeSummary(),
+		);
+		expect(outcome.path).toBe('Plaud/2026-04-14 Roadmap -1.md');
+		// The separate-file layout applies now that the path is linkable.
+		expect(
+			vault.files.has('Plaud/2026-04-14 Roadmap -1-assets/Transcript.md'),
+		).toBe(true);
+		// The H1 keeps the real title.
+		expect(vault.files.get(outcome.path)).toContain(
+			'# 2026-04-14 Roadmap #1',
+		);
+	});
+
+	it('moves an existing #-named note to the linkable name on re-import', async () => {
+		const OLD = 'Plaud/2026-04-14 Roadmap #1.md';
+		const NEW = 'Plaud/2026-04-14 Roadmap -1.md';
+		const vault = makeFakeVault();
+		vault.folders.add('Plaud');
+		vault.files.set(OLD, '---\nplaud-id: abc123\n---\n# old\n');
+		const migrateCalls: Array<[string, string]> = [];
+		const outcome = await new NoteWriter(vault, {
+			outputFolder: 'Plaud',
+			onDuplicate: 'overwrite',
+			existingPathForPlaudId: (id) => (id === 'abc123' ? OLD : null),
+			migrateExistingNote: async (oldPath, newPath) => {
+				migrateCalls.push([oldPath, newPath]);
+				const c = vault.files.get(oldPath) ?? '';
+				vault.files.delete(oldPath);
+				vault.files.set(newPath, c);
+			},
+		}).writeNote(
+			makeRecording({ title: 'Roadmap #1' }),
+			makeTranscript(),
+			makeSummary(),
+		);
+		expect(migrateCalls).toEqual([[OLD, NEW]]);
+		expect(outcome.path).toBe(NEW);
 	});
 });
