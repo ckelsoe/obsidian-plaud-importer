@@ -6452,6 +6452,32 @@ describe('transcript placement', () => {
 			expect(vault.files.has(NOTE)).toBe(false);
 		});
 
+		it('still reports the write when trashing the stale file fails', async () => {
+			const vault = makeFakeVault();
+			await new NoteWriter(vault, {
+				outputFolder: 'Plaud',
+				onDuplicate: 'overwrite',
+				transcriptPlacement: 'file-embed',
+			}).writeNote(makeRecording(), makeTranscript(), makeSummary());
+			const warn = jest
+				.spyOn(console, 'warn')
+				.mockImplementation(() => {});
+			try {
+				const outcome = await new NoteWriter(vault, {
+					outputFolder: 'Plaud',
+					onDuplicate: 'overwrite',
+					transcriptPlacement: 'heading',
+					trashFile: async () => {
+						throw new Error('trash failed');
+					},
+				}).writeNote(makeRecording(), makeTranscript(), makeSummary());
+				expect(outcome.status).toBe('overwritten');
+				expect(warn).toHaveBeenCalled();
+			} finally {
+				warn.mockRestore();
+			}
+		});
+
 		it('never trashes a Transcript.md the plugin did not write', async () => {
 			const vault = makeFakeVault();
 			vault.files.set(TRANSCRIPT, 'My own notes.');

@@ -3855,7 +3855,8 @@ export class NoteWriter {
 	 * After the note is written: when it no longer references the transcript
 	 * file (in-note layout, or the transcript excluded or empty), move a
 	 * leftover managed `Transcript.md` to the trash. Needs the injected trash
-	 * capability; never touches a file this plugin did not write.
+	 * capability; never touches a file this plugin did not write. Never throws:
+	 * a cleanup failure is logged, not reported as a failed import.
 	 */
 	private async removeStaleTranscriptFile(
 		recording: Recording,
@@ -3881,10 +3882,12 @@ export class NoteWriter {
 			}
 			await this.trashFile(path);
 		} catch (cause) {
-			throw new NoteWriterError(
-				`Failed to remove the old transcript file ${path} for recording ${recording.id}: ${
-					cause instanceof Error ? cause.message : String(cause)
-				}`,
+			// Best-effort: the note is already written, and failing the recording
+			// here would skip its attachments, audio, and badge refresh. A leftover
+			// transcript file is harmless and is retried on the next re-import.
+			console.warn(
+				`Plaud importer: could not remove the old transcript file ${path} for recording ${recording.id}`,
+				cause,
 			);
 		}
 	}
