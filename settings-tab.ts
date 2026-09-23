@@ -405,7 +405,7 @@ const DATETIME_TEMPLATE_TOKENS_HEADING =
 	'Tokens (case matters; combine them with separators inside the braces):';
 const DATETIME_TEMPLATE_EXAMPLES_HEADING = 'Examples:';
 const DATETIME_TEMPLATE_FOOTNOTE =
-	'Applies to new imports; notes you already imported keep their current frontmatter.';
+	'Applies to new imports. A note you already imported keeps its datetime property until a re-import overwrites it, and then the property is rewritten from this template, or removed if the template is empty.';
 
 // Rendered in two places (the settings tab and the declarative registry), which
 // previously held two verbatim copies of this sentence. One definition so they
