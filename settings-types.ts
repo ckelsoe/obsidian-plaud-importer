@@ -9,7 +9,11 @@
  * store's generic parameter.
  */
 import { DEFAULT_NOTE_NAME_TEMPLATE } from './note-writer';
-import type { CustomFrontmatterRow, TagMode } from './note-writer';
+import type {
+	CustomFrontmatterRow,
+	TagMode,
+	TranscriptPlacement,
+} from './note-writer';
 import type { SignInMethod } from './reconnect-routing';
 
 // Curated list of Lucide icon IDs offered in the "Ribbon icon" setting.
@@ -135,6 +139,9 @@ export interface PlaudImporterSettings {
 	defaultIncludeAudio: boolean;
 	foldTranscript: boolean;
 	transcriptHeaderLevel: 1 | 2 | 3 | 4 | 5 | 6;
+	// Where the transcript goes: under a heading, in a collapsed callout, or in
+	// its own file (embedded or linked). See TranscriptPlacement.
+	transcriptPlacement: TranscriptPlacement;
 	tagMode: TagMode;
 	customTags: string;
 	aiKeywordsAsProperty: boolean;
@@ -267,6 +274,7 @@ export const DEFAULT_SETTINGS: PlaudImporterSettings = {
 	defaultIncludeAudio: false,
 	foldTranscript: true,
 	transcriptHeaderLevel: 4,
+	transcriptPlacement: 'heading',
 	// 'plaud' keeps human-set Plaud tags but drops the AI keyword guesses
 	// that were flooding vaults with single-use tags. aiKeywordsAsProperty
 	// is off by default because Plaud's keyword list can run to hundreds of

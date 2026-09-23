@@ -39,6 +39,7 @@ import {
 	migrateLegacyDateTemplate,
 	renameRecordingNote,
 	isValidReplacementChar,
+	isTranscriptPlacement,
 	sanitizeFilename,
 	zoneOffsetMinutes,
 	formatPlaudWebUrl,
@@ -1049,6 +1050,7 @@ export default class PlaudImporterPlugin extends Plugin {
 			includeSummary: this.settings.defaultIncludeSummary,
 			foldTranscript: this.settings.foldTranscript,
 			transcriptHeaderLevel: this.settings.transcriptHeaderLevel,
+			transcriptPlacement: this.settings.transcriptPlacement,
 			defaultIncludeSummary: this.settings.defaultIncludeSummary,
 			defaultIncludeAttachments: this.settings.defaultIncludeAttachments,
 			defaultIncludeMindmap: this.settings.defaultIncludeMindmap,
@@ -1097,6 +1099,14 @@ export default class PlaudImporterPlugin extends Plugin {
 			// cascade does not re-fire the vault rename listener.
 			migrateExistingNote: (oldPath, newPath) =>
 				this.migrateRecordingNote(oldPath, newPath),
+			// Lets the writer drop a stale separate-file transcript once the note
+			// no longer references it. Obsidian's trash, so it is recoverable.
+			trashFile: async (path) => {
+				const file = this.app.vault.getFileByPath(path);
+				if (file !== null) {
+					await this.app.fileManager.trashFile(file);
+				}
+			},
 		};
 	}
 
@@ -2674,6 +2684,11 @@ export default class PlaudImporterPlugin extends Plugin {
 			this.settings.signInPortalUrl === RETIRED_ALPHA_PORTAL_URL
 		) {
 			this.settings.signInPortalUrl = DEFAULT_SETTINGS.signInPortalUrl;
+		}
+		// Repair a hand-edited or unknown transcript placement to the default, so
+		// the dropdown and the writer agree on what is in effect.
+		if (!isTranscriptPlacement(this.settings.transcriptPlacement)) {
+			this.settings.transcriptPlacement = 'heading';
 		}
 		// Repair a blank stored output folder back to the default. The
 		// declarative control can persist an empty string; consumers expect a

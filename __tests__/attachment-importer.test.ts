@@ -1,4 +1,7 @@
+import { TFile, TFolder } from 'obsidian';
 import {
+	clearAttachmentFolder,
+	insertSectionBeforeTranscript,
 	inferAssetExtension,
 	rewriteInlineSummaryEmbeds,
 	isLocalCardImage,
@@ -254,5 +257,80 @@ describe('repairLegacyCardEmbeds', () => {
 		const r = repairLegacyCardEmbeds(clean, ['n-assets/a-card.png']);
 		expect(r.repointed).toBe(0);
 		expect(r.content).toBe(clean);
+	});
+});
+
+describe('insertSectionBeforeTranscript', () => {
+	const section = '## Attachments\n\n![[a.png]]';
+
+	it('inserts before a Transcript heading', () => {
+		const out = insertSectionBeforeTranscript(
+			'# Note\n\n---\n\n#### Transcript\n\nbody',
+			section,
+		);
+		expect(out).toBe(
+			'# Note\n\n---\n\n## Attachments\n\n![[a.png]]\n\n#### Transcript\n\nbody\n',
+		);
+	});
+
+	it('inserts before a Transcript callout (callout layout, #115)', () => {
+		const out = insertSectionBeforeTranscript(
+			'# Note\n\n---\n\n> [!note]- Transcript\n> **[00:00]** A: hi',
+			section,
+		);
+		expect(out).toBe(
+			'# Note\n\n---\n\n## Attachments\n\n![[a.png]]\n\n> [!note]- Transcript\n> **[00:00]** A: hi\n',
+		);
+	});
+
+	it('anchors on the last match so an earlier template heading is skipped', () => {
+		const out = insertSectionBeforeTranscript(
+			'# Note\n\n### Transcript\n\ntemplate\n\n> [!note]- Transcript\n> real',
+			section,
+		);
+		expect(out.indexOf('## Attachments')).toBeGreaterThan(
+			out.indexOf('template'),
+		);
+		expect(out.indexOf('## Attachments')).toBeLessThan(
+			out.indexOf('> [!note]- Transcript'),
+		);
+	});
+
+	it('appends when the note has no transcript', () => {
+		expect(insertSectionBeforeTranscript('# Note', section)).toBe(
+			'# Note\n\n## Attachments\n\n![[a.png]]\n',
+		);
+	});
+});
+
+describe('clearAttachmentFolder', () => {
+	function file(name: string): TFile {
+		const f = new TFile();
+		f.name = name;
+		f.path = `Plaud/Note-assets/${name}`;
+		return f;
+	}
+
+	it('trashes attachments but keeps the managed transcript file (#70)', async () => {
+		const root = new TFolder();
+		const nested = new TFolder();
+		nested.name = 'sub';
+		const nestedTranscript = file('Transcript.md');
+		nested.children = [nestedTranscript];
+		const image = file('card.png');
+		const transcript = file('Transcript.md');
+		root.children = [image, transcript, nested];
+		const trashed: unknown[] = [];
+
+		await clearAttachmentFolder(root, async (f) => {
+			trashed.push(f);
+		});
+
+		expect(trashed).toContain(image);
+		expect(trashed).not.toContain(transcript);
+		// Only the top-level Transcript.md is the managed file; a nested folder
+		// is attachment content and is cleared completely.
+		expect(trashed).toContain(nestedTranscript);
+		expect(trashed).toContain(nested);
 	});
 });

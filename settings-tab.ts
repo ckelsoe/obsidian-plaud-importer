@@ -36,6 +36,7 @@ import {
 	TEMPLATE_PREVIEW_TITLE,
 	TEMPLATE_PREVIEW_FOLDER,
 	renderCustomFrontmatterPreview,
+	isTranscriptPlacement,
 } from './note-writer';
 import { coerceIntervalMinutes } from './auto-sync';
 import { BrowserSignInModal } from './modals';
@@ -103,6 +104,21 @@ const SIGN_IN_NOTE =
 // lifetime.
 const AUTO_SYNC_DESC =
 	"Off by default. Runs a background import on a schedule, unattended and never prompting. It uses your default import options: new recordings are imported, and a recording you changed in Plaud (edited speaker names, corrected transcript, or finished processing) is re-imported. IMPORTANT: a re-import OVERWRITES that note and its downloaded artifacts with Plaud's current version, so edits you made to a synced note or its attachment files are lost on the next change. Only recordings that actually changed are touched; unchanged notes are never modified. Desktop only. The background sync runs between sign-ins for as long as your Plaud session lasts (set by Plaud and shown in the status line under Plaud token), pausing for a one-click reconnection when the session expires.";
+
+// Transcript rendering rows, shared by both settings paths so they cannot drift.
+const TRANSCRIPT_PLACEMENT_NAME = 'Transcript layout';
+const TRANSCRIPT_PLACEMENT_DESC =
+	"Where each note's transcript goes. Under a heading is the original layout. A collapsed callout keeps the transcript out of the note's headings; chapters show as a plain list with bold titles, because Obsidian cannot jump to a chapter inside a callout. A separate file puts the transcript in Transcript.md in the note's attachments folder, either embedded (it still reads inline) or linked (the note stays short). Applies to notes you import or re-import from now on; existing notes change only when re-imported.";
+const TRANSCRIPT_PLACEMENT_OPTIONS: Record<string, string> = {
+	heading: 'In the note, under a heading',
+	callout: 'In the note, in a collapsed callout',
+	'file-embed': 'Separate file, embedded in the note',
+	'file-link': 'Separate file, linked from the note',
+};
+const FOLD_TRANSCRIPT_DESC =
+	"Collapse the transcript heading when the note is created so the transcript doesn't dominate the view on open. Click the chevron next to the heading to expand it. Does not apply to the callout layout, which is always collapsed.";
+const TRANSCRIPT_HEADING_LEVEL_DESC =
+	"Heading level of the 'transcript' heading in the heading and separate-file layouts. Chapter headings in the heading layout render one level below (level 4 gives an h4 transcript and h5 chapters). Not used by the callout layout.";
 
 const RECORDING_SOURCES_DESC =
 	'Off by default, so every recording is imported. Turn on to import only the sources you pick below, for both manual import and automatic sync. Useful when one of your Plaud devices records things you do not want in your vault (for example a personal NotePin), so automatic sync stops pulling them in.';
@@ -729,16 +745,23 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 		);
 
 		new Setting(containerEl).setName('Transcript rendering').setHeading();
+		this.addDropdownRow(
+			containerEl,
+			TRANSCRIPT_PLACEMENT_NAME,
+			TRANSCRIPT_PLACEMENT_DESC,
+			'transcriptPlacement',
+			TRANSCRIPT_PLACEMENT_OPTIONS,
+		);
 		this.addToggleRow(
 			containerEl,
 			'Fold transcript by default',
-			"Collapse the transcript section when the note is created so it doesn't dominate the view on open. Uses Obsidian's heading fold state — clicking the chevron next to the heading expands it. Turn off if you prefer the transcript always expanded.",
+			FOLD_TRANSCRIPT_DESC,
 			'foldTranscript',
 		);
 		this.addDropdownRow(
 			containerEl,
 			'Transcript heading level',
-			"Markdown heading level for the wrapping 'transcript' heading. Chapter sub-headings render at one level below (e.g. Level 4 → transcript is h4, chapters are h5). This is the heading whose fold state the 'fold transcript by default' toggle controls.",
+			TRANSCRIPT_HEADING_LEVEL_DESC,
 			'transcriptHeaderLevel',
 			{
 				'1': 'H1',
@@ -1909,6 +1932,8 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 				for (const [value, label] of Object.entries(options)) {
 					dropdown.addOption(value, label);
 				}
+				// The <select> gets no accessible name from the row's text.
+				dropdown.selectEl.setAttribute('aria-label', name);
 				dropdown
 					.setValue(this.readSettingString(key))
 					.onChange(async (value) => {
@@ -2310,13 +2335,22 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 				heading: 'Transcript rendering',
 				items: [
 					{
+						name: TRANSCRIPT_PLACEMENT_NAME,
+						desc: TRANSCRIPT_PLACEMENT_DESC,
+						control: {
+							type: 'dropdown',
+							key: 'transcriptPlacement',
+							options: TRANSCRIPT_PLACEMENT_OPTIONS,
+						},
+					},
+					{
 						name: 'Fold transcript by default',
-						desc: "Collapse the transcript section when the note is created so it doesn't dominate the view on open. Uses Obsidian's heading fold state — clicking the chevron next to the heading expands it. Turn off if you prefer the transcript always expanded.",
+						desc: FOLD_TRANSCRIPT_DESC,
 						control: { type: 'toggle', key: 'foldTranscript' },
 					},
 					{
 						name: 'Transcript heading level',
-						desc: "Markdown heading level for the wrapping 'transcript' heading. Chapter sub-headings render at one level below (e.g. Level 4 → transcript is h4, chapters are h5). This is the heading whose fold state the 'fold transcript by default' toggle controls.",
+						desc: TRANSCRIPT_HEADING_LEVEL_DESC,
 						control: {
 							type: 'dropdown',
 							key: 'transcriptHeaderLevel',
@@ -2470,6 +2504,12 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 				new Notice(FALLBACK_TIMEZONE_INVALID_NOTICE);
 				return;
 			}
+		} else if (key === 'transcriptPlacement') {
+			// Only a known layout is stored; anything else keeps the current one.
+			if (!isTranscriptPlacement(value)) {
+				return;
+			}
+			this.plugin.settings.transcriptPlacement = value;
 		} else if (key === 'transcriptHeaderLevel') {
 			const level = Number(value);
 			if (level >= 1 && level <= 6) {

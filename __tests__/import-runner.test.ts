@@ -1123,6 +1123,27 @@ describe('runImport', () => {
 		expect(foldPaths).toHaveLength(1);
 	});
 
+	it('skips the fold hook for the callout layout, which collapses itself', async () => {
+		const vault = makeFakeVault();
+		const recording = makeRecording();
+		const { fetchArtifacts } = makeFetch(
+			new Map([[recording.id, makeArtifacts(recording)]]),
+		);
+		const foldPaths: string[] = [];
+		await runImport({
+			recordings: [recording],
+			selection: SELECTION,
+			writer: makeWriter(vault),
+			attachments: makeAttachmentStub().pipeline,
+			options: { ...OPTIONS, transcriptPlacement: 'callout' },
+			fetchArtifacts,
+			applyFold: async (path) => {
+				foldPaths.push(path);
+			},
+		});
+		expect(foldPaths).toHaveLength(0);
+	});
+
 	// -------------------------------------------------------------------------
 	// A2: mid-batch token-expiry abort (issue #14). A rejected token part-way
 	// through a multi-select import is a batch-terminal condition: the loop must
