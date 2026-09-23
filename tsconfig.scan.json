@@ -1,0 +1,11 @@
+{
+  "//": "Marketplace-scan reproduction. The developer-dashboard preview scan type-checks with only production dependencies installed (no @types/node) and honors this project's tsconfig lib. That environment turns any method missing from the declared lib, or any node global, into `any`, which the scorecard then reports as no-unsafe-* warnings. This config reproduces that view locally and in CI: `types: []` drops the @types packages the scan does not install, while `obsidian` (its own types) and the local .d.ts files still resolve. It runs over shipped source only; __tests__ and __mocks__ are Jest-only and never reach the bundle. Wired into `npm run lint` so the gap is caught before a release, not after the scan.",
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "skipLibCheck": true,
+    "types": []
+  },
+  "include": ["**/*.ts", "**/*.d.ts"],
+  "exclude": ["node_modules", "__tests__", "__mocks__"]
+}

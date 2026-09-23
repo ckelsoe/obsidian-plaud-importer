@@ -31,13 +31,17 @@ export default [
 			"@typescript-eslint/ban-ts-comment": "off",
 			"no-prototype-builtins": "off",
 			"@typescript-eslint/no-empty-function": "off",
-			// The Obsidian `moment` re-export resolves as a real type locally but as
-			// `error`/`any` in the marketplace's type-check. note-writer.ts casts it to
-			// moment's module type so the marketplace's no-unsafe-* rules pass; that cast
-			// is redundant locally, so this rule would otherwise fail our own lint. The
-			// cast stays necessary where moment is untyped, so disabling the redundancy
-			// check (not the safety checks) is the correct reconciliation.
-			"@typescript-eslint/no-unnecessary-type-assertion": "off",
+			// The marketplace scan runs these type-aware rules. They are errors here
+			// so a finding fails local lint instead of lowering the scorecard after
+			// release. `npm run typecheck:marketplace` covers the other half: a
+			// method missing from the tsconfig lib (the scan installs no @types)
+			// turns values into `error`/`any` only in the scan's environment.
+			"@typescript-eslint/no-unsafe-assignment": "error",
+			"@typescript-eslint/no-unsafe-call": "error",
+			"@typescript-eslint/no-unsafe-argument": "error",
+			"@typescript-eslint/no-unsafe-member-access": "error",
+			"@typescript-eslint/no-unsafe-return": "error",
+			"@typescript-eslint/no-unnecessary-type-assertion": "error",
 		},
 	},
 	{

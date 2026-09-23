@@ -171,7 +171,7 @@ function makeAttachmentStub(summaryLinked: readonly AttachmentAsset[] = []): {
 		extractAttachmentAssetsFromSummaryMarkdown: (md) => {
 			const out = [...summaryLinked];
 			for (const m of (md ?? '').matchAll(/!\[[^\]]*\]\(([^)\s]+)\)/g)) {
-				out.push({ dataType: 'summary_image', url: m[1]! });
+				out.push({ dataType: 'summary_image', url: m[1] });
 			}
 			return out;
 		},
@@ -329,12 +329,12 @@ describe('runImport', () => {
 		});
 
 		expect(outcome.stop).toBe('completed');
-		const note = [...vault.files.values()][0]!;
+		const note = [...vault.files.values()][0];
 		expect(note).toContain('## Screenshots');
 		expect(note).toContain(
 			'![Screenshot at 0:30](https://s3.example/shot1.png?sig=1)',
 		);
-		const markAsset = importCalls[0]!.attachments.find(
+		const markAsset = importCalls[0].attachments.find(
 			(a) => a.url === 'https://s3.example/shot1.png?sig=1',
 		);
 		expect(markAsset).toBeDefined();
@@ -370,10 +370,10 @@ describe('runImport', () => {
 			fetchArtifacts,
 		});
 
-		const merged = importCalls[0]!.attachments;
+		const merged = importCalls[0].attachments;
 		const forShared = merged.filter((a) => a.url === sharedUrl);
 		expect(forShared).toHaveLength(1);
-		expect(forShared[0]!.dataType).toBe('plaud_mark');
+		expect(forShared[0].dataType).toBe('plaud_mark');
 	});
 
 	it('omits screenshots and queues no mark images when includeScreenshots is off', async () => {
@@ -400,7 +400,7 @@ describe('runImport', () => {
 			fetchArtifacts,
 		});
 
-		const note = [...vault.files.values()][0]!;
+		const note = [...vault.files.values()][0];
 		expect(note).not.toContain('## Screenshots');
 		const anyMark = importCalls
 			.flatMap((c) => c.attachments)
@@ -430,7 +430,7 @@ describe('runImport', () => {
 			],
 		});
 
-		const note = [...vault.files.values()][0]!;
+		const note = [...vault.files.values()][0];
 		expect(note).toMatch(/^plaud-location: unfiled$/m);
 		expect(note).not.toMatch(/^plaud-folder:/m);
 	});
@@ -465,7 +465,7 @@ describe('runImport', () => {
 			fetchArtifacts,
 		});
 
-		const note = [...vault.files.values()][0]!;
+		const note = [...vault.files.values()][0];
 		expect(note).toContain('## Summary (beta)');
 		expect(note).toContain('Beta body.');
 		// The second summary's image was extracted and handed to the downloader.
@@ -500,7 +500,7 @@ describe('runImport', () => {
 			fetchArtifacts,
 		});
 
-		const note = [...vault.files.values()][0]!;
+		const note = [...vault.files.values()][0];
 		expect(note).not.toContain('## Summary (beta)');
 	});
 
@@ -524,7 +524,7 @@ describe('runImport', () => {
 			fetchFolderCatalog: async () => [{ id: 'id-work', name: 'Work' }],
 		});
 
-		const note = [...vault.files.values()][0]!;
+		const note = [...vault.files.values()][0];
 		expect(note).toMatch(/^plaud-folder:/m);
 		expect(note).toContain('Work');
 		expect(note).not.toMatch(/^plaud-location:/m);

@@ -337,7 +337,7 @@ export async function runImport(
 				recording.systemFolderType !== 0;
 			const plaudLocation = isSystemFolder
 				? normalizePlaudLocation(
-						recording.systemFolderType as number,
+						recording.systemFolderType,
 						folderNames[0],
 					)
 				: '';
