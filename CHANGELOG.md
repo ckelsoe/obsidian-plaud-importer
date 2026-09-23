@@ -6,6 +6,28 @@ All notable changes to Plaud Importer will be documented in this file.
 
 ## [Unreleased]
 
+## [0.41.0] - 2026-09-23
+
+Support for the new Plaud portal. This stable release brings together the six 0.41.0 betas, which shipped through BRAT from 2026-09-17 to 2026-09-22. The beta entries below have the full detail.
+
+### Added
+
+- **The plugin works with the new Plaud portal.** Plaud is moving accounts to a rebuilt web app and API. The plugin detects which portal your account is on and uses the right one, so import keeps working after your account moves. An account still on the current portal works exactly as before.
+- **Every sign-in method works on the new portal.** You can sign in with the in-app window, with Google or Apple (SSO) in your browser, or with the sign-in bookmarklet. The plugin renews Google and Apple sessions in the background. Settings show which method your session used, and at startup the plugin checks for a session Plaud has ended, then asks you to reconnect straight away.
+- **More of each recording imports on the new portal.** Screenshots you took during a recording come in, each marked with its time in the recording. Every summary comes in, not just the first. Device names and renaming a recording's title from its note work as they do on the current portal.
+
+### Changed
+
+- **Recording links open in the right portal.** The `plaud-url` property and the "Open in Plaud" link point at the web app your account uses.
+- **Unfiled recordings no longer get a "Recordings" folder tag.** Recordings in Plaud's built-in buckets now carry `plaud-location: unfiled` (or `import`, or `conflict`) instead of a folder tag.
+- **Sign-in guidance is clearer.** After a browser sign-in, close the Plaud tab. Do not use Plaud's Log Out, because it would also sign Obsidian out. The Google and Apple guidance now matches what the plugin does, and email sign-in is still the most reliable option.
+
+### Fixed
+
+- **Re-importing after a portal move updates your notes instead of duplicating them.** The new portal keeps each recording's id in a prefixed form, and the plugin matches on that id. A new "Migrate recording ids" command fixes older notes.
+- **Two recordings with the same title and date both import.** The second one gets a numbered filename.
+- **Reconnecting a current-portal account after using the new portal works.**
+
 ## [0.41.0-beta.6] - 2026-09-22
 
 Clearer Google and Apple (SSO) sign-in guidance and session handling. Still a pre-release; install it through BRAT. The stable release is unaffected.
