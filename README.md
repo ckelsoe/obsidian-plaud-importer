@@ -208,7 +208,7 @@ Examples (folder for a June 4 2026 recording):
 
 You choose the order and the separators, so any date layout works, and a whole layout can live in one `{{ }}`. A live preview under the field shows the resulting folder as you type, and insert-token buttons add the correct token at the cursor. The folder is built from the recording's own date, so re-importing always resolves to the same place. A recording with no usable date goes to an `_undated` subfolder.
 
-The template applies to **new imports**; notes you already imported stay where they are. Each note's `-assets` folder follows it into the same subfolder. If you change the template later, re-importing an existing recording updates the note in place instead of creating a duplicate.
+The template applies to **new imports**; notes you already imported stay where they are until a re-import overwrites them. Each note's `-assets` folder follows it into the same subfolder. If you change the template later, a re-import that overwrites an existing note moves it, with its `-assets` folder, into the new subfolder instead of creating a duplicate.
 
 ### Note name
 
@@ -221,9 +221,9 @@ By default each note is named `YYYY-MM-DD <title>`, using the recording's own da
 | `{{MMM D, YYYY}} - {{title}}` | `Jul 3, 2026 - Team sync` (one combined date token) |
 | `{{title}}` | `Team sync` (no date in the name) |
 
-Preset buttons fill in ISO, US, and EU orders, insert-token buttons add a token at the cursor, and a live preview shows the resulting name as you type, or type your own. Keep your own words outside the braces, since bare letters inside are read as date tokens. The recording's own date replaces any date already in the Plaud title, so a title like `04/13 Meeting` becomes the recording's date, and a title with no date gets one. A note name has to be a valid filename, so a template is rejected if its result would contain a character a file name cannot hold (a slash, colon, square bracket, asterisk, question mark, angle bracket, pipe, or double quote), be a reserved device name such as `CON`, start or end with a dot or space, or run over 200 characters. The `date` property inside each note stays `YYYY-MM-DD` regardless, for Dataview and sorting.
+Preset buttons fill in ISO, US, and EU orders, insert-token buttons add a token at the cursor, and a live preview shows the resulting name as you type, or type your own. Keep your own words outside the braces, since bare letters inside are read as date tokens. The recording's own date replaces any date already in the Plaud title, so a title like `04/13 Meeting` becomes the recording's date, and a title with no date gets one. A note name has to be a valid filename, so a template is rejected if its result would contain a character a file name cannot hold (a slash, colon, square bracket, asterisk, question mark, angle bracket, pipe, or double quote), be a reserved device name such as `CON`, start or end with a dot or space, or run over 200 characters. A `#` or `^` in the name (usually from a recording title) is replaced with the replacement character instead, because Obsidian cannot link to a note or its attachments under a name that contains them. The `date` property inside each note stays `YYYY-MM-DD` regardless, for Dataview and sorting.
 
-Like the subfolder setting, this applies to **new imports**; existing notes are renamed only when you rename them yourself or when the recording changes in Plaud (see [Renaming recordings](#renaming-recordings)).
+Like the subfolder setting, this applies to **new imports** and leaves notes you already imported alone until they are re-imported. When a re-import overwrites a note whose name no longer matches (because the recording's title changed in Plaud, or you changed this template, the subfolder template, or the replacement character, or the old name contained `#` or `^`), the note moves to its new name together with its `-assets` folder. A note the re-import skips keeps its name. To rename a note by hand, see [Renaming recordings](#renaming-recordings).
 
 ### Renaming recordings
 

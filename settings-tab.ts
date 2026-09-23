@@ -37,6 +37,7 @@ import {
 	TEMPLATE_PREVIEW_FOLDER,
 	renderCustomFrontmatterPreview,
 	isTranscriptPlacement,
+	previewNoteFileName,
 } from './note-writer';
 import { coerceIntervalMinutes } from './auto-sync';
 import { BrowserSignInModal } from './modals';
@@ -174,7 +175,7 @@ const SUBFOLDER_TEMPLATE_TOKENS_HEADING =
 	'Tokens (case matters; combine them with separators inside the braces):';
 const SUBFOLDER_TEMPLATE_EXAMPLES_HEADING = 'Examples:';
 const SUBFOLDER_TEMPLATE_FOOTNOTE =
-	'Applies to new imports; notes you already imported stay where they are.';
+	'Applies to new imports. A note you already imported stays where it is until a re-import overwrites it, and then it moves into the subfolder this template gives it, along with its attachments folder.';
 
 // Note-name template documentation, shared by the declarative settings (1.13+)
 // and the imperative display() fallback (1.12). Held in consts (not inline
@@ -182,7 +183,7 @@ const SUBFOLDER_TEMPLATE_FOOTNOTE =
 // above: the sentence-case lint inspects literal arguments, so the token
 // examples and proper nouns stay untouched.
 const NOTE_NAME_TEMPLATE_INTRO =
-	"Sets each note's name from a template, using the same {{ }} Moment date formats as the subfolder setting plus a {{title}} token. The recording's date fills the date tokens, and {{title}} is the recording title with a leading numeric date removed (the MM-DD and YYYY-MM-DD style forms Plaud uses), so the recording's date takes the place of the one Plaud put in the title. Put the date wherever you like, before or after {{title}}, and keep your own words outside the braces. The date property inside the note stays YYYY-MM-DD for Dataview. The whole name has to work as a note file name, so a template that would put a character a file name cannot contain (a slash, colon, square bracket, asterisk, question mark, angle bracket, pipe, or double quote) into it is rejected.";
+	"Sets each note's name from a template, using the same {{ }} Moment date formats as the subfolder setting plus a {{title}} token. The recording's date fills the date tokens, and {{title}} is the recording title with a leading numeric date removed (the MM-DD and YYYY-MM-DD style forms Plaud uses), so the recording's date takes the place of the one Plaud put in the title. Put the date wherever you like, before or after {{title}}, and keep your own words outside the braces. The date property inside the note stays YYYY-MM-DD for Dataview. The whole name has to work as a note file name, so a template that would put a character a file name cannot contain (a slash, colon, square bracket, asterisk, question mark, angle bracket, pipe, or double quote) into it is rejected. A # or ^ in the name, for example from a recording title, is replaced with your replacement character, because Obsidian cannot link to a file whose name contains them.";
 
 // [token, what it expands to] pairs for a July 3 2026 recording. Real Moment
 // tokens (case matters), the same set the subfolder field uses plus {{title}}.
@@ -224,7 +225,7 @@ const NOTE_NAME_TEMPLATE_TOKENS_HEADING =
 	'Tokens (case matters; combine them with separators inside the braces):';
 const NOTE_NAME_TEMPLATE_EXAMPLES_HEADING = 'Examples:';
 const NOTE_NAME_TEMPLATE_FOOTNOTE =
-	'Applies to new imports; notes you already imported keep their current names.';
+	'Applies to new imports. A note you already imported keeps its name until a re-import overwrites it, and then it moves to the name this template gives it, along with its attachments folder.';
 
 // Description for the forbidden-character replacement setting. Held in a const so
 // the declarative (1.13+) and imperative (1.12) settings paths show identical
@@ -436,6 +437,9 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 	// sign-in status line in place after wiping the token. Null until the
 	// sign-in row has rendered.
 	private signinRefresh: (() => void) | null = null;
+	// Template previews to re-render when the replacement character changes.
+	// Each one removes itself once its row leaves the DOM.
+	private readonly previewRefreshers = new Set<() => void>();
 	// Set by renderTokenControl() so the paste/sign-in flows can redraw the
 	// secret picker to show a just-stored token as the selected secret. Null
 	// until the token row has rendered.
@@ -455,6 +459,7 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 		}
 		this.signinRefresh = null;
 		this.tokenRefresh = null;
+		this.previewRefreshers.clear();
 		super.hide();
 	}
 
@@ -469,6 +474,8 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 	// describe the same settings, so any change here must be mirrored in
 	// getSettingDefinitions() below, and vice versa.
 	display(): void {
+		// A rebuild detaches every earlier preview row.
+		this.previewRefreshers.clear();
 		const { containerEl } = this;
 		containerEl.empty();
 
@@ -1341,7 +1348,19 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 		const previewEl = setting.controlEl.createDiv({
 			cls: 'plaud-importer-template-preview',
 		});
+		let lastTemplate = '';
+		// Re-render when a setting the preview depends on (the replacement
+		// character) changes elsewhere; drops itself once the row is gone.
+		const refresh = (): void => {
+			if (!previewEl.isConnected) {
+				this.previewRefreshers.delete(refresh);
+				return;
+			}
+			previewEl.setText(render(lastTemplate));
+		};
+		this.previewRefreshers.add(refresh);
 		return (template: string) => {
+			lastTemplate = template;
 			previewEl.setText(render(template));
 		};
 	}
@@ -1847,7 +1866,12 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 			if (template.trim() !== '' && !isValidNoteNameTemplate(template)) {
 				return `Preview: ${name} (not a valid note name, so it will not be saved; a file name cannot contain a slash, colon, square bracket, or a character like * ? < > | ", cannot be a reserved name such as CON, cannot start or end with a dot or space, and cannot be over 200 characters)`;
 			}
-			return `Preview: ${name}`;
+			// Show the file name the writer will actually use: a valid template can
+			// still contain # or ^, which sanitizing swaps for the replacement.
+			return `Preview: ${previewNoteFileName(
+				template,
+				this.plugin.settings.forbiddenCharReplacement,
+			)}`;
 		});
 		updatePreview(this.readSettingString('noteNameTemplate'));
 	}
@@ -2451,7 +2475,7 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 				this.plugin.settings.forbiddenCharReplacement = next;
 			} else {
 				new Notice(
-					'Plaud importer: The replacement must be a single character and cannot be a slash, backslash, colon, square bracket, asterisk, question mark, angle bracket, pipe, double quote, dot, space, or control character. Keeping the previous value.',
+					'Plaud importer: The replacement must be a single character and cannot be a slash, backslash, colon, square bracket, asterisk, question mark, angle bracket, pipe, double quote, hash, caret, dot, space, or control character. Keeping the previous value.',
 				);
 				return;
 			}
@@ -2540,7 +2564,12 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 		await this.plugin.saveSettings();
 
 		// Side effects that the imperative onChange handlers used to run inline.
-		if (key === 'showRibbonIcon') {
+		if (key === 'forbiddenCharReplacement') {
+			// The note-name and subfolder previews render with this character.
+			for (const refresh of [...this.previewRefreshers]) {
+				refresh();
+			}
+		} else if (key === 'showRibbonIcon') {
 			this.plugin.updateRibbonIcon();
 		} else if (
 			key === 'autoSyncEnabled' ||

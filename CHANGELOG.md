@@ -6,6 +6,10 @@ All notable changes to Plaud Importer will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Recordings with `#` or `^` in the title now get working attachment, audio, and transcript links.** Obsidian cannot link to a file whose path contains `#` or `^`, so a note named after a title like "Roadmap #1" had broken image and audio embeds. Those two characters are now replaced in note names, like other characters a file name cannot hold (with your replacement character, a dash by default), so the note becomes "Roadmap -1". The note's heading keeps the real title. An existing note with `#` or `^` in its name moves to the new name, together with its attachments folder, the next time it is re-imported with overwrite on. `#` and `^` can no longer be used as the replacement character.
+
 ## [0.42.0] - 2026-09-23
 
 ### Added

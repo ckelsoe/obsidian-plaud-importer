@@ -390,7 +390,7 @@ export function isValidReplacementChar(value: string): boolean {
 		return false;
 	}
 	// eslint-disable-next-line no-control-regex -- reject control codes as a replacement
-	return !/[<>:"/\\|?*[\]. \x00-\x1f]/.test(value);
+	return !/[<>:"/\\|?*#^[\]. \x00-\x1f]/.test(value);
 }
 
 /**
@@ -420,14 +420,18 @@ export function sanitizeFilename(
 	out = out.replace(/\s+/g, ' ');
 
 	// Now replace the Windows-forbidden chars, square brackets (wikilink
-	// collision), and any remaining non-whitespace control characters with
-	// the configured replacement (default '-'). Whitespace control chars like
-	// \t and \n were already handled by the step above, so what's left is
-	// things like NUL (\x00) and the other non-whitespace control codes. A
-	// function replacer is used so a replacement containing `$` is inserted
-	// literally, not treated as a regex back-reference.
+	// collision), `#` and `^` (Obsidian splits every link target at them, so a
+	// note or its -assets folder under such a name cannot be linked or embedded,
+	// and Obsidian's own rename refuses them), and any remaining non-whitespace
+	// control characters with the configured replacement (default '-').
+	// Whitespace control chars like \t and \n were already handled by the step
+	// above, so what's left is things like NUL (\x00) and the other
+	// non-whitespace control codes. A function replacer is used so a
+	// replacement containing `$` is inserted literally, not treated as a regex
+	// back-reference.
 	// eslint-disable-next-line no-control-regex -- intentional: this class strips NUL and other non-whitespace control codes from the filename
-	out = out.replace(/[<>:"/\\|?*\x00-\x08\x0b\x0c\x0e-\x1f[\]]/g, () => repl);
+	const forbidden = /[<>:"/\\|?*#^\x00-\x08\x0b\x0c\x0e-\x1f[\]]/g;
+	out = out.replace(forbidden, () => repl);
 
 	// Strip trailing dots and spaces — Windows silently drops them from
 	// filenames, which causes "File.md" and "File .md" to collide.
@@ -1113,12 +1117,31 @@ const NOTE_NAME_SAMPLE_TITLE = 'Title';
  * space passes. Only the template's own text is judged; the recording title (a
  * `{{title}}` placeholder here) is sanitized separately at write time.
  */
+/**
+ * The note file name a template produces for the settings preview's sample
+ * recording, exactly as the writer would name the file (sanitized with the
+ * configured replacement, so a `#` or `^` shows as it will be written).
+ */
+export function previewNoteFileName(
+	template: string,
+	replacement: string,
+): string {
+	return sanitizeFilename(
+		buildNoteName(TEMPLATE_PREVIEW_TITLE, TEMPLATE_PREVIEW_DATE, template),
+		replacement,
+	);
+}
+
 export function isValidNoteNameTemplate(template: string): boolean {
+	// `#` and `^` are not grounds to reject: the writer's sanitizeFilename swaps
+	// them for the replacement character. Rejecting them would make the writer
+	// fall back to the default template for a stored template that uses them,
+	// renaming every note.
 	const rendered = formatNoteName(
 		template,
 		NOTE_NAME_SAMPLE_DATE,
 		NOTE_NAME_SAMPLE_TITLE,
-	);
+	).replace(/[#^]/g, '-');
 	return sanitizeFilename(rendered) === rendered;
 }
 
