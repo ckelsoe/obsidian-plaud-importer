@@ -175,7 +175,7 @@ const SUBFOLDER_TEMPLATE_TOKENS_HEADING =
 	'Tokens (case matters; combine them with separators inside the braces):';
 const SUBFOLDER_TEMPLATE_EXAMPLES_HEADING = 'Examples:';
 const SUBFOLDER_TEMPLATE_FOOTNOTE =
-	'Applies to new imports; notes you already imported stay where they are.';
+	'Applies to new imports. A note you already imported stays where it is until a re-import overwrites it, and then it moves into the subfolder this template gives it, along with its attachments folder.';
 
 // Note-name template documentation, shared by the declarative settings (1.13+)
 // and the imperative display() fallback (1.12). Held in consts (not inline
@@ -225,7 +225,7 @@ const NOTE_NAME_TEMPLATE_TOKENS_HEADING =
 	'Tokens (case matters; combine them with separators inside the braces):';
 const NOTE_NAME_TEMPLATE_EXAMPLES_HEADING = 'Examples:';
 const NOTE_NAME_TEMPLATE_FOOTNOTE =
-	'Applies to new imports; notes you already imported keep their current names.';
+	'Applies to new imports. A note you already imported keeps its name until a re-import overwrites it, and then it moves to the name this template gives it, along with its attachments folder.';
 
 // Description for the forbidden-character replacement setting. Held in a const so
 // the declarative (1.13+) and imperative (1.12) settings paths show identical
