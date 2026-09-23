@@ -6,6 +6,12 @@ All notable changes to Plaud Importer will be documented in this file.
 
 ## [Unreleased]
 
+## [0.42.2] - 2026-09-23
+
+### Fixed
+
+- **Resolved code-quality warnings from Obsidian's plugin review scan.** No change in behavior.
+
 ### Changed
 
 - **The datetime setting's help text now says what a re-import does.** It said notes you already imported keep their current frontmatter. A re-import that overwrites a note actually rewrites its datetime property from the current template, or removes it if the template is empty.
