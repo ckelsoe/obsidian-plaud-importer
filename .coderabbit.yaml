@@ -12,3 +12,13 @@ reviews:
     drafts: false
     ignore_title_keywords:
       - "Release"
+  # Docstring coverage as a non-blocking SIGNAL, not a merge gate. The check
+  # counts only JSDoc `/** */` blocks, and these plugins document with `//` line
+  # comments by convention, so the raw score under-reports. "warning" keeps the
+  # number visible as a nudge to add docstrings on exported/shared surfaces
+  # (cookbook components, cross-plugin helpers) without flipping an otherwise
+  # clean review to CHANGES_REQUESTED and blocking merge under branch protection.
+  # Repo config overrides the org UI setting.
+  pre_merge_checks:
+    docstrings:
+      mode: "warning"
