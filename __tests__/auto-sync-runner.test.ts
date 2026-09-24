@@ -121,7 +121,7 @@ describe('runAutoSyncTick', () => {
 		expect(result.reachedUpToDate).toBe(true); // page 3 yielded zero candidates
 		expect(result.pagesScanned).toBe(3);
 		expect(listSkips).toEqual([0, 2, 4]); // never asked for page 4
-		expect(importCalls[0].newIds).toEqual(['a', 'b', 'c']);
+		expect(importCalls[0]!.newIds).toEqual(['a', 'b', 'c']);
 	});
 
 	it('caps by maxPagesPerTick on a cold index (nothing up to date)', async () => {
@@ -158,7 +158,7 @@ describe('runAutoSyncTick', () => {
 		const result = await runAutoSyncTick(d);
 		expect(result.cappedByImports).toBe(true);
 		// only the first 3 accumulated
-		expect(importCalls[0].newIds).toEqual(['a', 'b', 'c']);
+		expect(importCalls[0]!.newIds).toEqual(['a', 'b', 'c']);
 	});
 
 	it('does not call importCandidates when there is nothing to do', async () => {
@@ -183,7 +183,7 @@ describe('runAutoSyncTick', () => {
 			pages: [[rec('junk', 900), rec('keep', 800)]],
 		});
 		const result = await runAutoSyncTick(d);
-		expect(importCalls[0].newIds).toEqual(['keep']);
+		expect(importCalls[0]!.newIds).toEqual(['keep']);
 		expect(result.imported).toBe(1);
 	});
 

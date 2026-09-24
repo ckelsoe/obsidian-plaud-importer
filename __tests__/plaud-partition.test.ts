@@ -116,7 +116,7 @@ describe('per-vault partition routing (issue #87)', () => {
 		expect(post).not.toBeNull();
 		await post?.('https://api.plaud.ai/auth/refresh-user-token', '{}', {});
 		expect(calls).toHaveLength(1);
-		expect(calls[0].partition).toBe(plaudPartition(VAULT_A));
+		expect(calls[0]!.partition).toBe(plaudPartition(VAULT_A));
 	});
 
 	// The actual bug: two vaults renewing at once. Before the fix both landed on

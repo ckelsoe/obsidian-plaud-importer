@@ -525,8 +525,8 @@ describe('tallyImportResults', () => {
 		expect(tally.created).toBe(1);
 		expect(tally.failed).toBe(2);
 		expect(tally.failures).toHaveLength(2);
-		expect(tally.failures[0].recording.id).toBe('b');
-		expect(tally.failures[1].recording.id).toBe('c');
+		expect(tally.failures[0]!.recording.id).toBe('b');
+		expect(tally.failures[1]!.recording.id).toBe('c');
 	});
 
 	it('preserves input order when multiple failures are interleaved with successes', () => {

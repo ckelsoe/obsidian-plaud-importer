@@ -113,7 +113,9 @@ function runProbe(
 			},
 			key: (i: number): string | null => keys[i] ?? null,
 			getItem: (k: string): string | null =>
-				Object.prototype.hasOwnProperty.call(map, k) ? map[k] : null,
+				Object.prototype.hasOwnProperty.call(map, k)
+					? (map[k] ?? null)
+					: null,
 		},
 		JSON,
 		// The probe applies the claim guard in-page now, so the sandbox has to
@@ -168,7 +170,7 @@ describe('PROBE_JS on a multi-workspace account', () => {
 
 	it('still degrades to plain collection when the hint is missing', () => {
 		const noHint = {
-			'pld_abc:workspaceList': MULTI['pld_abc:workspaceList'],
+			'pld_abc:workspaceList': MULTI['pld_abc:workspaceList']!,
 		};
 		expect(usableFrom(runProbe(noHint)).length).toBeGreaterThan(0);
 	});
@@ -248,7 +250,7 @@ describe('PROBE_JS candidate cap', () => {
 				REFRESH_TOKEN,
 				PROFILE_JWT,
 				EXPIRED_TOKEN,
-			][i % 3];
+			][i % 3]!;
 		}
 		decoyed['pld_abc:workspaceList'] = JSON.stringify([
 			{ workspaceId: 'ws_clF1vOqcHS', workspaceToken: WORKSPACE_TOKEN },

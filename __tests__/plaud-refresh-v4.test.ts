@@ -50,7 +50,7 @@ function recordingFetch(responses: PlaudHttpResponse[]): {
 			headers: req.headers,
 			body: req.body,
 		});
-		return Promise.resolve(responses[i++]);
+		return Promise.resolve(responses[i++]!);
 	};
 	return { fetch, calls };
 }
@@ -123,16 +123,16 @@ describe('performV4Refresh', () => {
 			refreshToken: ROTATED_REFRESH_TOKEN,
 		});
 		expect(calls).toHaveLength(1);
-		expect(calls[0].url).toBe(
+		expect(calls[0]!.url).toBe(
 			`https://api-test.plaud.ai/user-app/auth/workspace/refresh/${WID}`,
 		);
-		expect(calls[0].method).toBe('POST');
-		expect(calls[0].body).toBe('{}');
-		expect(calls[0].headers.authorization).toBe(`Bearer ${REFRESH_TOKEN}`);
-		expect(calls[0].headers['x-scope-type']).toBe('workspace');
-		expect(calls[0].headers['x-scope-id']).toBe(WID);
-		expect(calls[0].headers['x-device-id']).toBe('dev-123');
-		expect(calls[0].headers['app-platform']).toBe('web');
+		expect(calls[0]!.method).toBe('POST');
+		expect(calls[0]!.body).toBe('{}');
+		expect(calls[0]!.headers.authorization).toBe(`Bearer ${REFRESH_TOKEN}`);
+		expect(calls[0]!.headers['x-scope-type']).toBe('workspace');
+		expect(calls[0]!.headers['x-scope-id']).toBe(WID);
+		expect(calls[0]!.headers['x-device-id']).toBe('dev-123');
+		expect(calls[0]!.headers['app-platform']).toBe('web');
 	});
 
 	it('omits x-device-id when none was captured', async () => {
@@ -143,7 +143,7 @@ describe('performV4Refresh', () => {
 			baseUrl: 'https://api-test.plaud.ai',
 			fetch,
 		});
-		expect(calls[0].headers['x-device-id']).toBeUndefined();
+		expect(calls[0]!.headers['x-device-id']).toBeUndefined();
 	});
 
 	it('returns null (no call) when the stored token has no ws_ wid', async () => {

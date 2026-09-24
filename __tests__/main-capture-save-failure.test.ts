@@ -83,7 +83,7 @@ describe('settings tab reports a capture that failed to save (issue #86)', () =>
 			).resolves.toBeUndefined();
 
 			expect(Notice.instances).toHaveLength(1);
-			expect(Notice.instances[0].message).toBe(SAVE_FAILED);
+			expect(Notice.instances[0]!.message).toBe(SAVE_FAILED);
 			expect(consoleError).toHaveBeenCalled();
 		});
 
@@ -114,7 +114,7 @@ describe('settings tab reports a capture that failed to save (issue #86)', () =>
 			await settingButton(setting, 'Sign in').click();
 
 			expect(Notice.instances).toHaveLength(1);
-			expect(Notice.instances[0].message).not.toBe(SAVE_FAILED);
+			expect(Notice.instances[0]!.message).not.toBe(SAVE_FAILED);
 			expect(consoleError).not.toHaveBeenCalled();
 		});
 
@@ -126,7 +126,7 @@ describe('settings tab reports a capture that failed to save (issue #86)', () =>
 			await settingButton(setting, 'Sign in').click();
 
 			expect(Notice.instances).toHaveLength(1);
-			expect(Notice.instances[0].message).toBe(
+			expect(Notice.instances[0]!.message).toBe(
 				'Plaud token captured and saved.',
 			);
 		});
@@ -168,7 +168,7 @@ describe('settings tab reports a capture that failed to save (issue #86)', () =>
 			).rejects.toThrow('settings redraw failed');
 
 			expect(Notice.instances).toHaveLength(1);
-			expect(Notice.instances[0].message).toBe(
+			expect(Notice.instances[0]!.message).toBe(
 				'Plaud token captured and saved.',
 			);
 		});
@@ -188,7 +188,7 @@ describe('settings tab reports a capture that failed to save (issue #86)', () =>
 			).resolves.toBeUndefined();
 
 			expect(Notice.instances).toHaveLength(1);
-			expect(Notice.instances[0].message).toBe(SAVE_FAILED);
+			expect(Notice.instances[0]!.message).toBe(SAVE_FAILED);
 			expect(consoleError).toHaveBeenCalled();
 		});
 
@@ -215,7 +215,7 @@ describe('settings tab reports a capture that failed to save (issue #86)', () =>
 			await settingButton(setting, 'Paste token from clipboard').click();
 
 			expect(Notice.instances).toHaveLength(1);
-			expect(Notice.instances[0].message).toBe(
+			expect(Notice.instances[0]!.message).toBe(
 				'Token saved. Run a connection test to confirm it works.',
 			);
 		});
@@ -233,7 +233,7 @@ describe('settings tab reports a capture that failed to save (issue #86)', () =>
 			).rejects.toThrow('settings redraw failed');
 
 			expect(Notice.instances).toHaveLength(1);
-			expect(Notice.instances[0].message).toBe(
+			expect(Notice.instances[0]!.message).toBe(
 				'Token saved. Run a connection test to confirm it works.',
 			);
 		});

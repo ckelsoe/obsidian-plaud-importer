@@ -171,7 +171,7 @@ function makeAttachmentStub(summaryLinked: readonly AttachmentAsset[] = []): {
 		extractAttachmentAssetsFromSummaryMarkdown: (md) => {
 			const out = [...summaryLinked];
 			for (const m of (md ?? '').matchAll(/!\[[^\]]*\]\(([^)\s]+)\)/g)) {
-				out.push({ dataType: 'summary_image', url: m[1] });
+				out.push({ dataType: 'summary_image', url: m[1]! });
 			}
 			return out;
 		},
@@ -334,7 +334,7 @@ describe('runImport', () => {
 		expect(note).toContain(
 			'![Screenshot at 0:30](https://s3.example/shot1.png?sig=1)',
 		);
-		const markAsset = importCalls[0].attachments.find(
+		const markAsset = importCalls[0]!.attachments.find(
 			(a) => a.url === 'https://s3.example/shot1.png?sig=1',
 		);
 		expect(markAsset).toBeDefined();
@@ -370,10 +370,10 @@ describe('runImport', () => {
 			fetchArtifacts,
 		});
 
-		const merged = importCalls[0].attachments;
+		const merged = importCalls[0]!.attachments;
 		const forShared = merged.filter((a) => a.url === sharedUrl);
 		expect(forShared).toHaveLength(1);
-		expect(forShared[0].dataType).toBe('plaud_mark');
+		expect(forShared[0]!.dataType).toBe('plaud_mark');
 	});
 
 	it('omits screenshots and queues no mark images when includeScreenshots is off', async () => {
@@ -1347,7 +1347,7 @@ describe('runImport audio artifact', () => {
 		expect(outcome.stop).toBe('completed');
 		expect(audioFetches).toEqual([recording.id]);
 		expect(audioCalls).toHaveLength(1);
-		expect(audioCalls[0].audioUrl).toBe(AUDIO_URL);
+		expect(audioCalls[0]!.audioUrl).toBe(AUDIO_URL);
 	});
 
 	it('does not fetch or import audio when includeAudio is off', async () => {

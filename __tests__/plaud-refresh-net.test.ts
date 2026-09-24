@@ -128,7 +128,7 @@ describe('performNetRefresh', () => {
 		let i = 0;
 		const post: SessionPost = (url, body) => {
 			calls.push({ url, body });
-			return Promise.resolve(responses[i++]);
+			return Promise.resolve(responses[i++]!);
 		};
 		return { post, calls };
 	}
@@ -174,7 +174,7 @@ describe('performNetRefresh', () => {
 			post,
 		});
 		expect(result?.apiBaseUrl).toBe('https://api-euc1.plaud.ai');
-		expect(calls[2].url).toBe(
+		expect(calls[2]!.url).toBe(
 			`https://api-euc1.plaud.ai/user-app/auth/workspace/token/${WID}`,
 		);
 	});
