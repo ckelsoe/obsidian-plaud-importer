@@ -12,11 +12,7 @@ import {
 // a faithful fixture.
 function makeJwt(payload: Record<string, unknown>): string {
 	const b64url = (obj: unknown): string =>
-		Buffer.from(JSON.stringify(obj))
-			.toString('base64')
-			.replace(/\+/g, '-')
-			.replace(/\//g, '_')
-			.replace(/=+$/, '');
+		Buffer.from(JSON.stringify(obj)).toString('base64url');
 	return `${b64url({ alg: 'HS256', typ: 'WT' })}.${b64url(payload)}.sig`;
 }
 

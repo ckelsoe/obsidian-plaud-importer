@@ -33,11 +33,7 @@ import {
 // Same fixture construction as plaud-token.test.ts: the helpers read unverified
 // claims, so an unsigned token with a dummy signature segment is faithful.
 function b64url(obj: unknown): string {
-	return Buffer.from(JSON.stringify(obj))
-		.toString('base64')
-		.replace(/\+/g, '-')
-		.replace(/\//g, '_')
-		.replace(/=+$/, '');
+	return Buffer.from(JSON.stringify(obj)).toString('base64url');
 }
 function makeJwt(header: unknown, payload: unknown): string {
 	return `${b64url(header)}.${b64url(payload)}.sig`;

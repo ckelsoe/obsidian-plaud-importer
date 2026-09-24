@@ -42,6 +42,7 @@
 import type { PlaudHttpFetcher } from './plaud-client-re';
 import { normalizeTrustedOrigin } from './plaud-refresh-net';
 import { readTokenClientId, workspaceIdFromToken } from './plaud-token';
+import { redactJwtLike } from './jwt-redact';
 
 const WORKSPACE_REFRESH_PATH_PREFIX = '/user-app/auth/workspace/refresh/';
 
@@ -109,10 +110,7 @@ function envelopeMessage(
  * bodySnippet.
  */
 function bodySnippet(text: string): string {
-	const redacted = text.replace(
-		/[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g,
-		'[redacted-token]',
-	);
+	const redacted = redactJwtLike(text, '[redacted-token]');
 	return redacted.length > 200 ? `${redacted.slice(0, 200)}…` : redacted;
 }
 

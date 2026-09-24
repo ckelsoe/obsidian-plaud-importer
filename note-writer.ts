@@ -38,6 +38,7 @@ import type {
 } from './plaud-client';
 import { recordingSourceLabel } from './plaud-client';
 import { canonicalPlaudId } from './vault-index';
+import { trimChars, trimTrailingChars } from './text-trim';
 
 // -----------------------------------------------------------------------------
 // Errors
@@ -435,7 +436,7 @@ export function sanitizeFilename(
 
 	// Strip trailing dots and spaces — Windows silently drops them from
 	// filenames, which causes "File.md" and "File .md" to collide.
-	out = out.replace(/[. ]+$/, '');
+	out = trimTrailingChars(out, '. ');
 	out = out.replace(/^[. ]+/, '');
 
 	// Clamp length (see MAX_PATH_COMPONENT_LENGTH): leaves room for ".md" + any
@@ -443,7 +444,7 @@ export function sanitizeFilename(
 	if (out.length > MAX_PATH_COMPONENT_LENGTH) {
 		out = out.slice(0, MAX_PATH_COMPONENT_LENGTH).trim();
 		// Re-strip trailing dots/spaces after the slice.
-		out = out.replace(/[. ]+$/, '');
+		out = trimTrailingChars(out, '. ');
 	}
 
 	// Reserved Windows device names, including with an extension (CON.txt),
@@ -511,7 +512,7 @@ export function formatPlaudWebUrl(
 	recordingId: string,
 	webBase: string = PLAUD_WEB_URL_V3,
 ): string {
-	const base = webBase.replace(/\/+$/, '');
+	const base = trimTrailingChars(webBase, '/');
 	return `${base}/file/${encodeURIComponent(recordingId)}`;
 }
 
@@ -1442,11 +1443,10 @@ export function buildNoteTags(
 			if (typeof keyword !== 'string') {
 				continue;
 			}
-			const slug = keyword
-				.trim()
-				.toLowerCase()
-				.replace(/\s+/g, '-')
-				.replace(/^-+|-+$/g, '');
+			const slug = trimChars(
+				keyword.trim().toLowerCase().replace(/\s+/g, '-'),
+				'-',
+			);
 			if (slug.length === 0) {
 				continue;
 			}
@@ -1916,6 +1916,96 @@ export function formatFrontmatter(
 	return lines.join('\n');
 }
 
+// Line terminators as a JavaScript regex sees them (`.` excludes these, and
+// `^`/`$` in multiline mode match next to them).
+const LINE_TERMINATORS = '\n\r\u2028\u2029';
+
+// The characters `\s` matches, which is also what String#trim removes.
+function isRegexWhitespace(ch: string): boolean {
+	return ch.length > 0 && ch.trim() === '';
+}
+
+/**
+ * The body of a note's leading `---` frontmatter block, or null when there is
+ * none. A linear scan that returns exactly what
+ * `content.match(/^---\s*\r?\n([\s\S]*?)\r?\n---/)?.[1]` returned: that regex
+ * backtracks super-linearly on long whitespace runs. The body starts after the
+ * last newline of the whitespace run that follows the opening `---` (an
+ * earlier one only when no closing fence follows the last), and ends before
+ * the first `\n---` or `\r\n---` after it.
+ */
+function frontmatterBody(content: string): string | null {
+	if (!content.startsWith('---')) {
+		return null;
+	}
+	let runEnd = 3;
+	while (
+		runEnd < content.length &&
+		isRegexWhitespace(content.charAt(runEnd))
+	) {
+		runEnd++;
+	}
+	for (let nl = runEnd - 1; nl >= 3; nl--) {
+		if (content.charAt(nl) !== '\n') {
+			continue;
+		}
+		const start = nl + 1;
+		const close = content.indexOf('\n---', start);
+		if (close < 0) {
+			continue;
+		}
+		const end =
+			close > start && content.charAt(close - 1) === '\r'
+				? close - 1
+				: close;
+		return content.slice(start, end);
+	}
+	return null;
+}
+
+/**
+ * The value of the first `key:` line in a frontmatter body, or null when no
+ * line starts with `key:`. A linear scan that returns exactly what
+ * `body.match(/^key:\s*(.*?)\s*$/m)?.[1]` returned. Note that the regex's `\s*`
+ * crosses line breaks, so an empty `key:` yields the NEXT line's text; that is
+ * kept as-is here so this change does not alter behavior.
+ */
+function frontmatterKeyValue(body: string, key: string): string | null {
+	const prefix = `${key}:`;
+	let lineStart = 0;
+	while (lineStart <= body.length) {
+		if (body.startsWith(prefix, lineStart)) {
+			let valueStart = lineStart + prefix.length;
+			while (
+				valueStart < body.length &&
+				isRegexWhitespace(body.charAt(valueStart))
+			) {
+				valueStart++;
+			}
+			let valueEnd = valueStart;
+			while (
+				valueEnd < body.length &&
+				!LINE_TERMINATORS.includes(body.charAt(valueEnd))
+			) {
+				valueEnd++;
+			}
+			return body.slice(valueStart, valueEnd).trimEnd();
+		}
+		let next = lineStart;
+		while (
+			next < body.length &&
+			!LINE_TERMINATORS.includes(body.charAt(next))
+		) {
+			next++;
+		}
+		if (next >= body.length) {
+			return null;
+		}
+		lineStart = next + 1;
+	}
+	return null;
+}
+
 /**
  * Extract the `plaud-id` value from a note's YAML frontmatter, if any. Used
  * by the writer to detect filename collisions — if a note already exists at
@@ -1926,15 +2016,15 @@ export function formatFrontmatter(
  * frontmatter is malformed enough that we can't parse the id.
  */
 export function extractPlaudIdFromFrontmatter(content: string): string | null {
-	const block = content.match(/^---\s*\r?\n([\s\S]*?)\r?\n---/);
-	if (!block) {
+	const body = frontmatterBody(content);
+	if (body === null) {
 		return null;
 	}
-	const idLine = block[1].match(/^plaud-id:\s*(.*?)\s*$/m);
-	if (!idLine) {
+	const idValue = frontmatterKeyValue(body, 'plaud-id');
+	if (idValue === null) {
 		return null;
 	}
-	let value = idLine[1].trim();
+	let value = idValue.trim();
 	// Strip matched surrounding quotes (YAML double-quoted form).
 	if (
 		(value.startsWith('"') && value.endsWith('"')) ||
@@ -1996,11 +2086,11 @@ function parseLeadingQuotedScalar(
  */
 export function extractFrontmatterValues(content: string): Map<string, string> {
 	const values = new Map<string, string>();
-	const block = content.match(/^---\s*\r?\n([\s\S]*?)\r?\n---/);
-	if (!block) {
+	const body = frontmatterBody(content);
+	if (body === null) {
 		return values;
 	}
-	const lines = block[1].split('\n');
+	const lines = body.split('\n');
 	for (let i = 0; i < lines.length; i++) {
 		const line = lines[i];
 		if (/^\s/.test(line)) {
@@ -2026,14 +2116,14 @@ export function extractFrontmatterValues(content: string): Map<string, string> {
 			if (colon < 1) {
 				continue;
 			}
-			const candidate = line.slice(0, colon).replace(/\s+$/, '');
+			const candidate = line.slice(0, colon).trimEnd();
 			if (!/^[A-Za-z][A-Za-z0-9 _.-]*$/.test(candidate)) {
 				continue;
 			}
 			key = candidate;
 			rest = line.slice(colon + 1);
 		}
-		let rawValue = rest.replace(/^[ \t]/, '').replace(/\s+$/, '');
+		let rawValue = rest.replace(/^[ \t]/, '').trimEnd();
 		// Block scalar (`|` or `>`, with optional chomping/indent indicator):
 		// capture the indented body verbatim so a preserved multi-line value
 		// round-trips instead of collapsing to just the indicator on re-import.
@@ -2078,15 +2168,15 @@ export function extractFrontmatterValues(content: string): Map<string, string> {
  * key set to anything other than a truthy `true`/`yes` token.
  */
 export function extractPlaudPlaceholderFlag(content: string): boolean {
-	const block = content.match(/^---\s*\r?\n([\s\S]*?)\r?\n---/);
-	if (!block) {
+	const body = frontmatterBody(content);
+	if (body === null) {
 		return false;
 	}
-	const markerLine = block[1].match(/^plaud-placeholder:\s*(.*?)\s*$/m);
-	if (!markerLine) {
+	const markerValue = frontmatterKeyValue(body, 'plaud-placeholder');
+	if (markerValue === null) {
 		return false;
 	}
-	const value = markerLine[1]
+	const value = markerValue
 		.trim()
 		.replace(/^["']|["']$/g, '')
 		.toLowerCase();
@@ -2976,7 +3066,10 @@ export function formatPlaceholderMarkdown(
 		template,
 		offsetMinutes,
 	);
-	const flatReason = reason.replace(/\s*\r?\n\s*/g, ' ').trim();
+	// Each whitespace run that contains a line break becomes one space.
+	const flatReason = reason
+		.replace(/\s+/g, (run) => (run.includes('\n') ? ' ' : run))
+		.trim();
 	const lines: string[] = [
 		'---',
 		`plaud-id: ${yamlScalar(recording.id)}`,
@@ -3958,16 +4051,17 @@ export class NoteWriter {
  * would be a lie to the user about where their files went.
  */
 function normalizeFolderPath(folder: string): string {
-	const cleaned = folder
-		.trim()
-		// Windows users type paths like "\Inbox". Obsidian's createFolder
-		// normalizes "\" to "/" internally, but getFolderByPath does a literal
-		// index lookup — so an un-normalized backslash makes the existence check
-		// miss the folder Obsidian actually created, and every later import
-		// re-attempts the create and fails with "Folder already exists".
-		.replace(/\\/g, '/')
-		.replace(/^\/+|\/+$/g, '')
-		.replace(/\/{2,}/g, '/');
+	const cleaned = trimChars(
+		folder
+			.trim()
+			// Windows users type paths like "\Inbox". Obsidian's createFolder
+			// normalizes "\" to "/" internally, but getFolderByPath does a literal
+			// index lookup — so an un-normalized backslash makes the existence check
+			// miss the folder Obsidian actually created, and every later import
+			// re-attempts the create and fails with "Folder already exists".
+			.replace(/\\/g, '/'),
+		'/',
+	).replace(/\/{2,}/g, '/');
 	const segments = cleaned.split('/').filter((s) => s !== '' && s !== '.');
 	if (segments.some((s) => s === '..')) {
 		throw new NoteWriterError(

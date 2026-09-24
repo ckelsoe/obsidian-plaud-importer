@@ -28,11 +28,7 @@ import type { SignInMethod } from '../reconnect-routing';
 // Build a minimal unsigned JWT. The capture guard reads unverified claims only,
 // so an unsigned token with a dummy signature segment is a faithful fixture.
 function b64url(obj: unknown): string {
-	return Buffer.from(JSON.stringify(obj))
-		.toString('base64')
-		.replace(/\+/g, '-')
-		.replace(/\//g, '_')
-		.replace(/=+$/, '');
+	return Buffer.from(JSON.stringify(obj)).toString('base64url');
 }
 function makeJwt(payload: unknown): string {
 	return `${b64url({ alg: 'HS256', typ: 'JWT' })}.${b64url(payload)}.sig`;

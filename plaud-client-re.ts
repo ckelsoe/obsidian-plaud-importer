@@ -25,6 +25,7 @@ import type {
 	TranscriptSegment,
 } from './plaud-client';
 import type { DebugLogger } from './debug-logger';
+import { trimTrailingChars } from './text-trim';
 
 /**
  * Abstract HTTP call shape the client depends on. main.ts adapts Obsidian's
@@ -1185,7 +1186,7 @@ function detectRegionRedirect(json: unknown): string | null {
 		return null;
 	}
 	// Rebuild from the parsed origin so only scheme + host[:port] survive.
-	return `https://${parsed.host}`.replace(/\/+$/, '');
+	return trimTrailingChars(`https://${parsed.host}`, '/');
 }
 
 // Detects Plaud's in-band error envelope. Plaud signals failures on the data

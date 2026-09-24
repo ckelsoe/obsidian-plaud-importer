@@ -11,6 +11,7 @@ import { TRANSCRIPT_FILE_NAME } from './note-writer';
 import { NoopDebugLogger, type DebugLogger } from './debug-logger';
 import type { ArtifactSelection } from './import-core';
 import { PLAUD_MARK_DATA_TYPE } from './import-core';
+import { trimTrailingChars } from './text-trim';
 
 // Plaud host bases used to resolve relative asset paths into absolute
 // download candidates. The API host can vary by region (EU accounts get
@@ -640,7 +641,7 @@ export class AttachmentImporter {
 			}
 			const withoutManagedSection =
 				this.stripManagedAttachmentsSection(repointed);
-			const trimmed = withoutManagedSection.replace(/\s+$/, '');
+			const trimmed = withoutManagedSection.trimEnd();
 			const section: string[] = [
 				'## Images and Attachments',
 				'',
@@ -810,7 +811,7 @@ export class AttachmentImporter {
 
 			await this.app.vault.process(noteFile, (content) => {
 				const withoutManaged = this.stripManagedAudioSection(content);
-				const trimmed = withoutManaged.replace(/\s+$/, '');
+				const trimmed = withoutManaged.trimEnd();
 				const section = [
 					'## Audio',
 					'',
@@ -1242,7 +1243,7 @@ export class AttachmentImporter {
 		}
 		const normalized = pathOrUrl.replace(/^\/+/, '');
 		const fromMap = nestedAssetLinks?.[normalized];
-		const apiBase = this.resolveApiBaseUrl().replace(/\/+$/, '');
+		const apiBase = trimTrailingChars(this.resolveApiBaseUrl(), '/');
 		return [
 			...(typeof fromMap === 'string' && fromMap.length > 0
 				? [fromMap]
@@ -1321,7 +1322,7 @@ export class AttachmentImporter {
 			});
 		};
 
-		const markdownLinkRegex = /!?\[[^\]]*]\(([^)\s]+)(?:\s+"[^"]*")?\)/g;
+		const markdownLinkRegex = /!?\[[^\][]*]\(([^)\s]+)(?:\s+"[^"]*")?\)/g;
 		let match: RegExpExecArray | null;
 		while ((match = markdownLinkRegex.exec(summaryMarkdown)) !== null) {
 			addCandidate(match[1]);
@@ -1465,7 +1466,7 @@ export class AttachmentImporter {
 
 	private stripManagedAttachmentsSection(content: string): string {
 		return content.replace(
-			/\n## (?:Attachments|Images and Attachments)\s*\n\s*_Imported from Plaud file-detail assets at import time\._[\s\S]*$/m,
+			/\n## (?:Attachments|Images and Attachments)[^\S\n]*\n\s*_Imported from Plaud file-detail assets at import time\._[\s\S]*$/m,
 			'',
 		);
 	}
@@ -1516,7 +1517,7 @@ export function insertSectionBeforeTranscript(
 		insertAt = match.index;
 	}
 	if (insertAt !== -1) {
-		const before = content.slice(0, insertAt).replace(/\s+$/, '');
+		const before = content.slice(0, insertAt).trimEnd();
 		const after = content.slice(insertAt).replace(/^\s*/, '');
 		return `${before}\n\n${section}\n\n${after}\n`;
 	}

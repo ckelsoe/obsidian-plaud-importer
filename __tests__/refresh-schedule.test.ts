@@ -11,11 +11,7 @@ import {
 } from '../session-expiry';
 
 function b64url(obj: unknown): string {
-	return Buffer.from(JSON.stringify(obj))
-		.toString('base64')
-		.replace(/\+/g, '-')
-		.replace(/\//g, '_')
-		.replace(/=+$/, '');
+	return Buffer.from(JSON.stringify(obj)).toString('base64url');
 }
 function tokenExpiringAt(expMs: number): string {
 	return `${b64url({ alg: 'HS256', typ: 'WT' })}.${b64url({
@@ -27,11 +23,9 @@ function tokenExpiringAt(expMs: number): string {
 }
 /** Payload written raw so exp survives as a non-JSON-representable value. */
 function tokenWithRawPayload(payloadJson: string): string {
-	return `${b64url({ alg: 'HS256', typ: 'WT' })}.${Buffer.from(payloadJson)
-		.toString('base64')
-		.replace(/\+/g, '-')
-		.replace(/\//g, '_')
-		.replace(/=+$/, '')}.sig`;
+	return `${b64url({ alg: 'HS256', typ: 'WT' })}.${Buffer.from(
+		payloadJson,
+	).toString('base64url')}.sig`;
 }
 
 const NOW = 1_785_000_000_000;

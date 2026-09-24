@@ -45,6 +45,7 @@ import {
 	MAX_COLLECTED_CANDIDATES,
 	MAX_COLLECTED_REFRESH,
 } from './token-candidates';
+import { trimTrailingChars } from './text-trim';
 
 // Load the same web client the data API expects. The token is platform-typed:
 // a token minted by app.plaud.ai is parsed in a different mode by /file/simple/web
@@ -928,5 +929,5 @@ export function normalizeApiDomain(
 	if (!isTrustedPlaudHost(parsed.hostname)) {
 		return null;
 	}
-	return `https://${parsed.host}`.replace(/\/+$/, '');
+	return trimTrailingChars(`https://${parsed.host}`, '/');
 }

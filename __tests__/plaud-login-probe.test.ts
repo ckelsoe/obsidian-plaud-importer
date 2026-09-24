@@ -14,11 +14,7 @@ import {
 // capture path that 1092 passing tests missed for exactly that reason.
 
 function b64url(obj: unknown): string {
-	return Buffer.from(JSON.stringify(obj))
-		.toString('base64')
-		.replace(/\+/g, '-')
-		.replace(/\//g, '_')
-		.replace(/=+$/, '');
+	return Buffer.from(JSON.stringify(obj)).toString('base64url');
 }
 function makeJwt(header: unknown, payload: unknown): string {
 	return `${b64url(header)}.${b64url(payload)}.sig`;
@@ -235,11 +231,7 @@ describe('PROBE_JS candidate cap', () => {
 		// arrive off a hostile or corrupt localStorage entry.
 		const infinite = `${b64url({ alg: 'HS256', typ: 'WT' })}.${Buffer.from(
 			'{"sub":"u1","client_id":"web","exp":1e400}',
-		)
-			.toString('base64')
-			.replace(/\+/g, '-')
-			.replace(/\//g, '_')
-			.replace(/=+$/, '')}.sig`;
+		).toString('base64url')}.sig`;
 		expect(isUsableUserToken(infinite)).toBe(false);
 		expect(runProbe({ 'pld_abc:odd': infinite }).tokens).toHaveLength(0);
 	});
