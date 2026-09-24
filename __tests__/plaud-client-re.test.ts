@@ -71,10 +71,11 @@ function captureFetcher(response: PlaudHttpResponse): {
 	allRequests: () => readonly PlaudHttpRequest[];
 } {
 	const captured: PlaudHttpRequest[] = [];
-	const fetcher: PlaudHttpFetcher = async (req) => {
-		captured.push(req);
-		return response;
-	};
+	const fetcher: PlaudHttpFetcher = (req) =>
+		asyncResult(() => {
+			captured.push(req);
+			return response;
+		});
 	return {
 		fetcher,
 		lastRequest: () => captured[captured.length - 1],
@@ -91,9 +92,14 @@ function captureFetcher(response: PlaudHttpResponse): {
 // no special construction path; (c) token validation happens at call time,
 // never at construction time.
 
+// A fetcher whose request fails at the network layer.
+const timingOutFetcher: PlaudHttpFetcher = () =>
+	Promise.reject(new Error('ETIMEDOUT'));
+
 describe('token provider semantics', () => {
 	it('does not validate the token at construction time', () => {
-		const fetcher: PlaudHttpFetcher = async () => ok(listEnvelope([]));
+		const fetcher: PlaudHttpFetcher = () =>
+			asyncResult(() => ok(listEnvelope([])));
 		// None of these should throw — construction is always legal. The
 		// provider is only called when an API call is made.
 		expect(
@@ -595,12 +601,14 @@ describe('regional endpoint auto-detection', () => {
 	} {
 		const captured: PlaudHttpRequest[] = [];
 		let call = 0;
-		const fetcher: PlaudHttpFetcher = async (req) => {
-			captured.push(req);
-			const response = responses[Math.min(call, responses.length - 1)]!;
-			call += 1;
-			return response;
-		};
+		const fetcher: PlaudHttpFetcher = (req) =>
+			asyncResult(() => {
+				captured.push(req);
+				const response =
+					responses[Math.min(call, responses.length - 1)]!;
+				call += 1;
+				return response;
+			});
 		return { fetcher, allRequests: () => captured };
 	}
 
@@ -643,14 +651,15 @@ describe('regional endpoint auto-detection', () => {
 		// regional host, a second listRecordings must go straight there.
 		const captured: PlaudHttpRequest[] = [];
 		let call = 0;
-		const fetcher: PlaudHttpFetcher = async (req) => {
-			captured.push(req);
-			call += 1;
-			// First request only: region mismatch. Everything after: success.
-			return call === 1
-				? regionRedirect('https://api-euc1.plaud.ai')
-				: ok(listEnvelope([]));
-		};
+		const fetcher: PlaudHttpFetcher = (req) =>
+			asyncResult(() => {
+				captured.push(req);
+				call += 1;
+				// First request only: region mismatch. Everything after: success.
+				return call === 1
+					? regionRedirect('https://api-euc1.plaud.ai')
+					: ok(listEnvelope([]));
+			});
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
 		await client.listRecordings(); // redirect + retry (2 requests)
@@ -664,10 +673,11 @@ describe('regional endpoint auto-detection', () => {
 		// Every response is a redirect to a different host. The client must
 		// follow exactly one and then give up.
 		let call = 0;
-		const fetcher: PlaudHttpFetcher = async () => {
-			call += 1;
-			return regionRedirect(`https://api-region${call}.plaud.ai`);
-		};
+		const fetcher: PlaudHttpFetcher = () =>
+			asyncResult(() => {
+				call += 1;
+				return regionRedirect(`https://api-region${call}.plaud.ai`);
+			});
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
 		await expect(client.listRecordings()).rejects.toBeInstanceOf(
@@ -867,9 +877,10 @@ describe('listRecordings HTTP status handling', () => {
 	});
 
 	it('wraps a fetcher-thrown network error in PlaudApiError', async () => {
-		const fetcher: PlaudHttpFetcher = async () => {
-			throw new Error('ECONNRESET');
-		};
+		const fetcher: PlaudHttpFetcher = () =>
+			asyncResult(() => {
+				throw new Error('ECONNRESET');
+			});
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
 		await expect(client.listRecordings()).rejects.toBeInstanceOf(
@@ -1132,6 +1143,7 @@ describe('listRecordings filter validation', () => {
 // =============================================================================
 
 import type { PlaudRecordingId, Recording } from '../plaud-client';
+import { asyncResult } from './helpers/async-result';
 
 function transsummEnvelope(
 	overrides: Record<string, unknown> = {},
@@ -1232,10 +1244,11 @@ describe('getTranscriptAndSummary request shape', () => {
 
 	it('rejects empty id without making a request', async () => {
 		let called = false;
-		const fetcher: PlaudHttpFetcher = async () => {
-			called = true;
-			return ok(transsummEnvelope());
-		};
+		const fetcher: PlaudHttpFetcher = () =>
+			asyncResult(() => {
+				called = true;
+				return ok(transsummEnvelope());
+			});
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
 		await expect(
@@ -1260,15 +1273,16 @@ describe('getTranscriptAndSummary legacy-transsumm -12 fallback', () => {
 		transsummResponse: PlaudHttpResponse,
 		detailResponse: PlaudHttpResponse,
 	): PlaudHttpFetcher {
-		return async (req) => {
-			if (req.url.includes('/ai/transsumm/')) {
-				return transsummResponse;
-			}
-			if (req.url.includes('/file/detail/')) {
-				return detailResponse;
-			}
-			return status(404);
-		};
+		return (req) =>
+			asyncResult(() => {
+				if (req.url.includes('/ai/transsumm/')) {
+					return transsummResponse;
+				}
+				if (req.url.includes('/file/detail/')) {
+					return detailResponse;
+				}
+				return status(404);
+			});
 	}
 
 	const transsummMinus12 = ok({
@@ -2287,9 +2301,7 @@ describe('getTranscriptAndSummary error mapping', () => {
 	});
 
 	it('wraps a fetcher-thrown network error in PlaudApiError', async () => {
-		const fetcher: PlaudHttpFetcher = async () => {
-			throw new Error('ETIMEDOUT');
-		};
+		const fetcher = timingOutFetcher;
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
 		await expect(client.getTranscriptAndSummary(ID)).rejects.toBeInstanceOf(
@@ -2440,9 +2452,7 @@ describe('debug logger integration', () => {
 	});
 
 	it('emits an error event when the fetcher rejects', async () => {
-		const fetcher: PlaudHttpFetcher = async () => {
-			throw new Error('ETIMEDOUT');
-		};
+		const fetcher = timingOutFetcher;
 		const logger = new BufferedDebugLogger(true, {
 			consoleSink: silentSink(),
 		});
@@ -2652,23 +2662,24 @@ function routeFetcher(routes: {
 		json: null,
 		text: '',
 	};
-	const fetcher: PlaudHttpFetcher = async (req) => {
-		captured.push(req);
-		if (req.url.includes('/ai/transsumm/')) {
-			if (routes.throwOn === 'transsumm')
-				throw new Error('synthetic transsumm failure');
-			return routes.transsumm ?? defaultResponse;
-		}
-		if (req.url.includes('/file/detail/')) {
-			if (routes.throwOn === 'detail')
-				throw new Error('synthetic detail failure');
-			return routes.detail ?? defaultResponse;
-		}
-		// Anything else is assumed to be the S3 pre-signed polish URL.
-		if (routes.throwOn === 'polish')
-			throw new Error('synthetic polish failure');
-		return routes.polish ?? defaultResponse;
-	};
+	const fetcher: PlaudHttpFetcher = (req) =>
+		asyncResult(() => {
+			captured.push(req);
+			if (req.url.includes('/ai/transsumm/')) {
+				if (routes.throwOn === 'transsumm')
+					throw new Error('synthetic transsumm failure');
+				return routes.transsumm ?? defaultResponse;
+			}
+			if (req.url.includes('/file/detail/')) {
+				if (routes.throwOn === 'detail')
+					throw new Error('synthetic detail failure');
+				return routes.detail ?? defaultResponse;
+			}
+			// Anything else is assumed to be the S3 pre-signed polish URL.
+			if (routes.throwOn === 'polish')
+				throw new Error('synthetic polish failure');
+			return routes.polish ?? defaultResponse;
+		});
 	return { fetcher, requests: () => captured };
 }
 

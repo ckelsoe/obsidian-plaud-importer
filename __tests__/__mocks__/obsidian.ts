@@ -127,8 +127,8 @@ export class Plugin {
 		return id;
 	}
 	registerDomEvent(_el: unknown, _type: string, _cb: unknown): void {}
-	async loadData(): Promise<unknown> {
-		return null;
+	loadData(): Promise<unknown> {
+		return Promise.resolve(null);
 	}
 	async saveData(_data: unknown): Promise<void> {}
 	onload(): void {}

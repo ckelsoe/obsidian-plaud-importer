@@ -14,6 +14,7 @@ import {
 	type PlaudTokenProvider,
 } from '../plaud-client-re';
 import type { PlaudRecordingId } from '../plaud-client';
+import { asyncResult } from './helpers/async-result';
 
 // Response helpers ----------------------------------------------------------
 
@@ -199,14 +200,15 @@ function routingFetcher(
 	requestFor: (substr: string) => PlaudHttpRequest | undefined;
 } {
 	const captured: PlaudHttpRequest[] = [];
-	const fetcher: PlaudHttpFetcher = async (req) => {
-		captured.push(req);
-		const hit = routes.find((r) => req.url.includes(r.match));
-		if (hit === undefined) {
-			throw new Error(`no route for ${req.url}`);
-		}
-		return hit.response;
-	};
+	const fetcher: PlaudHttpFetcher = (req) =>
+		asyncResult(() => {
+			captured.push(req);
+			const hit = routes.find((r) => req.url.includes(r.match));
+			if (hit === undefined) {
+				throw new Error(`no route for ${req.url}`);
+			}
+			return hit.response;
+		});
 	return {
 		fetcher,
 		requests: () => captured,
@@ -337,14 +339,15 @@ describe('PlaudV4Client.listRecordingsPage', () => {
 
 	it('getFolderCatalog ignores a listing that was in flight across a switch', async () => {
 		let ws = 'ws_A';
-		const fetcher: PlaudHttpFetcher = async (req) => {
-			if (req.url.includes('/recordings/all')) {
-				// The switch lands while this request is awaiting its response.
-				ws = 'ws_B';
-				return listEnvelope([listItem()]);
-			}
-			throw new Error(`no route for ${req.url}`);
-		};
+		const fetcher: PlaudHttpFetcher = (req) =>
+			asyncResult(() => {
+				if (req.url.includes('/recordings/all')) {
+					// The switch lands while this request is awaiting its response.
+					ws = 'ws_B';
+					return listEnvelope([listItem()]);
+				}
+				throw new Error(`no route for ${req.url}`);
+			});
 		const client = makeClient(fetcher, { workspaceId: () => ws });
 		await client.listRecordingsPage();
 		expect(await client.getFolderCatalog()).toEqual([]);
@@ -970,19 +973,20 @@ describe('PlaudV4Client.updateTitle', () => {
 	it('re-reads a fresh version and retries once on a node version conflict', async () => {
 		let detailCalls = 0;
 		let renameCalls = 0;
-		const fetcher: PlaudHttpFetcher = async (req) => {
-			if (req.url.includes('/files/detail/')) {
-				detailCalls++;
-				return detailEnvelope({
-					node: { version_ms: detailCalls === 1 ? 100 : 200 },
-				});
-			}
-			if (req.url.includes('/nodes/rename/')) {
-				renameCalls++;
-				return renameCalls === 1 ? renameConflict : renameOk;
-			}
-			throw new Error(`no route for ${req.url}`);
-		};
+		const fetcher: PlaudHttpFetcher = (req) =>
+			asyncResult(() => {
+				if (req.url.includes('/files/detail/')) {
+					detailCalls++;
+					return detailEnvelope({
+						node: { version_ms: detailCalls === 1 ? 100 : 200 },
+					});
+				}
+				if (req.url.includes('/nodes/rename/')) {
+					renameCalls++;
+					return renameCalls === 1 ? renameConflict : renameOk;
+				}
+				throw new Error(`no route for ${req.url}`);
+			});
 		const client = makeClient(fetcher);
 
 		await client.updateTitle(ID, 'New Title');
@@ -1030,13 +1034,14 @@ describe('PlaudV4Client.getDeviceCatalog', () => {
 
 	it('fetches once and reuses the cache for the same account and host', async () => {
 		let calls = 0;
-		const fetcher: PlaudHttpFetcher = async (req) => {
-			if (req.url.includes('/device-app/device/list')) {
-				calls++;
-				return deviceListEnvelope([DEV]);
-			}
-			throw new Error(`no route for ${req.url}`);
-		};
+		const fetcher: PlaudHttpFetcher = (req) =>
+			asyncResult(() => {
+				if (req.url.includes('/device-app/device/list')) {
+					calls++;
+					return deviceListEnvelope([DEV]);
+				}
+				throw new Error(`no route for ${req.url}`);
+			});
 		const client = makeClient(fetcher);
 
 		const a = await client.getDeviceCatalog();
@@ -1050,13 +1055,16 @@ describe('PlaudV4Client.getDeviceCatalog', () => {
 	it('refetches when the workspace changes (account switch on one client)', async () => {
 		let calls = 0;
 		let ws = 'ws_A';
-		const fetcher: PlaudHttpFetcher = async (req) => {
-			if (req.url.includes('/device-app/device/list')) {
-				calls++;
-				return deviceListEnvelope([{ ...DEV, name: `dev-${calls}` }]);
-			}
-			throw new Error(`no route for ${req.url}`);
-		};
+		const fetcher: PlaudHttpFetcher = (req) =>
+			asyncResult(() => {
+				if (req.url.includes('/device-app/device/list')) {
+					calls++;
+					return deviceListEnvelope([
+						{ ...DEV, name: `dev-${calls}` },
+					]);
+				}
+				throw new Error(`no route for ${req.url}`);
+			});
 		const client = makeClient(fetcher, { workspaceId: () => ws });
 
 		const first = await client.getDeviceCatalog();

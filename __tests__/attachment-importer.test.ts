@@ -8,6 +8,7 @@ import {
 	repairLegacyCardEmbeds,
 } from '../attachment-importer';
 import type { AttachmentAsset } from '../plaud-client';
+import { asyncResult } from './helpers/async-result';
 
 function asset(overrides: Partial<AttachmentAsset> = {}): AttachmentAsset {
 	return {
@@ -322,9 +323,11 @@ describe('clearAttachmentFolder', () => {
 		root.children = [image, transcript, nested];
 		const trashed: unknown[] = [];
 
-		await clearAttachmentFolder(root, async (f) => {
-			trashed.push(f);
-		});
+		await clearAttachmentFolder(root, (f) =>
+			asyncResult(() => {
+				trashed.push(f);
+			}),
+		);
 
 		expect(trashed).toContain(image);
 		expect(trashed).not.toContain(transcript);

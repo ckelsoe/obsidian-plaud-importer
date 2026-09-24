@@ -85,14 +85,6 @@ export default tseslint.config(
 				...globals.jest,
 			},
 		},
-		rules: {
-			// Test doubles implement Promise-returning interfaces (vault, client,
-			// prompt callbacks). `async` is the correct way to write them: a double
-			// that throws must reject, as the real API does, and dropping `async`
-			// would turn that into a synchronous throw. The rule stays an error in
-			// shipped code, where a needless `async` is a real smell.
-			"@typescript-eslint/require-await": "off",
-		},
 	},
 	{
 		// __tests__/__mocks__/obsidian.ts IS the stub that stands in for the

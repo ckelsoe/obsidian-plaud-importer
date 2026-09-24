@@ -1,6 +1,7 @@
 import type { PlaudRecordingId, Recording } from '../plaud-client';
 import type { ImportedIndex, ImportedRecord } from '../vault-index';
 import { runAutoSyncTick, type AutoSyncTickDeps } from '../auto-sync-runner';
+import { asyncResult } from './helpers/async-result';
 
 function emptyIndex(): ImportedIndex {
 	return { byId: new Map(), byInstant: new Map(), byDay: new Map() };
@@ -50,19 +51,24 @@ function deps(
 		maxImportsPerTick: over.maxImportsPerTick ?? 100,
 		maxPagesPerTick: over.maxPagesPerTick ?? 10,
 		ignoredIds: over.ignoredIds,
-		listPage: async (skip) => {
-			listSkips.push(skip);
-			const pageIndex = Math.floor(skip / (over.pageSize ?? 10));
-			return pages[pageIndex] ?? [];
-		},
+		listPage: (skip) =>
+			asyncResult(() => {
+				listSkips.push(skip);
+				const pageIndex = Math.floor(skip / (over.pageSize ?? 10));
+				return pages[pageIndex] ?? [];
+			}),
 		buildIndex: () => over.index ?? emptyIndex(),
-		importCandidates: async (newRecs, changedRecs) => {
-			importCalls.push({
-				newIds: newRecs.map((r) => r.id),
-				changedIds: changedRecs.map((r) => r.id),
-			});
-			return { imported: newRecs.length, updated: changedRecs.length };
-		},
+		importCandidates: (newRecs, changedRecs) =>
+			asyncResult(() => {
+				importCalls.push({
+					newIds: newRecs.map((r) => r.id),
+					changedIds: changedRecs.map((r) => r.id),
+				});
+				return {
+					imported: newRecs.length,
+					updated: changedRecs.length,
+				};
+			}),
 	};
 	return { deps: d, importCalls, listSkips };
 }

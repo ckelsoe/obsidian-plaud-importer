@@ -29,6 +29,7 @@ import {
 	TOKEN_DEEP_LINK_BASE,
 	type StoredEntry,
 } from '../token-candidates';
+import { asyncResult } from './helpers/async-result';
 
 // Same fixture construction as plaud-token.test.ts: the helpers read unverified
 // claims, so an unsigned token with a dummy signature segment is faithful.
@@ -630,9 +631,10 @@ describe('selectWorkingCandidate', () => {
 		const probed: string[] = [];
 		const result = await selectWorkingCandidate(
 			[USER_TOKEN, WORKSPACE_TOKEN],
-			async (token) => {
-				probed.push(token);
-			},
+			(token) =>
+				asyncResult(() => {
+					probed.push(token);
+				}),
 			NOW_MS,
 		);
 		expect(result.outcome).toBe('selected');
@@ -647,12 +649,13 @@ describe('selectWorkingCandidate', () => {
 		const probed: string[] = [];
 		const result = await selectWorkingCandidate(
 			[REVOKED_LONG_TOKEN, WORKSPACE_TOKEN],
-			async (token) => {
-				probed.push(token);
-				if (token === REVOKED_LONG_TOKEN) {
-					inBand(-3900);
-				}
-			},
+			(token) =>
+				asyncResult(() => {
+					probed.push(token);
+					if (token === REVOKED_LONG_TOKEN) {
+						inBand(-3900);
+					}
+				}),
 			NOW_MS,
 		);
 		expect(result.outcome).toBe('selected');
@@ -663,7 +666,7 @@ describe('selectWorkingCandidate', () => {
 	it('reports all-rejected when every candidate is refused', async () => {
 		const result = await selectWorkingCandidate(
 			[USER_TOKEN, WORKSPACE_TOKEN],
-			async () => rejected(),
+			() => asyncResult(() => rejected()),
 			NOW_MS,
 		);
 		expect(result.outcome).toBe('all-rejected');
@@ -676,10 +679,11 @@ describe('selectWorkingCandidate', () => {
 		const boom = new PlaudApiError('Plaud API network error: offline');
 		const result = await selectWorkingCandidate(
 			[USER_TOKEN, WORKSPACE_TOKEN],
-			async (token) => {
-				probed.push(token);
-				throw boom;
-			},
+			(token) =>
+				asyncResult(() => {
+					probed.push(token);
+					throw boom;
+				}),
 			NOW_MS,
 		);
 		expect(result.outcome).toBe('unreachable');
@@ -693,9 +697,10 @@ describe('selectWorkingCandidate', () => {
 		const probed: string[] = [];
 		const result = await selectWorkingCandidate(
 			[PROFILE_JWT, REFRESH_TOKEN, EXPIRED_TOKEN, USER_TOKEN],
-			async (token) => {
-				probed.push(token);
-			},
+			(token) =>
+				asyncResult(() => {
+					probed.push(token);
+				}),
 			NOW_MS,
 		);
 		expect(probed).toEqual([USER_TOKEN]);
@@ -703,7 +708,7 @@ describe('selectWorkingCandidate', () => {
 	});
 
 	it('reports none-usable without probing when nothing passes the guard', async () => {
-		const probe = jest.fn(async () => undefined);
+		const probe = jest.fn(() => Promise.resolve(undefined));
 		const result = await selectWorkingCandidate(
 			[PROFILE_JWT, REFRESH_TOKEN],
 			probe,
