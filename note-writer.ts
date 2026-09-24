@@ -367,7 +367,9 @@ const WINDOWS_RESERVED_NAMES = new Set([
 // reserved, not just the bare name. A leading-dot name (`.hidden`) has an empty
 // base and is never reserved.
 function isReservedDeviceName(name: string): boolean {
-	return WINDOWS_RESERVED_NAMES.has(name.split('.', 1)[0].toUpperCase());
+	return WINDOWS_RESERVED_NAMES.has(
+		(name.split('.', 1)[0] ?? '').toUpperCase(),
+	);
 }
 
 // Max length for a single path component (file name or one folder level). Every
@@ -1621,8 +1623,14 @@ export function expandCustomFrontmatterValue(
 	const m = captureMoment(ctx.date, ctx.offsetMinutes);
 	return value.replace(templateTokenRe(), (_match, raw: string): string => {
 		const inner = raw.trim();
-		if (Object.prototype.hasOwnProperty.call(content, inner)) {
-			return content[inner];
+		const contentValue = Object.prototype.hasOwnProperty.call(
+			content,
+			inner,
+		)
+			? content[inner]
+			: undefined;
+		if (contentValue !== undefined) {
+			return contentValue;
 		}
 		if (inner === 'title') {
 			return ctx.title;
@@ -1855,7 +1863,7 @@ export function formatFrontmatter(
 	// frontmatter); otherwise the value is regenerated from the template. plaud-id
 	// is the note's locked identity and can never be set by a custom row.
 	if (customRows && customRows.length > 0) {
-		const folderName = folders && folders.length > 0 ? folders[0] : '';
+		const folderName = folders?.[0] ?? '';
 		const ctx = customFrontmatterContext(
 			recording,
 			summary,
@@ -2092,8 +2100,9 @@ export function extractFrontmatterValues(content: string): Map<string, string> {
 	}
 	const lines = body.split('\n');
 	for (let i = 0; i < lines.length; i++) {
+		// `i` also jumps past a block scalar below, so this stays an index loop.
 		const line = lines[i];
-		if (/^\s/.test(line)) {
+		if (line === undefined || /^\s/.test(line)) {
 			// Indented: a nested mapping, a list item, or a block-scalar body that
 			// the preceding key already consumed. Not a top-level key.
 			continue;
@@ -2130,15 +2139,17 @@ export function extractFrontmatterValues(content: string): Map<string, string> {
 		if (/^[|>][+-]?\d*$/.test(rawValue)) {
 			const body: string[] = [];
 			let j = i + 1;
+			let next = lines[j];
 			while (
-				j < lines.length &&
-				(lines[j].trim() === '' || /^\s/.test(lines[j]))
+				next !== undefined &&
+				(next.trim() === '' || /^\s/.test(next))
 			) {
-				body.push(lines[j]);
+				body.push(next);
 				j++;
+				next = lines[j];
 			}
 			// Drop trailing blank lines: they separate the next key, not the block.
-			while (body.length > 0 && body[body.length - 1].trim() === '') {
+			while (body[body.length - 1]?.trim() === '') {
 				body.pop();
 			}
 			if (body.length > 0) {
@@ -2271,18 +2282,18 @@ export function groupTranscriptByChapters(
 		// Chapters are assumed to be in ascending order (parseOutlineBody
 		// preserves the Plaud wire order, which is ascending).
 		let idx = 0;
-		for (let i = 0; i < cleanChapters.length; i++) {
-			if (cleanChapters[i].startSeconds <= segment.startSeconds) {
+		for (const [i, candidate] of cleanChapters.entries()) {
+			if (candidate.startSeconds <= segment.startSeconds) {
 				idx = i;
 			} else {
 				break;
 			}
 		}
-		buckets[idx].push(segment);
+		buckets[idx]?.push(segment);
 	}
 
 	return cleanChapters.map((chapter, i) => {
-		const segments = buckets[i];
+		const segments = buckets[i] ?? [];
 		return {
 			chapter,
 			segments,
@@ -2645,12 +2656,11 @@ interface CodeFence {
 
 /** Parse a line that opens or closes a fenced code block into its marker. */
 function parseCodeFence(line: string): CodeFence | null {
-	const match = line.match(/^\s*(`{3,}|~{3,})/);
-	if (match === null) {
+	const run = line.match(/^\s*(`{3,}|~{3,})/)?.[1];
+	if (run === undefined) {
 		return null;
 	}
-	const run = match[1];
-	return { marker: run[0] === '`' ? '`' : '~', length: run.length };
+	return { marker: run.startsWith('`') ? '`' : '~', length: run.length };
 }
 
 /**
@@ -2700,9 +2710,9 @@ function normalizeConsumerNoteBody(markdown: string): string {
 		if (prevFence !== null || activeFence !== null) {
 			continue;
 		}
-		const m = line.match(/^(#{1,6})\s/);
-		if (m) {
-			minLevel = Math.min(minLevel, m[1].length);
+		const hashes = line.match(/^(#{1,6})\s/)?.[1];
+		if (hashes !== undefined) {
+			minLevel = Math.min(minLevel, hashes.length);
 		}
 	}
 	const shift = minLevel < 4 ? 4 - minLevel : 0;
@@ -2716,8 +2726,10 @@ function normalizeConsumerNoteBody(markdown: string): string {
 		}
 		if (shift > 0) {
 			const heading = line.match(/^(#{1,6})(\s.*)$/);
-			if (heading !== null) {
-				return `${'#'.repeat(Math.min(6, heading[1].length + shift))}${heading[2]}`;
+			const hashes = heading?.[1];
+			const text = heading?.[2];
+			if (hashes !== undefined && text !== undefined) {
+				return `${'#'.repeat(Math.min(6, hashes.length + shift))}${text}`;
 			}
 		}
 		if (/^-{3,}\s*$/.test(line)) {

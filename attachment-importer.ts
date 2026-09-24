@@ -162,8 +162,7 @@ export class AttachmentImporter {
 					genericAssets.push({ path, isImage });
 			}
 		};
-		for (let i = 0; i < attachments.length; i++) {
-			const asset = attachments[i];
+		for (const [i, asset] of attachments.entries()) {
 			const assetLabel = `${asset.dataType}#${i + 1}`;
 			const kind = this.classifyAttachmentKind(asset);
 			if (!this.shouldIncludeAttachmentKind(kind, selection)) {
@@ -288,7 +287,7 @@ export class AttachmentImporter {
 							},
 						);
 						if (imageLinks.length > 0) {
-							for (let j = 0; j < imageLinks.length; j++) {
+							for (const [j, imageLink] of imageLinks.entries()) {
 								const nestedLabel = `${assetLabel}/html#${j + 1}`;
 								const nestedKind =
 									htmlKind !== 'generic'
@@ -296,11 +295,11 @@ export class AttachmentImporter {
 										: this.classifyAttachmentKindFromValues(
 												asset.dataType,
 												asset.name,
-												imageLinks[j],
+												imageLink,
 											);
 								const nested =
 									await this.downloadNestedPictureAsset(
-										imageLinks[j],
+										imageLink,
 										folderPath,
 										nestedKind,
 										nestedLabel,
@@ -374,17 +373,20 @@ export class AttachmentImporter {
 							},
 						);
 						if (extraction.links.length > 0) {
-							for (let j = 0; j < extraction.links.length; j++) {
+							for (const [
+								j,
+								nestedLink,
+							] of extraction.links.entries()) {
 								const nestedLabel = `${assetLabel}/nested#${j + 1}`;
 								const nestedKind =
 									this.classifyAttachmentKindFromValues(
 										asset.dataType,
 										asset.name,
-										extraction.links[j],
+										nestedLink,
 									);
 								const nested =
 									await this.downloadNestedPictureAsset(
-										extraction.links[j],
+										nestedLink,
 										folderPath,
 										nestedKind,
 										nestedLabel,
@@ -511,19 +513,19 @@ export class AttachmentImporter {
 			const images = assets.filter((asset) => asset.isImage);
 			const files = assets.filter((asset) => !asset.isImage);
 			if (images.length > 0) {
-				for (let i = 0; i < images.length; i++) {
+				for (const [i, image] of images.entries()) {
 					lines.push(
 						`#### ${imageLabel} ${i + 1}`,
-						`![[${images[i].path}]]`,
+						`![[${image.path}]]`,
 						'',
 					);
 				}
 			}
 			if (files.length > 0) {
-				for (let i = 0; i < files.length; i++) {
+				for (const [i, file] of files.entries()) {
 					lines.push(
 						`#### ${fileLabel} ${i + 1}`,
-						`- [[${files[i].path}]]`,
+						`- [[${file.path}]]`,
 						'',
 					);
 				}
@@ -1048,7 +1050,12 @@ export class AttachmentImporter {
 		const srcsetRegex =
 			/<(?:img|source)\b[^>]*?\bsrcset\s*=\s*["']([^"']+)["']/gi;
 		const cssUrlRegex = /url\((['"]?)([^'")]+)\1\)/gi;
-		const addCandidate = (raw: string): void => {
+		// Capture groups type as possibly undefined; every group passed here is
+		// mandatory, so undefined never arrives at runtime.
+		const addCandidate = (raw: string | undefined): void => {
+			if (raw === undefined) {
+				return;
+			}
 			const link = raw.trim();
 			if (link.length === 0 || link.startsWith('data:')) {
 				return;
@@ -1080,9 +1087,9 @@ export class AttachmentImporter {
 			addCandidate(match[1]);
 		}
 		while ((match = srcsetRegex.exec(text)) !== null) {
-			const candidates = match[1]
+			const candidates = (match[1] ?? '')
 				.split(',')
-				.map((entry) => entry.trim().split(/\s+/)[0])
+				.map((entry) => entry.trim().split(/\s+/)[0] ?? '')
 				.filter((entry) => entry.length > 0);
 			for (const candidate of candidates) {
 				addCandidate(candidate);
@@ -1285,9 +1292,9 @@ export class AttachmentImporter {
 
 		try {
 			const pathname = new URL(url).pathname.toLowerCase();
-			const m = pathname.match(/\.([a-z0-9]{2,6})$/);
-			if (m) {
-				return m[1];
+			const ext = pathname.match(/\.([a-z0-9]{2,6})$/)?.[1];
+			if (ext !== undefined) {
+				return ext;
 			}
 		} catch {
 			// fallback below
@@ -1305,7 +1312,12 @@ export class AttachmentImporter {
 		}
 		const out: AttachmentAsset[] = [];
 		const seen = new Set<string>();
-		const addCandidate = (raw: string): void => {
+		// Capture groups type as possibly undefined; every group passed here is
+		// mandatory, so undefined never arrives at runtime.
+		const addCandidate = (raw: string | undefined): void => {
+			if (raw === undefined) {
+				return;
+			}
 			const normalized = this.normalizeSummaryLink(raw);
 			if (
 				normalized.length === 0 ||
@@ -1402,15 +1414,16 @@ export class AttachmentImporter {
 			trimmed.lastIndexOf('\\'),
 		);
 		const base = slash >= 0 ? trimmed.slice(slash + 1) : trimmed;
-		const withoutQuery = base.split('?')[0].split('#')[0].trim();
+		const cut = base.search(/[?#]/);
+		const withoutQuery = (cut >= 0 ? base.slice(0, cut) : base).trim();
 		return withoutQuery.length > 0 ? withoutQuery : undefined;
 	}
 
 	private computeAttachmentFingerprint(bytes: ArrayBuffer): string {
 		const view = new Uint8Array(bytes);
 		let hash = 2166136261;
-		for (let i = 0; i < view.length; i++) {
-			hash ^= view[i];
+		for (const byte of view) {
+			hash ^= byte;
 			hash = Math.imul(hash, 16777619);
 		}
 		return `${view.length}:${hash >>> 0}`;
@@ -1682,9 +1695,9 @@ export function inferAssetExtension(
 
 	try {
 		const pathname = new URL(asset.url).pathname.toLowerCase();
-		const m = pathname.match(/\.([a-z0-9]{2,6})$/);
-		if (m) {
-			return m[1];
+		const ext = pathname.match(/\.([a-z0-9]{2,6})$/)?.[1];
+		if (ext !== undefined) {
+			return ext;
 		}
 	} catch {
 		// ignore parse failures and use fallbacks below

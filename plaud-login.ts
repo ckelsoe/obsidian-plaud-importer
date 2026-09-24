@@ -745,14 +745,15 @@ class PlaudLoginSession {
 	): void {
 		// Values arrive already trimmed and bearer-stripped by the caller.
 		const values = tokens.filter((value) => value.length > 0);
-		if (values.length === 0) {
+		const first = values[0];
+		if (first === undefined) {
 			return;
 		}
 		// Measure, never assume, the issued lifetime (issue #78: some accounts
 		// get a 24h token). Advisory: never blocks capture. Reported for the
 		// FIRST candidate only; which one actually wins is decided by the
 		// caller probing them against the API.
-		const life = readTokenLifetime(values[0]);
+		const life = readTokenLifetime(first);
 		this.note('token captured', 'note', {
 			apiBaseUrl,
 			candidates: values.length,
