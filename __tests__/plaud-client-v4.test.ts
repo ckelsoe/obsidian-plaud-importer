@@ -309,6 +309,47 @@ describe('PlaudV4Client.listRecordingsPage', () => {
 		expect(folders).toEqual([{ id: 'fld1', name: 'Recordings' }]);
 	});
 
+	it('getFolderCatalog drops folders from a previous workspace', async () => {
+		let ws = 'ws_A';
+		const { fetcher } = routingFetcher([
+			{ match: '/recordings/all', response: listEnvelope([listItem()]) },
+		]);
+		const client = makeClient(fetcher, { workspaceId: () => ws });
+		await client.listRecordingsPage();
+		expect(await client.getFolderCatalog()).toEqual([
+			{ id: 'fld1', name: 'Recordings' },
+		]);
+
+		ws = 'ws_B';
+		expect(await client.getFolderCatalog()).toEqual([]);
+	});
+
+	it('getFolderCatalog drops folders from a previous host', async () => {
+		let host = 'https://api-staging-apne1.plaud.ai';
+		const { fetcher } = routingFetcher([
+			{ match: '/recordings/all', response: listEnvelope([listItem()]) },
+		]);
+		const client = makeClient(fetcher, { baseUrl: () => host });
+		await client.listRecordingsPage();
+		host = 'https://api.plaud.ai';
+		expect(await client.getFolderCatalog()).toEqual([]);
+	});
+
+	it('getFolderCatalog ignores a listing that was in flight across a switch', async () => {
+		let ws = 'ws_A';
+		const fetcher: PlaudHttpFetcher = async (req) => {
+			if (req.url.includes('/recordings/all')) {
+				// The switch lands while this request is awaiting its response.
+				ws = 'ws_B';
+				return listEnvelope([listItem()]);
+			}
+			throw new Error(`no route for ${req.url}`);
+		};
+		const client = makeClient(fetcher, { workspaceId: () => ws });
+		await client.listRecordingsPage();
+		expect(await client.getFolderCatalog()).toEqual([]);
+	});
+
 	it('rejects a folderId filter loudly', async () => {
 		const { fetcher } = routingFetcher([
 			{ match: '/recordings/all', response: listEnvelope([]) },
