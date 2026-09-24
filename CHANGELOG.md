@@ -6,6 +6,10 @@ All notable changes to Plaud Importer will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Folder tags stay correct after you switch Plaud workspaces.** Signing in to a different workspace on the new portal kept the previous workspace's folder names until Obsidian reloaded, so a note imported in between could get the wrong folder tag. Folder names are now tracked per workspace.
+
 ## [0.42.2] - 2026-09-23
 
 ### Fixed

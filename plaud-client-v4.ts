@@ -151,8 +151,17 @@ export class PlaudV4Client implements PlaudClient {
 	// `/filetag/` catalog; folder membership rides on each recording's
 	// parent_folder, so we accumulate {folder_id -> name} as we page and serve
 	// it through getFolderCatalog, letting the existing tag->folder resolution
-	// in note-writer work unchanged. folder_id -> name.
-	private readonly folderNames = new Map<string, string>();
+	// in note-writer work unchanged. folder_id -> name. Keyed on the host and
+	// workspace like the device list below: a re-sign-in to another workspace
+	// keeps this client, and serving the old workspace's names would tag a new
+	// note with the wrong folder.
+	private folderNames:
+		| {
+				readonly baseUrl: string;
+				readonly workspaceId: string;
+				readonly names: Map<string, string>;
+		  }
+		| undefined;
 	// Per-session cache of the paired-device list, same rationale as the folder
 	// names: it changes rarely, so one fetch per plugin session is enough and a
 	// reload clears it. undefined = not yet fetched; an empty array is a valid
@@ -257,7 +266,16 @@ export class PlaudV4Client implements PlaudClient {
 
 		const endpoint = '/file-app/v4/recordings/all';
 		const url = `${this.resolveBaseUrl()}${endpoint}?${params.toString()}`;
+		// The scope this request is sent under. If the user switches workspace or
+		// host while it is in flight, its folder names belong to the old scope and
+		// must not land in the new scope's cache.
+		const requestBaseUrl = this.baseUrlProvider();
+		const requestWorkspaceId = this.workspaceIdProvider();
 		const data = await this.fetchApiData(url, endpoint);
+		const folderNames = this.folderNamesForScope(
+			requestBaseUrl,
+			requestWorkspaceId,
+		);
 
 		// Require a real array. A missing or reshaped `items` is an API-shape
 		// regression, not an empty account, so surface it rather than silently
@@ -274,7 +292,11 @@ export class PlaudV4Client implements PlaudClient {
 		const rejected: Array<{ index: number; reason: string }> = [];
 		items.forEach((item, index) => {
 			try {
-				const recording = this.parseV4ListItem(item, endpoint);
+				const recording = this.parseV4ListItem(
+					item,
+					endpoint,
+					folderNames,
+				);
 				if (matchesFilter(recording, filter)) {
 					out.push(recording);
 				}
@@ -323,10 +345,41 @@ export class PlaudV4Client implements PlaudClient {
 		// If no listing has run yet it is empty, matching the interface contract
 		// that a missing catalog degrades to "no folders resolved".
 		const catalog: PlaudFolder[] = [];
-		for (const [id, name] of this.folderNames) {
+		for (const [id, name] of this.folderNamesForScope(
+			this.baseUrlProvider(),
+			this.workspaceIdProvider(),
+		)) {
 			catalog.push({ id, name });
 		}
 		return catalog;
+	}
+
+	/**
+	 * The folder-name map for a host and workspace. When that scope is the
+	 * current one, this is the cache, reset if the current scope changed since
+	 * it was filled. When it is not (a listing that was in flight across a
+	 * switch), a throwaway map is returned so the stale names are discarded.
+	 * Uses the raw host, not `resolveBaseUrl`, because this is only a cache key
+	 * and `getFolderCatalog` must not throw.
+	 */
+	private folderNamesForScope(
+		baseUrl: string,
+		workspaceId: string,
+	): Map<string, string> {
+		if (
+			baseUrl !== this.baseUrlProvider() ||
+			workspaceId !== this.workspaceIdProvider()
+		) {
+			return new Map();
+		}
+		if (
+			this.folderNames === undefined ||
+			this.folderNames.baseUrl !== baseUrl ||
+			this.folderNames.workspaceId !== workspaceId
+		) {
+			this.folderNames = { baseUrl, workspaceId, names: new Map() };
+		}
+		return this.folderNames.names;
 	}
 
 	/**
@@ -960,7 +1013,11 @@ export class PlaudV4Client implements PlaudClient {
 		}
 	}
 
-	private parseV4ListItem(raw: unknown, endpoint: string): Recording {
+	private parseV4ListItem(
+		raw: unknown,
+		endpoint: string,
+		folderNames: Map<string, string>,
+	): Recording {
 		if (!isRecord(raw)) {
 			throw new PlaudParseError(
 				'recording item is not an object',
@@ -1020,7 +1077,7 @@ export class PlaudV4Client implements PlaudClient {
 			);
 			if (folderId !== undefined) {
 				if (folderName !== undefined) {
-					this.folderNames.set(folderId, folderName);
+					folderNames.set(folderId, folderName);
 				}
 				tags = [folderId];
 			}
