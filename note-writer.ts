@@ -1938,9 +1938,8 @@ function isRegexWhitespace(ch: string): boolean {
  * none. A linear scan that returns exactly what
  * `content.match(/^---\s*\r?\n([\s\S]*?)\r?\n---/)?.[1]` returned: that regex
  * backtracks super-linearly on long whitespace runs. The body starts after the
- * last newline of the whitespace run that follows the opening `---` (an
- * earlier one only when no closing fence follows the last), and ends before
- * the first `\n---` or `\r\n---` after it.
+ * last newline of the whitespace run that follows the opening `---`, and ends
+ * before the first `\n---` or `\r\n---` after it.
  */
 function frontmatterBody(content: string): string | null {
 	if (!content.startsWith('---')) {
@@ -1953,22 +1952,33 @@ function frontmatterBody(content: string): string | null {
 	) {
 		runEnd++;
 	}
-	for (let nl = runEnd - 1; nl >= 3; nl--) {
-		if (content.charAt(nl) !== '\n') {
-			continue;
-		}
-		const start = nl + 1;
-		const close = content.indexOf('\n---', start);
-		if (close < 0) {
-			continue;
-		}
-		const end =
-			close > start && content.charAt(close - 1) === '\r'
-				? close - 1
-				: close;
-		return content.slice(start, end);
+	const last = content.lastIndexOf('\n', runEnd - 1);
+	if (last < 3) {
+		return null;
 	}
-	return null;
+	const close = content.indexOf('\n---', last + 1);
+	if (close >= 0) {
+		return content.slice(last + 1, bodyEnd(content, last + 1, close));
+	}
+	// No fence after the last newline. The regex then backtracks to an earlier
+	// newline in the run, which can only succeed when that last newline is
+	// itself the start of the closing fence (an empty body: `---\n\n---`).
+	if (last !== runEnd - 1 || !content.startsWith('---', runEnd)) {
+		return null;
+	}
+	const previous = content.lastIndexOf('\n', last - 1);
+	if (previous < 3) {
+		return null;
+	}
+	return content.slice(previous + 1, bodyEnd(content, previous + 1, last));
+}
+
+// Where a frontmatter body ends given the `\n` of its closing fence: before a
+// `\r` that precedes it, when that `\r` is inside the body.
+function bodyEnd(content: string, start: number, fenceNewline: number): number {
+	return fenceNewline > start && content.charAt(fenceNewline - 1) === '\r'
+		? fenceNewline - 1
+		: fenceNewline;
 }
 
 /**
