@@ -251,10 +251,7 @@ export class Setting {
 		return this;
 	}
 	addExtraButton(cb: (btn: ButtonStub) => unknown): this {
-		const btn = new ButtonStub();
-		this.buttons.push(btn);
-		cb(btn);
-		return this;
+		return this.addButton(cb);
 	}
 	addSearch(_cb: unknown): this {
 		return this;

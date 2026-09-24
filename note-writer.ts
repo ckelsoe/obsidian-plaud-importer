@@ -83,7 +83,7 @@ export type DuplicatePolicy = 'skip' | 'overwrite' | 'prompt';
  * is encountered. Intentionally minimal: the callback's job is to ask
  * the user a yes/no/cancel question, not to render recording metadata.
  */
-export interface DuplicatePromptContext {
+interface DuplicatePromptContext {
 	readonly recordingId: string;
 	readonly recordingTitle: string;
 	readonly targetPath: string;
@@ -1503,7 +1503,7 @@ export interface CustomFrontmatterRow {
  * (`date`, `source`, ...) from being silently rewritten by a template. Keep in
  * sync with the keys formatFrontmatter emits.
  */
-export const RESERVED_FRONTMATTER_KEYS: ReadonlySet<string> = new Set([
+const RESERVED_FRONTMATTER_KEYS: ReadonlySet<string> = new Set([
 	'plaud-id',
 	'plaud-url',
 	'date',
@@ -2213,7 +2213,7 @@ export function groupTranscriptByChapters(
  * slug so it doesn't collide with user-curated block ids in the
  * same note.
  */
-export const CHAPTERS_BLOCK_ID = 'plaud-chapters';
+const CHAPTERS_BLOCK_ID = 'plaud-chapters';
 
 /**
  * Sanitizes a chapter title for safe use inside a heading anchor.
@@ -2424,7 +2424,7 @@ export function formatTranscriptFileMarkdown(
  * file: a `Transcript` heading (so the fold setting and the attachments anchor
  * keep working) over an embed or a plain link to that file.
  */
-export function formatTranscriptFileReference(
+function formatTranscriptFileReference(
 	transcriptPath: string,
 	placement: 'file-embed' | 'file-link',
 	headerLevel: HeadingLevel,
@@ -2787,7 +2787,7 @@ export interface FormatMarkdownOptions {
  * both): Obsidian cannot link to a file under such a path, so the transcript
  * stays in the note rather than behind a broken link.
  */
-export function effectiveTranscriptPlacement(
+function effectiveTranscriptPlacement(
 	transcript: Transcript | null,
 	options: Pick<FormatMarkdownOptions, 'transcriptPlacement' | 'notePath'>,
 ): TranscriptPlacement {
@@ -3041,7 +3041,7 @@ export type RenameFileFn = (oldPath: string, newPath: string) => Promise<void>;
  * importer writes to (`<notePath>`.replace(/\.md$/i, '-assets')) so a rename
  * moves the exact folder the attachments live in.
  */
-export function assetsFolderPathFor(notePath: string): string {
+function assetsFolderPathFor(notePath: string): string {
 	return notePath.replace(/\.md$/i, '-assets');
 }
 

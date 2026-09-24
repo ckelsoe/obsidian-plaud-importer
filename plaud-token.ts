@@ -94,7 +94,7 @@ function jwtHeaderTyp(value: string): string | null {
 }
 
 /** Header `typ` of Plaud's v2 workspace token, the credential the data API takes. */
-export const WORKSPACE_TOKEN_TYP = 'WT';
+const WORKSPACE_TOKEN_TYP = 'WT';
 
 /**
  * True when the value is a workspace token (header `typ: WT`).

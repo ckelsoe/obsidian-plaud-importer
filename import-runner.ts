@@ -147,8 +147,7 @@ export interface ImportRunDeps {
  * condition a headless caller (auto-sync, Phase 2) can use to drive an
  * auth-pause state machine.
  */
-export type ImportRunStop =
-	'completed' | 'aborted' | 'cancelled' | 'auth-failed';
+type ImportRunStop = 'completed' | 'aborted' | 'cancelled' | 'auth-failed';
 
 export interface ImportRunOutcome {
 	readonly results: ImportResult[];

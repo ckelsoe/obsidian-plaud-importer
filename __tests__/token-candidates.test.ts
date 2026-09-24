@@ -45,6 +45,13 @@ function makeJwt(header: unknown, payload: unknown): string {
 
 const NOW_MS = 1_780_000_000_000; // 2026-05-28
 const FUTURE_EXP = 1_800_000_000; // seconds → 2027-01-15, after NOW_MS
+
+// A web workspace token (typ WT) for workspace `ws_<n>`.
+const workspaceTokenFor = (n: number): string =>
+	makeJwt(
+		{ alg: 'HS256', typ: 'WT' },
+		{ client_id: 'web', exp: FUTURE_EXP, wid: `ws_${n}` },
+	);
 const PAST_EXP = 1_770_000_000; // seconds → 2026-02-01, before NOW_MS
 
 // The au-coco / treyb shape: a user token under the `token` key.
@@ -1011,11 +1018,7 @@ describe('SIGN_IN_BOOKMARKLET', () => {
 		// The WT and WRT share one traversal in the bookmarklet. If it stopped at
 		// the access-token cap it would never reach a refresh token sitting behind
 		// five access tokens, and the v4 session would silently lose renewal.
-		const smallWt = (n: number): string =>
-			makeJwt(
-				{ alg: 'HS256', typ: 'WT' },
-				{ client_id: 'web', exp: FUTURE_EXP, wid: `ws_${n}` },
-			);
+		const smallWt = workspaceTokenFor;
 		const map: Record<string, string> = {
 			pld_a: smallWt(1),
 			pld_b: smallWt(2),
@@ -1039,11 +1042,7 @@ describe('SIGN_IN_BOOKMARKLET', () => {
 		// The active workspace is third. Without hoisting, the small refresh cap
 		// fills with the first two workspaces and the active workspace's WRT is
 		// discarded, disabling renewal even though its WT is the one selected.
-		const wt = (n: number): string =>
-			makeJwt(
-				{ alg: 'HS256', typ: 'WT' },
-				{ client_id: 'web', exp: FUTURE_EXP, wid: `ws_${n}` },
-			);
+		const wt = workspaceTokenFor;
 		const wrt = (n: number): string =>
 			makeJwt(
 				{ alg: 'HS256', typ: 'WRT' },

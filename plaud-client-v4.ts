@@ -339,19 +339,22 @@ export class PlaudV4Client implements PlaudClient {
 		return { recordings: out, nextCursor };
 	}
 
-	async getFolderCatalog(): Promise<readonly PlaudFolder[]> {
+	getFolderCatalog(): Promise<readonly PlaudFolder[]> {
 		// Best-effort: v4 folders ride on each recording's parent_folder rather
 		// than a flat catalog endpoint, so this returns what listing discovered.
 		// If no listing has run yet it is empty, matching the interface contract
 		// that a missing catalog degrades to "no folders resolved".
-		const catalog: PlaudFolder[] = [];
-		for (const [id, name] of this.folderNamesForScope(
-			this.baseUrlProvider(),
-			this.workspaceIdProvider(),
-		)) {
-			catalog.push({ id, name });
-		}
-		return catalog;
+		// Deferred so a throw surfaces as a rejection, as it did when async.
+		return Promise.resolve().then(() => {
+			const catalog: PlaudFolder[] = [];
+			for (const [id, name] of this.folderNamesForScope(
+				this.baseUrlProvider(),
+				this.workspaceIdProvider(),
+			)) {
+				catalog.push({ id, name });
+			}
+			return catalog;
+		});
 	}
 
 	/**
@@ -1138,7 +1141,7 @@ function resolveLocalTimezone(): string {
  * non-https scheme or a host outside that allowlist. Returns the URL unchanged
  * on success so it can be used inline.
  */
-export function assertTrustedPlaudHost(baseUrl: string): string {
+function assertTrustedPlaudHost(baseUrl: string): string {
 	let parsed: URL;
 	try {
 		parsed = new URL(baseUrl);

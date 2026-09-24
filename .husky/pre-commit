@@ -1,0 +1,7 @@
+# Deterministic pre-commit gate. Blocks the commit if any check fails:
+#   - eslint (incl. type-aware no-unsafe-* and async-safety rules)
+#   - prettier --check
+#   - submission pre-checks
+#   - full type-check (tsc --noEmit)
+# To fix formatting: npx prettier --write "**/*.ts"
+npm run lint && npx tsc --noEmit

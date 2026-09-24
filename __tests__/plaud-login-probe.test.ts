@@ -25,6 +25,18 @@ function makeJwt(header: unknown, payload: unknown): string {
 }
 
 const FUTURE_EXP = Math.floor(Date.now() / 1000) + 24 * 3600;
+
+// A web workspace token (typ WT) for workspace `ws_<n>`.
+const workspaceTokenFor = (n: number): string =>
+	makeJwt(
+		{ alg: 'HS256', typ: 'WT' },
+		{
+			sub: 'u1',
+			exp: FUTURE_EXP,
+			client_id: 'web',
+			wid: `ws_${n}`,
+		},
+	);
 const PAST_EXP = Math.floor(Date.now() / 1000) - 3600;
 
 // Shapes read first-party off a real account on 2026-07-26. The workspace token
@@ -503,16 +515,7 @@ describe('PROBE_JS v4 refresh token capture', () => {
 				{ alg: 'HS256', typ: 'WRT' },
 				{ sub: 'u1', exp: FUTURE_EXP + 700 * 3600, wid: `ws_${n}` },
 			);
-		const tokenFor = (n: number): string =>
-			makeJwt(
-				{ alg: 'HS256', typ: 'WT' },
-				{
-					sub: 'u1',
-					exp: FUTURE_EXP,
-					client_id: 'web',
-					wid: `ws_${n}`,
-				},
-			);
+		const tokenFor = workspaceTokenFor;
 		const out = runProbe({
 			'pld_u1:currentWorkspaceId': '"ws_3"',
 			'pld_u1:workspaceTokens': JSON.stringify({
@@ -531,16 +534,7 @@ describe('PROBE_JS v4 refresh token capture', () => {
 	it('captures a refresh token even when the access-token cap fills first', () => {
 		// No currentWorkspaceId, so no hoist: the shared walk must keep scanning
 		// past the access-token cap to reach the refresh token behind it.
-		const wt = (n: number): string =>
-			makeJwt(
-				{ alg: 'HS256', typ: 'WT' },
-				{
-					sub: 'u1',
-					exp: FUTURE_EXP,
-					client_id: 'web',
-					wid: `ws_${n}`,
-				},
-			);
+		const wt = workspaceTokenFor;
 		const map: Record<string, string> = {
 			'pld_a:t': wt(1),
 			'pld_b:t': wt(2),

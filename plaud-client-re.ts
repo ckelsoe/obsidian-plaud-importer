@@ -1718,8 +1718,8 @@ function describeUnknownError(err: unknown): string {
 	if (err === null || err === undefined) return String(err);
 	if (typeof err === 'number' || typeof err === 'boolean') return String(err);
 	try {
-		const json = JSON.stringify(err);
-		if (json !== undefined) return json;
+		const json: unknown = JSON.stringify(err);
+		if (typeof json === 'string') return json;
 	} catch {
 		// Fall through to constructor-name fallback.
 	}
@@ -2619,7 +2619,7 @@ function basenameLike(path: string): string | undefined {
  * Both map relative asset paths (for example `permanent/.../mark/foo.png`)
  * to pre-signed S3 URLs.
  */
-export function findNestedAssetLinks(
+function findNestedAssetLinks(
 	raw: unknown,
 	endpoint: string,
 ): Readonly<Record<string, string>> {
@@ -2857,10 +2857,7 @@ export function findTransactionPolishLink(
  * in-band `-12` "start trans task error". Same selection rules as the polish
  * finder: requires `task_status === 1`, returns null when absent.
  */
-export function findRawTranscriptLink(
-	raw: unknown,
-	endpoint: string,
-): string | null {
+function findRawTranscriptLink(raw: unknown, endpoint: string): string | null {
 	return findContentListLink(raw, endpoint, 'transaction');
 }
 
@@ -3211,15 +3208,15 @@ function buildSummary(
 // length to 400 chars to keep the user-facing notice readable.
 function summarizeShape(value: unknown): string {
 	try {
-		const json = JSON.stringify(value, (_key, v: unknown) => {
+		const json: unknown = JSON.stringify(value, (_key, v: unknown) => {
 			if (typeof v === 'string') {
 				if (v.length > 120) return `[string:${v.length}chars]`;
-				if (/^(bearer\s+)?ey[A-Za-z0-9_-]+\./i.test(v))
+				if (/^(bearer\s+)?ey[a-z0-9_-]+\./i.test(v))
 					return '[redacted-token]';
 			}
 			return v;
 		});
-		if (json === undefined) return '(unserializable)';
+		if (typeof json !== 'string') return '(unserializable)';
 		return json.length > 400 ? `${json.slice(0, 400)}…` : json;
 	} catch {
 		return '(serialize-failed)';

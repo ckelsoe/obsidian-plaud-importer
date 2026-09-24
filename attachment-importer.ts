@@ -333,7 +333,7 @@ export class AttachmentImporter {
 										? `${idPrefix}-${baseName}`
 										: baseName;
 								const htmlPath =
-									await this.resolveUniqueAttachmentPath(
+									this.resolveUniqueAttachmentPath(
 										`${folderPath}/${prefixed}.html`,
 									);
 								await this.app.vault.createBinary(
@@ -450,10 +450,9 @@ export class AttachmentImporter {
 					);
 					const prefixed =
 						idPrefix.length > 0 ? `${idPrefix}-${base}` : base;
-					const attachmentPath =
-						await this.resolveUniqueAttachmentPath(
-							`${folderPath}/${prefixed}.${ext}`,
-						);
+					const attachmentPath = this.resolveUniqueAttachmentPath(
+						`${folderPath}/${prefixed}.${ext}`,
+					);
 					await this.app.vault.createBinary(attachmentPath, bytes);
 					payloadToPath.set(fp, attachmentPath);
 					this.logAttachmentDebug('saved primary attachment', {
@@ -992,9 +991,7 @@ export class AttachmentImporter {
 		return `file${counters.genericFile}`;
 	}
 
-	private async resolveUniqueAttachmentPath(
-		basePath: string,
-	): Promise<string> {
+	private resolveUniqueAttachmentPath(basePath: string): string {
 		const dot = basePath.lastIndexOf('.');
 		const stem = dot >= 0 ? basePath.slice(0, dot) : basePath;
 		const ext = dot >= 0 ? basePath.slice(dot) : '';
@@ -1204,7 +1201,7 @@ export class AttachmentImporter {
 				);
 				const prefixed =
 					idPrefix.length > 0 ? `${idPrefix}-${baseName}` : baseName;
-				const path = await this.resolveUniqueAttachmentPath(
+				const path = this.resolveUniqueAttachmentPath(
 					`${folderPath}/${prefixed}.${ext}`,
 				);
 				await this.app.vault.createBinary(path, bytes);

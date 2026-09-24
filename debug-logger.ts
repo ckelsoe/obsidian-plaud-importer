@@ -29,8 +29,7 @@
  * client. `note` is a free-form developer marker the plugin can use to
  * annotate the timeline ("user clicked Import", "modal closed").
  */
-export type DebugEventKind =
-	'request' | 'response' | 'parsed' | 'error' | 'note';
+type DebugEventKind = 'request' | 'response' | 'parsed' | 'error' | 'note';
 
 /**
  * Shape of an event as logged by a caller. The timestamp is filled in by
@@ -198,10 +197,13 @@ export class BufferedDebugLogger implements DebugLogger {
 			}
 			let payloadText: string;
 			try {
-				payloadText = JSON.stringify(event.payload, null, 2);
-				if (payloadText === undefined) {
-					payloadText = `(non-serializable: ${describeNonString(event.payload)})`;
-				}
+				// JSON.stringify is typed `string` but returns undefined for a
+				// function, symbol, or undefined payload.
+				const json: unknown = JSON.stringify(event.payload, null, 2);
+				payloadText =
+					typeof json === 'string'
+						? json
+						: `(non-serializable: ${describeNonString(event.payload)})`;
 			} catch (err) {
 				payloadText = `(non-serializable: ${err instanceof Error ? err.message : describeNonString(err)})`;
 			}
@@ -227,8 +229,8 @@ function describeNonString(value: unknown): string {
 		return String(value);
 	}
 	try {
-		const json = JSON.stringify(value);
-		if (json !== undefined) return json;
+		const json: unknown = JSON.stringify(value);
+		if (typeof json === 'string') return json;
 	} catch {
 		// Fall through to the constructor-name fallback below.
 	}
