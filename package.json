@@ -56,7 +56,8 @@
 		"@humanfs/node": "^0.16.8",
 		"browserslist": "^4.28.7",
 		"fast-uri": "^3.1.7",
-		"js-yaml": "^4.3.2"
+		"js-yaml": "^4.3.2",
+		"qs": "^6.16.0"
 	},
 	"typeCoverage": {
 		"atLeast": 99

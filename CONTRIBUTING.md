@@ -24,7 +24,12 @@ npm run dev              # watch-mode esbuild
 npm run build            # tsc type check + production esbuild
 npm run lint             # eslint, zero warnings tolerated
 npm test                 # jest
+npm run knip             # unused files, exports, and dependencies
+npm run type-coverage    # fails below 99% typed identifiers
+npm run test:mutation    # Stryker mutation testing (slow, run on demand)
 ```
+
+A pre-commit hook runs `npm run lint` and a full type check, and blocks the commit if either fails.
 
 ## Testing the plugin in Obsidian
 
