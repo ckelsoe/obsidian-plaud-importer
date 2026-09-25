@@ -6,6 +6,12 @@ All notable changes to Plaud Importer will be documented in this file.
 
 ## [Unreleased]
 
+## [0.42.4] - 2026-09-25
+
+### Changed
+
+- **Stricter internal checks, no change in behavior.** The code now passes a stricter type checker and a wider set of bug-finding lint rules. A few text scans that could slow down badly on unusual input were replaced with ones that stay fast.
+
 ## [0.42.3] - 2026-09-24
 
 ### Fixed
