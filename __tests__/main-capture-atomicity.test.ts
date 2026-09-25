@@ -24,6 +24,8 @@
  */
 import { CaptureStore, type CaptureStoreHost } from '../capture-store';
 import type { SignInMethod } from '../reconnect-routing';
+import type { PlaudVersion } from '../plaud-version';
+import { PlaudAuthError, PlaudApiError } from '../plaud-client-re';
 
 // Build a minimal unsigned JWT. The capture guard reads unverified claims only,
 // so an unsigned token with a dummy signature segment is a faithful fixture.
@@ -59,6 +61,7 @@ interface HarnessSettings {
 	signInMethod: SignInMethod;
 	plaudWorkspaceId: string;
 	plaudDeviceId: string;
+	plaudDetectedVersion: PlaudVersion | '';
 	/** Unrelated to auth, used to prove a concurrent edit is not reverted. */
 	autoSyncEnabled: boolean;
 	[key: string]: unknown;
@@ -104,6 +107,11 @@ interface Harness {
 	 * tokens never produces.
 	 */
 	shortLifetimeNotices: number;
+	/**
+	 * What probeCandidate does, for the storeFirstWorkingCandidate tests. Null
+	 * (the default) fails loudly, because storeAccessToken never probes.
+	 */
+	probe: ((token: string) => Promise<PlaudVersion>) | null;
 }
 
 /** What a vault that will not take the write looks like out of saveData. */
@@ -131,6 +139,7 @@ function makeHarness(settings: Partial<HarnessSettings> = {}): Harness {
 		failLegacySecret: null,
 		duringSave: null,
 		shortLifetimeNotices: 0,
+		probe: null,
 	};
 
 	const host: HostStub = {
@@ -140,6 +149,7 @@ function makeHarness(settings: Partial<HarnessSettings> = {}): Harness {
 			signInMethod: 'browser',
 			plaudWorkspaceId: '',
 			plaudDeviceId: '',
+			plaudDetectedVersion: '',
 			autoSyncEnabled: false,
 			...settings,
 		},
@@ -194,10 +204,14 @@ function makeHarness(settings: Partial<HarnessSettings> = {}): Harness {
 			calls.push('reconcileRefresh');
 		},
 		redrawSettings: (): void => host.settingsRefresh?.(),
-		probeCandidate: (): Promise<void> => {
+		probeCandidate: (token: string): Promise<PlaudVersion> => {
 			// storeAccessToken never probes; only storeFirstWorkingCandidate does,
-			// and this suite does not exercise it. Fail loudly if that changes.
-			throw new Error('probeCandidate is not part of this suite');
+			// and only the tests that set `probe` exercise it. Fail loudly
+			// otherwise.
+			if (harness.probe === null) {
+				throw new Error('probeCandidate is not part of this test');
+			}
+			return harness.probe(token);
 		},
 	};
 
@@ -796,5 +810,101 @@ describe('v4 workspace scope commits atomically with the credential', () => {
 		// not probe scope): leave the prior scope intact.
 		expect(h.host.settings.plaudWorkspaceId).toBe('');
 		expect(h.host.settings.plaudDeviceId).toBe('dev_existing');
+	});
+});
+
+describe('the detected Plaud version commits with the credential (issue #143)', () => {
+	it('records the platform the probe found accepting the selected token', async () => {
+		const h = makeHarness();
+		h.probe = () => Promise.resolve('v3');
+		const token = usableToken();
+
+		const result = await h.store.storeFirstWorkingCandidate(
+			[token],
+			() => true,
+			'window',
+		);
+
+		expect(result.stored).toBe(true);
+		expect(h.host.settings.plaudDetectedVersion).toBe('v3');
+		// In the same batch that reached disk, not a later write.
+		const onDisk = JSON.parse(
+			h.secrets.get('__data.json__') ?? '{}',
+		) as Record<string, unknown>;
+		expect(onDisk.plaudDetectedVersion).toBe('v3');
+	});
+
+	it('records the version of the candidate that was selected, not an earlier rejected one', async () => {
+		const h = makeHarness();
+		const first = usableToken('first');
+		const second = usableToken('second');
+		h.probe = (token) =>
+			token === first
+				? Promise.reject(
+						new PlaudAuthError('token_rejected', 'revoked', '/x'),
+					)
+				: Promise.resolve('v4');
+
+		const result = await h.store.storeFirstWorkingCandidate(
+			[first, second],
+			() => true,
+			'browser',
+		);
+
+		expect(result.stored).toBe(true);
+		expect(h.secrets.get(CAPTURED_SECRET_ID)).toBe(second);
+		expect(h.host.settings.plaudDetectedVersion).toBe('v4');
+	});
+
+	it('clears the recorded version when a token is stored unverified', async () => {
+		const h = makeHarness({ plaudDetectedVersion: 'v4' });
+		// A network fault: nothing proven, so no platform either.
+		h.probe = () =>
+			Promise.reject(new PlaudApiError('network down', undefined, '/x'));
+
+		const result = await h.store.storeFirstWorkingCandidate(
+			[usableToken()],
+			() => true,
+			'window',
+		);
+
+		expect(result.stored).toBe(true);
+		expect(h.host.settings.plaudDetectedVersion).toBe('');
+	});
+
+	it('leaves the recorded version alone on a store that did not probe', async () => {
+		// The background refresh renews the same account, so it passes nothing.
+		const h = makeHarness({ plaudDetectedVersion: 'v3' });
+
+		await h.store.storeAccessToken(
+			usableToken(),
+			'window',
+			undefined,
+			true,
+		);
+
+		expect(h.host.settings.plaudDetectedVersion).toBe('v3');
+	});
+
+	it('does not tell a sign-in window user to click a bookmark', async () => {
+		const h = makeHarness();
+		h.probe = () =>
+			Promise.reject(new PlaudAuthError('token_rejected', 'no', '/x'));
+
+		const fromWindow = await h.store.storeFirstWorkingCandidate(
+			[usableToken()],
+			() => true,
+			'window',
+		);
+		const fromBrowser = await h.store.storeFirstWorkingCandidate(
+			[usableToken()],
+			() => true,
+			'browser',
+		);
+
+		expect(fromWindow.stored).toBe(false);
+		expect(fromWindow.message).not.toMatch(/bookmark/i);
+		expect(fromWindow.message).toMatch(/Sign in/);
+		expect(fromBrowser.message).toMatch(/bookmark/i);
 	});
 });

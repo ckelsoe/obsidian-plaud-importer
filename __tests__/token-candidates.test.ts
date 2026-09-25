@@ -50,6 +50,9 @@ const workspaceTokenFor = (n: number): string =>
 		{ alg: 'HS256', typ: 'WT' },
 		{ client_id: 'web', exp: FUTURE_EXP, wid: `ws_${n}` },
 	);
+// The matching workspace refresh token (typ WRT) for workspace `ws_<n>`.
+const workspaceRefreshTokenFor = (n: number): string =>
+	makeJwt({ alg: 'HS256', typ: 'WRT' }, { exp: FUTURE_EXP, wid: `ws_${n}` });
 const PAST_EXP = 1_770_000_000; // seconds → 2026-02-01, before NOW_MS
 
 // The au-coco / treyb shape: a user token under the `token` key.
@@ -1047,11 +1050,7 @@ describe('SIGN_IN_BOOKMARKLET', () => {
 		// fills with the first two workspaces and the active workspace's WRT is
 		// discarded, disabling renewal even though its WT is the one selected.
 		const wt = workspaceTokenFor;
-		const wrt = (n: number): string =>
-			makeJwt(
-				{ alg: 'HS256', typ: 'WRT' },
-				{ exp: FUTURE_EXP, wid: `ws_${n}` },
-			);
+		const wrt = workspaceRefreshTokenFor;
 		const map: Record<string, string> = {
 			'pld_u1:currentWorkspaceId': '"ws_3"',
 			'pld_u1:workspaceTokens': JSON.stringify({
@@ -1073,6 +1072,82 @@ describe('SIGN_IN_BOOKMARKLET', () => {
 		expect(
 			selectRefreshTokenForWorkspace(refresh, at(tokens, 0), NOW_MS),
 		).toBe(wrt(3));
+	});
+
+	it('reads the pld_session layout the web.plaud.ai 4.0 app uses', () => {
+		// Read off a live account on 2026-09-25: none of the pld_<uid>:* keys
+		// exist, the session lives under fixed pld_session.* keys.
+		const wt = workspaceTokenFor;
+		const wrt = workspaceRefreshTokenFor;
+		const map: Record<string, string> = {
+			'pld_session.workspace': JSON.stringify({
+				list: {
+					'0': {
+						workspaceId: 'ws_1',
+						domain: 'https://api.plaud.ai',
+					},
+					'1': {
+						workspaceId: 'ws_3',
+						domain: 'https://api-euc1.plaud.ai',
+					},
+				},
+				currentId: 'ws_3',
+			}),
+			'pld_session.tokens': JSON.stringify({
+				byWsId: {
+					ws_1: { token: wt(1), refreshToken: wrt(1) },
+					ws_2: { token: wt(2), refreshToken: wrt(2) },
+					ws_3: { token: wt(3), refreshToken: wrt(3) },
+				},
+			}),
+		};
+		const href = runBookmarklet(map).href ?? '';
+		const params = Object.fromEntries(
+			new URLSearchParams(href.slice(href.indexOf('?') + 1)),
+		);
+		// The active workspace's WT first, its WRT kept, its host carried.
+		expect(at(parseTokenCandidates(params), 0)).toBe(wt(3));
+		expect(parseRefreshCandidates(params)).toContain(wrt(3));
+		expect(parseV4Host(params)).toBe('https://api-euc1.plaud.ai');
+	});
+
+	it('reads the pld_session layout past a stale older currentWorkspaceId', () => {
+		const wt = workspaceTokenFor;
+		const map: Record<string, string> = {
+			// Left over: its list entry has no token and its map holds only an
+			// expired one, so neither is live data for that workspace.
+			'pld_u1:currentWorkspaceId': '"ws_9"',
+			'pld_u1:workspaceList': JSON.stringify({
+				'0': {
+					workspaceId: 'ws_9',
+					domain: 'https://api-test.plaud.ai',
+				},
+			}),
+			'pld_u1:workspaceTokens': JSON.stringify({
+				ws_9: { token: EXPIRED_TOKEN },
+			}),
+			'pld_session.workspace': JSON.stringify({
+				list: {
+					'0': {
+						workspaceId: 'ws_3',
+						domain: 'https://api-euc1.plaud.ai',
+					},
+				},
+				currentId: 'ws_3',
+			}),
+			'pld_session.tokens': JSON.stringify({
+				byWsId: {
+					ws_1: { token: wt(1) },
+					ws_3: { token: wt(3) },
+				},
+			}),
+		};
+		const href = runBookmarklet(map).href ?? '';
+		const params = Object.fromEntries(
+			new URLSearchParams(href.slice(href.indexOf('?') + 1)),
+		);
+		expect(at(parseTokenCandidates(params), 0)).toBe(wt(3));
+		expect(parseV4Host(params)).toBe('https://api-euc1.plaud.ai');
 	});
 
 	it('never dead-ends: a miss offers a diagnostic instead of only an alert', () => {

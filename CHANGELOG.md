@@ -6,6 +6,16 @@ All notable changes to Plaud Importer will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Plaud 3.0 accounts can sign in again (#143).** Plaud now gives 3.0 accounts the same kind of workspace token as 4.0 accounts, so the plugin took every such sign-in for a 4.0 account, checked it only against the 4.0 service, and reported that Plaud rejected every token. Sign-in now tries both platforms and remembers the one Plaud accepts.
+- **Sign-in reads the session layout the 4.0 web app now uses.** web.plaud.ai stores its session under new keys. Sign-in now finds the active workspace, its API host, and its renewal token there, so a multi-workspace account imports from the workspace you are in.
+- **A failed sign-in from the sign-in window no longer tells you to click a bookmark.** That advice only applies to the browser sign-in.
+
+### Added
+
+- **Plaud version setting.** Under Sign in, "Plaud version" shows which platform your account is on (Plaud 3.0 or Plaud 4.0). Leave it on Auto: the plugin detects the platform at each sign-in and switches to 4.0 on its own when Plaud moves your account. Pick a version only if support asks you to. The setting will go away once Plaud retires 3.0.
+
 ## [0.42.4] - 2026-09-25
 
 ### Changed

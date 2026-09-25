@@ -315,6 +315,18 @@
 	color: var(--text-error);
 }
 
+/* The "Plaud version" row's status line. Red only when a pinned version
+   disagrees with what was detected. */
+.plaud-importer-version-status {
+	margin-top: 0.35em;
+	font-size: var(--font-ui-smaller);
+	color: var(--text-muted);
+}
+
+.plaud-importer-version-status.plaud-importer-version-mismatch {
+	color: var(--text-error);
+}
+
 /* Result line under the "Clear sign-in" setting */
 .plaud-importer-clear-status {
 	margin-top: 0.35em;

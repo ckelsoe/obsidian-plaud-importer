@@ -114,6 +114,13 @@ export class PlaudParseError extends PlaudApiError {
 	}
 }
 
+/**
+ * In-band status the v3 endpoints return (HTTP 200) when the account has moved
+ * to Plaud 4.0. Plaud's own 3.0 web app reacts to it by switching to the 4.0
+ * app. Observed live 2026-09-25 on `/file/simple/web` for a 4.0 account.
+ */
+const V3_ACCOUNT_ON_V4_STATUS = -1800907;
+
 const DEFAULT_BASE_URL = 'https://api.plaud.ai';
 const USER_AGENT = 'obsidian-plaud-importer/0.1.0';
 const DEFAULT_LIMIT = 50;
@@ -136,6 +143,15 @@ export interface PlaudClientOptions {
 	 * See `detectRegionRedirect` for the wire format.
 	 */
 	readonly onBaseUrlChanged?: (newBaseUrl: string) => void;
+	/**
+	 * Called when Plaud answers V3_ACCOUNT_ON_V4_STATUS: the account has moved
+	 * to Plaud 4.0 and this client can no longer read it (issue #143). The
+	 * plugin switches to the 4.0 client. The request still fails with the
+	 * usual in-band error; the callback only reports what it means. Receives
+	 * the bearer the request carried, so a response that arrives after the user
+	 * has signed in to a different account can be recognized as stale.
+	 */
+	readonly onAccountOnV4?: (token: string) => void;
 }
 
 export class ReverseEngineeredPlaudClient implements PlaudClient {
@@ -147,6 +163,7 @@ export class ReverseEngineeredPlaudClient implements PlaudClient {
 	private readonly debugLogger: DebugLogger | undefined;
 	private readonly onBaseUrlChanged:
 		((newBaseUrl: string) => void) | undefined;
+	private readonly onAccountOnV4: ((token: string) => void) | undefined;
 	// Per-session cache of the flat folder/tag catalog (`GET /filetag/`). The
 	// catalog changes rarely, so one fetch per plugin session is enough; a
 	// folder renamed in Plaud after this is read shows its old name until the
@@ -169,6 +186,7 @@ export class ReverseEngineeredPlaudClient implements PlaudClient {
 		this.baseUrl = options.baseUrl ?? DEFAULT_BASE_URL;
 		this.debugLogger = options.debugLogger;
 		this.onBaseUrlChanged = options.onBaseUrlChanged;
+		this.onAccountOnV4 = options.onAccountOnV4;
 	}
 
 	async listRecordings(
@@ -877,6 +895,9 @@ export class ReverseEngineeredPlaudClient implements PlaudClient {
 		// be ignored at best and rejected at worst. When skipAuth is true,
 		// we do NOT read the token provider at all — this also means an
 		// authless call never triggers the "no token configured" error.
+		// The bearer this request carried, so an account-move report names the
+		// credential it is about (see onAccountOnV4). Null on a skipAuth call.
+		let sentToken: string | null = null;
 		if (options.skipAuth !== true) {
 			// Read the token fresh on every call so that settings changes take
 			// effect immediately. If the user hasn't configured one, surface a
@@ -895,6 +916,7 @@ export class ReverseEngineeredPlaudClient implements PlaudClient {
 			// get rejected. Strip any leading `bearer ` (case-insensitive)
 			// before we prepend our own capitalized scheme token.
 			const token = rawToken.trim().replace(/^bearer\s+/i, '');
+			sentToken = token;
 			headers.Authorization = `Bearer ${token}`;
 			if (this.debugLogger?.enabled === true) {
 				tokenDiagnostics = decodeTokenDiagnostics(token);
@@ -1110,6 +1132,12 @@ export class ReverseEngineeredPlaudClient implements PlaudClient {
 					`Plaud rejected the token on ${endpoint} (status ${inBand.status}: ${inBand.msg})`,
 					endpoint,
 				);
+			}
+			if (
+				inBand.status === V3_ACCOUNT_ON_V4_STATUS &&
+				sentToken !== null
+			) {
+				this.onAccountOnV4?.(sentToken);
 			}
 			// Any other in-band failure (e.g. -3901 "token type does not match
 			// parse mode") surfaces Plaud's own message. The "in-band error

@@ -15,6 +15,7 @@ import {
 	selectWorkingCandidate,
 } from './token-candidates';
 import type { SignInMethod } from './reconnect-routing';
+import type { PlaudVersion } from './plaud-version';
 
 // Stable SecretStorage id for a token captured by the in-app sign-in flow.
 // Re-running sign-in overwrites it, mirroring "replace my token".
@@ -42,6 +43,12 @@ const DEEP_LINK_BAD_TOKEN_NOTICE =
 // (issue #78: rogerfsh's 300-day token still decodes cleanly but is revoked).
 const DEEP_LINK_ALL_REJECTED_NOTICE =
 	'Plaud rejected every sign-in token from your browser, so that session looks signed out or revoked. Sign in to Plaud in your browser again, then click the bookmark.';
+// The same outcome from the embedded sign-in window, which has no bookmark
+// (issue #143 called the bookmark wording misleading there). Both Plaud 3.0 and
+// 4.0 were tried unless a version is pinned, so the pinned version is the first
+// thing worth checking.
+const WINDOW_ALL_REJECTED_NOTICE =
+	'Plaud rejected the sign-in from the sign-in window. Click Sign in to try again. If it keeps failing and Plaud version is not set to Auto, set it back to Auto.';
 // One candidate, and Plaud could not be reached to check it. Storing it
 // unverified matches the pre-0.35.0 behavior and keeps an offline reconnect
 // working; the user finds out from the next import if it was already dead.
@@ -135,6 +142,10 @@ export interface CaptureSettings {
 	// captured credential never lands on disk paired with a stale scope.
 	plaudWorkspaceId: string;
 	plaudDeviceId: string;
+	// Which Plaud platform the probe found accepting this credential (issue
+	// #143). Committed with the token for the same reason as the scope: a stored
+	// credential must never be paired with another account's platform.
+	plaudDetectedVersion: PlaudVersion | '';
 }
 
 /**
@@ -187,7 +198,8 @@ export interface CaptureStoreHost<S extends CaptureSettings> {
 	 * acceptance and rejecting on refusal. A host call rather than a client the
 	 * store constructs itself, so the store carries no transport dependency and
 	 * its tests need no client mock. `onBaseUrlChanged` reports a region
-	 * redirect followed during the probe.
+	 * redirect followed during the probe. Resolves with the Plaud platform
+	 * that accepted the token.
 	 */
 	probeCandidate(
 		token: string,
@@ -197,7 +209,7 @@ export interface CaptureStoreHost<S extends CaptureSettings> {
 		// from plugin-global state) so overlapping captures never probe one
 		// candidate against another capture's scope. Empty on the prod path.
 		v4Scope: CapturedV4Scope,
-	): Promise<void>;
+	): Promise<PlaudVersion>;
 }
 
 export class CaptureStore<S extends CaptureSettings> {
@@ -255,6 +267,11 @@ export class CaptureStore<S extends CaptureSettings> {
 		// token, so a stale WRT cannot linger); a string sets it. See
 		// commitCapturedToken.
 		refreshToken: string | null | undefined = undefined,
+		// The Plaud platform the probe found accepting this token, committed with
+		// it. `undefined` (a background refresh, which renews the same account)
+		// leaves the recorded version intact; `null` clears it (a token stored
+		// unverified, whose platform nobody checked); a version sets it.
+		detectedVersion: PlaudVersion | null | undefined = undefined,
 	): Promise<CaptureStoreResult> {
 		const token = rawToken.trim().replace(/^bearer\s+/i, '');
 		if (token.length === 0 || !isUsableUserToken(token)) {
@@ -278,6 +295,7 @@ export class CaptureStore<S extends CaptureSettings> {
 				stillOwns,
 				v4Scope,
 				refreshToken,
+				detectedVersion,
 			),
 		);
 	}
@@ -312,6 +330,7 @@ export class CaptureStore<S extends CaptureSettings> {
 		stillOwns: () => boolean,
 		v4Scope: CapturedV4Scope,
 		refreshToken: string | null | undefined,
+		detectedVersion: PlaudVersion | null | undefined,
 	): Promise<CaptureStoreResult> {
 		// The queue guarantees order, not relevance. This caller may have waited
 		// while a newer capture took over, and its own guard was evaluated before
@@ -403,6 +422,9 @@ export class CaptureStore<S extends CaptureSettings> {
 		if (v4Scope.deviceId !== undefined) {
 			next.plaudDeviceId = v4Scope.deviceId ?? '';
 		}
+		if (detectedVersion !== undefined) {
+			next.plaudDetectedVersion = detectedVersion ?? '';
+		}
 		try {
 			await this.host.saveData(next);
 		} catch (err) {
@@ -459,6 +481,9 @@ export class CaptureStore<S extends CaptureSettings> {
 		}
 		if (v4Scope.deviceId !== undefined) {
 			live.plaudDeviceId = v4Scope.deviceId ?? '';
+		}
+		if (detectedVersion !== undefined) {
+			live.plaudDetectedVersion = detectedVersion ?? '';
 		}
 		// EVERY host call below this line is bookkeeping about a store that has
 		// already succeeded. A throw in one must not escape, or the caller
@@ -611,8 +636,14 @@ export class CaptureStore<S extends CaptureSettings> {
 		// candidate must not rewrite the configured API host. It is handed to
 		// the store below only for the candidate that is actually stored. Held
 		// on an object so the value written inside the probe closure is read
-		// back correctly after the await.
-		const detected: { baseUrl: string | null } = { baseUrl: null };
+		// back correctly after the await. `version` is the Plaud platform that
+		// accepted the candidate, recorded the same way; selection stops at the
+		// first accepted candidate, so after a 'selected' outcome it describes
+		// the selected token.
+		const detected: {
+			baseUrl: string | null;
+			version: PlaudVersion | null;
+		} = { baseUrl: null, version: null };
 		// Probing several candidates is several round-trips, and the user has
 		// just switched from the browser to Obsidian expecting something to
 		// happen. Say what is happening rather than sitting silent. Given a
@@ -628,7 +659,8 @@ export class CaptureStore<S extends CaptureSettings> {
 				candidates,
 				async (candidate) => {
 					detected.baseUrl = null;
-					await this.host.probeCandidate(
+					detected.version = null;
+					detected.version = await this.host.probeCandidate(
 						candidate,
 						probeBaseUrl,
 						(url) => {
@@ -654,7 +686,13 @@ export class CaptureStore<S extends CaptureSettings> {
 			return { stored: false, message: DEEP_LINK_BAD_TOKEN_NOTICE };
 		}
 		if (selection.outcome === 'all-rejected') {
-			return { stored: false, message: DEEP_LINK_ALL_REJECTED_NOTICE };
+			return {
+				stored: false,
+				message:
+					signInMethod === 'window'
+						? WINDOW_ALL_REJECTED_NOTICE
+						: DEEP_LINK_ALL_REJECTED_NOTICE,
+			};
 		}
 		if (selection.outcome === 'unreachable') {
 			// With several candidates the whole point is choosing between them,
@@ -678,6 +716,9 @@ export class CaptureStore<S extends CaptureSettings> {
 					stillOwns,
 					v4Scope,
 					resolveRefresh(only),
+					// Nothing was proven, so no platform either. Clear the
+					// recorded one rather than keep a previous account's.
+					null,
 				),
 				DEEP_LINK_UNVERIFIED_NOTICE,
 			);
@@ -700,6 +741,7 @@ export class CaptureStore<S extends CaptureSettings> {
 				stillOwns,
 				v4Scope,
 				resolveRefresh(token),
+				detected.version,
 			),
 			DEEP_LINK_SAVED_NOTICE,
 		);

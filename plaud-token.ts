@@ -140,8 +140,9 @@ export function readTokenClientId(value: string): string | null {
  * null when the value is not a decodable JWT or carries no `ws_` workspace id.
  * A v4 token embeds its own workspace, so this recovers the workspace scope for
  * a sign-in path (external browser, paste, deep link) that did not scrape the
- * portal's localStorage. A v3 token has no `wid`, so a non-null result also
- * doubles as "this is a v4 token."
+ * portal's localStorage. A non-null result means "this is a workspace token",
+ * NOT "this account is on Plaud 4.0": Plaud issues workspace tokens to 3.0
+ * accounts too (issue #143). plaud-version.ts decides the platform.
  */
 export function workspaceIdFromToken(value: string): string | null {
 	const payload = decodeJwtPayload(value);

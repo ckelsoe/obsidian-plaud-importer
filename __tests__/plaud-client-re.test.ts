@@ -1118,6 +1118,44 @@ describe('listRecordings in-band error envelopes', () => {
 		);
 	});
 
+	it('reports -1800907 (account moved to Plaud 4.0) through onAccountOnV4 and still fails the call', async () => {
+		// Observed live 2026-09-25: the 3.0 list endpoint answers a 4.0 account
+		// with HTTP 200 and this status. Issue #143.
+		const { fetcher } = captureFetcher(ok({ status: -1800907, msg: '' }));
+		const reported: string[] = [];
+		const client = new ReverseEngineeredPlaudClient(
+			() => 'bearer tok',
+			fetcher,
+			{
+				onAccountOnV4: (token) => {
+					reported.push(token);
+				},
+			},
+		);
+
+		const err = await client.listRecordings().catch((e: unknown) => e);
+		// The bare bearer the request carried, so the plugin can tell a stale
+		// response for a replaced credential from one about the current account.
+		expect(reported).toEqual(['tok']);
+		expect(err).toBeInstanceOf(PlaudApiError);
+		expect((err as PlaudApiError).inBandStatus).toBe(-1800907);
+	});
+
+	it('does not call onAccountOnV4 for other in-band errors', async () => {
+		const { fetcher } = captureFetcher(
+			ok({ status: -3901, msg: 'token type does not match parse mode' }),
+		);
+		let moved = 0;
+		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher, {
+			onAccountOnV4: () => {
+				moved += 1;
+			},
+		});
+
+		await client.listRecordings().catch(() => undefined);
+		expect(moved).toBe(0);
+	});
+
 	it('does not trip on a valid list (status 0) — success path is unaffected', async () => {
 		const { fetcher } = captureFetcher(ok(listEnvelope([record()])));
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);

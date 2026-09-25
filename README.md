@@ -168,6 +168,8 @@ How long a sign-in lasts depends on the sign-in method. A session from the email
 
 The token is stored in Obsidian's per-vault secret storage either way. It is **never written to `data.json`** and does not travel through Obsidian Sync. Switching vaults requires re-connecting.
 
+**Plaud 3.0 and Plaud 4.0:** Plaud is moving accounts from Plaud 3.0 to Plaud 4.0, and both work. The plugin detects which one your account is on each time you sign in, and switches to 4.0 by itself when Plaud moves your account. The **Plaud version** setting under Sign in shows what was detected. Leave it on **Auto** unless support asks you to change it.
+
 Regional accounts (EU and others) need no extra setup. If Plaud routes your account to a regional server, the plugin detects it on the first import and remembers it.
 
 ### Test connection

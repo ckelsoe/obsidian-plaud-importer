@@ -110,6 +110,15 @@ import {
 	RenameRecordingModal,
 } from './modals';
 import { trimTrailingChars } from './text-trim';
+import {
+	isPlaudVersion,
+	isPlaudVersionOverride,
+	probeAcrossVersions,
+	probeOrder,
+	resolvePlaudVersion,
+	type PlaudVersion,
+	type PlaudVersionOverride,
+} from './plaud-version';
 
 // Legacy secret id for the paired refresh token (typ WRT) that pre-0.32.0
 // email sign-ins stored. The refresh subsystem is gone; the secret is only
@@ -366,42 +375,63 @@ export default class PlaudImporterPlugin extends Plugin {
 			// from THIS capture's scope, or from the token's own `wid` claim (a v4
 			// token embeds it), which is what lets an external-browser / paste /
 			// deep-link token probe as v4 even though it did not scrape the
-			// portal. A token with no workspace at all is a prod (v3) sign-in:
-			// probe the prod client, which can learn a regional host via
-			// onBaseUrlChanged. Deciding the portal from the capture and the token
-			// (not stored settings) avoids a stale prior scope misrouting a fresh
-			// sign-in.
+			// portal. Deciding from the capture and the token (not stored
+			// settings) avoids a stale prior scope misrouting a fresh sign-in.
 			const probeWorkspaceId =
 				(v4Scope.workspaceId ?? '').trim() ||
 				workspaceIdFromToken(token) ||
 				'';
-			if (probeWorkspaceId.length > 0) {
-				const probe = new PlaudV4Client(() => token, obsidianFetcher, {
-					debugLogger: this.debugLogger,
-					baseUrl,
-					workspaceId: () => probeWorkspaceId,
-					deviceId: () => {
-						// Match commitCapturedToken's null/undefined rule:
-						// undefined = "not observed" (fall back to the stored id);
-						// null = "observed absent" (this sign-in confirmed no
-						// device, so send none rather than a stale id that could
-						// get a valid token's probe rejected); a string is used.
-						const d =
-							v4Scope.deviceId === undefined
-								? this.settings.plaudDeviceId
-								: (v4Scope.deviceId ?? '');
-						return d.length > 0 ? d : undefined;
-					},
-				});
-				await probe.listRecordings({ limit: 1 });
-				return;
-			}
-			const probe = new ReverseEngineeredPlaudClient(
-				() => token,
-				obsidianFetcher,
-				{ debugLogger: this.debugLogger, baseUrl, onBaseUrlChanged },
+			// A workspace no longer proves Plaud 4.0: Plaud issues workspace
+			// tokens to 3.0 accounts too (issue #143). So it only decides which
+			// platform to TRY first; on auto the other one is the fallback, and
+			// the one Plaud accepts is recorded with the token. A pinned
+			// "Plaud version" setting probes only that platform.
+			return probeAcrossVersions(
+				probeOrder(
+					this.settings.plaudVersionOverride,
+					probeWorkspaceId.length > 0,
+				),
+				async (version) => {
+					if (version === 'v4') {
+						const probe = new PlaudV4Client(
+							() => token,
+							obsidianFetcher,
+							{
+								debugLogger: this.debugLogger,
+								baseUrl,
+								workspaceId: () => probeWorkspaceId,
+								deviceId: () => {
+									// Match commitCapturedToken's null/undefined
+									// rule: undefined = "not observed" (fall back to
+									// the stored id); null = "observed absent" (this
+									// sign-in confirmed no device, so send none
+									// rather than a stale id that could get a valid
+									// token's probe rejected); a string is used.
+									const d =
+										v4Scope.deviceId === undefined
+											? this.settings.plaudDeviceId
+											: (v4Scope.deviceId ?? '');
+									return d.length > 0 ? d : undefined;
+								},
+							},
+						);
+						await probe.listRecordings({ limit: 1 });
+						return;
+					}
+					// The 3.0 client can learn a regional host via
+					// onBaseUrlChanged.
+					const probe = new ReverseEngineeredPlaudClient(
+						() => token,
+						obsidianFetcher,
+						{
+							debugLogger: this.debugLogger,
+							baseUrl,
+							onBaseUrlChanged,
+						},
+					);
+					await probe.listRecordings({ limit: 1 });
+				},
 			);
-			await probe.listRecordings({ limit: 1 });
 		},
 	});
 	// Redraws the open settings tab's sign-in status and secret picker. Set by
@@ -717,16 +747,18 @@ export default class PlaudImporterPlugin extends Plugin {
 	 * workspace via `x-scope-id`, and a v4 token embeds its own workspace, so the
 	 * token fallback is what lets a sign-in that did NOT scrape the portal's
 	 * localStorage (external browser for Google/Apple SSO, paste, deep link) run
-	 * on the v4 client. Empty for a v3 account (a v3 token has no `wid`).
+	 * on the v4 client. Empty for a legacy user token, which has no `wid`. A
+	 * `wid` does NOT mean Plaud 4.0 on its own: 3.0 accounts get workspace
+	 * tokens too (issue #143), so plaudVersion() decides the platform.
 	 */
 	private resolvedWorkspaceId(): string {
 		const token = this.app.secretStorage.getSecret(this.settings.secretId);
 		if (token !== null && token.length > 0) {
-			// The token is authoritative for its own session: a v4 token carries
-			// its workspace (`wid`); a v3 token has none, which means v3 even if a
-			// stale workspace from a prior v4 session is still stored. This is
-			// what keeps a v4 -> v3 reconnect from routing a v3 token through the
-			// v4 client on the leftover scope.
+			// The token is authoritative for its own session: a workspace token
+			// carries its workspace (`wid`); a legacy user token has none, which
+			// means no workspace even if a stale one from a prior session is still
+			// stored. This is what keeps a reconnect with a legacy token from
+			// routing it through the v4 client on the leftover scope.
 			return workspaceIdFromToken(token) ?? '';
 		}
 		// No token to read (e.g. before a capture commits): fall back to the
@@ -735,13 +767,103 @@ export default class PlaudImporterPlugin extends Plugin {
 	}
 
 	/**
-	 * True when this account is on the new Plaud portal (v4). Decided by
-	 * resolvedWorkspaceId, so both a captured workspace and a v4 token's own
-	 * `wid` count. Used to pick the client and the sign-in probe. Clearing
-	 * sign-in clears the workspace and blanks the token, so this returns false.
+	 * The Plaud platform this vault talks to: a pinned "Plaud version" setting,
+	 * else the version the last sign-in detected, else (an install that has not
+	 * signed in since detection shipped) the old inference from the workspace.
+	 * See plaud-version.ts for why a workspace alone no longer decides it.
+	 */
+	private plaudVersion(): PlaudVersion {
+		return resolvePlaudVersion(
+			this.settings.plaudVersionOverride,
+			this.settings.plaudDetectedVersion,
+			this.resolvedWorkspaceId().length > 0,
+		);
+	}
+
+	/**
+	 * True when this account is on the new Plaud portal (v4). Used to pick the
+	 * client. Clearing sign-in clears the detected version, the workspace, and
+	 * the token, so this returns false unless v4 is pinned.
 	 */
 	private usesV4Portal(): boolean {
-		return this.resolvedWorkspaceId().length > 0;
+		return this.plaudVersion() === 'v4';
+	}
+
+	/**
+	 * What the "Plaud version" settings row shows: the version Auto would use
+	 * (whatever the override is), and what the last sign-in detected.
+	 */
+	plaudVersionStatus(): { auto: PlaudVersion; detected: PlaudVersion | '' } {
+		return {
+			auto: resolvePlaudVersion(
+				'auto',
+				this.settings.plaudDetectedVersion,
+				this.resolvedWorkspaceId().length > 0,
+			),
+			detected: this.settings.plaudDetectedVersion,
+		};
+	}
+
+	/**
+	 * Sets the "Plaud version" setting and switches the client to match, so a
+	 * change takes effect on the next request with no reload.
+	 */
+	async setPlaudVersionOverride(value: PlaudVersionOverride): Promise<void> {
+		this.settings.plaudVersionOverride = value;
+		await this.saveSettings();
+		this.syncClientToPlaudVersion();
+	}
+
+	/**
+	 * Rebuilds the client when the platform it was built for no longer matches
+	 * plaudVersion(), for a change made outside a capture (the version setting,
+	 * or a secret linked by hand in the token picker). The client class is
+	 * fixed at construction, so without this the old one would run until a
+	 * reload.
+	 */
+	syncClientToPlaudVersion(): void {
+		// Callers reach this after an awaited save. Never build a client onto a
+		// plugin that unloaded meanwhile.
+		if (this.disposed) {
+			return;
+		}
+		if (this.usesV4Portal() !== this.clientIsV4) {
+			this.buildClient();
+		}
+	}
+
+	/**
+	 * A 3.0 endpoint answered that this account has moved to Plaud 4.0. On auto,
+	 * record it and switch clients so the next request goes to the 4.0 API; a
+	 * pinned version is the user's call, so it is left alone and the settings
+	 * row shows the mismatch. Says so once per switch, and says to sign in again
+	 * when there is no workspace for the 4.0 client to use. `token` is the
+	 * bearer the request carried: a response for a credential the user has
+	 * since replaced says nothing about the current account, so it is ignored.
+	 */
+	private handleAccountOnV4(token: string): void {
+		if (this.disposed || this.settings.plaudDetectedVersion === 'v4') {
+			return;
+		}
+		const current = this.readStoredTokenValue()
+			.trim()
+			.replace(/^bearer\s+/i, '');
+		if (current !== token) {
+			return;
+		}
+		this.settings.plaudDetectedVersion = 'v4';
+		void this.saveSettings();
+		if (this.settings.plaudVersionOverride !== 'auto') {
+			this.settingsRefresh?.();
+			return;
+		}
+		this.buildClient();
+		this.settingsRefresh?.();
+		new Notice(
+			this.resolvedWorkspaceId().length > 0
+				? 'Your Plaud account has moved to Plaud 4.0. The plugin has switched to it; run the import again.'
+				: 'Your Plaud account has moved to Plaud 4.0. Sign in again in the plugin settings to keep importing.',
+		);
 	}
 
 	/**
@@ -803,6 +925,7 @@ export default class PlaudImporterPlugin extends Plugin {
 					this.settings.apiBaseUrl = url;
 					void this.saveSettings();
 				},
+				onAccountOnV4: (token) => this.handleAccountOnV4(token),
 			},
 		);
 	}
@@ -2675,6 +2798,14 @@ export default class PlaudImporterPlugin extends Plugin {
 		if (typeof this.settings.plaudDeviceId !== 'string') {
 			this.settings.plaudDeviceId = '';
 		}
+		// Same for the version fields: an unknown value reads as the default
+		// (auto, nothing detected), which falls back to the old inference.
+		if (!isPlaudVersionOverride(this.settings.plaudVersionOverride)) {
+			this.settings.plaudVersionOverride = 'auto';
+		}
+		if (!isPlaudVersion(this.settings.plaudDetectedVersion)) {
+			this.settings.plaudDetectedVersion = '';
+		}
 		// The sign-in portal moved from alpha.plaud.ai to beta.plaud.ai when the
 		// new portal left alpha. Migrate a stored value that still pins the
 		// retired alpha default (or is malformed) to the current default; a user
@@ -2882,6 +3013,10 @@ export default class PlaudImporterPlugin extends Plugin {
 		// reconnect that carries no scope keeps its scope via commitCapturedToken.
 		this.settings.plaudWorkspaceId = '';
 		this.settings.plaudDeviceId = '';
+		// The detected platform belonged to the cleared account. The next
+		// sign-in detects its own. A pinned override is a user preference and
+		// stays.
+		this.settings.plaudDetectedVersion = '';
 		// A cleared plugin has no session, so there is no sign-in method to route
 		// a Reconnect from until the next capture records one. The warn stamp
 		// resets too: the next credential deserves its own warning.
