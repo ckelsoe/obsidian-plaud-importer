@@ -19,6 +19,7 @@
  */
 import { PlaudImporterSettingsTab } from '../settings-tab';
 import { Notice, Setting, settingButton } from './__mocks__/obsidian';
+import { at } from './helpers/checked';
 
 /** The subset of the settings tab these tests drive. Private members need the cast. */
 type ReauthOutcome = 'captured' | 'closed' | 'reported';
@@ -83,7 +84,7 @@ describe('settings tab reports a capture that failed to save (issue #86)', () =>
 			).resolves.toBeUndefined();
 
 			expect(Notice.instances).toHaveLength(1);
-			expect(Notice.instances[0]!.message).toBe(SAVE_FAILED);
+			expect(at(Notice.instances, 0).message).toBe(SAVE_FAILED);
 			expect(consoleError).toHaveBeenCalled();
 		});
 
@@ -114,7 +115,7 @@ describe('settings tab reports a capture that failed to save (issue #86)', () =>
 			await settingButton(setting, 'Sign in').click();
 
 			expect(Notice.instances).toHaveLength(1);
-			expect(Notice.instances[0]!.message).not.toBe(SAVE_FAILED);
+			expect(at(Notice.instances, 0).message).not.toBe(SAVE_FAILED);
 			expect(consoleError).not.toHaveBeenCalled();
 		});
 
@@ -126,7 +127,7 @@ describe('settings tab reports a capture that failed to save (issue #86)', () =>
 			await settingButton(setting, 'Sign in').click();
 
 			expect(Notice.instances).toHaveLength(1);
-			expect(Notice.instances[0]!.message).toBe(
+			expect(at(Notice.instances, 0).message).toBe(
 				'Plaud token captured and saved.',
 			);
 		});
@@ -168,7 +169,7 @@ describe('settings tab reports a capture that failed to save (issue #86)', () =>
 			).rejects.toThrow('settings redraw failed');
 
 			expect(Notice.instances).toHaveLength(1);
-			expect(Notice.instances[0]!.message).toBe(
+			expect(at(Notice.instances, 0).message).toBe(
 				'Plaud token captured and saved.',
 			);
 		});
@@ -188,7 +189,7 @@ describe('settings tab reports a capture that failed to save (issue #86)', () =>
 			).resolves.toBeUndefined();
 
 			expect(Notice.instances).toHaveLength(1);
-			expect(Notice.instances[0]!.message).toBe(SAVE_FAILED);
+			expect(at(Notice.instances, 0).message).toBe(SAVE_FAILED);
 			expect(consoleError).toHaveBeenCalled();
 		});
 
@@ -215,7 +216,7 @@ describe('settings tab reports a capture that failed to save (issue #86)', () =>
 			await settingButton(setting, 'Paste token from clipboard').click();
 
 			expect(Notice.instances).toHaveLength(1);
-			expect(Notice.instances[0]!.message).toBe(
+			expect(at(Notice.instances, 0).message).toBe(
 				'Token saved. Run a connection test to confirm it works.',
 			);
 		});
@@ -233,7 +234,7 @@ describe('settings tab reports a capture that failed to save (issue #86)', () =>
 			).rejects.toThrow('settings redraw failed');
 
 			expect(Notice.instances).toHaveLength(1);
-			expect(Notice.instances[0]!.message).toBe(
+			expect(at(Notice.instances, 0).message).toBe(
 				'Token saved. Run a connection test to confirm it works.',
 			);
 		});

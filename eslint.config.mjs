@@ -51,6 +51,9 @@ export default tseslint.config(
 			"@typescript-eslint/no-unsafe-return": "error",
 			"@typescript-eslint/no-unnecessary-type-assertion": "error",
 			"@typescript-eslint/require-await": "error",
+			// `x!` only silences the type checker. Tests use the checked `at` and
+			// `defined` helpers (__tests__/helpers/checked.ts) instead.
+			"@typescript-eslint/no-non-null-assertion": "error",
 			// eslint-plugin-sonarjs: a curated BUG-detection allowlist, not the
 			// full recommended preset (whose style/metric rules are noise at
 			// scale). Every rule here flags a genuine logic defect. Two rules are

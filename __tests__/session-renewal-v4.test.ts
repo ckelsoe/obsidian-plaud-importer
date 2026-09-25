@@ -14,6 +14,7 @@ import {
 } from '../settings-types';
 import type { CaptureStoreResult } from '../capture-store';
 import type { PlaudHttpFetcher, PlaudHttpResponse } from '../plaud-client-re';
+import { at } from './helpers/checked';
 
 function b64url(obj: unknown): string {
 	return Buffer.from(JSON.stringify(obj)).toString('base64url');
@@ -203,8 +204,8 @@ describe('refreshNow on a browser (v4) session', () => {
 		expect(outcome).toBe('refreshed');
 		expect(h.fetchCalls).toBe(1);
 		expect(h.stored).toHaveLength(1);
-		expect(h.stored[0]!.token).toBe(FRESH_WT);
-		expect(h.stored[0]!.refreshToken).toBe(ROTATED_REFRESH);
+		expect(at(h.stored, 0).token).toBe(FRESH_WT);
+		expect(at(h.stored, 0).refreshToken).toBe(ROTATED_REFRESH);
 		// The rotated token is now what is stored, so the next refresh uses it.
 		expect(h.storedRefresh.value).toBe(ROTATED_REFRESH);
 	});

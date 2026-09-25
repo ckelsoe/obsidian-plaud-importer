@@ -185,7 +185,7 @@ describe('listRecordings happy path', () => {
 		const result = await client.listRecordings();
 
 		expect(result).toHaveLength(1);
-		const r = result[0]!;
+		const r = at(result, 0);
 		expect(r.id).toBe('abc123');
 		expect(r.title).toBe('Morning standup');
 		expect(r.durationSeconds).toBe(600);
@@ -211,7 +211,7 @@ describe('listRecordings happy path', () => {
 			),
 		);
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
-		const r = (await client.listRecordings())[0]!;
+		const r = at(await client.listRecordings(), 0);
 		expect(r.endsAt.getTime()).toBe(1744629000000);
 	});
 
@@ -228,7 +228,7 @@ describe('listRecordings happy path', () => {
 			),
 		);
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
-		const r = (await client.listRecordings())[0]!;
+		const r = at(await client.listRecordings(), 0);
 		expect(r.endsAt.getTime()).toBe(1744628400000 + 600000);
 	});
 
@@ -246,7 +246,7 @@ describe('listRecordings happy path', () => {
 			),
 		);
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
-		const r = (await client.listRecordings())[0]!;
+		const r = at(await client.listRecordings(), 0);
 		expect(r.endsAt.getTime()).toBe(1744628400000 + 600000);
 	});
 
@@ -265,7 +265,7 @@ describe('listRecordings happy path', () => {
 			),
 		);
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
-		const r = (await client.listRecordings())[0]!;
+		const r = at(await client.listRecordings(), 0);
 		expect(r.endsAt.getTime()).toBe(1744628400000 + 600000);
 	});
 
@@ -274,7 +274,7 @@ describe('listRecordings happy path', () => {
 			ok(listEnvelope([record({ timezone: -4, zonemins: 0 })])),
 		);
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
-		const r = (await client.listRecordings())[0]!;
+		const r = at(await client.listRecordings(), 0);
 		expect(r.captureOffsetMinutes).toBe(-240);
 	});
 
@@ -283,7 +283,7 @@ describe('listRecordings happy path', () => {
 			ok(listEnvelope([record({ timezone: 5, zonemins: 30 })])),
 		);
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
-		const r = (await client.listRecordings())[0]!;
+		const r = at(await client.listRecordings(), 0);
 		expect(r.captureOffsetMinutes).toBe(330);
 	});
 
@@ -293,7 +293,7 @@ describe('listRecordings happy path', () => {
 			ok(listEnvelope([record({ timezone: -3, zonemins: -30 })])),
 		);
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
-		const r = (await client.listRecordings())[0]!;
+		const r = at(await client.listRecordings(), 0);
 		expect(r.captureOffsetMinutes).toBe(-210);
 	});
 
@@ -302,7 +302,7 @@ describe('listRecordings happy path', () => {
 			ok(listEnvelope([record({ timezone: 0, zonemins: 0 })])),
 		);
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
-		const r = (await client.listRecordings())[0]!;
+		const r = at(await client.listRecordings(), 0);
 		expect(r.captureOffsetMinutes).toBe(0);
 	});
 
@@ -311,7 +311,7 @@ describe('listRecordings happy path', () => {
 			ok(listEnvelope([record({ timezone: undefined })])),
 		);
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
-		const r = (await client.listRecordings())[0]!;
+		const r = at(await client.listRecordings(), 0);
 		expect(r.captureOffsetMinutes).toBeNull();
 	});
 
@@ -321,7 +321,7 @@ describe('listRecordings happy path', () => {
 			ok(listEnvelope([record({ timezone: 99, zonemins: 0 })])),
 		);
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
-		const r = (await client.listRecordings())[0]!;
+		const r = at(await client.listRecordings(), 0);
 		expect(r.captureOffsetMinutes).toBeNull();
 	});
 
@@ -340,7 +340,7 @@ describe('listRecordings happy path', () => {
 		);
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
-		const r = (await client.listRecordings())[0]!;
+		const r = at(await client.listRecordings(), 0);
 
 		expect(r.tags).toEqual(['tag-a', 'tag-b']);
 	});
@@ -349,7 +349,7 @@ describe('listRecordings happy path', () => {
 		const { fetcher } = captureFetcher(ok(listEnvelope([record()])));
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
-		const r = (await client.listRecordings())[0]!;
+		const r = at(await client.listRecordings(), 0);
 
 		expect(r.tags).toBeUndefined();
 	});
@@ -360,7 +360,7 @@ describe('listRecordings happy path', () => {
 		);
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
-		const r = (await client.listRecordings())[0]!;
+		const r = at(await client.listRecordings(), 0);
 
 		expect(r.isTrashed).toBe(true);
 	});
@@ -377,7 +377,7 @@ describe('listRecordings happy path', () => {
 				() => 'tok',
 				fetcher,
 			);
-			const r = (await client.listRecordings())[0]!;
+			const r = at(await client.listRecordings(), 0);
 			expect(r.isTrashed).toBe(true);
 		}
 	});
@@ -391,7 +391,7 @@ describe('listRecordings happy path', () => {
 				() => 'tok',
 				fetcher,
 			);
-			const r = (await client.listRecordings())[0]!;
+			const r = at(await client.listRecordings(), 0);
 			expect(r.isTrashed).toBe(false);
 		}
 	});
@@ -402,7 +402,7 @@ describe('listRecordings happy path', () => {
 		);
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
-		const r = (await client.listRecordings())[0]!;
+		const r = at(await client.listRecordings(), 0);
 
 		expect(r.isTrashed).toBe(false);
 	});
@@ -417,7 +417,7 @@ describe('listRecordings happy path', () => {
 		);
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
-		const r = (await client.listRecordings())[0]!;
+		const r = at(await client.listRecordings(), 0);
 
 		expect(r.versionMs).toBe(1744628400123);
 		expect(r.waitPull).toBe(true);
@@ -429,7 +429,7 @@ describe('listRecordings happy path', () => {
 		);
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
-		const r = (await client.listRecordings())[0]!;
+		const r = at(await client.listRecordings(), 0);
 
 		expect(r.versionMs).toBeUndefined();
 		expect(r.waitPull).toBe(false);
@@ -604,8 +604,10 @@ describe('regional endpoint auto-detection', () => {
 		const fetcher: PlaudHttpFetcher = (req) =>
 			asyncResult(() => {
 				captured.push(req);
-				const response =
-					responses[Math.min(call, responses.length - 1)]!;
+				const response = at(
+					responses,
+					Math.min(call, responses.length - 1),
+				);
 				call += 1;
 				return response;
 			});
@@ -967,7 +969,7 @@ describe('listRecordings parse errors', () => {
 		const result = await client.listRecordings();
 
 		expect(result).toHaveLength(1);
-		expect(result[0]!.durationSeconds).toBe(1303);
+		expect(at(result, 0).durationSeconds).toBe(1303);
 	});
 
 	it('rejects start_time before year 2000 as likely seconds-mistaken-for-milliseconds', async () => {
@@ -1144,6 +1146,7 @@ describe('listRecordings filter validation', () => {
 
 import type { PlaudRecordingId, Recording } from '../plaud-client';
 import { asyncResult } from './helpers/async-result';
+import { at } from './helpers/checked';
 
 function transsummEnvelope(
 	overrides: Record<string, unknown> = {},
@@ -1351,11 +1354,11 @@ describe('getTranscriptAndSummary happy path', () => {
 		const { transcript } = await client.getTranscriptAndSummary(ID);
 
 		// First segment: start_time 0 ms → 0 s, end_time 4500 ms → 4.5 s
-		expect(transcript?.segments[0]!.startSeconds).toBe(0);
-		expect(transcript?.segments[0]!.endSeconds).toBe(4.5);
+		expect(at(transcript?.segments, 0).startSeconds).toBe(0);
+		expect(at(transcript?.segments, 0).endSeconds).toBe(4.5);
 		// Second segment: 4500 ms → 4.5 s, 9000 ms → 9 s
-		expect(transcript?.segments[1]!.startSeconds).toBe(4.5);
-		expect(transcript?.segments[1]!.endSeconds).toBe(9);
+		expect(at(transcript?.segments, 1).startSeconds).toBe(4.5);
+		expect(at(transcript?.segments, 1).endSeconds).toBe(9);
 	});
 
 	it('maps content → text and preserves speaker', async () => {
@@ -1364,10 +1367,12 @@ describe('getTranscriptAndSummary happy path', () => {
 
 		const { transcript } = await client.getTranscriptAndSummary(ID);
 
-		expect(transcript?.segments[0]!.text).toBe('Hello there.');
-		expect(transcript?.segments[0]!.speaker).toBe('Speaker 1');
-		expect(transcript?.segments[1]!.text).toBe('How are you doing today?');
-		expect(transcript?.segments[1]!.speaker).toBe('Speaker 2');
+		expect(at(transcript?.segments, 0).text).toBe('Hello there.');
+		expect(at(transcript?.segments, 0).speaker).toBe('Speaker 1');
+		expect(at(transcript?.segments, 1).text).toBe(
+			'How are you doing today?',
+		);
+		expect(at(transcript?.segments, 1).speaker).toBe('Speaker 2');
 	});
 
 	it('prefers the user-assigned speaker name over the raw diarization label', async () => {
@@ -1394,7 +1399,7 @@ describe('getTranscriptAndSummary happy path', () => {
 
 		const { transcript } = await client.getTranscriptAndSummary(ID);
 
-		expect(transcript?.segments[0]!.speaker).toBe('Charles');
+		expect(at(transcript?.segments, 0).speaker).toBe('Charles');
 	});
 
 	it('falls back to original_speaker when speaker is empty', async () => {
@@ -1417,7 +1422,7 @@ describe('getTranscriptAndSummary happy path', () => {
 
 		const { transcript } = await client.getTranscriptAndSummary(ID);
 
-		expect(transcript?.segments[0]!.speaker).toBe('Speaker 1');
+		expect(at(transcript?.segments, 0).speaker).toBe('Speaker 1');
 	});
 
 	it('leaves speaker undefined when both speaker and original_speaker are empty', async () => {
@@ -1440,7 +1445,7 @@ describe('getTranscriptAndSummary happy path', () => {
 
 		const { transcript } = await client.getTranscriptAndSummary(ID);
 
-		expect(transcript?.segments[0]!.speaker).toBeUndefined();
+		expect(at(transcript?.segments, 0).speaker).toBeUndefined();
 	});
 
 	it('joins all segment text into rawText', async () => {
@@ -1972,9 +1977,9 @@ describe('getTranscriptAndSummary segment validation', () => {
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
 		const { transcript } = await client.getTranscriptAndSummary(ID);
-		expect(transcript?.segments[0]!.startSeconds).toBe(1610.44);
-		expect(transcript?.segments[0]!.endSeconds).toBe(1610.44);
-		expect(transcript?.segments[0]!.text).toBe('backwards');
+		expect(at(transcript?.segments, 0).startSeconds).toBe(1610.44);
+		expect(at(transcript?.segments, 0).endSeconds).toBe(1610.44);
+		expect(at(transcript?.segments, 0).text).toBe('backwards');
 	});
 
 	it('allows end_time equal to start_time (zero-length segment)', async () => {
@@ -1995,8 +2000,8 @@ describe('getTranscriptAndSummary segment validation', () => {
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
 		const { transcript } = await client.getTranscriptAndSummary(ID);
-		expect(transcript?.segments[0]!.startSeconds).toBe(1);
-		expect(transcript?.segments[0]!.endSeconds).toBe(1);
+		expect(at(transcript?.segments, 0).startSeconds).toBe(1);
+		expect(at(transcript?.segments, 0).endSeconds).toBe(1);
 	});
 
 	it('throws PlaudParseError when start_time exceeds the 24h plausible bound (unit-confusion canary)', async () => {
@@ -2820,7 +2825,7 @@ describe('getTranscriptAndSummary polished-transcript path', () => {
 
 		expect(transcript).not.toBeNull();
 		expect(transcript?.segments).toHaveLength(2);
-		expect(transcript?.segments[0]!.text).toContain('Raw line one');
+		expect(at(transcript?.segments, 0).text).toContain('Raw line one');
 		// The raw S3 link was fetched without the Bearer token.
 		const rawReq = requests().find((r) =>
 			r.url.includes('/raw-transcript'),
@@ -4444,8 +4449,8 @@ describe('getFolderCatalog', () => {
 			icon: 'e644',
 			color: '#fff',
 		});
-		expect(catalog[1]!.id).toBe('b');
-		expect(catalog[1]!.name).toBe('B&B');
+		expect(at(catalog, 1).id).toBe('b');
+		expect(at(catalog, 1).name).toBe('B&B');
 		expect(lastRequest()?.url).toContain('/filetag/');
 		expect(lastRequest()?.method).toBe('GET');
 	});
@@ -4471,10 +4476,10 @@ describe('getFolderCatalog', () => {
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 		const catalog = await client.getFolderCatalog();
 		expect(catalog).toHaveLength(1);
-		expect(catalog[0]!.id).toBe('a');
-		expect(catalog[0]!.name).toBe('Work');
-		expect(catalog[0]!.icon).toBeUndefined();
-		expect(catalog[0]!.color).toBeUndefined();
+		expect(at(catalog, 0).id).toBe('a');
+		expect(at(catalog, 0).name).toBe('Work');
+		expect(at(catalog, 0).icon).toBeUndefined();
+		expect(at(catalog, 0).color).toBeUndefined();
 	});
 
 	it('skips malformed entries instead of failing the whole catalog', async () => {
@@ -4597,7 +4602,7 @@ describe('parseRecording source derivation', () => {
 		);
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 		const recordings = await client.listRecordings();
-		return recordings[0]!;
+		return at(recordings, 0);
 	};
 
 	it('classifies scene 1 with a serial as a device capture', async () => {

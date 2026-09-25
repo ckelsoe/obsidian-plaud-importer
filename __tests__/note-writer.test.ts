@@ -64,6 +64,7 @@ import type {
 // test can flip the global locale and observe the formatter's pinned English.
 import { moment } from 'obsidian';
 import { asyncResult } from './helpers/async-result';
+import { at } from './helpers/checked';
 
 // Fixtures ------------------------------------------------------------------
 
@@ -4647,15 +4648,15 @@ describe('groupTranscriptByChapters', () => {
 		];
 		const groups = groupTranscriptByChapters(tx(segments), chapters);
 		expect(groups).toHaveLength(3);
-		expect(groups[0]!.segments.map((s) => s.text)).toEqual([
+		expect(at(groups, 0).segments.map((s) => s.text)).toEqual([
 			'intro',
 			'intro-2',
 		]);
-		expect(groups[1]!.segments.map((s) => s.text)).toEqual([
+		expect(at(groups, 1).segments.map((s) => s.text)).toEqual([
 			'main',
 			'main-2',
 		]);
-		expect(groups[2]!.segments.map((s) => s.text)).toEqual(['wrap']);
+		expect(at(groups, 2).segments.map((s) => s.text)).toEqual(['wrap']);
 	});
 
 	it('assigns segments that start before the first chapter to the first chapter', () => {
@@ -4669,7 +4670,7 @@ describe('groupTranscriptByChapters', () => {
 		];
 		const groups = groupTranscriptByChapters(tx(segments), chapters);
 		expect(groups).toHaveLength(1);
-		expect(groups[0]!.segments.map((s) => s.text)).toEqual([
+		expect(at(groups, 0).segments.map((s) => s.text)).toEqual([
 			'early',
 			'also-early',
 			'main',
@@ -4681,8 +4682,8 @@ describe('groupTranscriptByChapters', () => {
 			{ title: 'Intro', startSeconds: 0 },
 			{ title: 'Main', startSeconds: 60 },
 		]);
-		expect(groups[0]!.blockId).toBe('t-ch-0');
-		expect(groups[1]!.blockId).toBe('t-ch-1');
+		expect(at(groups, 0).blockId).toBe('t-ch-0');
+		expect(at(groups, 1).blockId).toBe('t-ch-1');
 	});
 
 	it('gives empty groups a null blockId so the caller can skip linking', () => {
@@ -4692,9 +4693,9 @@ describe('groupTranscriptByChapters', () => {
 			{ title: 'A', startSeconds: 0 },
 			{ title: 'B', startSeconds: 300 },
 		]);
-		expect(groups[0]!.blockId).toBe('t-ch-0');
-		expect(groups[1]!.blockId).toBeNull();
-		expect(groups[1]!.segments).toEqual([]);
+		expect(at(groups, 0).blockId).toBe('t-ch-0');
+		expect(at(groups, 1).blockId).toBeNull();
+		expect(at(groups, 1).segments).toEqual([]);
 	});
 
 	it('drops chapters with blank titles before bucketing', () => {
@@ -4703,9 +4704,9 @@ describe('groupTranscriptByChapters', () => {
 			{ title: 'Real', startSeconds: 30 },
 		]);
 		expect(groups).toHaveLength(1);
-		expect(groups[0]!.chapter.title).toBe('Real');
+		expect(at(groups, 0).chapter.title).toBe('Real');
 		// Both segments attach to the sole surviving chapter.
-		expect(groups[0]!.segments).toHaveLength(2);
+		expect(at(groups, 0).segments).toHaveLength(2);
 	});
 });
 
@@ -4814,12 +4815,12 @@ describe('formatTranscriptSection', () => {
 		const groups: readonly TranscriptChapterGroup[] = [
 			{
 				chapter: { title: 'Intro', startSeconds: 0 },
-				segments: [segs[0]!],
+				segments: [at(segs, 0)],
 				blockId: 't-ch-0',
 			},
 			{
 				chapter: { title: 'Middle', startSeconds: 60 },
-				segments: [segs[1]!],
+				segments: [at(segs, 1)],
 				blockId: 't-ch-1',
 			},
 		];
@@ -4849,7 +4850,7 @@ describe('formatTranscriptSection', () => {
 		const groups: readonly TranscriptChapterGroup[] = [
 			{
 				chapter: { title: 'Intro', startSeconds: 0 },
-				segments: [segs[0]!],
+				segments: [at(segs, 0)],
 				blockId: 't-ch-0',
 			},
 		];
@@ -4869,7 +4870,7 @@ describe('formatTranscriptSection', () => {
 		const groups: readonly TranscriptChapterGroup[] = [
 			{
 				chapter: { title: 'Intro', startSeconds: 0 },
-				segments: [segs[0]!],
+				segments: [at(segs, 0)],
 				blockId: 't-ch-0',
 			},
 		];
@@ -4889,7 +4890,7 @@ describe('formatTranscriptSection', () => {
 		const groups: readonly TranscriptChapterGroup[] = [
 			{
 				chapter: { title: 'Main | topic [x] #id', startSeconds: 0 },
-				segments: [segs[0]!],
+				segments: [at(segs, 0)],
 				blockId: 't-ch-0',
 			},
 		];

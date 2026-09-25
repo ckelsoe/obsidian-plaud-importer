@@ -2,6 +2,7 @@ import {
 	stableKeysFromRecording,
 	stableKeysFromFrontmatter,
 } from '../stable-key';
+import { defined } from './helpers/checked';
 
 // 2026-08-07T18:52:11Z. Written two ways below to prove the offset does not
 // change the instant key.
@@ -76,7 +77,7 @@ describe('stableKeysFromFrontmatter', () => {
 		// Derive the note date from the recording so the assertion is independent
 		// of the runner timezone; both go through the same local-day formatting.
 		const rec = stableKeysFromRecording(INSTANT_MS, DURATION);
-		const dayYmd = rec.day!.slice(2, 12); // strip the "d:" prefix, keep YYYY-MM-DD
+		const dayYmd = defined(rec.day).slice(2, 12); // strip the "d:" prefix, keep YYYY-MM-DD
 		const note = stableKeysFromFrontmatter({
 			date: dayYmd,
 			'duration-seconds': DURATION,

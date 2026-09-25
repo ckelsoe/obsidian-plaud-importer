@@ -6,6 +6,7 @@ import {
 	MAX_COLLECTED_CANDIDATES,
 	collectTokenCandidates,
 } from '../token-candidates';
+import { at, defined } from './helpers/checked';
 
 // Executes the SHIPPED probe string against fixtures, the same way the
 // bookmarklet parity tests do. The probe cannot import the shared collector (it
@@ -170,7 +171,7 @@ describe('PROBE_JS on a multi-workspace account', () => {
 
 	it('still degrades to plain collection when the hint is missing', () => {
 		const noHint = {
-			'pld_abc:workspaceList': MULTI['pld_abc:workspaceList']!,
+			'pld_abc:workspaceList': defined(MULTI['pld_abc:workspaceList']),
 		};
 		expect(usableFrom(runProbe(noHint)).length).toBeGreaterThan(0);
 	});
@@ -246,11 +247,10 @@ describe('PROBE_JS candidate cap', () => {
 		// probe returns) would see nothing usable and poll forever.
 		const decoyed: Record<string, string> = {};
 		for (let i = 0; i < MAX_COLLECTED_CANDIDATES + 3; i++) {
-			decoyed[`pld_abc:decoy${i}`] = [
-				REFRESH_TOKEN,
-				PROFILE_JWT,
-				EXPIRED_TOKEN,
-			][i % 3]!;
+			decoyed[`pld_abc:decoy${i}`] = at(
+				[REFRESH_TOKEN, PROFILE_JWT, EXPIRED_TOKEN],
+				i % 3,
+			);
 		}
 		decoyed['pld_abc:workspaceList'] = JSON.stringify([
 			{ workspaceId: 'ws_clF1vOqcHS', workspaceToken: WORKSPACE_TOKEN },

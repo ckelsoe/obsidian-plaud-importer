@@ -20,6 +20,7 @@ import {
 import type { PlaudRecordingId, Recording } from '../plaud-client';
 import type { WriteOutcome } from '../note-writer';
 import { NoteWriterError } from '../note-writer';
+import { at } from './helpers/checked';
 
 // classifyError --------------------------------------------------------------
 
@@ -525,8 +526,8 @@ describe('tallyImportResults', () => {
 		expect(tally.created).toBe(1);
 		expect(tally.failed).toBe(2);
 		expect(tally.failures).toHaveLength(2);
-		expect(tally.failures[0]!.recording.id).toBe('b');
-		expect(tally.failures[1]!.recording.id).toBe('c');
+		expect(at(tally.failures, 0).recording.id).toBe('b');
+		expect(at(tally.failures, 1).recording.id).toBe('c');
 	});
 
 	it('preserves input order when multiple failures are interleaved with successes', () => {

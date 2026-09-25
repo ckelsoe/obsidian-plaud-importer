@@ -30,6 +30,7 @@ import {
 	type StoredEntry,
 } from '../token-candidates';
 import { asyncResult } from './helpers/async-result';
+import { at, defined } from './helpers/checked';
 
 // Same fixture construction as plaud-token.test.ts: the helpers read unverified
 // claims, so an unsigned token with a dummy signature segment is faithful.
@@ -135,7 +136,7 @@ const V4_STORAGE: Record<string, string> = {
 };
 
 function entries(map: Record<string, string>): StoredEntry[] {
-	return Object.keys(map).map((key) => ({ key, value: map[key]! }));
+	return Object.keys(map).map((key) => ({ key, value: defined(map[key]) }));
 }
 
 describe('collectTokenCandidates', () => {
@@ -975,7 +976,7 @@ describe('SIGN_IN_BOOKMARKLET', () => {
 		expect(
 			selectRefreshTokenForWorkspace(
 				parseRefreshCandidates(params),
-				parseTokenCandidates(params)[0]!,
+				at(parseTokenCandidates(params), 0),
 				NOW_MS,
 			),
 		).toBe(V4_REFRESH);
@@ -1070,7 +1071,7 @@ describe('SIGN_IN_BOOKMARKLET', () => {
 		expect(refresh).toContain(wrt(3));
 		// So the store keeps the active workspace's WRT for the selected WT.
 		expect(
-			selectRefreshTokenForWorkspace(refresh, tokens[0]!, NOW_MS),
+			selectRefreshTokenForWorkspace(refresh, at(tokens, 0), NOW_MS),
 		).toBe(wrt(3));
 	});
 
@@ -1086,7 +1087,7 @@ describe('SIGN_IN_BOOKMARKLET', () => {
 		expect(run.href).toBeNull();
 		expect(run.alerts).toEqual([]);
 		expect(run.prompts).toHaveLength(1);
-		const payload = run.prompts[0]!.value;
+		const payload = at(run.prompts, 0).value;
 		expect(payload.startsWith('plaud-capture-miss')).toBe(true);
 		// Shapes only. The profile JWT carries {email,id,name} and the diagnostic
 		// is something users paste into public issues, so no token segment and no
@@ -1105,7 +1106,7 @@ describe('SIGN_IN_BOOKMARKLET', () => {
 			{ sub: 'u1', client_id: 'web' },
 		);
 		const run = runBookmarklet({ pld_odd: weird });
-		const payload = run.prompts[0]!.value;
+		const payload = at(run.prompts, 0).value;
 		expect(payload).not.toContain('tenant-42');
 		expect(payload).toContain('other');
 	});
@@ -1119,8 +1120,8 @@ describe('SIGN_IN_BOOKMARKLET', () => {
 			token: USER_TOKEN,
 		});
 		expect(run.prompts).toHaveLength(1);
-		expect(run.prompts[0]!.value).toBe(run.href);
-		expect(parseClipboardTokens(run.prompts[0]!.value)).toEqual([
+		expect(at(run.prompts, 0).value).toBe(run.href);
+		expect(parseClipboardTokens(at(run.prompts, 0).value)).toEqual([
 			USER_TOKEN,
 			WORKSPACE_TOKEN,
 		]);
@@ -1134,9 +1135,9 @@ describe('SIGN_IN_BOOKMARKLET', () => {
 		expect(runBookmarklet(map).href).not.toBeNull();
 		const later = runBookmarklet(map, { nowMs: (FUTURE_EXP + 1) * 1000 });
 		expect(later.href).toBeNull();
-		expect(later.prompts[0]!.value.startsWith('plaud-capture-miss')).toBe(
-			true,
-		);
+		expect(
+			at(later.prompts, 0).value.startsWith('plaud-capture-miss'),
+		).toBe(true);
 	});
 
 	it('stays silent when the deep link took focus away', () => {

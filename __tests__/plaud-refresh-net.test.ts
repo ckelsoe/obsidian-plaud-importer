@@ -6,6 +6,7 @@ import {
 	readRegionRedirect,
 	type SessionPost,
 } from '../plaud-refresh-net';
+import { at } from './helpers/checked';
 
 // Build a minimal unsigned JWT with the given payload claims. The helpers only
 // read unverified payload claims, so an unsigned token with a dummy signature is
@@ -128,7 +129,7 @@ describe('performNetRefresh', () => {
 		let i = 0;
 		const post: SessionPost = (url, body) => {
 			calls.push({ url, body });
-			return Promise.resolve(responses[i++]!);
+			return Promise.resolve(at(responses, i++));
 		};
 		return { post, calls };
 	}
@@ -174,7 +175,7 @@ describe('performNetRefresh', () => {
 			post,
 		});
 		expect(result?.apiBaseUrl).toBe('https://api-euc1.plaud.ai');
-		expect(calls[2]!.url).toBe(
+		expect(at(calls, 2).url).toBe(
 			`https://api-euc1.plaud.ai/user-app/auth/workspace/token/${WID}`,
 		);
 	});

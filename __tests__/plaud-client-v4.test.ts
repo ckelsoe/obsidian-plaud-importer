@@ -15,6 +15,7 @@ import {
 } from '../plaud-client-re';
 import type { PlaudRecordingId } from '../plaud-client';
 import { asyncResult } from './helpers/async-result';
+import { at, defined } from './helpers/checked';
 
 // Response helpers ----------------------------------------------------------
 
@@ -245,7 +246,7 @@ describe('PlaudV4Client.listRecordingsPage', () => {
 		const page = await client.listRecordingsPage();
 		expect(page.nextCursor).toBe('CURSOR2');
 		expect(page.recordings).toHaveLength(1);
-		const rec = page.recordings[0]!;
+		const rec = at(page.recordings, 0);
 		expect(rec.id).toBe('f1');
 		expect(rec.title).toBe('Meeting');
 		expect(rec.createdAt.getTime()).toBe(1755200000000);
@@ -265,7 +266,7 @@ describe('PlaudV4Client.listRecordingsPage', () => {
 		expect(rec.contentAvailabilityUnknown).toBe(true);
 
 		// Scope + auth headers are present on the list call.
-		const req = requestFor('/recordings/all')!;
+		const req = defined(requestFor('/recordings/all'));
 		expect(req.headers['Authorization']).toBe('Bearer eyJfake.token.value');
 		expect(req.headers['x-scope-id']).toBe('ws_test');
 		expect(req.headers['x-scope-type']).toBe('workspace');
@@ -286,7 +287,7 @@ describe('PlaudV4Client.listRecordingsPage', () => {
 			sortBy: 'edit_time',
 		});
 		expect(page.nextCursor).toBeNull();
-		const req = requestFor('/recordings/all')!;
+		const req = defined(requestFor('/recordings/all'));
 		expect(req.url).toContain('cursor=ABC');
 		expect(req.url).toContain('sort_by=updated');
 	});
@@ -298,7 +299,7 @@ describe('PlaudV4Client.listRecordingsPage', () => {
 		const client = makeClient(fetcher);
 		const recs = await client.listRecordings();
 		expect(recs).toHaveLength(1);
-		expect(recs[0]!.id).toBe('f1');
+		expect(at(recs, 0).id).toBe('f1');
 	});
 
 	it('getFolderCatalog surfaces folders discovered while listing', async () => {
@@ -415,20 +416,24 @@ describe('PlaudV4Client.getTranscriptAndSummary', () => {
 		const result = await client.getTranscriptAndSummary(ID);
 
 		expect(result.transcript).not.toBeNull();
-		expect(result.transcript!.segments).toHaveLength(2);
-		expect(result.transcript!.segments[0]!.speaker).toBe('Charles');
-		expect(result.transcript!.segments[0]!.startSeconds).toBe(1);
-		expect(result.transcript!.segments[0]!.endSeconds).toBe(2);
-		expect(result.transcript!.segments[0]!.text).toBe('Hello everyone.');
+		expect(defined(result.transcript).segments).toHaveLength(2);
+		expect(at(defined(result.transcript).segments, 0).speaker).toBe(
+			'Charles',
+		);
+		expect(at(defined(result.transcript).segments, 0).startSeconds).toBe(1);
+		expect(at(defined(result.transcript).segments, 0).endSeconds).toBe(2);
+		expect(at(defined(result.transcript).segments, 0).text).toBe(
+			'Hello everyone.',
+		);
 
 		expect(result.summary).not.toBeNull();
-		expect(result.summary!.text).toContain('# Summary');
+		expect(defined(result.summary).text).toContain('# Summary');
 
 		expect(result.chapters).toBeDefined();
 		expect(result.chapters).toHaveLength(2);
-		expect(result.chapters![0]!.title).toBe('Intro');
-		expect(result.chapters![0]!.startSeconds).toBe(0);
-		expect(result.chapters![0]!.endSeconds).toBe(5);
+		expect(at(result.chapters, 0).title).toBe('Intro');
+		expect(at(result.chapters, 0).startSeconds).toBe(0);
+		expect(at(result.chapters, 0).endSeconds).toBe(5);
 
 		expect(result.aiKeywords).toEqual(['alpha', 'pilot']);
 	});
@@ -463,7 +468,9 @@ describe('PlaudV4Client.getTranscriptAndSummary', () => {
 		]);
 		const client = makeClient(fetcher);
 		const result = await client.getTranscriptAndSummary(ID);
-		expect(result.transcript!.segments[0]!.text).toBe('Hello everyone.');
+		expect(at(defined(result.transcript).segments, 0).text).toBe(
+			'Hello everyone.',
+		);
 	});
 
 	it('returns null transcript/summary when their content_url is absent', async () => {
@@ -535,8 +542,10 @@ describe('PlaudV4Client.getTranscriptAndSummary', () => {
 		const result = await client.getTranscriptAndSummary(ID);
 		expect(result.summary?.text).toContain('Key point one');
 		expect(result.additionalSummaries).toHaveLength(1);
-		expect(result.additionalSummaries![0]!.heading).toBe('Summary (beta)');
-		expect(result.additionalSummaries![0]!.text).toContain('Bullet a');
+		expect(at(result.additionalSummaries, 0).heading).toBe(
+			'Summary (beta)',
+		);
+		expect(at(result.additionalSummaries, 0).text).toContain('Bullet a');
 	});
 
 	it('leaves additionalSummaries undefined when only one summary exists', async () => {
@@ -572,13 +581,15 @@ describe('PlaudV4Client.getTranscriptAndSummary', () => {
 		const result = await client.getTranscriptAndSummary(ID);
 		expect(result.marks).toBeDefined();
 		expect(result.marks).toHaveLength(3);
-		expect(result.marks!.map((m) => m.offsetSeconds)).toEqual([1, 2, 3]);
-		expect(result.marks!.map((m) => m.url)).toEqual([
+		expect(defined(result.marks).map((m) => m.offsetSeconds)).toEqual([
+			1, 2, 3,
+		]);
+		expect(defined(result.marks).map((m) => m.url)).toEqual([
 			'https://s3.example/mark1.png?sig=a',
 			'https://s3.example/mark2.png?sig=b',
 			'https://s3.example/mark3.png?sig=c',
 		]);
-		expect(result.marks![0]!.markType).toBe(2);
+		expect(at(result.marks, 0).markType).toBe(2);
 	});
 
 	it('omits marks when the recording has no MARK_MEMO object', async () => {
@@ -795,7 +806,7 @@ describe('PlaudV4Client base URL host guard', () => {
 		// Capture happens; the provider now returns a real host, no rebuild.
 		host = 'https://api-staging-apne1.plaud.ai';
 		await expect(client.listRecordings()).resolves.toHaveLength(1);
-		expect(requestFor('/recordings/all')!.url).toContain(
+		expect(defined(requestFor('/recordings/all')).url).toContain(
 			'api-staging-apne1.plaud.ai',
 		);
 	});
@@ -814,9 +825,9 @@ describe('PlaudV4Client base URL host guard', () => {
 		);
 		ws = 'ws_captured';
 		await client.listRecordings();
-		expect(requestFor('/recordings/all')!.headers['x-scope-id']).toBe(
-			'ws_captured',
-		);
+		expect(
+			defined(requestFor('/recordings/all')).headers['x-scope-id'],
+		).toBe('ws_captured');
 	});
 });
 
@@ -883,7 +894,7 @@ describe('parseMarkMemoArray', () => {
 			MAP,
 		);
 		expect(marks).toHaveLength(1);
-		expect(marks[0]!.url).toBe('https://s3.example/a.png');
+		expect(at(marks, 0).url).toBe('https://s3.example/a.png');
 	});
 
 	it('clamps a missing or out-of-range timestamp to 0', () => {
@@ -899,7 +910,7 @@ describe('parseMarkMemoArray', () => {
 			[{ picture_link: 'c_a', mark_type: 'photo' }],
 			MAP,
 		);
-		expect(marks[0]!.markType).toBeUndefined();
+		expect(at(marks, 0).markType).toBeUndefined();
 	});
 
 	it('returns [] for a non-array body', () => {
@@ -945,10 +956,10 @@ describe('PlaudV4Client.updateTitle', () => {
 
 		await client.updateTitle(ID, '  New Title  ');
 
-		const req = requestFor('/nodes/rename/')!;
+		const req = defined(requestFor('/nodes/rename/'));
 		expect(req.method).toBe('PATCH');
 		expect(req.url).toContain('/file-app/v4/nodes/rename/n_sp_f1');
-		expect(JSON.parse(req.body!)).toEqual({
+		expect(JSON.parse(defined(req.body))).toEqual({
 			name: 'New Title',
 			origin_version: 1755200500000,
 		});
@@ -1049,7 +1060,7 @@ describe('PlaudV4Client.getDeviceCatalog', () => {
 		expect(calls).toBe(1);
 		expect(a).toBe(b);
 		expect(a).toHaveLength(1);
-		expect(a[0]!.name).toBe('My NotePin');
+		expect(at(a, 0).name).toBe('My NotePin');
 	});
 
 	it('refetches when the workspace changes (account switch on one client)', async () => {
@@ -1072,7 +1083,7 @@ describe('PlaudV4Client.getDeviceCatalog', () => {
 		const second = await client.getDeviceCatalog();
 
 		expect(calls).toBe(2);
-		expect(first[0]!.name).toBe('dev-1');
-		expect(second[0]!.name).toBe('dev-2');
+		expect(at(first, 0).name).toBe('dev-1');
+		expect(at(second, 0).name).toBe('dev-2');
 	});
 });

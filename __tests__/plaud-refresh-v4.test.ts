@@ -1,5 +1,6 @@
 import { parseV4RefreshResponse, performV4Refresh } from '../plaud-refresh-v4';
 import type { PlaudHttpFetcher, PlaudHttpResponse } from '../plaud-client-re';
+import { at } from './helpers/checked';
 
 // Build a minimal unsigned JWT. The module only reads unverified payload/header
 // claims, so an unsigned token with a dummy signature is a faithful fixture.
@@ -50,7 +51,7 @@ function recordingFetch(responses: PlaudHttpResponse[]): {
 			headers: req.headers,
 			body: req.body,
 		});
-		return Promise.resolve(responses[i++]!);
+		return Promise.resolve(at(responses, i++));
 	};
 	return { fetch, calls };
 }
@@ -123,16 +124,18 @@ describe('performV4Refresh', () => {
 			refreshToken: ROTATED_REFRESH_TOKEN,
 		});
 		expect(calls).toHaveLength(1);
-		expect(calls[0]!.url).toBe(
+		expect(at(calls, 0).url).toBe(
 			`https://api-test.plaud.ai/user-app/auth/workspace/refresh/${WID}`,
 		);
-		expect(calls[0]!.method).toBe('POST');
-		expect(calls[0]!.body).toBe('{}');
-		expect(calls[0]!.headers.authorization).toBe(`Bearer ${REFRESH_TOKEN}`);
-		expect(calls[0]!.headers['x-scope-type']).toBe('workspace');
-		expect(calls[0]!.headers['x-scope-id']).toBe(WID);
-		expect(calls[0]!.headers['x-device-id']).toBe('dev-123');
-		expect(calls[0]!.headers['app-platform']).toBe('web');
+		expect(at(calls, 0).method).toBe('POST');
+		expect(at(calls, 0).body).toBe('{}');
+		expect(at(calls, 0).headers.authorization).toBe(
+			`Bearer ${REFRESH_TOKEN}`,
+		);
+		expect(at(calls, 0).headers['x-scope-type']).toBe('workspace');
+		expect(at(calls, 0).headers['x-scope-id']).toBe(WID);
+		expect(at(calls, 0).headers['x-device-id']).toBe('dev-123');
+		expect(at(calls, 0).headers['app-platform']).toBe('web');
 	});
 
 	it('omits x-device-id when none was captured', async () => {
@@ -143,7 +146,7 @@ describe('performV4Refresh', () => {
 			baseUrl: 'https://api-test.plaud.ai',
 			fetch,
 		});
-		expect(calls[0]!.headers['x-device-id']).toBeUndefined();
+		expect(at(calls, 0).headers['x-device-id']).toBeUndefined();
 	});
 
 	it('returns null (no call) when the stored token has no ws_ wid', async () => {
