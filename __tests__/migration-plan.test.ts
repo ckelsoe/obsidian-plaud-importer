@@ -1,6 +1,7 @@
 import type { App, TFile } from 'obsidian';
 import { buildImportedIndex } from '../vault-index';
 import { planMigration, type PlannableRecording } from '../migration-plan';
+import { at } from './helpers/checked';
 
 interface FM {
 	readonly [key: string]: unknown;
@@ -63,7 +64,7 @@ describe('planMigration', () => {
 			recordingTitle: 'title-v4-new',
 			versionMs: undefined,
 		});
-		expect(plan.heals[0].recordingWhen).toMatch(
+		expect(at(plan.heals, 0).recordingWhen).toMatch(
 			/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/,
 		);
 		expect(plan.alreadyCurrent).toBe(0);
@@ -147,8 +148,8 @@ describe('planMigration', () => {
 		const iso = new Date(2026, 5, 25, 12, 0, 0).toISOString();
 		const plan = planMigration([r('v4-date', iso, 226)], index);
 		expect(plan.heals.map((h) => h.via)).toEqual(['date']);
-		expect(plan.heals[0].notePath).toBe('Plaud/dateonly.md');
-		expect(plan.heals[0].toId).toBe('v4-date');
+		expect(at(plan.heals, 0).notePath).toBe('Plaud/dateonly.md');
+		expect(at(plan.heals, 0).toId).toBe('v4-date');
 	});
 
 	it('does NOT heal a date match when two recordings share the day-key', () => {
@@ -188,6 +189,6 @@ describe('planMigration', () => {
 			index,
 			() => 12345,
 		);
-		expect(plan.heals[0].versionMs).toBe(12345);
+		expect(at(plan.heals, 0).versionMs).toBe(12345);
 	});
 });

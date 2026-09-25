@@ -61,10 +61,8 @@ export {
 	formatDuration,
 	tallyImportResults,
 	formatImportNotice,
-	formatErrorForClipboard,
 	mergeRecordings,
 	filterVisibleRecordings,
-	PAGE_SIZE,
 };
 export type {
 	ImportModalOptions,
@@ -329,10 +327,20 @@ class OverwriteConfirmationModal extends Modal {
 	}
 
 	onClose(): void {
-		this.contentEl.empty();
-		if (!this.resolved) {
-			this.onDone('cancel');
-		}
+		closeAsCancelUnlessResolved(this.contentEl, this.resolved, this.onDone);
+	}
+}
+
+// Shared onClose for the choice modals: closing without picking (Esc, the X,
+// a click outside) counts as cancel.
+function closeAsCancelUnlessResolved(
+	contentEl: HTMLElement,
+	resolved: boolean,
+	onDone: (choice: 'cancel') => void,
+): void {
+	contentEl.empty();
+	if (!resolved) {
+		onDone('cancel');
 	}
 }
 
@@ -409,10 +417,7 @@ class DuplicateDecisionModal extends Modal {
 	}
 
 	onClose(): void {
-		this.contentEl.empty();
-		if (!this.resolved) {
-			this.onDone('cancel');
-		}
+		closeAsCancelUnlessResolved(this.contentEl, this.resolved, this.onDone);
 	}
 }
 

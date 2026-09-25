@@ -109,6 +109,7 @@ import {
 	ConfirmModal,
 	RenameRecordingModal,
 } from './modals';
+import { trimTrailingChars } from './text-trim';
 
 // Legacy secret id for the paired refresh token (typ WRT) that pre-0.32.0
 // email sign-ins stored. The refresh subsystem is gone; the secret is only
@@ -2513,7 +2514,7 @@ export default class PlaudImporterPlugin extends Plugin {
 			.toISOString()
 			.slice(0, 19)
 			.replace(/[:T]/g, '-');
-		const folder = this.settings.outputFolder.replace(/\/+$/, '');
+		const folder = trimTrailingChars(this.settings.outputFolder, '/');
 		const path = `${folder}/plaud-migration-plan-${stamp}.md`;
 		await this.app.vault.create(path, `${lines.join('\n')}\n`);
 		return path;

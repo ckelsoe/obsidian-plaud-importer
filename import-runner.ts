@@ -147,8 +147,7 @@ export interface ImportRunDeps {
  * condition a headless caller (auto-sync, Phase 2) can use to drive an
  * auth-pause state machine.
  */
-export type ImportRunStop =
-	'completed' | 'aborted' | 'cancelled' | 'auth-failed';
+type ImportRunStop = 'completed' | 'aborted' | 'cancelled' | 'auth-failed';
 
 export interface ImportRunOutcome {
 	readonly results: ImportResult[];
@@ -222,14 +221,13 @@ export async function runImport(
 		options.getDeviceNames?.() ?? new Map();
 
 	const results: ImportResult[] = [];
-	for (let i = 0; i < total; i++) {
+	for (const [i, recording] of recordings.entries()) {
 		// Bail on mid-import modal close. The caller renders the partial
 		// Notice so the user sees what was completed before they hit Esc.
 		if (shouldAbort()) {
 			return { results, stop: 'aborted', processed: i };
 		}
 
-		const recording = recordings[i];
 		observer?.onRecordingStart?.(i + 1, total, recording);
 		// Plaud never produced a transcript OR a summary for this
 		// recording — the list metadata already told us so, before the

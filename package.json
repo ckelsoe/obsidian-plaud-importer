@@ -10,7 +10,11 @@
 		"lint": "eslint . --max-warnings 0 && prettier --check \"**/*.ts\" && node scripts/check-submission.mjs && node scripts/check-icons.mjs && npm run typecheck:marketplace",
 		"typecheck:marketplace": "tsc --noEmit -p tsconfig.scan.json",
 		"test": "jest --passWithNoTests",
-		"version": "node version-bump.mjs && git add manifest.json versions.json"
+		"version": "node version-bump.mjs && git add manifest.json versions.json",
+		"knip": "knip",
+		"type-coverage": "type-coverage",
+		"test:mutation": "stryker run",
+		"prepare": "node .husky/install.mjs"
 	},
 	"keywords": [
 		"obsidian",
@@ -23,30 +27,39 @@
 	"license": "MIT",
 	"devDependencies": {
 		"@eslint/js": "^9.39.2",
+		"@stryker-mutator/core": "^9.6.1",
+		"@stryker-mutator/jest-runner": "^9.6.1",
 		"@types/jest": "^30.0.0",
 		"@types/node": "^24.0.7",
-		"@typescript-eslint/eslint-plugin": "^8.35.0",
-		"@typescript-eslint/parser": "^8.35.0",
 		"bestzip": "^2.2.3",
 		"esbuild": "^0.28.1",
 		"eslint": "^9.39.2",
 		"eslint-config-prettier": "^10.1.8",
 		"eslint-plugin-obsidianmd": "^0.4.2",
+		"eslint-plugin-sonarjs": "^4.2.1",
 		"globals": "^17.1.0",
+		"husky": "^9.1.7",
 		"jest": "^30.2.0",
+		"knip": "^6.38.0",
 		"lucide-static": "^1.23.0",
 		"moment": "^2.29.4",
 		"obsidian": "^1.13.0",
 		"prettier": "^3.9.6",
 		"ts-jest": "^29.4.6",
 		"tslib": "^2.8.1",
-		"typescript": "^5.8.3"
+		"type-coverage": "^2.30.1",
+		"typescript": "^5.8.3",
+		"typescript-eslint": "^8.70.1"
 	},
 	"overrides": {
 		"@babel/core": "^7.29.6",
 		"@humanfs/node": "^0.16.8",
 		"browserslist": "^4.28.7",
 		"fast-uri": "^3.1.7",
-		"js-yaml": "^4.3.2"
+		"js-yaml": "^4.3.2",
+		"qs": "^6.16.0"
+	},
+	"typeCoverage": {
+		"atLeast": 99
 	}
 }

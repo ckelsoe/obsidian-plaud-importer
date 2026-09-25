@@ -506,7 +506,7 @@ export interface Summary {
 	readonly version?: string;
 }
 
-export interface SummarySection {
+interface SummarySection {
 	readonly heading: string;
 	readonly body: string;
 }

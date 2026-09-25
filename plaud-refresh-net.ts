@@ -67,6 +67,7 @@
 
 import { decodeJwtPayload } from './plaud-token';
 import { isTrustedPlaudHost } from './plaud-hosts';
+import { redactJwtLike } from './jwt-redact';
 
 /**
  * A non-empty string claim off the stored token's payload, or null.
@@ -134,10 +135,7 @@ export interface NetRefreshDeps {
  * contract holds even if one ever slips into an error body.
  */
 function bodySnippet(text: string): string {
-	const redacted = text.replace(
-		/[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g,
-		'[redacted-token]',
-	);
+	const redacted = redactJwtLike(text, '[redacted-token]');
 	return redacted.length > 200 ? `${redacted.slice(0, 200)}…` : redacted;
 }
 

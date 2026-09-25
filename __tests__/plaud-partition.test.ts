@@ -6,6 +6,7 @@ import {
 	plaudPartition,
 } from '../plaud-partition';
 import { buildPartitionPost } from '../plaud-refresh-net';
+import { at } from './helpers/checked';
 
 // Two real Obsidian vault ids, measured 2026-07-31 from two vaults open at the
 // same time. Used as fixtures rather than invented strings so the shape the code
@@ -116,7 +117,7 @@ describe('per-vault partition routing (issue #87)', () => {
 		expect(post).not.toBeNull();
 		await post?.('https://api.plaud.ai/auth/refresh-user-token', '{}', {});
 		expect(calls).toHaveLength(1);
-		expect(calls[0].partition).toBe(plaudPartition(VAULT_A));
+		expect(at(calls, 0).partition).toBe(plaudPartition(VAULT_A));
 	});
 
 	// The actual bug: two vaults renewing at once. Before the fix both landed on

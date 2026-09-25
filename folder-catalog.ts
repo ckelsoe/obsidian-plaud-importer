@@ -14,6 +14,7 @@
 // -----------------------------------------------------------------------------
 
 import type { PlaudFolder } from './plaud-client';
+import { trimChars } from './text-trim';
 
 /**
  * Index a folder catalog by id for O(1) name lookup. Built once per import run
@@ -85,11 +86,13 @@ export function resolveFolderNames(
  *   "  Work  "      -> "work"
  */
 export function folderNameToTag(name: string): string {
-	return name
-		.toLowerCase()
-		.replace(/[^\p{L}\p{N}_]+/gu, '-')
-		.replace(/-+/g, '-')
-		.replace(/^-+|-+$/g, '');
+	return trimChars(
+		name
+			.toLowerCase()
+			.replace(/[^\p{L}\p{N}_]+/gu, '-')
+			.replace(/-+/g, '-'),
+		'-',
+	);
 }
 
 /**

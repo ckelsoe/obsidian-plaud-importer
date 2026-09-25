@@ -25,6 +25,7 @@ import type {
 	TranscriptSegment,
 } from './plaud-client';
 import type { DebugLogger } from './debug-logger';
+import { trimTrailingChars } from './text-trim';
 
 /**
  * Abstract HTTP call shape the client depends on. main.ts adapts Obsidian's
@@ -783,8 +784,7 @@ export class ReverseEngineeredPlaudClient implements PlaudClient {
 	): Promise<readonly ConsumerNote[]> {
 		const refs = findConsumerNoteEntries(rawDetail, detailEndpoint);
 		const notes: ConsumerNote[] = [];
-		for (let i = 0; i < refs.length; i++) {
-			const ref = refs[i];
+		for (const [i, ref] of refs.entries()) {
 			const noteEndpoint = `/s3/file_consumer_note_${i}/${encodeURIComponent(id)}`;
 			const body = await this.fetchTextBody(ref.dataLink, noteEndpoint);
 			if (body === null || body.trim().length === 0) {
@@ -1185,7 +1185,7 @@ function detectRegionRedirect(json: unknown): string | null {
 		return null;
 	}
 	// Rebuild from the parsed origin so only scheme + host[:port] survive.
-	return `https://${parsed.host}`.replace(/\/+$/, '');
+	return trimTrailingChars(`https://${parsed.host}`, '/');
 }
 
 // Detects Plaud's in-band error envelope. Plaud signals failures on the data
@@ -1250,11 +1250,11 @@ function decodeJwtSegment(seg: string): Record<string, unknown> | null {
 // `app-platform` header disagrees with this claim, so the client uses it to
 // keep the two in sync. Returns null when the token is opaque or has no claim.
 function readTokenClientId(token: string): string | null {
-	const parts = token.split('.');
-	if (parts.length < 2) {
+	const segment = token.split('.')[1];
+	if (segment === undefined) {
 		return null;
 	}
-	const payload = decodeJwtSegment(parts[1]);
+	const payload = decodeJwtSegment(segment);
 	return payload !== null && typeof payload.client_id === 'string'
 		? payload.client_id
 		: null;
@@ -1277,14 +1277,14 @@ const TOKEN_DIAG_CLAIMS = [
 	'region',
 ];
 function decodeTokenDiagnostics(token: string): Record<string, unknown> {
-	const parts = token.split('.');
-	if (parts.length < 2) {
+	const [header, payload] = token.split('.');
+	if (header === undefined || payload === undefined) {
 		return { token: 'not-a-jwt' };
 	}
 	const safe: Record<string, unknown> = {};
 	for (const [name, seg] of [
-		['header', parts[0]],
-		['payload', parts[1]],
+		['header', header],
+		['payload', payload],
 	] as const) {
 		const obj = decodeJwtSegment(seg);
 		if (obj === null) {
@@ -1718,8 +1718,8 @@ function describeUnknownError(err: unknown): string {
 	if (err === null || err === undefined) return String(err);
 	if (typeof err === 'number' || typeof err === 'boolean') return String(err);
 	try {
-		const json = JSON.stringify(err);
-		if (json !== undefined) return json;
+		const json: unknown = JSON.stringify(err);
+		if (typeof json === 'string') return json;
 	} catch {
 		// Fall through to constructor-name fallback.
 	}
@@ -2347,11 +2347,10 @@ export function findConsumerNoteEntries(
 		if (item.task_status !== undefined && item.task_status !== 1) {
 			continue;
 		}
-		const links = collectAttachmentUrls(item.data_link);
-		if (links.length === 0) {
+		const dataLink = collectAttachmentUrls(item.data_link)[0];
+		if (dataLink === undefined) {
 			continue;
 		}
-		const dataLink = links[0];
 		if (seen.has(dataLink)) {
 			continue;
 		}
@@ -2619,7 +2618,7 @@ function basenameLike(path: string): string | undefined {
  * Both map relative asset paths (for example `permanent/.../mark/foo.png`)
  * to pre-signed S3 URLs.
  */
-export function findNestedAssetLinks(
+function findNestedAssetLinks(
 	raw: unknown,
 	endpoint: string,
 ): Readonly<Record<string, string>> {
@@ -2857,10 +2856,7 @@ export function findTransactionPolishLink(
  * in-band `-12` "start trans task error". Same selection rules as the polish
  * finder: requires `task_status === 1`, returns null when absent.
  */
-export function findRawTranscriptLink(
-	raw: unknown,
-	endpoint: string,
-): string | null {
+function findRawTranscriptLink(raw: unknown, endpoint: string): string | null {
 	return findContentListLink(raw, endpoint, 'transaction');
 }
 
@@ -3211,15 +3207,15 @@ function buildSummary(
 // length to 400 chars to keep the user-facing notice readable.
 function summarizeShape(value: unknown): string {
 	try {
-		const json = JSON.stringify(value, (_key, v: unknown) => {
+		const json: unknown = JSON.stringify(value, (_key, v: unknown) => {
 			if (typeof v === 'string') {
 				if (v.length > 120) return `[string:${v.length}chars]`;
-				if (/^(bearer\s+)?ey[A-Za-z0-9_-]+\./i.test(v))
+				if (/^(bearer\s+)?ey[a-z0-9_-]+\./i.test(v))
 					return '[redacted-token]';
 			}
 			return v;
 		});
-		if (json === undefined) return '(unserializable)';
+		if (typeof json !== 'string') return '(unserializable)';
 		return json.length > 400 ? `${json.slice(0, 400)}…` : json;
 	} catch {
 		return '(serialize-failed)';

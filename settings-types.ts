@@ -36,7 +36,7 @@ export const RIBBON_ICON_CHOICES: ReadonlyArray<{ id: string; label: string }> =
 		{ id: 'captions', label: 'Captions' },
 		{ id: 'users-round', label: 'Meeting participants' },
 	];
-export const DEFAULT_RIBBON_ICON = 'audio-lines';
+const DEFAULT_RIBBON_ICON = 'audio-lines';
 
 /**
  * Coerce a stored ribbon icon ID to a known-good value. Protects against

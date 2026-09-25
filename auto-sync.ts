@@ -122,7 +122,7 @@ export function classifyRecording(
 		: 'up-to-date-boundary';
 }
 
-export interface AutoSyncCandidate {
+interface AutoSyncCandidate {
 	readonly recording: Recording;
 	/** Drives the headless duplicate policy: skip-for-new, overwrite-for-changed. */
 	readonly kind: 'new' | 'changed';
@@ -265,12 +265,9 @@ export function nextAutoSyncState(
 // Interval coercion
 // -----------------------------------------------------------------------------
 
-export const AUTO_SYNC_INTERVAL_PRESETS = [
-	15, 30, 60, 120, 240, 480, 1440,
-] as const;
-export const AUTO_SYNC_INTERVAL_FLOOR = 15;
-export const AUTO_SYNC_INTERVAL_CEILING = 1440;
-export const AUTO_SYNC_INTERVAL_DEFAULT = 60;
+const AUTO_SYNC_INTERVAL_FLOOR = 15;
+const AUTO_SYNC_INTERVAL_CEILING = 1440;
+const AUTO_SYNC_INTERVAL_DEFAULT = 60;
 
 /**
  * Coerce a settings value (number, or a string from a dropdown) into a valid

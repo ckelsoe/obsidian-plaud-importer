@@ -127,8 +127,8 @@ export class Plugin {
 		return id;
 	}
 	registerDomEvent(_el: unknown, _type: string, _cb: unknown): void {}
-	async loadData(): Promise<unknown> {
-		return null;
+	loadData(): Promise<unknown> {
+		return Promise.resolve(null);
 	}
 	async saveData(_data: unknown): Promise<void> {}
 	onload(): void {}
@@ -251,10 +251,7 @@ export class Setting {
 		return this;
 	}
 	addExtraButton(cb: (btn: ButtonStub) => unknown): this {
-		const btn = new ButtonStub();
-		this.buttons.push(btn);
-		cb(btn);
-		return this;
+		return this.addButton(cb);
 	}
 	addSearch(_cb: unknown): this {
 		return this;

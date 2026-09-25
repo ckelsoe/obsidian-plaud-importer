@@ -63,6 +63,8 @@ import type {
 // the real moment). Reaching it the same way here shares that one singleton, so a
 // test can flip the global locale and observe the formatter's pinned English.
 import { moment } from 'obsidian';
+import { asyncResult } from './helpers/async-result';
+import { at } from './helpers/checked';
 
 // Fixtures ------------------------------------------------------------------
 
@@ -2578,28 +2580,33 @@ function makeFakeVault(): FakeVault {
 		getFolderByPath(path: string): FolderLike | null {
 			return folders.has(path) ? { path } : null;
 		},
-		async createFolder(path: string): Promise<FolderLike> {
-			createFolderCalls.push(path);
-			folders.add(path);
-			return { path };
+		createFolder(path: string): Promise<FolderLike> {
+			return asyncResult(() => {
+				createFolderCalls.push(path);
+				folders.add(path);
+				return { path };
+			});
 		},
-		async create(path: string, data: string): Promise<FileLike> {
-			files.set(path, data);
-			createdPaths.push(path);
-			return { path };
+		create(path: string, data: string): Promise<FileLike> {
+			return asyncResult(() => {
+				files.set(path, data);
+				createdPaths.push(path);
+				return { path };
+			});
 		},
-		async read(file: FileLike): Promise<string> {
-			return files.get(file.path) ?? '';
+		read(file: FileLike): Promise<string> {
+			return asyncResult(() => {
+				return files.get(file.path) ?? '';
+			});
 		},
-		async process(
-			file: FileLike,
-			fn: (data: string) => string,
-		): Promise<string> {
-			const current = files.get(file.path) ?? '';
-			const next = fn(current);
-			files.set(file.path, next);
-			overwrittenPaths.push(file.path);
-			return next;
+		process(file: FileLike, fn: (data: string) => string): Promise<string> {
+			return asyncResult(() => {
+				const current = files.get(file.path) ?? '';
+				const next = fn(current);
+				files.set(file.path, next);
+				overwrittenPaths.push(file.path);
+				return next;
+			});
 		},
 	};
 	return vault;
@@ -2618,18 +2625,19 @@ function makeFakeRename(vault: FakeVault): {
 	calls: Array<[string, string]>;
 } {
 	const calls: Array<[string, string]> = [];
-	const rename = async (oldPath: string, newPath: string): Promise<void> => {
-		calls.push([oldPath, newPath]);
-		if (vault.files.has(oldPath)) {
-			const content = vault.files.get(oldPath) ?? '';
-			vault.files.delete(oldPath);
-			vault.files.set(newPath, content);
-		}
-		if (vault.folders.has(oldPath)) {
-			vault.folders.delete(oldPath);
-			vault.folders.add(newPath);
-		}
-	};
+	const rename = (oldPath: string, newPath: string): Promise<void> =>
+		asyncResult(() => {
+			calls.push([oldPath, newPath]);
+			if (vault.files.has(oldPath)) {
+				const content = vault.files.get(oldPath) ?? '';
+				vault.files.delete(oldPath);
+				vault.files.set(newPath, content);
+			}
+			if (vault.folders.has(oldPath)) {
+				vault.folders.delete(oldPath);
+				vault.folders.add(newPath);
+			}
+		});
 	return { rename, calls };
 }
 
@@ -2731,19 +2739,17 @@ describe('renameRecordingNote', () => {
 		vault.files.set('Plaud/old.md', '---\nplaud-id: abc123\n---\n');
 		vault.folders.add('Plaud/old-assets');
 		const calls: Array<[string, string]> = [];
-		const rename = async (
-			oldPath: string,
-			newPath: string,
-		): Promise<void> => {
-			calls.push([oldPath, newPath]);
-			if (oldPath.endsWith('.md')) {
-				throw new Error('note rename boom');
-			}
-			if (vault.folders.has(oldPath)) {
-				vault.folders.delete(oldPath);
-				vault.folders.add(newPath);
-			}
-		};
+		const rename = (oldPath: string, newPath: string): Promise<void> =>
+			asyncResult(() => {
+				calls.push([oldPath, newPath]);
+				if (oldPath.endsWith('.md')) {
+					throw new Error('note rename boom');
+				}
+				if (vault.folders.has(oldPath)) {
+					vault.folders.delete(oldPath);
+					vault.folders.add(newPath);
+				}
+			});
 
 		await expect(
 			renameRecordingNote(vault, rename, 'Plaud/old.md', 'Plaud/new.md'),
@@ -3045,10 +3051,11 @@ describe('NoteWriter', () => {
 		// an existing path while getFolderByPath disagrees about that path.
 		const vault = makeFakeVault();
 		vault.getFolderByPath = () => null;
-		vault.createFolder = async (path: string) => {
-			vault.createFolderCalls.push(path);
-			throw new Error(`Folder already exists.`);
-		};
+		vault.createFolder = (path: string) =>
+			asyncResult(() => {
+				vault.createFolderCalls.push(path);
+				throw new Error(`Folder already exists.`);
+			});
 		const writer = new NoteWriter(vault, {
 			outputFolder: 'Inbox',
 			onDuplicate: 'skip',
@@ -3146,14 +3153,15 @@ describe('NoteWriter', () => {
 			const writer = new NoteWriter(vault, {
 				outputFolder: 'Plaud',
 				onDuplicate: 'prompt',
-				promptOnDuplicate: async (ctx) => {
-					received.push({
-						recordingId: ctx.recordingId,
-						recordingTitle: ctx.recordingTitle,
-						targetPath: ctx.targetPath,
-					});
-					return 'overwrite';
-				},
+				promptOnDuplicate: (ctx) =>
+					asyncResult(() => {
+						received.push({
+							recordingId: ctx.recordingId,
+							recordingTitle: ctx.recordingTitle,
+							targetPath: ctx.targetPath,
+						});
+						return 'overwrite';
+					}),
 			});
 
 			const outcome = await writer.writeNote(
@@ -3181,7 +3189,7 @@ describe('NoteWriter', () => {
 			const writer = new NoteWriter(vault, {
 				outputFolder: 'Plaud',
 				onDuplicate: 'prompt',
-				promptOnDuplicate: async () => 'skip',
+				promptOnDuplicate: () => Promise.resolve('skip'),
 			});
 
 			const outcome = await writer.writeNote(
@@ -3206,7 +3214,7 @@ describe('NoteWriter', () => {
 			const writer = new NoteWriter(vault, {
 				outputFolder: 'Plaud',
 				onDuplicate: 'prompt',
-				promptOnDuplicate: async () => 'cancel',
+				promptOnDuplicate: () => Promise.resolve('cancel'),
 			});
 
 			await expect(
@@ -3221,7 +3229,9 @@ describe('NoteWriter', () => {
 
 		it('does not invoke the callback when the file does not exist yet', async () => {
 			const vault = makeFakeVault();
-			const promptSpy = jest.fn(async () => 'overwrite' as const);
+			const promptSpy = jest.fn(() =>
+				Promise.resolve('overwrite' as const),
+			);
 			const writer = new NoteWriter(vault, {
 				outputFolder: 'Plaud',
 				onDuplicate: 'prompt',
@@ -3531,12 +3541,13 @@ describe('NoteWriter', () => {
 				outputFolder: 'Plaud',
 				onDuplicate: 'overwrite',
 				existingPathForPlaudId: (id) => (id === 'abc123' ? OLD : null),
-				migrateExistingNote: async (oldPath, newPath) => {
-					migrateCalls.push([oldPath, newPath]);
-					const c = vault.files.get(oldPath) ?? '';
-					vault.files.delete(oldPath);
-					vault.files.set(newPath, c);
-				},
+				migrateExistingNote: (oldPath, newPath) =>
+					asyncResult(() => {
+						migrateCalls.push([oldPath, newPath]);
+						const c = vault.files.get(oldPath) ?? '';
+						vault.files.delete(oldPath);
+						vault.files.set(newPath, c);
+					}),
 			});
 			return { vault, migrateCalls, writer };
 		}
@@ -3566,9 +3577,10 @@ describe('NoteWriter', () => {
 			const writer = new NoteWriter(vault, {
 				outputFolder: 'Plaud',
 				onDuplicate: 'overwrite',
-				migrateExistingNote: async (oldPath, newPath) => {
-					migrateCalls.push([oldPath, newPath]);
-				},
+				migrateExistingNote: (oldPath, newPath) =>
+					asyncResult(() => {
+						migrateCalls.push([oldPath, newPath]);
+					}),
 			});
 
 			const outcome = await writer.writeNote(
@@ -3614,9 +3626,10 @@ describe('NoteWriter', () => {
 				outputFolder: 'Plaud',
 				onDuplicate: 'overwrite',
 				existingPathForPlaudId: (id) => (id === 'abc123' ? OLD : null),
-				migrateExistingNote: async () => {
-					throw new Error('renameFile failed');
-				},
+				migrateExistingNote: () =>
+					asyncResult(() => {
+						throw new Error('renameFile failed');
+					}),
 			});
 
 			const err = await writer
@@ -3642,9 +3655,10 @@ describe('NoteWriter', () => {
 				outputFolder: 'Plaud',
 				onDuplicate: 'skip',
 				existingPathForPlaudId: (id) => (id === 'abc123' ? OLD : null),
-				migrateExistingNote: async (oldPath, newPath) => {
-					migrateCalls.push([oldPath, newPath]);
-				},
+				migrateExistingNote: (oldPath, newPath) =>
+					asyncResult(() => {
+						migrateCalls.push([oldPath, newPath]);
+					}),
 			});
 
 			const outcome = await writer.writeNote(
@@ -3678,12 +3692,13 @@ describe('NoteWriter', () => {
 								p.endsWith('Morning standup.md'),
 							) ?? null)
 						: null,
-				migrateExistingNote: async (oldPath, newPath) => {
-					migrateCalls.push([oldPath, newPath]);
-					const c = vault.files.get(oldPath) ?? '';
-					vault.files.delete(oldPath);
-					vault.files.set(newPath, c);
-				},
+				migrateExistingNote: (oldPath, newPath) =>
+					asyncResult(() => {
+						migrateCalls.push([oldPath, newPath]);
+						const c = vault.files.get(oldPath) ?? '';
+						vault.files.delete(oldPath);
+						vault.files.set(newPath, c);
+					}),
 			});
 
 			// 1. Transcript/summary not ready: a placeholder is written. The error
@@ -4039,9 +4054,10 @@ describe('NoteWriter', () => {
 	describe('error context wrapping', () => {
 		it('wraps vault.create errors with recording id and target path', async () => {
 			const vault = makeFakeVault();
-			vault.create = async () => {
-				throw new Error('EACCES permission denied');
-			};
+			vault.create = () =>
+				asyncResult(() => {
+					throw new Error('EACCES permission denied');
+				});
 			const writer = new NoteWriter(vault, {
 				outputFolder: 'Plaud',
 				onDuplicate: 'skip',
@@ -4065,9 +4081,10 @@ describe('NoteWriter', () => {
 				'Plaud/2026-04-14 Morning standup.md',
 				'---\nplaud-id: abc123\n---\n',
 			);
-			vault.process = async () => {
-				throw new Error('disk full');
-			};
+			vault.process = () =>
+				asyncResult(() => {
+					throw new Error('disk full');
+				});
 			const writer = new NoteWriter(vault, {
 				outputFolder: 'Plaud',
 				onDuplicate: 'overwrite',
@@ -4085,9 +4102,10 @@ describe('NoteWriter', () => {
 		it('wraps vault.read errors during collision check', async () => {
 			const vault = makeFakeVault();
 			vault.files.set('Plaud/2026-04-14 Morning standup.md', 'existing');
-			vault.read = async () => {
-				throw new Error('read blew up');
-			};
+			vault.read = () =>
+				asyncResult(() => {
+					throw new Error('read blew up');
+				});
 			const writer = new NoteWriter(vault, {
 				outputFolder: 'Plaud',
 				onDuplicate: 'skip',
@@ -4630,15 +4648,15 @@ describe('groupTranscriptByChapters', () => {
 		];
 		const groups = groupTranscriptByChapters(tx(segments), chapters);
 		expect(groups).toHaveLength(3);
-		expect(groups[0].segments.map((s) => s.text)).toEqual([
+		expect(at(groups, 0).segments.map((s) => s.text)).toEqual([
 			'intro',
 			'intro-2',
 		]);
-		expect(groups[1].segments.map((s) => s.text)).toEqual([
+		expect(at(groups, 1).segments.map((s) => s.text)).toEqual([
 			'main',
 			'main-2',
 		]);
-		expect(groups[2].segments.map((s) => s.text)).toEqual(['wrap']);
+		expect(at(groups, 2).segments.map((s) => s.text)).toEqual(['wrap']);
 	});
 
 	it('assigns segments that start before the first chapter to the first chapter', () => {
@@ -4652,7 +4670,7 @@ describe('groupTranscriptByChapters', () => {
 		];
 		const groups = groupTranscriptByChapters(tx(segments), chapters);
 		expect(groups).toHaveLength(1);
-		expect(groups[0].segments.map((s) => s.text)).toEqual([
+		expect(at(groups, 0).segments.map((s) => s.text)).toEqual([
 			'early',
 			'also-early',
 			'main',
@@ -4664,8 +4682,8 @@ describe('groupTranscriptByChapters', () => {
 			{ title: 'Intro', startSeconds: 0 },
 			{ title: 'Main', startSeconds: 60 },
 		]);
-		expect(groups[0].blockId).toBe('t-ch-0');
-		expect(groups[1].blockId).toBe('t-ch-1');
+		expect(at(groups, 0).blockId).toBe('t-ch-0');
+		expect(at(groups, 1).blockId).toBe('t-ch-1');
 	});
 
 	it('gives empty groups a null blockId so the caller can skip linking', () => {
@@ -4675,9 +4693,9 @@ describe('groupTranscriptByChapters', () => {
 			{ title: 'A', startSeconds: 0 },
 			{ title: 'B', startSeconds: 300 },
 		]);
-		expect(groups[0].blockId).toBe('t-ch-0');
-		expect(groups[1].blockId).toBeNull();
-		expect(groups[1].segments).toEqual([]);
+		expect(at(groups, 0).blockId).toBe('t-ch-0');
+		expect(at(groups, 1).blockId).toBeNull();
+		expect(at(groups, 1).segments).toEqual([]);
 	});
 
 	it('drops chapters with blank titles before bucketing', () => {
@@ -4686,9 +4704,9 @@ describe('groupTranscriptByChapters', () => {
 			{ title: 'Real', startSeconds: 30 },
 		]);
 		expect(groups).toHaveLength(1);
-		expect(groups[0].chapter.title).toBe('Real');
+		expect(at(groups, 0).chapter.title).toBe('Real');
 		// Both segments attach to the sole surviving chapter.
-		expect(groups[0].segments).toHaveLength(2);
+		expect(at(groups, 0).segments).toHaveLength(2);
 	});
 });
 
@@ -4797,12 +4815,12 @@ describe('formatTranscriptSection', () => {
 		const groups: readonly TranscriptChapterGroup[] = [
 			{
 				chapter: { title: 'Intro', startSeconds: 0 },
-				segments: [segs[0]],
+				segments: [at(segs, 0)],
 				blockId: 't-ch-0',
 			},
 			{
 				chapter: { title: 'Middle', startSeconds: 60 },
-				segments: [segs[1]],
+				segments: [at(segs, 1)],
 				blockId: 't-ch-1',
 			},
 		];
@@ -4832,7 +4850,7 @@ describe('formatTranscriptSection', () => {
 		const groups: readonly TranscriptChapterGroup[] = [
 			{
 				chapter: { title: 'Intro', startSeconds: 0 },
-				segments: [segs[0]],
+				segments: [at(segs, 0)],
 				blockId: 't-ch-0',
 			},
 		];
@@ -4852,7 +4870,7 @@ describe('formatTranscriptSection', () => {
 		const groups: readonly TranscriptChapterGroup[] = [
 			{
 				chapter: { title: 'Intro', startSeconds: 0 },
-				segments: [segs[0]],
+				segments: [at(segs, 0)],
 				blockId: 't-ch-0',
 			},
 		];
@@ -4872,7 +4890,7 @@ describe('formatTranscriptSection', () => {
 		const groups: readonly TranscriptChapterGroup[] = [
 			{
 				chapter: { title: 'Main | topic [x] #id', startSeconds: 0 },
-				segments: [segs[0]],
+				segments: [at(segs, 0)],
 				blockId: 't-ch-0',
 			},
 		];
@@ -5281,13 +5299,14 @@ describe('NoteWriter.writeNote foldInfo', () => {
 		const vault: VaultLike = {
 			getFileByPath: () => null,
 			getFolderByPath: () => ({ path: '' }),
-			createFolder: async () => undefined,
-			create: async (path, data) => {
-				created.set(path, data);
-				return { path };
-			},
-			read: async () => '',
-			process: async () => '',
+			createFolder: () => Promise.resolve(undefined),
+			create: (path, data) =>
+				asyncResult(() => {
+					created.set(path, data);
+					return { path };
+				}),
+			read: () => Promise.resolve(''),
+			process: () => Promise.resolve(''),
 		};
 		return { vault, created };
 	}
@@ -6334,11 +6353,12 @@ describe('transcript placement', () => {
 				onDuplicate: 'overwrite',
 				transcriptPlacement: 'file-link',
 				existingPathForPlaudId: (id) => (id === 'abc123' ? OLD : null),
-				migrateExistingNote: async (oldPath, newPath) => {
-					const c = vault.files.get(oldPath) ?? '';
-					vault.files.delete(oldPath);
-					vault.files.set(newPath, c);
-				},
+				migrateExistingNote: (oldPath, newPath) =>
+					asyncResult(() => {
+						const c = vault.files.get(oldPath) ?? '';
+						vault.files.delete(oldPath);
+						vault.files.set(newPath, c);
+					}),
 			});
 			const outcome = await writer.writeNote(
 				makeRecording({ title: 'New title' }),
@@ -6377,10 +6397,11 @@ describe('transcript placement', () => {
 				outputFolder: 'Plaud',
 				onDuplicate: 'overwrite',
 				transcriptPlacement: 'callout',
-				trashFile: async (path) => {
-					trashed.push(path);
-					vault.files.delete(path);
-				},
+				trashFile: (path) =>
+					asyncResult(() => {
+						trashed.push(path);
+						vault.files.delete(path);
+					}),
 			}).writeNote(makeRecording(), makeTranscript(), makeSummary());
 
 			expect(outcome.status).toBe('overwritten');
@@ -6401,9 +6422,10 @@ describe('transcript placement', () => {
 				onDuplicate: 'overwrite',
 				transcriptPlacement: 'file-link',
 				includeTranscript: false,
-				trashFile: async (path) => {
-					trashed.push(path);
-				},
+				trashFile: (path) =>
+					asyncResult(() => {
+						trashed.push(path);
+					}),
 			}).writeNote(makeRecording(), makeTranscript(), makeSummary());
 			expect(trashed).toEqual([TRANSCRIPT]);
 		});
@@ -6411,9 +6433,10 @@ describe('transcript placement', () => {
 		it('never trashes the transcript file it just wrote, or one that is absent', async () => {
 			const vault = makeFakeVault();
 			const trashed: string[] = [];
-			const trashFile = async (path: string): Promise<void> => {
-				trashed.push(path);
-			};
+			const trashFile = (path: string): Promise<void> =>
+				asyncResult(() => {
+					trashed.push(path);
+				});
 			await new NoteWriter(vault, {
 				outputFolder: 'Plaud',
 				onDuplicate: 'overwrite',
@@ -6468,9 +6491,10 @@ describe('transcript placement', () => {
 					outputFolder: 'Plaud',
 					onDuplicate: 'overwrite',
 					transcriptPlacement: 'heading',
-					trashFile: async () => {
-						throw new Error('trash failed');
-					},
+					trashFile: () =>
+						asyncResult(() => {
+							throw new Error('trash failed');
+						}),
 				}).writeNote(makeRecording(), makeTranscript(), makeSummary());
 				expect(outcome.status).toBe('overwritten');
 				expect(warn).toHaveBeenCalled();
@@ -6487,9 +6511,10 @@ describe('transcript placement', () => {
 				outputFolder: 'Plaud',
 				onDuplicate: 'overwrite',
 				transcriptPlacement: 'callout',
-				trashFile: async (path) => {
-					trashed.push(path);
-				},
+				trashFile: (path) =>
+					asyncResult(() => {
+						trashed.push(path);
+					}),
 			}).writeNote(makeRecording(), makeTranscript(), makeSummary());
 			expect(trashed).toEqual([]);
 		});
@@ -6598,12 +6623,13 @@ describe('# and ^ in note names', () => {
 			outputFolder: 'Plaud',
 			onDuplicate: 'overwrite',
 			existingPathForPlaudId: (id) => (id === 'abc123' ? OLD : null),
-			migrateExistingNote: async (oldPath, newPath) => {
-				migrateCalls.push([oldPath, newPath]);
-				const c = vault.files.get(oldPath) ?? '';
-				vault.files.delete(oldPath);
-				vault.files.set(newPath, c);
-			},
+			migrateExistingNote: (oldPath, newPath) =>
+				asyncResult(() => {
+					migrateCalls.push([oldPath, newPath]);
+					const c = vault.files.get(oldPath) ?? '';
+					vault.files.delete(oldPath);
+					vault.files.set(newPath, c);
+				}),
 		}).writeNote(
 			makeRecording({ title: 'Roadmap #1' }),
 			makeTranscript(),

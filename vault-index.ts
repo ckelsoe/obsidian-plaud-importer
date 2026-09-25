@@ -34,6 +34,7 @@ import {
 	stableKeysFromFrontmatter,
 	stableKeysFromRecording,
 } from './stable-key';
+import { trimChars } from './text-trim';
 
 /**
  * Lightweight pointer back to an imported note. The path is the only
@@ -272,10 +273,7 @@ function normalizeFolder(folder: string): string {
 	// Match the note writer's normalization: a Windows-style "\Inbox" must
 	// resolve to "Inbox" so the imported-note index finds files under the folder
 	// Obsidian actually created.
-	return folder
-		.trim()
-		.replace(/\\/g, '/')
-		.replace(/^\/+|\/+$/g, '');
+	return trimChars(folder.trim().replace(/\\/g, '/'), '/');
 }
 
 function fileIsUnder(file: TFile, folder: string): boolean {

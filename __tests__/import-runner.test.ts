@@ -21,6 +21,8 @@ import type {
 	Transcript,
 	TranscriptAndSummary,
 } from '../plaud-client';
+import { asyncResult } from './helpers/async-result';
+import { at, defined } from './helpers/checked';
 
 // -----------------------------------------------------------------------------
 // Test doubles
@@ -49,24 +51,29 @@ function makeFakeVault(): FakeVault {
 		getFolderByPath(path: string): FolderLike | null {
 			return folders.has(path) ? { path } : null;
 		},
-		async createFolder(path: string): Promise<FolderLike> {
-			folders.add(path);
-			return { path };
+		createFolder(path: string): Promise<FolderLike> {
+			return asyncResult(() => {
+				folders.add(path);
+				return { path };
+			});
 		},
-		async create(path: string, data: string): Promise<FileLike> {
-			files.set(path, data);
-			return { path };
+		create(path: string, data: string): Promise<FileLike> {
+			return asyncResult(() => {
+				files.set(path, data);
+				return { path };
+			});
 		},
-		async read(file: FileLike): Promise<string> {
-			return files.get(file.path) ?? '';
+		read(file: FileLike): Promise<string> {
+			return asyncResult(() => {
+				return files.get(file.path) ?? '';
+			});
 		},
-		async process(
-			file: FileLike,
-			fn: (data: string) => string,
-		): Promise<string> {
-			const next = fn(files.get(file.path) ?? '');
-			files.set(file.path, next);
-			return next;
+		process(file: FileLike, fn: (data: string) => string): Promise<string> {
+			return asyncResult(() => {
+				const next = fn(files.get(file.path) ?? '');
+				files.set(file.path, next);
+				return next;
+			});
 		},
 	};
 	return vault;
@@ -171,7 +178,7 @@ function makeAttachmentStub(summaryLinked: readonly AttachmentAsset[] = []): {
 		extractAttachmentAssetsFromSummaryMarkdown: (md) => {
 			const out = [...summaryLinked];
 			for (const m of (md ?? '').matchAll(/!\[[^\]]*\]\(([^)\s]+)\)/g)) {
-				out.push({ dataType: 'summary_image', url: m[1] });
+				out.push({ dataType: 'summary_image', url: at(m, 1) });
 			}
 			return out;
 		},
@@ -187,24 +194,26 @@ function makeAttachmentStub(summaryLinked: readonly AttachmentAsset[] = []): {
 			}
 			return out;
 		},
-		importAttachmentsForNote: async (
+		importAttachmentsForNote: (
 			notePath,
 			attachments,
 			_selection,
 			replaceExisting,
 			recordingId,
-		) => {
-			importCalls.push({
-				notePath,
-				replaceExisting,
-				recordingId,
-				attachments,
-			});
-		},
-		importAudioForNote: async (notePath, audioUrl) => {
-			audioCalls.push({ notePath, audioUrl });
-			return 1234;
-		},
+		) =>
+			asyncResult(() => {
+				importCalls.push({
+					notePath,
+					replaceExisting,
+					recordingId,
+					attachments,
+				});
+			}),
+		importAudioForNote: (notePath, audioUrl) =>
+			asyncResult(() => {
+				audioCalls.push({ notePath, audioUrl });
+				return 1234;
+			}),
 	};
 	return { pipeline, importCalls, audioCalls };
 }
@@ -216,20 +225,21 @@ function makeFetch(
 	calls: PlaudRecordingId[];
 } {
 	const calls: PlaudRecordingId[] = [];
-	const fetchArtifacts = async (
+	const fetchArtifacts = (
 		id: PlaudRecordingId,
-	): Promise<TranscriptAndSummary> => {
-		calls.push(id);
-		const entry = artifactsById.get(id);
-		if (typeof entry === 'function') {
-			// A thrower: model a fetch that rejects for this recording.
-			return entry();
-		}
-		if (entry === undefined) {
-			throw new Error(`no artifacts registered for ${id}`);
-		}
-		return entry;
-	};
+	): Promise<TranscriptAndSummary> =>
+		asyncResult(() => {
+			calls.push(id);
+			const entry = artifactsById.get(id);
+			if (typeof entry === 'function') {
+				// A thrower: model a fetch that rejects for this recording.
+				return entry();
+			}
+			if (entry === undefined) {
+				throw new Error(`no artifacts registered for ${id}`);
+			}
+			return entry;
+		});
 	return { fetchArtifacts, calls };
 }
 
@@ -334,11 +344,11 @@ describe('runImport', () => {
 		expect(note).toContain(
 			'![Screenshot at 0:30](https://s3.example/shot1.png?sig=1)',
 		);
-		const markAsset = importCalls[0].attachments.find(
+		const markAsset = at(importCalls, 0).attachments.find(
 			(a) => a.url === 'https://s3.example/shot1.png?sig=1',
 		);
 		expect(markAsset).toBeDefined();
-		expect(markAsset!.dataType).toBe('plaud_mark');
+		expect(defined(markAsset).dataType).toBe('plaud_mark');
 	});
 
 	it('keeps a mark that shares a URL with a summary image downloadable when Other attachments is off', async () => {
@@ -370,10 +380,10 @@ describe('runImport', () => {
 			fetchArtifacts,
 		});
 
-		const merged = importCalls[0].attachments;
+		const merged = at(importCalls, 0).attachments;
 		const forShared = merged.filter((a) => a.url === sharedUrl);
 		expect(forShared).toHaveLength(1);
-		expect(forShared[0].dataType).toBe('plaud_mark');
+		expect(at(forShared, 0).dataType).toBe('plaud_mark');
 	});
 
 	it('omits screenshots and queues no mark images when includeScreenshots is off', async () => {
@@ -425,9 +435,8 @@ describe('runImport', () => {
 			attachments: makeAttachmentStub().pipeline,
 			options: OPTIONS,
 			fetchArtifacts,
-			fetchFolderCatalog: async () => [
-				{ id: 'id-rec', name: 'Recordings' },
-			],
+			fetchFolderCatalog: () =>
+				Promise.resolve([{ id: 'id-rec', name: 'Recordings' }]),
 		});
 
 		const note = [...vault.files.values()][0];
@@ -521,7 +530,8 @@ describe('runImport', () => {
 			attachments: makeAttachmentStub().pipeline,
 			options: OPTIONS,
 			fetchArtifacts,
-			fetchFolderCatalog: async () => [{ id: 'id-work', name: 'Work' }],
+			fetchFolderCatalog: () =>
+				Promise.resolve([{ id: 'id-work', name: 'Work' }]),
 		});
 
 		const note = [...vault.files.values()][0];
@@ -545,10 +555,11 @@ describe('runImport', () => {
 			attachments: makeAttachmentStub().pipeline,
 			options: OPTIONS,
 			fetchArtifacts,
-			fetchFolderCatalog: async () => [
-				{ id: 'id-work', name: 'Work' },
-				{ id: 'id-bnb', name: 'B&B' },
-			],
+			fetchFolderCatalog: () =>
+				Promise.resolve([
+					{ id: 'id-work', name: 'Work' },
+					{ id: 'id-bnb', name: 'B&B' },
+				]),
 		});
 
 		expect(outcome.stop).toBe('completed');
@@ -575,7 +586,8 @@ describe('runImport', () => {
 			attachments: makeAttachmentStub().pipeline,
 			options: OPTIONS,
 			fetchArtifacts,
-			fetchFolderCatalog: async () => [{ id: 'id-known', name: 'Known' }],
+			fetchFolderCatalog: () =>
+				Promise.resolve([{ id: 'id-known', name: 'Known' }]),
 		});
 
 		const note = [...vault.files.values()][0];
@@ -622,9 +634,10 @@ describe('runImport', () => {
 			attachments: makeAttachmentStub().pipeline,
 			options: OPTIONS,
 			fetchArtifacts,
-			fetchFolderCatalog: async () => {
-				throw new Error('boom');
-			},
+			fetchFolderCatalog: () =>
+				asyncResult(() => {
+					throw new Error('boom');
+				}),
 		});
 
 		expect(outcome.stop).toBe('completed');
@@ -915,10 +928,12 @@ describe('runImport', () => {
 		// Prompt overwrites the first duplicate, cancels the second.
 		const promptWriter = makeWriter(vault, {
 			onDuplicate: 'prompt',
-			promptOnDuplicate: async ({
+			promptOnDuplicate: ({
 				recordingId,
 			}): Promise<DuplicatePromptDecision> =>
-				recordingId === recB.id ? 'cancel' : 'overwrite',
+				Promise.resolve(
+					recordingId === recB.id ? 'cancel' : 'overwrite',
+				),
 		});
 		const outcome = await runImport({
 			recordings: [recA, recB],
@@ -1110,9 +1125,10 @@ describe('runImport', () => {
 			attachments: makeAttachmentStub().pipeline,
 			options: OPTIONS,
 			fetchArtifacts,
-			applyFold: async (path) => {
-				foldPaths.push(path);
-			},
+			applyFold: (path) =>
+				asyncResult(() => {
+					foldPaths.push(path);
+				}),
 		};
 
 		await runImport(deps);
@@ -1137,9 +1153,10 @@ describe('runImport', () => {
 			attachments: makeAttachmentStub().pipeline,
 			options: { ...OPTIONS, transcriptPlacement: 'callout' },
 			fetchArtifacts,
-			applyFold: async (path) => {
-				foldPaths.push(path);
-			},
+			applyFold: (path) =>
+				asyncResult(() => {
+					foldPaths.push(path);
+				}),
 		});
 		expect(foldPaths).toHaveLength(0);
 	});
@@ -1338,16 +1355,17 @@ describe('runImport audio artifact', () => {
 			attachments: pipeline,
 			options: OPTIONS,
 			fetchArtifacts,
-			fetchAudioUrl: async (id) => {
-				audioFetches.push(id);
-				return AUDIO_URL;
-			},
+			fetchAudioUrl: (id) =>
+				asyncResult(() => {
+					audioFetches.push(id);
+					return AUDIO_URL;
+				}),
 		});
 
 		expect(outcome.stop).toBe('completed');
 		expect(audioFetches).toEqual([recording.id]);
 		expect(audioCalls).toHaveLength(1);
-		expect(audioCalls[0].audioUrl).toBe(AUDIO_URL);
+		expect(at(audioCalls, 0).audioUrl).toBe(AUDIO_URL);
 	});
 
 	it('does not fetch or import audio when includeAudio is off', async () => {
@@ -1366,9 +1384,9 @@ describe('runImport audio artifact', () => {
 			attachments: pipeline,
 			options: OPTIONS,
 			fetchArtifacts,
-			fetchAudioUrl: async () => {
+			fetchAudioUrl: () => {
 				audioFetchCount += 1;
-				return AUDIO_URL;
+				return Promise.resolve(AUDIO_URL);
 			},
 		});
 
@@ -1391,7 +1409,7 @@ describe('runImport audio artifact', () => {
 			attachments: pipeline,
 			options: OPTIONS,
 			fetchArtifacts,
-			fetchAudioUrl: async () => null,
+			fetchAudioUrl: () => Promise.resolve(null),
 		});
 
 		expect(audioCalls).toEqual([]);
@@ -1412,7 +1430,7 @@ describe('runImport audio artifact', () => {
 			attachments: pipeline,
 			options: OPTIONS,
 			fetchArtifacts,
-			fetchAudioUrl: async () => AUDIO_URL,
+			fetchAudioUrl: () => Promise.resolve(AUDIO_URL),
 		};
 
 		await runImport(deps); // first run: note created, audio imported

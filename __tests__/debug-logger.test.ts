@@ -4,6 +4,7 @@ import {
 	NoopDebugLogger,
 	type DebugEvent,
 } from '../debug-logger';
+import { at } from './helpers/checked';
 
 // A pinned-clock factory — every call returns the next second from a
 // fixed base, so test assertions can compare ISO strings byte-for-byte
@@ -57,10 +58,10 @@ describe('BufferedDebugLogger', () => {
 		});
 		const events = logger.snapshot();
 		expect(events).toHaveLength(2);
-		expect(events[0].kind).toBe('request');
-		expect(events[0].endpoint).toBe('/file/simple/web');
-		expect(events[0].timestamp).toBeInstanceOf(Date);
-		expect(events[1].kind).toBe('response');
+		expect(at(events, 0).kind).toBe('request');
+		expect(at(events, 0).endpoint).toBe('/file/simple/web');
+		expect(at(events, 0).timestamp).toBeInstanceOf(Date);
+		expect(at(events, 1).kind).toBe('response');
 	});
 
 	it('respects the maxEvents ring buffer cap by dropping the oldest events', () => {
@@ -132,10 +133,10 @@ describe('BufferedDebugLogger', () => {
 			payload: { url: 'https://api.plaud.ai/file/simple/web' },
 		});
 		expect(calls).toHaveLength(1);
-		expect(calls[0].message).toBe(
+		expect(at(calls, 0).message).toBe(
 			'[Plaud Debug] request /file/simple/web: GET /file/simple/web',
 		);
-		expect(calls[0].payload).toEqual({
+		expect(at(calls, 0).payload).toEqual({
 			url: 'https://api.plaud.ai/file/simple/web',
 		});
 	});

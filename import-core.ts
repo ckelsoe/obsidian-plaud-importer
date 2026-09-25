@@ -761,7 +761,7 @@ export function isUpdateAvailable(
  * the ignore set. Snapshotted into the modal at open; changes are pushed back
  * to plugin settings via `ImportModalOptions.onViewStateChange`.
  */
-export interface ImportViewState {
+interface ImportViewState {
 	readonly showTrashedRecordings: boolean;
 	readonly hideProcessedRecordings: boolean;
 	readonly hideUpdatesRecordings: boolean;

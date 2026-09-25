@@ -11,6 +11,7 @@ import { TRANSCRIPT_FILE_NAME } from './note-writer';
 import { NoopDebugLogger, type DebugLogger } from './debug-logger';
 import type { ArtifactSelection } from './import-core';
 import { PLAUD_MARK_DATA_TYPE } from './import-core';
+import { trimTrailingChars } from './text-trim';
 
 // Plaud host bases used to resolve relative asset paths into absolute
 // download candidates. The API host can vary by region (EU accounts get
@@ -161,8 +162,7 @@ export class AttachmentImporter {
 					genericAssets.push({ path, isImage });
 			}
 		};
-		for (let i = 0; i < attachments.length; i++) {
-			const asset = attachments[i];
+		for (const [i, asset] of attachments.entries()) {
 			const assetLabel = `${asset.dataType}#${i + 1}`;
 			const kind = this.classifyAttachmentKind(asset);
 			if (!this.shouldIncludeAttachmentKind(kind, selection)) {
@@ -287,7 +287,7 @@ export class AttachmentImporter {
 							},
 						);
 						if (imageLinks.length > 0) {
-							for (let j = 0; j < imageLinks.length; j++) {
+							for (const [j, imageLink] of imageLinks.entries()) {
 								const nestedLabel = `${assetLabel}/html#${j + 1}`;
 								const nestedKind =
 									htmlKind !== 'generic'
@@ -295,11 +295,11 @@ export class AttachmentImporter {
 										: this.classifyAttachmentKindFromValues(
 												asset.dataType,
 												asset.name,
-												imageLinks[j],
+												imageLink,
 											);
 								const nested =
 									await this.downloadNestedPictureAsset(
-										imageLinks[j],
+										imageLink,
 										folderPath,
 										nestedKind,
 										nestedLabel,
@@ -333,7 +333,7 @@ export class AttachmentImporter {
 										? `${idPrefix}-${baseName}`
 										: baseName;
 								const htmlPath =
-									await this.resolveUniqueAttachmentPath(
+									this.resolveUniqueAttachmentPath(
 										`${folderPath}/${prefixed}.html`,
 									);
 								await this.app.vault.createBinary(
@@ -373,17 +373,20 @@ export class AttachmentImporter {
 							},
 						);
 						if (extraction.links.length > 0) {
-							for (let j = 0; j < extraction.links.length; j++) {
+							for (const [
+								j,
+								nestedLink,
+							] of extraction.links.entries()) {
 								const nestedLabel = `${assetLabel}/nested#${j + 1}`;
 								const nestedKind =
 									this.classifyAttachmentKindFromValues(
 										asset.dataType,
 										asset.name,
-										extraction.links[j],
+										nestedLink,
 									);
 								const nested =
 									await this.downloadNestedPictureAsset(
-										extraction.links[j],
+										nestedLink,
 										folderPath,
 										nestedKind,
 										nestedLabel,
@@ -450,10 +453,9 @@ export class AttachmentImporter {
 					);
 					const prefixed =
 						idPrefix.length > 0 ? `${idPrefix}-${base}` : base;
-					const attachmentPath =
-						await this.resolveUniqueAttachmentPath(
-							`${folderPath}/${prefixed}.${ext}`,
-						);
+					const attachmentPath = this.resolveUniqueAttachmentPath(
+						`${folderPath}/${prefixed}.${ext}`,
+					);
 					await this.app.vault.createBinary(attachmentPath, bytes);
 					payloadToPath.set(fp, attachmentPath);
 					this.logAttachmentDebug('saved primary attachment', {
@@ -511,19 +513,19 @@ export class AttachmentImporter {
 			const images = assets.filter((asset) => asset.isImage);
 			const files = assets.filter((asset) => !asset.isImage);
 			if (images.length > 0) {
-				for (let i = 0; i < images.length; i++) {
+				for (const [i, image] of images.entries()) {
 					lines.push(
 						`#### ${imageLabel} ${i + 1}`,
-						`![[${images[i].path}]]`,
+						`![[${image.path}]]`,
 						'',
 					);
 				}
 			}
 			if (files.length > 0) {
-				for (let i = 0; i < files.length; i++) {
+				for (const [i, file] of files.entries()) {
 					lines.push(
 						`#### ${fileLabel} ${i + 1}`,
-						`- [[${files[i].path}]]`,
+						`- [[${file.path}]]`,
 						'',
 					);
 				}
@@ -641,7 +643,7 @@ export class AttachmentImporter {
 			}
 			const withoutManagedSection =
 				this.stripManagedAttachmentsSection(repointed);
-			const trimmed = withoutManagedSection.replace(/\s+$/, '');
+			const trimmed = withoutManagedSection.trimEnd();
 			const section: string[] = [
 				'## Images and Attachments',
 				'',
@@ -811,7 +813,7 @@ export class AttachmentImporter {
 
 			await this.app.vault.process(noteFile, (content) => {
 				const withoutManaged = this.stripManagedAudioSection(content);
-				const trimmed = withoutManaged.replace(/\s+$/, '');
+				const trimmed = withoutManaged.trimEnd();
 				const section = [
 					'## Audio',
 					'',
@@ -992,9 +994,7 @@ export class AttachmentImporter {
 		return `file${counters.genericFile}`;
 	}
 
-	private async resolveUniqueAttachmentPath(
-		basePath: string,
-	): Promise<string> {
+	private resolveUniqueAttachmentPath(basePath: string): string {
 		const dot = basePath.lastIndexOf('.');
 		const stem = dot >= 0 ? basePath.slice(0, dot) : basePath;
 		const ext = dot >= 0 ? basePath.slice(dot) : '';
@@ -1050,7 +1050,12 @@ export class AttachmentImporter {
 		const srcsetRegex =
 			/<(?:img|source)\b[^>]*?\bsrcset\s*=\s*["']([^"']+)["']/gi;
 		const cssUrlRegex = /url\((['"]?)([^'")]+)\1\)/gi;
-		const addCandidate = (raw: string): void => {
+		// Capture groups type as possibly undefined; every group passed here is
+		// mandatory, so undefined never arrives at runtime.
+		const addCandidate = (raw: string | undefined): void => {
+			if (raw === undefined) {
+				return;
+			}
 			const link = raw.trim();
 			if (link.length === 0 || link.startsWith('data:')) {
 				return;
@@ -1082,9 +1087,9 @@ export class AttachmentImporter {
 			addCandidate(match[1]);
 		}
 		while ((match = srcsetRegex.exec(text)) !== null) {
-			const candidates = match[1]
+			const candidates = (match[1] ?? '')
 				.split(',')
-				.map((entry) => entry.trim().split(/\s+/)[0])
+				.map((entry) => entry.trim().split(/\s+/)[0] ?? '')
 				.filter((entry) => entry.length > 0);
 			for (const candidate of candidates) {
 				addCandidate(candidate);
@@ -1204,7 +1209,7 @@ export class AttachmentImporter {
 				);
 				const prefixed =
 					idPrefix.length > 0 ? `${idPrefix}-${baseName}` : baseName;
-				const path = await this.resolveUniqueAttachmentPath(
+				const path = this.resolveUniqueAttachmentPath(
 					`${folderPath}/${prefixed}.${ext}`,
 				);
 				await this.app.vault.createBinary(path, bytes);
@@ -1245,7 +1250,7 @@ export class AttachmentImporter {
 		}
 		const normalized = pathOrUrl.replace(/^\/+/, '');
 		const fromMap = nestedAssetLinks?.[normalized];
-		const apiBase = this.resolveApiBaseUrl().replace(/\/+$/, '');
+		const apiBase = trimTrailingChars(this.resolveApiBaseUrl(), '/');
 		return [
 			...(typeof fromMap === 'string' && fromMap.length > 0
 				? [fromMap]
@@ -1287,9 +1292,9 @@ export class AttachmentImporter {
 
 		try {
 			const pathname = new URL(url).pathname.toLowerCase();
-			const m = pathname.match(/\.([a-z0-9]{2,6})$/);
-			if (m) {
-				return m[1];
+			const ext = pathname.match(/\.([a-z0-9]{2,6})$/)?.[1];
+			if (ext !== undefined) {
+				return ext;
 			}
 		} catch {
 			// fallback below
@@ -1307,7 +1312,12 @@ export class AttachmentImporter {
 		}
 		const out: AttachmentAsset[] = [];
 		const seen = new Set<string>();
-		const addCandidate = (raw: string): void => {
+		// Capture groups type as possibly undefined; every group passed here is
+		// mandatory, so undefined never arrives at runtime.
+		const addCandidate = (raw: string | undefined): void => {
+			if (raw === undefined) {
+				return;
+			}
 			const normalized = this.normalizeSummaryLink(raw);
 			if (
 				normalized.length === 0 ||
@@ -1324,7 +1334,7 @@ export class AttachmentImporter {
 			});
 		};
 
-		const markdownLinkRegex = /!?\[[^\]]*]\(([^)\s]+)(?:\s+"[^"]*")?\)/g;
+		const markdownLinkRegex = /!?\[[^\][]*]\(([^)\s]+)(?:\s+"[^"]*")?\)/g;
 		let match: RegExpExecArray | null;
 		while ((match = markdownLinkRegex.exec(summaryMarkdown)) !== null) {
 			addCandidate(match[1]);
@@ -1404,15 +1414,16 @@ export class AttachmentImporter {
 			trimmed.lastIndexOf('\\'),
 		);
 		const base = slash >= 0 ? trimmed.slice(slash + 1) : trimmed;
-		const withoutQuery = base.split('?')[0].split('#')[0].trim();
+		const cut = base.search(/[?#]/);
+		const withoutQuery = (cut >= 0 ? base.slice(0, cut) : base).trim();
 		return withoutQuery.length > 0 ? withoutQuery : undefined;
 	}
 
 	private computeAttachmentFingerprint(bytes: ArrayBuffer): string {
 		const view = new Uint8Array(bytes);
 		let hash = 2166136261;
-		for (let i = 0; i < view.length; i++) {
-			hash ^= view[i];
+		for (const byte of view) {
+			hash ^= byte;
 			hash = Math.imul(hash, 16777619);
 		}
 		return `${view.length}:${hash >>> 0}`;
@@ -1468,7 +1479,7 @@ export class AttachmentImporter {
 
 	private stripManagedAttachmentsSection(content: string): string {
 		return content.replace(
-			/\n## (?:Attachments|Images and Attachments)\s*\n\s*_Imported from Plaud file-detail assets at import time\._[\s\S]*$/m,
+			/\n## (?:Attachments|Images and Attachments)[^\S\n]*\n\s*_Imported from Plaud file-detail assets at import time\._[\s\S]*$/m,
 			'',
 		);
 	}
@@ -1519,7 +1530,7 @@ export function insertSectionBeforeTranscript(
 		insertAt = match.index;
 	}
 	if (insertAt !== -1) {
-		const before = content.slice(0, insertAt).replace(/\s+$/, '');
+		const before = content.slice(0, insertAt).trimEnd();
 		const after = content.slice(insertAt).replace(/^\s*/, '');
 		return `${before}\n\n${section}\n\n${after}\n`;
 	}
@@ -1684,9 +1695,9 @@ export function inferAssetExtension(
 
 	try {
 		const pathname = new URL(asset.url).pathname.toLowerCase();
-		const m = pathname.match(/\.([a-z0-9]{2,6})$/);
-		if (m) {
-			return m[1];
+		const ext = pathname.match(/\.([a-z0-9]{2,6})$/)?.[1];
+		if (ext !== undefined) {
+			return ext;
 		}
 	} catch {
 		// ignore parse failures and use fallbacks below

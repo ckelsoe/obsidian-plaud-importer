@@ -39,6 +39,7 @@ import {
 	type PlaudHttpResponse,
 	type PlaudTokenProvider,
 } from './plaud-client-re';
+import { trimTrailingChars } from './text-trim';
 
 const DEFAULT_PAGE_SIZE = 300;
 const DEFAULT_SCOPE_TYPE = 'workspace';
@@ -219,9 +220,9 @@ export class PlaudV4Client implements PlaudClient {
 	 * the bearer is attached) if the host is not an https plaud.ai origin.
 	 */
 	private resolveBaseUrl(): string {
-		return assertTrustedPlaudHost(this.baseUrlProvider()).replace(
-			/\/+$/,
-			'',
+		return trimTrailingChars(
+			assertTrustedPlaudHost(this.baseUrlProvider()),
+			'/',
 		);
 	}
 
@@ -339,19 +340,22 @@ export class PlaudV4Client implements PlaudClient {
 		return { recordings: out, nextCursor };
 	}
 
-	async getFolderCatalog(): Promise<readonly PlaudFolder[]> {
+	getFolderCatalog(): Promise<readonly PlaudFolder[]> {
 		// Best-effort: v4 folders ride on each recording's parent_folder rather
 		// than a flat catalog endpoint, so this returns what listing discovered.
 		// If no listing has run yet it is empty, matching the interface contract
 		// that a missing catalog degrades to "no folders resolved".
-		const catalog: PlaudFolder[] = [];
-		for (const [id, name] of this.folderNamesForScope(
-			this.baseUrlProvider(),
-			this.workspaceIdProvider(),
-		)) {
-			catalog.push({ id, name });
-		}
-		return catalog;
+		// Deferred so a throw surfaces as a rejection, as it did when async.
+		return Promise.resolve().then(() => {
+			const catalog: PlaudFolder[] = [];
+			for (const [id, name] of this.folderNamesForScope(
+				this.baseUrlProvider(),
+				this.workspaceIdProvider(),
+			)) {
+				catalog.push({ id, name });
+			}
+			return catalog;
+		});
 	}
 
 	/**
@@ -1138,7 +1142,7 @@ function resolveLocalTimezone(): string {
  * non-https scheme or a host outside that allowlist. Returns the URL unchanged
  * on success so it can be used inline.
  */
-export function assertTrustedPlaudHost(baseUrl: string): string {
+function assertTrustedPlaudHost(baseUrl: string): string {
 	let parsed: URL;
 	try {
 		parsed = new URL(baseUrl);
@@ -1246,6 +1250,74 @@ function readStringMap(value: unknown): Record<string, string> {
 }
 
 /**
+ * Replace every Markdown link or image `[alt](target)` / `![alt](target)` in
+ * `text` with `replace(whole, alt, target)`. A linear scan that matches exactly
+ * what `/!?\[([^\]]*)\]\(([^)\s]+)\)/g` matched: the alt text runs to the first
+ * `]` (it may contain `[`), and the target is a non-empty run with no `)` or
+ * whitespace, closed by `)`. The regex form backtracks super-linearly.
+ */
+function replaceMarkdownLinks(
+	text: string,
+	replace: (whole: string, alt: string, target: string) => string,
+): string {
+	let out = '';
+	let copied = 0;
+	let pos = 0;
+	// The last scanned run of target characters, [runStart, runEnd). Candidate
+	// targets only move rightward, and a run ends at the same index wherever in
+	// it a scan starts, so reusing it keeps the whole pass linear.
+	let runStart = -1;
+	let runEnd = -1;
+	while (pos < text.length) {
+		const bang = text.charAt(pos) === '!' && text.charAt(pos + 1) === '[';
+		const open = bang ? pos + 1 : pos;
+		if (text.charAt(open) !== '[') {
+			pos++;
+			continue;
+		}
+		const close = text.indexOf(']', open + 1);
+		if (close < 0) {
+			break;
+		}
+		let targetEnd = close + 2;
+		if (text.charAt(close + 1) === '(') {
+			if (targetEnd >= runStart && targetEnd <= runEnd) {
+				targetEnd = runEnd;
+			} else {
+				runStart = targetEnd;
+				while (
+					targetEnd < text.length &&
+					text.charAt(targetEnd) !== ')' &&
+					text.charAt(targetEnd).trim() !== ''
+				) {
+					targetEnd++;
+				}
+				runEnd = targetEnd;
+			}
+		}
+		if (
+			text.charAt(close + 1) !== '(' ||
+			targetEnd === close + 2 ||
+			text.charAt(targetEnd) !== ')'
+		) {
+			// Every `[` before `close` shares this `]` and fails the same way.
+			pos = close + 1;
+			continue;
+		}
+		const end = targetEnd + 1;
+		out += text.slice(copied, pos);
+		out += replace(
+			text.slice(pos, end),
+			text.slice(open + 1, close),
+			text.slice(close + 2, targetEnd),
+		);
+		copied = end;
+		pos = end;
+	}
+	return out + text.slice(copied);
+}
+
+/**
  * Rewrite v4 summary image markers to real image embeds.
  *
  * The v4 summary body does not carry image bytes or even a real image URL. It
@@ -1264,8 +1336,8 @@ export function embedV4SummaryImages(
 	if (Object.keys(relationContentMapping).length === 0) {
 		return summary;
 	}
-	return summary.replace(
-		/!?\[([^\]]*)\]\(([^)\s]+)\)/g,
+	return replaceMarkdownLinks(
+		summary,
 		(whole: string, alt: string, target: string): string => {
 			const idMatch = /c_[0-9a-f]{32}/i.exec(target);
 			if (idMatch === null) {

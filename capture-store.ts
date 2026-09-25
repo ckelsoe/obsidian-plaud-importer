@@ -663,20 +663,21 @@ export class CaptureStore<S extends CaptureSettings> {
 			// there is nothing to choose: store it unverified, which is what
 			// every release before 0.35.0 did, so an offline reconnect still
 			// works.
-			if (selection.usable.length !== 1) {
+			const only = selection.usable[0];
+			if (selection.usable.length !== 1 || only === undefined) {
 				return { stored: false, message: DEEP_LINK_UNREACHABLE_NOTICE };
 			}
 			// Unreachable means nothing was proven, so no redirect was observed
 			// either; the surface's own discovered region is the best available.
 			return this.describeCaptureOutcome(
 				await this.storeAccessToken(
-					selection.usable[0],
+					only,
 					signInMethod,
 					discoveredBaseUrl,
 					false,
 					stillOwns,
 					v4Scope,
-					resolveRefresh(selection.usable[0]),
+					resolveRefresh(only),
 				),
 				DEEP_LINK_UNVERIFIED_NOTICE,
 			);

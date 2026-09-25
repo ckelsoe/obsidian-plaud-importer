@@ -51,3 +51,7 @@ GeminiReview.md
 
 # Internal documentation
 internal-docs/
+
+# Stryker mutation testing
+.stryker-tmp
+reports/mutation

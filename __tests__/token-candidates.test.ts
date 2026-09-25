@@ -29,15 +29,13 @@ import {
 	TOKEN_DEEP_LINK_BASE,
 	type StoredEntry,
 } from '../token-candidates';
+import { asyncResult } from './helpers/async-result';
+import { at, defined } from './helpers/checked';
 
 // Same fixture construction as plaud-token.test.ts: the helpers read unverified
 // claims, so an unsigned token with a dummy signature segment is faithful.
 function b64url(obj: unknown): string {
-	return Buffer.from(JSON.stringify(obj))
-		.toString('base64')
-		.replace(/\+/g, '-')
-		.replace(/\//g, '_')
-		.replace(/=+$/, '');
+	return Buffer.from(JSON.stringify(obj)).toString('base64url');
 }
 function makeJwt(header: unknown, payload: unknown): string {
 	return `${b64url(header)}.${b64url(payload)}.sig`;
@@ -45,6 +43,13 @@ function makeJwt(header: unknown, payload: unknown): string {
 
 const NOW_MS = 1_780_000_000_000; // 2026-05-28
 const FUTURE_EXP = 1_800_000_000; // seconds → 2027-01-15, after NOW_MS
+
+// A web workspace token (typ WT) for workspace `ws_<n>`.
+const workspaceTokenFor = (n: number): string =>
+	makeJwt(
+		{ alg: 'HS256', typ: 'WT' },
+		{ client_id: 'web', exp: FUTURE_EXP, wid: `ws_${n}` },
+	);
 const PAST_EXP = 1_770_000_000; // seconds → 2026-02-01, before NOW_MS
 
 // The au-coco / treyb shape: a user token under the `token` key.
@@ -131,7 +136,7 @@ const V4_STORAGE: Record<string, string> = {
 };
 
 function entries(map: Record<string, string>): StoredEntry[] {
-	return Object.keys(map).map((key) => ({ key, value: map[key] }));
+	return Object.keys(map).map((key) => ({ key, value: defined(map[key]) }));
 }
 
 describe('collectTokenCandidates', () => {
@@ -627,9 +632,10 @@ describe('selectWorkingCandidate', () => {
 		const probed: string[] = [];
 		const result = await selectWorkingCandidate(
 			[USER_TOKEN, WORKSPACE_TOKEN],
-			async (token) => {
-				probed.push(token);
-			},
+			(token) =>
+				asyncResult(() => {
+					probed.push(token);
+				}),
 			NOW_MS,
 		);
 		expect(result.outcome).toBe('selected');
@@ -644,12 +650,13 @@ describe('selectWorkingCandidate', () => {
 		const probed: string[] = [];
 		const result = await selectWorkingCandidate(
 			[REVOKED_LONG_TOKEN, WORKSPACE_TOKEN],
-			async (token) => {
-				probed.push(token);
-				if (token === REVOKED_LONG_TOKEN) {
-					inBand(-3900);
-				}
-			},
+			(token) =>
+				asyncResult(() => {
+					probed.push(token);
+					if (token === REVOKED_LONG_TOKEN) {
+						inBand(-3900);
+					}
+				}),
 			NOW_MS,
 		);
 		expect(result.outcome).toBe('selected');
@@ -660,7 +667,7 @@ describe('selectWorkingCandidate', () => {
 	it('reports all-rejected when every candidate is refused', async () => {
 		const result = await selectWorkingCandidate(
 			[USER_TOKEN, WORKSPACE_TOKEN],
-			async () => rejected(),
+			() => asyncResult(() => rejected()),
 			NOW_MS,
 		);
 		expect(result.outcome).toBe('all-rejected');
@@ -673,10 +680,11 @@ describe('selectWorkingCandidate', () => {
 		const boom = new PlaudApiError('Plaud API network error: offline');
 		const result = await selectWorkingCandidate(
 			[USER_TOKEN, WORKSPACE_TOKEN],
-			async (token) => {
-				probed.push(token);
-				throw boom;
-			},
+			(token) =>
+				asyncResult(() => {
+					probed.push(token);
+					throw boom;
+				}),
 			NOW_MS,
 		);
 		expect(result.outcome).toBe('unreachable');
@@ -690,9 +698,10 @@ describe('selectWorkingCandidate', () => {
 		const probed: string[] = [];
 		const result = await selectWorkingCandidate(
 			[PROFILE_JWT, REFRESH_TOKEN, EXPIRED_TOKEN, USER_TOKEN],
-			async (token) => {
-				probed.push(token);
-			},
+			(token) =>
+				asyncResult(() => {
+					probed.push(token);
+				}),
 			NOW_MS,
 		);
 		expect(probed).toEqual([USER_TOKEN]);
@@ -700,7 +709,7 @@ describe('selectWorkingCandidate', () => {
 	});
 
 	it('reports none-usable without probing when nothing passes the guard', async () => {
-		const probe = jest.fn(async () => undefined);
+		const probe = jest.fn(() => Promise.resolve(undefined));
 		const result = await selectWorkingCandidate(
 			[PROFILE_JWT, REFRESH_TOKEN],
 			probe,
@@ -738,7 +747,9 @@ describe('SIGN_IN_BOOKMARKLET', () => {
 			},
 			key: (i: number): string | null => keys[i] ?? null,
 			getItem: (k: string): string | null =>
-				Object.prototype.hasOwnProperty.call(map, k) ? map[k] : null,
+				Object.prototype.hasOwnProperty.call(map, k)
+					? (map[k] ?? null)
+					: null,
 		};
 		const location = {
 			hostname: options.hostname ?? 'web.plaud.ai',
@@ -965,7 +976,7 @@ describe('SIGN_IN_BOOKMARKLET', () => {
 		expect(
 			selectRefreshTokenForWorkspace(
 				parseRefreshCandidates(params),
-				parseTokenCandidates(params)[0],
+				at(parseTokenCandidates(params), 0),
 				NOW_MS,
 			),
 		).toBe(V4_REFRESH);
@@ -1011,11 +1022,7 @@ describe('SIGN_IN_BOOKMARKLET', () => {
 		// The WT and WRT share one traversal in the bookmarklet. If it stopped at
 		// the access-token cap it would never reach a refresh token sitting behind
 		// five access tokens, and the v4 session would silently lose renewal.
-		const smallWt = (n: number): string =>
-			makeJwt(
-				{ alg: 'HS256', typ: 'WT' },
-				{ client_id: 'web', exp: FUTURE_EXP, wid: `ws_${n}` },
-			);
+		const smallWt = workspaceTokenFor;
 		const map: Record<string, string> = {
 			pld_a: smallWt(1),
 			pld_b: smallWt(2),
@@ -1039,11 +1046,7 @@ describe('SIGN_IN_BOOKMARKLET', () => {
 		// The active workspace is third. Without hoisting, the small refresh cap
 		// fills with the first two workspaces and the active workspace's WRT is
 		// discarded, disabling renewal even though its WT is the one selected.
-		const wt = (n: number): string =>
-			makeJwt(
-				{ alg: 'HS256', typ: 'WT' },
-				{ client_id: 'web', exp: FUTURE_EXP, wid: `ws_${n}` },
-			);
+		const wt = workspaceTokenFor;
 		const wrt = (n: number): string =>
 			makeJwt(
 				{ alg: 'HS256', typ: 'WRT' },
@@ -1067,9 +1070,9 @@ describe('SIGN_IN_BOOKMARKLET', () => {
 		expect(tokens[0]).toBe(wt(3));
 		expect(refresh).toContain(wrt(3));
 		// So the store keeps the active workspace's WRT for the selected WT.
-		expect(selectRefreshTokenForWorkspace(refresh, tokens[0], NOW_MS)).toBe(
-			wrt(3),
-		);
+		expect(
+			selectRefreshTokenForWorkspace(refresh, at(tokens, 0), NOW_MS),
+		).toBe(wrt(3));
 	});
 
 	it('never dead-ends: a miss offers a diagnostic instead of only an alert', () => {
@@ -1084,7 +1087,7 @@ describe('SIGN_IN_BOOKMARKLET', () => {
 		expect(run.href).toBeNull();
 		expect(run.alerts).toEqual([]);
 		expect(run.prompts).toHaveLength(1);
-		const payload = run.prompts[0].value;
+		const payload = at(run.prompts, 0).value;
 		expect(payload.startsWith('plaud-capture-miss')).toBe(true);
 		// Shapes only. The profile JWT carries {email,id,name} and the diagnostic
 		// is something users paste into public issues, so no token segment and no
@@ -1103,7 +1106,7 @@ describe('SIGN_IN_BOOKMARKLET', () => {
 			{ sub: 'u1', client_id: 'web' },
 		);
 		const run = runBookmarklet({ pld_odd: weird });
-		const payload = run.prompts[0].value;
+		const payload = at(run.prompts, 0).value;
 		expect(payload).not.toContain('tenant-42');
 		expect(payload).toContain('other');
 	});
@@ -1117,8 +1120,8 @@ describe('SIGN_IN_BOOKMARKLET', () => {
 			token: USER_TOKEN,
 		});
 		expect(run.prompts).toHaveLength(1);
-		expect(run.prompts[0].value).toBe(run.href);
-		expect(parseClipboardTokens(run.prompts[0].value)).toEqual([
+		expect(at(run.prompts, 0).value).toBe(run.href);
+		expect(parseClipboardTokens(at(run.prompts, 0).value)).toEqual([
 			USER_TOKEN,
 			WORKSPACE_TOKEN,
 		]);
@@ -1132,9 +1135,9 @@ describe('SIGN_IN_BOOKMARKLET', () => {
 		expect(runBookmarklet(map).href).not.toBeNull();
 		const later = runBookmarklet(map, { nowMs: (FUTURE_EXP + 1) * 1000 });
 		expect(later.href).toBeNull();
-		expect(later.prompts[0].value.startsWith('plaud-capture-miss')).toBe(
-			true,
-		);
+		expect(
+			at(later.prompts, 0).value.startsWith('plaud-capture-miss'),
+		).toBe(true);
 	});
 
 	it('stays silent when the deep link took focus away', () => {

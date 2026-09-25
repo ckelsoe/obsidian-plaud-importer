@@ -45,7 +45,7 @@ import {
 } from './plaud-token';
 
 /** localStorage key the Plaud web app uses on the accounts that have one. */
-export const PRIMARY_TOKEN_KEY = 'token';
+const PRIMARY_TOKEN_KEY = 'token';
 
 /** Custom-protocol URL the bookmarklet navigates to. */
 export const TOKEN_DEEP_LINK_BASE = 'obsidian://plaud-importer-token';
@@ -68,7 +68,7 @@ export const MAX_COLLECTED_CANDIDATES = 5;
  * cap because the handler is a trust boundary: the URL can come from anywhere,
  * so it enforces its own limit rather than trusting the sender's.
  */
-export const MAX_DEEP_LINK_CANDIDATES = 8;
+const MAX_DEEP_LINK_CANDIDATES = 8;
 
 /**
  * Longest value considered as a candidate at all. Real Plaud JWTs run a few
@@ -83,9 +83,9 @@ export const MAX_CANDIDATE_LENGTH = 4096;
  * depth and a total node budget keep a hostile or merely huge cache from
  * turning a bookmark click into a long pause.
  */
-export const MAX_CONTAINER_LENGTH = 262144;
+const MAX_CONTAINER_LENGTH = 262144;
 export const MAX_WALK_DEPTH = 6;
-export const MAX_WALK_NODES = 4000;
+const MAX_WALK_NODES = 4000;
 
 /**
  * Deep-link URL budget. Windows hands a custom-protocol URL to the shell,
@@ -507,16 +507,7 @@ export function parseTokenCandidates(params: {
 	readonly [key: string]: unknown;
 }): string[] {
 	const out: string[] = [];
-	const push = (raw: unknown): void => {
-		if (typeof raw !== 'string' || raw.length > MAX_CANDIDATE_LENGTH) {
-			return;
-		}
-		const token = normalizeCandidate(raw);
-		if (token === null || out.includes(token)) {
-			return;
-		}
-		out.push(token);
-	};
+	const push = candidatePusher(out);
 	push(params.token);
 	const rawList = params.tokens;
 	if (
@@ -539,6 +530,24 @@ export function parseTokenCandidates(params: {
 }
 
 /**
+ * Returns a push function that adds a raw deep-link value to `out` when it is a
+ * string within the length bound, normalizes to a token, and is not already
+ * present. Shared by the access-token and refresh-token parsers.
+ */
+function candidatePusher(out: string[]): (raw: unknown) => void {
+	return (raw) => {
+		if (typeof raw !== 'string' || raw.length > MAX_CANDIDATE_LENGTH) {
+			return;
+		}
+		const token = normalizeCandidate(raw);
+		if (token === null || out.includes(token)) {
+			return;
+		}
+		out.push(token);
+	};
+}
+
+/**
  * Parses the deep link's `refresh` parameter into an ordered, deduplicated list
  * of candidate v4 workspace refresh tokens (typ WRT). Trust boundary, exactly
  * like parseTokenCandidates: an `obsidian://` URL can be fired by any page, so
@@ -551,16 +560,7 @@ export function parseRefreshCandidates(params: {
 	readonly [key: string]: unknown;
 }): string[] {
 	const out: string[] = [];
-	const push = (raw: unknown): void => {
-		if (typeof raw !== 'string' || raw.length > MAX_CANDIDATE_LENGTH) {
-			return;
-		}
-		const token = normalizeCandidate(raw);
-		if (token === null || out.includes(token)) {
-			return;
-		}
-		out.push(token);
-	};
+	const push = candidatePusher(out);
 	const rawList = params.refresh;
 	if (
 		typeof rawList === 'string' &&
@@ -707,7 +707,7 @@ export function isCredentialRejection(err: unknown): boolean {
 	return false;
 }
 
-export type CandidateOutcome =
+type CandidateOutcome =
 	/** A candidate was accepted by Plaud; `token` holds it. */
 	| 'selected'
 	/** Nothing in the list passed the local capture guard. */

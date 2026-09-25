@@ -6,6 +6,7 @@ import {
 	MAX_COLLECTED_CANDIDATES,
 	collectTokenCandidates,
 } from '../token-candidates';
+import { at, defined } from './helpers/checked';
 
 // Executes the SHIPPED probe string against fixtures, the same way the
 // bookmarklet parity tests do. The probe cannot import the shared collector (it
@@ -14,17 +15,25 @@ import {
 // capture path that 1092 passing tests missed for exactly that reason.
 
 function b64url(obj: unknown): string {
-	return Buffer.from(JSON.stringify(obj))
-		.toString('base64')
-		.replace(/\+/g, '-')
-		.replace(/\//g, '_')
-		.replace(/=+$/, '');
+	return Buffer.from(JSON.stringify(obj)).toString('base64url');
 }
 function makeJwt(header: unknown, payload: unknown): string {
 	return `${b64url(header)}.${b64url(payload)}.sig`;
 }
 
 const FUTURE_EXP = Math.floor(Date.now() / 1000) + 24 * 3600;
+
+// A web workspace token (typ WT) for workspace `ws_<n>`.
+const workspaceTokenFor = (n: number): string =>
+	makeJwt(
+		{ alg: 'HS256', typ: 'WT' },
+		{
+			sub: 'u1',
+			exp: FUTURE_EXP,
+			client_id: 'web',
+			wid: `ws_${n}`,
+		},
+	);
 const PAST_EXP = Math.floor(Date.now() / 1000) - 3600;
 
 // Shapes read first-party off a real account on 2026-07-26. The workspace token
@@ -105,7 +114,9 @@ function runProbe(
 			},
 			key: (i: number): string | null => keys[i] ?? null,
 			getItem: (k: string): string | null =>
-				Object.prototype.hasOwnProperty.call(map, k) ? map[k] : null,
+				Object.prototype.hasOwnProperty.call(map, k)
+					? (map[k] ?? null)
+					: null,
 		},
 		JSON,
 		// The probe applies the claim guard in-page now, so the sandbox has to
@@ -160,7 +171,7 @@ describe('PROBE_JS on a multi-workspace account', () => {
 
 	it('still degrades to plain collection when the hint is missing', () => {
 		const noHint = {
-			'pld_abc:workspaceList': MULTI['pld_abc:workspaceList'],
+			'pld_abc:workspaceList': defined(MULTI['pld_abc:workspaceList']),
 		};
 		expect(usableFrom(runProbe(noHint)).length).toBeGreaterThan(0);
 	});
@@ -223,11 +234,7 @@ describe('PROBE_JS candidate cap', () => {
 		// arrive off a hostile or corrupt localStorage entry.
 		const infinite = `${b64url({ alg: 'HS256', typ: 'WT' })}.${Buffer.from(
 			'{"sub":"u1","client_id":"web","exp":1e400}',
-		)
-			.toString('base64')
-			.replace(/\+/g, '-')
-			.replace(/\//g, '_')
-			.replace(/=+$/, '')}.sig`;
+		).toString('base64url')}.sig`;
 		expect(isUsableUserToken(infinite)).toBe(false);
 		expect(runProbe({ 'pld_abc:odd': infinite }).tokens).toHaveLength(0);
 	});
@@ -240,11 +247,10 @@ describe('PROBE_JS candidate cap', () => {
 		// probe returns) would see nothing usable and poll forever.
 		const decoyed: Record<string, string> = {};
 		for (let i = 0; i < MAX_COLLECTED_CANDIDATES + 3; i++) {
-			decoyed[`pld_abc:decoy${i}`] = [
-				REFRESH_TOKEN,
-				PROFILE_JWT,
-				EXPIRED_TOKEN,
-			][i % 3];
+			decoyed[`pld_abc:decoy${i}`] = at(
+				[REFRESH_TOKEN, PROFILE_JWT, EXPIRED_TOKEN],
+				i % 3,
+			);
 		}
 		decoyed['pld_abc:workspaceList'] = JSON.stringify([
 			{ workspaceId: 'ws_clF1vOqcHS', workspaceToken: WORKSPACE_TOKEN },
@@ -503,16 +509,7 @@ describe('PROBE_JS v4 refresh token capture', () => {
 				{ alg: 'HS256', typ: 'WRT' },
 				{ sub: 'u1', exp: FUTURE_EXP + 700 * 3600, wid: `ws_${n}` },
 			);
-		const tokenFor = (n: number): string =>
-			makeJwt(
-				{ alg: 'HS256', typ: 'WT' },
-				{
-					sub: 'u1',
-					exp: FUTURE_EXP,
-					client_id: 'web',
-					wid: `ws_${n}`,
-				},
-			);
+		const tokenFor = workspaceTokenFor;
 		const out = runProbe({
 			'pld_u1:currentWorkspaceId': '"ws_3"',
 			'pld_u1:workspaceTokens': JSON.stringify({
@@ -531,16 +528,7 @@ describe('PROBE_JS v4 refresh token capture', () => {
 	it('captures a refresh token even when the access-token cap fills first', () => {
 		// No currentWorkspaceId, so no hoist: the shared walk must keep scanning
 		// past the access-token cap to reach the refresh token behind it.
-		const wt = (n: number): string =>
-			makeJwt(
-				{ alg: 'HS256', typ: 'WT' },
-				{
-					sub: 'u1',
-					exp: FUTURE_EXP,
-					client_id: 'web',
-					wid: `ws_${n}`,
-				},
-			);
+		const wt = workspaceTokenFor;
 		const map: Record<string, string> = {
 			'pld_a:t': wt(1),
 			'pld_b:t': wt(2),

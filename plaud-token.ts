@@ -56,13 +56,19 @@ function jwtSegments(value: string): [string, string, string] | null {
 		.replace(/^bearer\s+/i, '')
 		.trim();
 	const parts = token.split('.');
-	if (parts.length !== 3) {
+	const [header, payload, signature] = parts;
+	if (
+		parts.length !== 3 ||
+		header === undefined ||
+		payload === undefined ||
+		signature === undefined
+	) {
 		return null;
 	}
 	if (!parts.every((part) => B64URL_SEGMENT.test(part))) {
 		return null;
 	}
-	return [parts[0], parts[1], parts[2]];
+	return [header, payload, signature];
 }
 
 /** Decodes the JWT payload, or null when the value is not a decodable JWT. */
@@ -94,7 +100,7 @@ function jwtHeaderTyp(value: string): string | null {
 }
 
 /** Header `typ` of Plaud's v2 workspace token, the credential the data API takes. */
-export const WORKSPACE_TOKEN_TYP = 'WT';
+const WORKSPACE_TOKEN_TYP = 'WT';
 
 /**
  * True when the value is a workspace token (header `typ: WT`).

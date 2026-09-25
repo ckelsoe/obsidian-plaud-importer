@@ -1,6 +1,8 @@
 import type { PlaudRecordingId, Recording } from '../plaud-client';
 import type { ImportedIndex, ImportedRecord } from '../vault-index';
 import { runAutoSyncTick, type AutoSyncTickDeps } from '../auto-sync-runner';
+import { asyncResult } from './helpers/async-result';
+import { at } from './helpers/checked';
 
 function emptyIndex(): ImportedIndex {
 	return { byId: new Map(), byInstant: new Map(), byDay: new Map() };
@@ -50,19 +52,24 @@ function deps(
 		maxImportsPerTick: over.maxImportsPerTick ?? 100,
 		maxPagesPerTick: over.maxPagesPerTick ?? 10,
 		ignoredIds: over.ignoredIds,
-		listPage: async (skip) => {
-			listSkips.push(skip);
-			const pageIndex = Math.floor(skip / (over.pageSize ?? 10));
-			return pages[pageIndex] ?? [];
-		},
+		listPage: (skip) =>
+			asyncResult(() => {
+				listSkips.push(skip);
+				const pageIndex = Math.floor(skip / (over.pageSize ?? 10));
+				return pages[pageIndex] ?? [];
+			}),
 		buildIndex: () => over.index ?? emptyIndex(),
-		importCandidates: async (newRecs, changedRecs) => {
-			importCalls.push({
-				newIds: newRecs.map((r) => r.id),
-				changedIds: changedRecs.map((r) => r.id),
-			});
-			return { imported: newRecs.length, updated: changedRecs.length };
-		},
+		importCandidates: (newRecs, changedRecs) =>
+			asyncResult(() => {
+				importCalls.push({
+					newIds: newRecs.map((r) => r.id),
+					changedIds: changedRecs.map((r) => r.id),
+				});
+				return {
+					imported: newRecs.length,
+					updated: changedRecs.length,
+				};
+			}),
 	};
 	return { deps: d, importCalls, listSkips };
 }
@@ -121,7 +128,7 @@ describe('runAutoSyncTick', () => {
 		expect(result.reachedUpToDate).toBe(true); // page 3 yielded zero candidates
 		expect(result.pagesScanned).toBe(3);
 		expect(listSkips).toEqual([0, 2, 4]); // never asked for page 4
-		expect(importCalls[0].newIds).toEqual(['a', 'b', 'c']);
+		expect(at(importCalls, 0).newIds).toEqual(['a', 'b', 'c']);
 	});
 
 	it('caps by maxPagesPerTick on a cold index (nothing up to date)', async () => {
@@ -158,7 +165,7 @@ describe('runAutoSyncTick', () => {
 		const result = await runAutoSyncTick(d);
 		expect(result.cappedByImports).toBe(true);
 		// only the first 3 accumulated
-		expect(importCalls[0].newIds).toEqual(['a', 'b', 'c']);
+		expect(at(importCalls, 0).newIds).toEqual(['a', 'b', 'c']);
 	});
 
 	it('does not call importCandidates when there is nothing to do', async () => {
@@ -183,7 +190,7 @@ describe('runAutoSyncTick', () => {
 			pages: [[rec('junk', 900), rec('keep', 800)]],
 		});
 		const result = await runAutoSyncTick(d);
-		expect(importCalls[0].newIds).toEqual(['keep']);
+		expect(at(importCalls, 0).newIds).toEqual(['keep']);
 		expect(result.imported).toBe(1);
 	});
 
