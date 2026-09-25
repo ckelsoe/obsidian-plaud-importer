@@ -6,6 +6,8 @@ All notable changes to Plaud Importer will be documented in this file.
 
 ## [Unreleased]
 
+## [0.43.0] - 2026-09-25
+
 ### Fixed
 
 - **Plaud 3.0 accounts can sign in again (#143).** Plaud now gives 3.0 accounts the same kind of workspace token as 4.0 accounts, so the plugin took every such sign-in for a 4.0 account, checked it only against the 4.0 service, and reported that Plaud rejected every token. Sign-in now tries both platforms and remembers the one Plaud accepts.
