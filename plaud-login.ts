@@ -236,6 +236,33 @@ export const PROBE_JS = `(() => {
 					}
 				}
 			} catch (e) {}
+			// The 4.0 app web.plaud.ai serves (build of 2026-09-23) keeps the
+			// session under fixed keys instead: pld_session.workspace holds
+			// {list, currentId} and pld_session.tokens holds
+			// {byWsId: {<ws>: {token, refreshToken}}}. Same hoist, same domain
+			// fallback, read only when the older keys found no workspace.
+			try {
+				if (!wsId) {
+					var sw = JSON.parse(localStorage.getItem('pld_session.workspace'));
+					if (sw && typeof sw === 'object' && typeof sw.currentId === 'string' && sw.currentId) {
+						wsId = sw.currentId;
+						var sl = sw.list;
+						if (sl && typeof sl === 'object') {
+							for (var se in sl) {
+								if (!Object.prototype.hasOwnProperty.call(sl, se)) { continue; }
+								var sEntry = sl[se];
+								if (sEntry && typeof sEntry === 'object' && sEntry.workspaceId === wsId && typeof sEntry.domain === 'string' && sEntry.domain) { wsDomain = sEntry.domain; }
+							}
+						}
+						var stok = JSON.parse(localStorage.getItem('pld_session.tokens'));
+						var sby = stok && typeof stok === 'object' ? stok.byWsId : null;
+						if (sby && typeof sby === 'object' && sby[wsId] && typeof sby[wsId] === 'object') {
+							add(sby[wsId].token);
+							add(sby[wsId].refreshToken);
+						}
+					}
+				}
+			} catch (e) {}
 			for (var i = 0; i < localStorage.length; i++) {
 				var k = localStorage.key(i);
 				if (k === null || k === 'token') { continue; }

@@ -11,6 +11,7 @@
  */
 import {
 	App,
+	type DropdownComponent,
 	Notice,
 	type Plugin,
 	PluginSettingTab,
@@ -56,6 +57,12 @@ import {
 import type { SignInMethod } from './reconnect-routing';
 import { describeSignInMethod } from './reconnect-routing';
 import type { BufferedDebugLogger } from './debug-logger';
+import {
+	isPlaudVersionOverride,
+	plaudVersionLabel,
+	type PlaudVersion,
+	type PlaudVersionOverride,
+} from './plaud-version';
 
 /**
  * What the tab needs from the plugin, named one member at a time rather than
@@ -77,6 +84,9 @@ export interface SettingsTabHost extends Plugin {
 	readStoredTokenValue(): string;
 	testPlaudConnection(): Promise<{ ok: boolean; message: string }>;
 	loadPlaudDevices(): Promise<readonly StoredDevice[]>;
+	plaudVersionStatus(): { auto: PlaudVersion; detected: PlaudVersion | '' };
+	setPlaudVersionOverride(value: PlaudVersionOverride): Promise<void>;
+	syncClientToPlaudVersion(): void;
 	reauthenticate(): Promise<ReauthOutcome>;
 	pasteTokenFromClipboard(canStore?: () => boolean): Promise<boolean>;
 	clearSignIn(): Promise<{ sessionCleared: boolean }>;
@@ -407,6 +417,10 @@ const DATETIME_TEMPLATE_EXAMPLES_HEADING = 'Examples:';
 const DATETIME_TEMPLATE_FOOTNOTE =
 	'Applies to new imports. A note you already imported keeps its datetime property until a re-import overwrites it, and then the property is rewritten from this template, or removed if the template is empty.';
 
+// Held in a const so both render paths show the same text.
+const PLAUD_VERSION_DESC =
+	'Plaud runs two platforms, Plaud 3.0 and Plaud 4.0. Auto detects which one your account is on each time you sign in, and switches when Plaud moves your account. Leave it on Auto unless support asks you to change it.';
+
 // Rendered in two places (the settings tab and the declarative registry), which
 // previously held two verbatim copies of this sentence. One definition so they
 // cannot drift, which matters here because the behavior it describes changed:
@@ -444,6 +458,9 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 	// secret picker to show a just-stored token as the selected secret. Null
 	// until the token row has rendered.
 	private tokenRefresh: (() => void) | null = null;
+	// Set by renderPlaudVersionControl() so a sign-in, a sign-out, or a detected
+	// account move can redraw the version row. Null until that row has rendered.
+	private versionRefresh: (() => void) | null = null;
 
 	constructor(app: App, plugin: SettingsTabHost) {
 		super(app, plugin);
@@ -459,6 +476,7 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 		}
 		this.signinRefresh = null;
 		this.tokenRefresh = null;
+		this.versionRefresh = null;
 		this.previewRefreshers.clear();
 		super.hide();
 	}
@@ -512,6 +530,9 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 		);
 		this.renderClearSignInControl(
 			this.makeSetting(containerEl, 'Clear sign-in', CLEAR_SIGN_IN_DESC),
+		);
+		this.renderPlaudVersionControl(
+			this.makeSetting(containerEl, 'Plaud version', PLAUD_VERSION_DESC),
 		);
 		this.renderPortalControl(
 			this.makeSetting(
@@ -876,6 +897,7 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 		this.plugin.settingsRefresh = () => {
 			this.signinRefresh?.();
 			this.tokenRefresh?.();
+			this.versionRefresh?.();
 		};
 		setting.addComponent((el) => {
 			// Rebuild the picker so it re-reads the secret list and reflects the
@@ -895,8 +917,16 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 						// token.
 						if (id !== CAPTURED_SECRET_ID) {
 							this.plugin.settings.signInMethod = '';
+							// Same for the detected Plaud version: it described
+							// the captured credential, not this one. Cleared, the
+							// version falls back to what this token itself shows
+							// until the next sign-in detects it.
+							this.plugin.settings.plaudDetectedVersion = '';
 						}
 						await this.plugin.saveSettings();
+						// The linked credential may be on the other platform.
+						this.plugin.syncClientToPlaudVersion();
+						this.versionRefresh?.();
 						// A freshly stored token is a resume trigger for a paused
 						// auto-sync.
 						this.plugin.resumeAutoSyncIfPaused();
@@ -1198,6 +1228,65 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 		renderList();
 	}
 
+	// The "Plaud version" dropdown (issue #143). Auto follows what the last
+	// sign-in detected and names it in the option label, so the user sees what
+	// is in use without changing anything. A pinned version is an escape hatch;
+	// when it disagrees with detection the status line says so.
+	private renderPlaudVersionControl(setting: Setting): void {
+		const statusEl = setting.descEl.createDiv({
+			cls: 'plaud-importer-version-status',
+		});
+		let dropdown: DropdownComponent | null = null;
+		const refresh = (): void => {
+			const { auto, detected } = this.plugin.plaudVersionStatus();
+			const signedIn = this.plugin.readStoredTokenValue().length > 0;
+			const override = this.plugin.settings.plaudVersionOverride;
+			if (dropdown !== null) {
+				const autoOption = dropdown.selectEl.querySelector(
+					'option[value="auto"]',
+				);
+				autoOption?.setText(
+					signedIn
+						? `Auto (${plaudVersionLabel(auto)})`
+						: 'Auto (not signed in yet)',
+				);
+				dropdown.setValue(override);
+			}
+			let status: string;
+			if (detected !== '') {
+				status = `Detected ${plaudVersionLabel(detected)}.`;
+			} else if (signedIn) {
+				status = `Not detected yet, so ${plaudVersionLabel(auto)} is assumed. Sign in again to detect it.`;
+			} else {
+				status = 'Detected when you sign in.';
+			}
+			const mismatch =
+				override !== 'auto' && detected !== '' && detected !== override;
+			if (mismatch) {
+				status += ` Set to ${plaudVersionLabel(override)}, but this account looks like ${plaudVersionLabel(detected)}. Imports may fail.`;
+			}
+			statusEl.setText(status);
+			statusEl.toggleClass('plaud-importer-version-mismatch', mismatch);
+		};
+		this.versionRefresh = refresh;
+		setting.addDropdown((dd) => {
+			dropdown = dd;
+			dd.addOption('auto', 'Auto');
+			dd.addOption('v3', plaudVersionLabel('v3'));
+			dd.addOption('v4', plaudVersionLabel('v4'));
+			// The <select> gets no accessible name from the row's text.
+			dd.selectEl.setAttribute('aria-label', 'Plaud version');
+			dd.onChange(async (value) => {
+				if (!isPlaudVersionOverride(value)) {
+					return;
+				}
+				await this.plugin.setPlaudVersionOverride(value);
+				refresh();
+			});
+		});
+		refresh();
+	}
+
 	private renderClearSignInControl(setting: Setting): void {
 		const resultEl = setting.descEl.createDiv({
 			cls: 'plaud-importer-clear-status',
@@ -1220,6 +1309,7 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 					new Notice('Plaud sign-in cleared.');
 					this.signinRefresh?.();
 					this.tokenRefresh?.();
+					this.versionRefresh?.();
 				} finally {
 					btn.setDisabled(false);
 				}
@@ -2042,6 +2132,13 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 						searchable: false,
 						render: (setting: Setting) =>
 							this.renderClearSignInControl(setting),
+					},
+					{
+						name: 'Plaud version',
+						desc: PLAUD_VERSION_DESC,
+						searchable: false,
+						render: (setting: Setting) =>
+							this.renderPlaudVersionControl(setting),
 					},
 					{
 						name: 'Sign-in portal',

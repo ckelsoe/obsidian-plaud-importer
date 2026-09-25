@@ -15,6 +15,7 @@ import type {
 	TranscriptPlacement,
 } from './note-writer';
 import type { SignInMethod } from './reconnect-routing';
+import type { PlaudVersion, PlaudVersionOverride } from './plaud-version';
 
 // Curated list of Lucide icon IDs offered in the "Ribbon icon" setting.
 // Each entry is a valid Lucide ID bundled with Obsidian's icon set. This
@@ -80,6 +81,16 @@ export interface PlaudImporterSettings {
 	// until the first sign-in captures them. Not surfaced in the settings UI.
 	plaudWorkspaceId: string;
 	plaudDeviceId: string;
+	// Which Plaud platform to talk to (issue #143). 'auto' (the default) follows
+	// plaudDetectedVersion; 'v3' or 'v4' pins one, as an escape hatch if
+	// detection guesses wrong. Surfaced as the "Plaud version" dropdown.
+	plaudVersionOverride: PlaudVersionOverride;
+	// The platform the last sign-in's probe found Plaud accepting, or '' when no
+	// sign-in has recorded one yet (an install upgraded from before detection
+	// shipped, until its next sign-in, and after Clear sign-in). Written atomically with the token by the
+	// capture store, and flipped to 'v4' when a 3.0 endpoint reports the account
+	// has moved to Plaud 4.0. Not user-editable.
+	plaudDetectedVersion: PlaudVersion | '';
 	// The Plaud portal the sign-in window loads. Defaults to the beta portal.
 	// A user on a different regional portal points the sign-in here, and the
 	// token, workspace, region, and API domain are all detected from whatever
@@ -246,6 +257,8 @@ export const DEFAULT_SETTINGS: PlaudImporterSettings = {
 	apiBaseUrl: 'https://api.plaud.ai',
 	plaudWorkspaceId: '',
 	plaudDeviceId: '',
+	plaudVersionOverride: 'auto',
+	plaudDetectedVersion: '',
 	signInPortalUrl: 'https://beta.plaud.ai',
 	outputFolder: 'Plaud',
 	subfolderTemplate: '{{YYYY}}/{{MM}}',

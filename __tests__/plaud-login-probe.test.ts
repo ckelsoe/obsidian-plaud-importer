@@ -34,6 +34,12 @@ const workspaceTokenFor = (n: number): string =>
 			wid: `ws_${n}`,
 		},
 	);
+// The matching workspace refresh token (typ WRT) for workspace `ws_<n>`.
+const workspaceRefreshTokenFor = (n: number): string =>
+	makeJwt(
+		{ alg: 'HS256', typ: 'WRT' },
+		{ sub: 'u1', exp: FUTURE_EXP + 700 * 3600, wid: `ws_${n}` },
+	);
 const PAST_EXP = Math.floor(Date.now() / 1000) - 3600;
 
 // Shapes read first-party off a real account on 2026-07-26. The workspace token
@@ -504,11 +510,7 @@ describe('PROBE_JS v4 refresh token capture', () => {
 		// The active workspace is third. Without hoisting, the generic walk fills
 		// the 2-slot refresh cap with the first two workspaces' tokens and the
 		// active one is lost, so the store would find no match and disable renewal.
-		const refreshFor = (n: number): string =>
-			makeJwt(
-				{ alg: 'HS256', typ: 'WRT' },
-				{ sub: 'u1', exp: FUTURE_EXP + 700 * 3600, wid: `ws_${n}` },
-			);
+		const refreshFor = workspaceRefreshTokenFor;
 		const tokenFor = workspaceTokenFor;
 		const out = runProbe({
 			'pld_u1:currentWorkspaceId': '"ws_3"',
@@ -543,5 +545,68 @@ describe('PROBE_JS v4 refresh token capture', () => {
 		const out = runProbe(map);
 		expect(out.tokens).toHaveLength(MAX_COLLECTED_CANDIDATES);
 		expect(out.refreshTokens?.length).toBeGreaterThan(0);
+	});
+});
+
+// The 4.0 app web.plaud.ai serves (build of 2026-09-23), read off a live
+// account on 2026-09-25: the session moved out of the pld_<uid>:* keys into
+// fixed pld_session.* keys, and none of the older keys exist.
+describe('PROBE_JS on the pld_session layout (web.plaud.ai 4.0)', () => {
+	const wt = workspaceTokenFor;
+	const wrt = workspaceRefreshTokenFor;
+	const layout = (active: number): Record<string, string> => ({
+		pld_loginMethod: 'email',
+		'pld_session.workspace': JSON.stringify({
+			epoch: 'e1',
+			list: {
+				'0': {
+					workspaceId: 'ws_1',
+					name: 'Personal',
+					domain: 'https://api.plaud.ai',
+				},
+				'1': {
+					workspaceId: 'ws_2',
+					name: 'Team',
+					domain: 'https://api-euc1.plaud.ai',
+				},
+			},
+			currentId: `ws_${active}`,
+		}),
+		'pld_session.tokens': JSON.stringify({
+			epoch: 'e1',
+			byWsId: {
+				ws_1: { token: wt(1), refreshToken: wrt(1) },
+				ws_2: { token: wt(2), refreshToken: wrt(2) },
+			},
+		}),
+		pld_DEVICE_ID: 'dev_1',
+	});
+
+	it('captures the active workspace, its token first, its refresh token, and its domain', () => {
+		const out = runProbe(layout(2));
+		expect(out.workspaceId).toBe('ws_2');
+		expect(at(usableFrom(out), 0)).toBe(wt(2));
+		expect(out.refreshTokens).toContain(wrt(2));
+		expect(out.domain).toBe('https://api-euc1.plaud.ai');
+		expect(out.deviceId).toBe('dev_1');
+	});
+
+	it('does not let the older keys be displaced when they exist', () => {
+		const both: Record<string, string> = {
+			...layout(2),
+			'pld_abc:currentWorkspaceId': 'ws_1',
+		};
+		expect(runProbe(both).workspaceId).toBe('ws_1');
+	});
+
+	it('survives a malformed pld_session value and still collects by walking', () => {
+		const out = runProbe({
+			'pld_session.workspace': '{not json',
+			'pld_session.tokens': JSON.stringify({
+				byWsId: { ws_1: { token: wt(1) } },
+			}),
+		});
+		expect(out.workspaceId).toBeNull();
+		expect(usableFrom(out)).toEqual([wt(1)]);
 	});
 });
