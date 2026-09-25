@@ -1263,6 +1263,11 @@ function replaceMarkdownLinks(
 	let out = '';
 	let copied = 0;
 	let pos = 0;
+	// The last scanned run of target characters, [runStart, runEnd). Candidate
+	// targets only move rightward, and a run ends at the same index wherever in
+	// it a scan starts, so reusing it keeps the whole pass linear.
+	let runStart = -1;
+	let runEnd = -1;
 	while (pos < text.length) {
 		const bang = text.charAt(pos) === '!' && text.charAt(pos + 1) === '[';
 		const open = bang ? pos + 1 : pos;
@@ -1276,12 +1281,18 @@ function replaceMarkdownLinks(
 		}
 		let targetEnd = close + 2;
 		if (text.charAt(close + 1) === '(') {
-			while (
-				targetEnd < text.length &&
-				text.charAt(targetEnd) !== ')' &&
-				text.charAt(targetEnd).trim() !== ''
-			) {
-				targetEnd++;
+			if (targetEnd >= runStart && targetEnd <= runEnd) {
+				targetEnd = runEnd;
+			} else {
+				runStart = targetEnd;
+				while (
+					targetEnd < text.length &&
+					text.charAt(targetEnd) !== ')' &&
+					text.charAt(targetEnd).trim() !== ''
+				) {
+					targetEnd++;
+				}
+				runEnd = targetEnd;
 			}
 		}
 		if (
