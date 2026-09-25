@@ -106,6 +106,7 @@ export default tseslint.config(
 		".stryker-tmp",
 		"reports",
 		"scripts/**",
+		".husky/**",
 		"*.mjs",
 		"*.js",
 		"*.json",

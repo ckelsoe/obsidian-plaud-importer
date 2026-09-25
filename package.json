@@ -14,7 +14,7 @@
 		"knip": "knip",
 		"type-coverage": "type-coverage",
 		"test:mutation": "stryker run",
-		"prepare": "husky"
+		"prepare": "node .husky/install.mjs"
 	},
 	"keywords": [
 		"obsidian",
