@@ -86,6 +86,10 @@ export const PROBE_JS = `(() => {
 		var domain = null;
 		var wsDomain = null;
 		var wsId = null;
+		// True once the legacy pld_<uid>:* keys held a USABLE access token for
+		// their own active workspace. A leftover currentWorkspaceId with no live
+		// token behind it is stale, and must not stop the pld_session read below.
+		var legacyHit = false;
 		var deviceId = null;
 		var h = String(location.hostname || '').toLowerCase().replace(/\\.$/, '');
 		var httpsOk = location.protocol === 'https:';
@@ -121,30 +125,33 @@ export const PROBE_JS = `(() => {
 				} catch (e) { return null; }
 			};
 			var add = function (v) {
-				if (typeof v !== 'string' || v.length > 4096) { return; }
+				if (typeof v !== 'string' || v.length > 4096) { return false; }
 				var t = v.trim().replace(/^bearer +/i, '').trim();
 				var p = t.split('.');
-				if (p.length !== 3 || !seg.test(p[0]) || !seg.test(p[1]) || !seg.test(p[2])) { return; }
+				if (p.length !== 3 || !seg.test(p[0]) || !seg.test(p[1]) || !seg.test(p[2])) { return false; }
 				var hd = dec(p[0]);
 				var pl = dec(p[1]);
-				if (hd === null || pl === null) { return; }
+				if (hd === null || pl === null) { return false; }
 				// A refresh token (typ WRT) is never a data credential, but a v4 one
 				// (future exp, ws_ wid) IS the bearer the background renewal uses, so
 				// collect it into a SEPARATE stream. Same guard as
 				// collectRefreshCandidates / the bookmarklet.
 				if (hd.typ === 'WRT') {
 					if (typeof pl.exp === 'number' && isFinite(pl.exp) && pl.exp * 1000 > Date.now() && typeof pl.wid === 'string' && pl.wid.slice(0, 3) === 'ws_' && rtokens.indexOf(t) < 0 && rtokens.length < ${MAX_COLLECTED_REFRESH}) { rtokens.push(t); }
-					return;
+					return false;
 				}
-				if (typeof pl.client_id !== 'string' || pl.client_id.length === 0) { return; }
+				if (typeof pl.client_id !== 'string' || pl.client_id.length === 0) { return false; }
 				// isFinite matters, not just the > comparison: a payload can encode
 				// exp as 1e400, which JSON.parse yields as Infinity. That passes a
 				// bare future-dated test but isUsableUserToken rejects it
 				// (Number.isFinite), so without this the value would consume a
 				// cap slot the plugin was always going to discard.
-				if (typeof pl.exp !== 'number' || !isFinite(pl.exp)) { return; }
-				if (!(pl.exp * 1000 > Date.now())) { return; }
+				if (typeof pl.exp !== 'number' || !isFinite(pl.exp)) { return false; }
+				if (!(pl.exp * 1000 > Date.now())) { return false; }
 				if (tokens.indexOf(t) < 0 && tokens.length < ${MAX_COLLECTED_CANDIDATES}) { tokens.push(t); }
+				// True when v passed the access-token guard, collected now or
+				// earlier, so a caller can tell a live credential from a dead one.
+				return true;
 			};
 			var budget = 4000;
 			var walk = function (x, depth) {
@@ -201,7 +208,7 @@ export const PROBE_JS = `(() => {
 						try {
 							var wmap = JSON.parse(localStorage.getItem(mk));
 							if (wmap && typeof wmap === 'object' && wmap[current] && typeof wmap[current] === 'object') {
-								add(wmap[current].token);
+								if (add(wmap[current].token)) { legacyHit = true; }
 								// Hoist the ACTIVE workspace's refresh token too, ahead
 								// of the generic walk. With 3+ workspaces the walk can
 								// fill the small refresh cap with other workspaces'
@@ -222,7 +229,7 @@ export const PROBE_JS = `(() => {
 							if (!Object.prototype.hasOwnProperty.call(list, e)) { continue; }
 							var entry = list[e];
 							if (entry && typeof entry === 'object' && entry.workspaceId === current) {
-								add(entry.workspaceToken);
+								if (add(entry.workspaceToken)) { legacyHit = true; }
 								// The active workspace's refresh token (alpha-era shape),
 								// hoisted for the same reason as the workspaceTokens map above.
 								add(entry.refreshToken);
@@ -240,12 +247,14 @@ export const PROBE_JS = `(() => {
 			// session under fixed keys instead: pld_session.workspace holds
 			// {list, currentId} and pld_session.tokens holds
 			// {byWsId: {<ws>: {token, refreshToken}}}. Same hoist, same domain
-			// fallback, read only when the older keys found no workspace.
+			// fallback, read unless the older keys held live data for their
+			// active workspace. When read, it replaces any stale legacy scope.
 			try {
-				if (!wsId) {
+				if (!legacyHit) {
 					var sw = JSON.parse(localStorage.getItem('pld_session.workspace'));
 					if (sw && typeof sw === 'object' && typeof sw.currentId === 'string' && sw.currentId) {
 						wsId = sw.currentId;
+						wsDomain = null;
 						var sl = sw.list;
 						if (sl && typeof sl === 'object') {
 							for (var se in sl) {

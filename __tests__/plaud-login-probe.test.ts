@@ -591,12 +591,41 @@ describe('PROBE_JS on the pld_session layout (web.plaud.ai 4.0)', () => {
 		expect(out.deviceId).toBe('dev_1');
 	});
 
-	it('does not let the older keys be displaced when they exist', () => {
+	it('keeps the older keys when they hold live data for their workspace', () => {
 		const both: Record<string, string> = {
 			...layout(2),
 			'pld_abc:currentWorkspaceId': 'ws_1',
+			'pld_abc:workspaceTokens': JSON.stringify({
+				ws_1: { token: wt(1), refreshToken: wrt(1) },
+			}),
 		};
-		expect(runProbe(both).workspaceId).toBe('ws_1');
+		const out = runProbe(both);
+		expect(out.workspaceId).toBe('ws_1');
+		expect(at(usableFrom(out), 0)).toBe(wt(1));
+	});
+
+	it('ignores a stale older currentWorkspaceId with no data behind it', () => {
+		const both: Record<string, string> = {
+			...layout(2),
+			'pld_abc:currentWorkspaceId': 'ws_9',
+		};
+		const out = runProbe(both);
+		expect(out.workspaceId).toBe('ws_2');
+		expect(at(usableFrom(out), 0)).toBe(wt(2));
+		expect(out.domain).toBe('https://api-euc1.plaud.ai');
+	});
+
+	it('ignores an older workspace whose only token is expired', () => {
+		const both: Record<string, string> = {
+			...layout(2),
+			'pld_abc:currentWorkspaceId': 'ws_9',
+			'pld_abc:workspaceTokens': JSON.stringify({
+				ws_9: { token: EXPIRED_TOKEN },
+			}),
+		};
+		const out = runProbe(both);
+		expect(out.workspaceId).toBe('ws_2');
+		expect(at(usableFrom(out), 0)).toBe(wt(2));
 	});
 
 	it('survives a malformed pld_session value and still collects by walking', () => {

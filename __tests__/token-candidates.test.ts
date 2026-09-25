@@ -1111,6 +1111,45 @@ describe('SIGN_IN_BOOKMARKLET', () => {
 		expect(parseV4Host(params)).toBe('https://api-euc1.plaud.ai');
 	});
 
+	it('reads the pld_session layout past a stale older currentWorkspaceId', () => {
+		const wt = workspaceTokenFor;
+		const map: Record<string, string> = {
+			// Left over: its list entry has no token and its map holds only an
+			// expired one, so neither is live data for that workspace.
+			'pld_u1:currentWorkspaceId': '"ws_9"',
+			'pld_u1:workspaceList': JSON.stringify({
+				'0': {
+					workspaceId: 'ws_9',
+					domain: 'https://api-test.plaud.ai',
+				},
+			}),
+			'pld_u1:workspaceTokens': JSON.stringify({
+				ws_9: { token: EXPIRED_TOKEN },
+			}),
+			'pld_session.workspace': JSON.stringify({
+				list: {
+					'0': {
+						workspaceId: 'ws_3',
+						domain: 'https://api-euc1.plaud.ai',
+					},
+				},
+				currentId: 'ws_3',
+			}),
+			'pld_session.tokens': JSON.stringify({
+				byWsId: {
+					ws_1: { token: wt(1) },
+					ws_3: { token: wt(3) },
+				},
+			}),
+		};
+		const href = runBookmarklet(map).href ?? '';
+		const params = Object.fromEntries(
+			new URLSearchParams(href.slice(href.indexOf('?') + 1)),
+		);
+		expect(at(parseTokenCandidates(params), 0)).toBe(wt(3));
+		expect(parseV4Host(params)).toBe('https://api-euc1.plaud.ai');
+	});
+
 	it('never dead-ends: a miss offers a diagnostic instead of only an alert', () => {
 		// 0.35.0 alerted and returned here, leaving the user with nothing at all
 		// - strictly worse than the pre-deep-link bookmarklet, which at least
