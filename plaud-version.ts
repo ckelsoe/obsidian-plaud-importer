@@ -24,10 +24,12 @@ export type PlaudVersion = 'v3' | 'v4';
 /** The settings choice: follow detection, or pin one platform. */
 export type PlaudVersionOverride = 'auto' | PlaudVersion;
 
+/** True for a recorded platform value; guards a value read from data.json. */
 export function isPlaudVersion(value: unknown): value is PlaudVersion {
 	return value === 'v3' || value === 'v4';
 }
 
+/** True for a "Plaud version" setting value; guards data.json and the dropdown. */
 export function isPlaudVersionOverride(
 	value: unknown,
 ): value is PlaudVersionOverride {

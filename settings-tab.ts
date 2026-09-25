@@ -1228,10 +1228,12 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 		renderList();
 	}
 
-	// The "Plaud version" dropdown (issue #143). Auto follows what the last
-	// sign-in detected and names it in the option label, so the user sees what
-	// is in use without changing anything. A pinned version is an escape hatch;
-	// when it disagrees with detection the status line says so.
+	/**
+	 * The "Plaud version" dropdown (issue #143). Auto follows what the last
+	 * sign-in detected and names it in the option label, so the user sees what
+	 * is in use without changing anything. A pinned version is an escape hatch;
+	 * when it disagrees with detection the status line says so.
+	 */
 	private renderPlaudVersionControl(setting: Setting): void {
 		const statusEl = setting.descEl.createDiv({
 			cls: 'plaud-importer-version-status',
