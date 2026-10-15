@@ -538,7 +538,7 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 			this.makeSetting(
 				containerEl,
 				'Sign-in portal',
-				'The Plaud portal the sign-in window opens. Defaults to the beta portal. Point it at your regional portal if you use a different one, and the token, workspace, and API region are all detected from wherever you sign in.',
+				'The Plaud portal the sign-in window opens. Defaults to web.plaud.ai, the main Plaud web app. Point it at your regional portal if you use a different one, and the token, workspace, and API region are all detected from wherever you sign in.',
 			),
 		);
 		this.renderRegionControl(
@@ -1359,8 +1359,9 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 	}
 
 	private renderRegionControl(setting: Setting): void {
-		// Editable so the beta portal, whose v4 API lives on a regional staging
-		// host, can be pointed at the right host when sign-in did not capture it.
+		// Editable so a portal whose API lives on another host (beta.plaud.ai
+		// uses api-test.plaud.ai) can be pointed at it when sign-in did not
+		// capture it.
 		// The v4 client reads apiBaseUrl fresh per request, but the prod client
 		// snapshots it, so rebuild the client on change to take effect at once.
 		this.renderTrustedUrlField(setting, {
@@ -1376,7 +1377,7 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 
 	private renderPortalControl(setting: Setting): void {
 		// The portal the sign-in window loads. Editable so a user on a regional
-		// portal (or the beta portal) signs in there, and the token, workspace,
+		// portal (or another Plaud portal) signs in there, and the token, workspace,
 		// region, and API domain are all captured from whichever portal they use.
 		// Takes effect on the next sign-in.
 		this.renderTrustedUrlField(setting, {
@@ -2144,7 +2145,7 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 					},
 					{
 						name: 'Sign-in portal',
-						desc: 'The Plaud portal the sign-in window opens. Defaults to the beta portal. Point it at your regional portal if you use a different one, and the token, workspace, and API region are all detected from wherever you sign in.',
+						desc: 'The Plaud portal the sign-in window opens. Defaults to web.plaud.ai, the main Plaud web app. Point it at your regional portal if you use a different one, and the token, workspace, and API region are all detected from wherever you sign in.',
 						searchable: false,
 						render: (setting: Setting) =>
 							this.renderPortalControl(setting),

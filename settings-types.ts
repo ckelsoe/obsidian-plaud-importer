@@ -9,6 +9,7 @@
  * store's generic parameter.
  */
 import { DEFAULT_NOTE_NAME_TEMPLATE } from './note-writer';
+import { trimTrailingChars } from './text-trim';
 import type {
 	CustomFrontmatterRow,
 	TagMode,
@@ -91,7 +92,8 @@ export interface PlaudImporterSettings {
 	// capture store, and flipped to 'v4' when a 3.0 endpoint reports the account
 	// has moved to Plaud 4.0. Not user-editable.
 	plaudDetectedVersion: PlaudVersion | '';
-	// The Plaud portal the sign-in window loads. Defaults to the beta portal.
+	// The Plaud portal the sign-in window loads. Defaults to web.plaud.ai,
+	// Plaud's production web app (see DEFAULT_SIGN_IN_PORTAL_URL).
 	// A user on a different regional portal points the sign-in here, and the
 	// token, workspace, region, and API domain are all detected from whatever
 	// portal they log in to. Only an https URL on a trusted Plaud host is
@@ -252,6 +254,36 @@ export interface PlaudImporterSettings {
 //      once per vault rather than on every load.
 export const CURRENT_SETTINGS_VERSION = 2;
 
+// The sign-in portal default: Plaud's production web app. It serves the 3.0
+// or the 4.0 app by account and talks to the production API (api.plaud.ai).
+// beta.plaud.ai, the previous default, is a pre-release build wired to
+// Plaud's test API cluster (api-test.plaud.ai, and api-pre-* regionally);
+// measured from both portals' bundles on 2026-10-15.
+export const DEFAULT_SIGN_IN_PORTAL_URL = 'https://web.plaud.ai';
+
+// Earlier defaults. A stored value that still equals one of these was almost
+// certainly never chosen, only inherited, so it moves to the current default
+// on load. A user who typed any other portal keeps it.
+const RETIRED_PORTAL_DEFAULTS: readonly string[] = [
+	'https://alpha.plaud.ai',
+	'https://beta.plaud.ai',
+];
+
+/**
+ * The sign-in portal to use for a stored settings value: the current default
+ * for a missing, blank, or retired-default value, else the stored value as is.
+ */
+export function migrateSignInPortalUrl(stored: unknown): string {
+	if (
+		typeof stored !== 'string' ||
+		stored.trim().length === 0 ||
+		RETIRED_PORTAL_DEFAULTS.includes(trimTrailingChars(stored.trim(), '/'))
+	) {
+		return DEFAULT_SIGN_IN_PORTAL_URL;
+	}
+	return stored;
+}
+
 export const DEFAULT_SETTINGS: PlaudImporterSettings = {
 	secretId: '',
 	apiBaseUrl: 'https://api.plaud.ai',
@@ -259,7 +291,7 @@ export const DEFAULT_SETTINGS: PlaudImporterSettings = {
 	plaudDeviceId: '',
 	plaudVersionOverride: 'auto',
 	plaudDetectedVersion: '',
-	signInPortalUrl: 'https://beta.plaud.ai',
+	signInPortalUrl: DEFAULT_SIGN_IN_PORTAL_URL,
 	outputFolder: 'Plaud',
 	subfolderTemplate: '{{YYYY}}/{{MM}}',
 	noteNameTemplate: DEFAULT_NOTE_NAME_TEMPLATE,

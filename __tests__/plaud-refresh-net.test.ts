@@ -1,4 +1,5 @@
 import {
+	buildPartitionPost,
 	extractWorkspaceId,
 	normalizeTrustedOrigin,
 	parseWorkspaceTokenResponse,
@@ -278,5 +279,116 @@ describe('performNetRefresh', () => {
 				},
 			}),
 		).resolves.toBeNull();
+	});
+});
+
+// --- Electron adapter: where the timeout signal is made (issue #148) --------
+//
+// session.fetch runs in the MAIN process and checks `instanceof AbortSignal`
+// against the main process's class. A signal made in the renderer crosses the
+// remote bridge as a proxy and fails that check, so every refresh threw before
+// sending anything. These pin that the signal comes from the main process's
+// AbortSignal.timeout, fresh per request, and that the adapter reports
+// unavailable rather than send an unbounded request when it cannot make one.
+
+interface AdapterFetchCall {
+	url: string;
+	signal: unknown;
+}
+
+interface FakeRemoteOptions {
+	/** Replaces remote.getGlobal; `null` removes it. */
+	getGlobal?: ((name: string) => unknown) | null;
+}
+
+function installFakeRemote(options: FakeRemoteOptions = {}): {
+	fetches: AdapterFetchCall[];
+	timeouts: number[];
+} {
+	const fetches: AdapterFetchCall[] = [];
+	const timeouts: number[] = [];
+	const mainAbortSignal = {
+		timeout: (ms: number) => {
+			timeouts.push(ms);
+			return { mainSignal: timeouts.length };
+		},
+	};
+	const remote: Record<string, unknown> = {
+		session: {
+			fromPartition: () => ({
+				fetch: (url: string, init: { signal?: unknown }) => {
+					fetches.push({ url, signal: init.signal });
+					return Promise.resolve({
+						status: 200,
+						text: () => Promise.resolve('{"status":0}'),
+					});
+				},
+			}),
+		},
+	};
+	if (options.getGlobal !== null) {
+		remote.getGlobal =
+			options.getGlobal ??
+			((name: string) =>
+				name === 'AbortSignal' ? mainAbortSignal : undefined);
+	}
+	const win = window as unknown as { require: (id: string) => unknown };
+	win.require = () => ({ remote });
+	return { fetches, timeouts };
+}
+
+describe('buildPartitionPost timeout signal (issue #148)', () => {
+	afterEach(() => {
+		delete (window as unknown as { require?: unknown }).require;
+	});
+
+	it('passes a main-process signal, never a renderer AbortSignal', async () => {
+		const { fetches, timeouts } = installFakeRemote();
+		const post = buildPartitionPost('persist:plaud-test');
+		expect(post).not.toBeNull();
+		await post?.('https://api.plaud.ai/auth/refresh-user-token', '{}', {});
+		expect(timeouts).toEqual([30_000]);
+		const signal = at(fetches, 0).signal;
+		expect(signal).toEqual({ mainSignal: 1 });
+		expect(signal).not.toBeInstanceOf(AbortSignal);
+	});
+
+	it('makes a fresh signal for every request', async () => {
+		const { fetches } = installFakeRemote();
+		const post = buildPartitionPost('persist:plaud-test');
+		await post?.('https://api.plaud.ai/auth/refresh-user-token', '{}', {});
+		await post?.(
+			'https://api.plaud.ai/user-app/auth/workspace/token/ws_x',
+			'{}',
+			{},
+		);
+		expect(fetches.map((f) => f.signal)).toEqual([
+			{ mainSignal: 1 },
+			{ mainSignal: 2 },
+		]);
+	});
+
+	it('reports unavailable when the remote has no getGlobal', () => {
+		installFakeRemote({ getGlobal: null });
+		expect(buildPartitionPost('persist:plaud-test')).toBeNull();
+	});
+
+	it('reports unavailable when the main AbortSignal has no timeout', () => {
+		installFakeRemote({ getGlobal: () => ({}) });
+		expect(buildPartitionPost('persist:plaud-test')).toBeNull();
+	});
+
+	it('reports unavailable when getGlobal returns nothing', () => {
+		installFakeRemote({ getGlobal: () => undefined });
+		expect(buildPartitionPost('persist:plaud-test')).toBeNull();
+	});
+
+	it('reports unavailable, without throwing, when getGlobal throws', () => {
+		installFakeRemote({
+			getGlobal: () => {
+				throw new Error('remote gone');
+			},
+		});
+		expect(buildPartitionPost('persist:plaud-test')).toBeNull();
 	});
 });

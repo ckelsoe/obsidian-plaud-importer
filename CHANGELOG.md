@@ -6,6 +6,16 @@ All notable changes to Plaud Importer will be documented in this file.
 
 ## [Unreleased]
 
+## [0.44.0] - 2026-10-15
+
+### Fixed
+
+- **Email sign-ins renew in the background again (#148).** On current Obsidian versions every background renewal failed before it sent anything ("Expected signal ... to be an instance of AbortSignal"), so an email sign-in lasted about a day instead of about 30. This affected every desktop platform, not only Windows. Thanks to @pearnoak for the diagnosis and the tested fix.
+
+### Changed
+
+- **Sign-in now opens web.plaud.ai, Plaud's main web app.** The previous default, beta.plaud.ai, is Plaud's pre-release app and talks to Plaud's test servers. If your sign-in portal setting still holds an old default (beta.plaud.ai or alpha.plaud.ai), it moves to web.plaud.ai the next time Obsidian starts. A portal you typed yourself is kept. Your current session keeps working where it is; the next sign-in uses web.plaud.ai.
+
 ## [0.43.0] - 2026-09-25
 
 ### Fixed

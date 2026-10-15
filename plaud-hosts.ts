@@ -10,10 +10,10 @@
  * the region never auto-detected and had to be typed in by hand. Centralizing
  * the predicate makes that class of drift impossible.
  *
- * Two registered domains are trusted: `plaud.ai` (production and its regional
- * hosts) and `theplaud.com` (the new portal's regional hosts, currently on a
- * staging cluster). A future general-availability host is added HERE, once, and
- * every trust check picks it up.
+ * Two registered domains are trusted: `plaud.ai` (production, its regional
+ * hosts, and the pre-release `api-test`/`api-pre-*` hosts beta.plaud.ai uses)
+ * and `theplaud.com` (Plaud's staging hosts; the 4.0 alpha ran there). A
+ * future host is added HERE, once, and every trust check picks it up.
  */
 export function isTrustedPlaudHost(host: string): boolean {
 	const h = host.toLowerCase().replace(/\.$/, '');
