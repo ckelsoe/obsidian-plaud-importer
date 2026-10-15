@@ -1,6 +1,6 @@
 {
 	"name": "obsidian-plaud-importer",
-	"version": "0.43.0",
+	"version": "0.44.0",
 	"description": "Import meeting summaries, transcripts, and attachments from Plaud.AI into an Obsidian vault.",
 	"main": "main.js",
 	"scripts": {
@@ -42,7 +42,7 @@
 		"jest": "^30.2.0",
 		"knip": "^6.38.0",
 		"lucide-static": "^1.23.0",
-		"moment": "^2.29.4",
+		"moment": "^2.31.0",
 		"obsidian": "^1.13.0",
 		"prettier": "^3.9.6",
 		"ts-jest": "^29.4.6",
@@ -54,9 +54,14 @@
 	"overrides": {
 		"@babel/core": "^7.29.6",
 		"@humanfs/node": "^0.16.8",
+		"brace-expansion@1": "^1.1.21",
+		"brace-expansion@2": "^2.1.7",
+		"brace-expansion@5": "^5.0.12",
 		"browserslist": "^4.28.7",
-		"fast-uri": "^3.1.7",
+		"fast-uri": "^3.1.8",
+		"handlebars": "^4.7.10",
 		"js-yaml": "^4.3.2",
+		"moment": "^2.31.0",
 		"qs": "^6.16.0"
 	},
 	"typeCoverage": {

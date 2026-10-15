@@ -402,6 +402,20 @@ interface ElectronSessionFetchResponse {
 	status: number;
 	text(): Promise<string>;
 }
+
+/**
+ * An AbortSignal created in the MAIN process, held here as a remote proxy.
+ * Deliberately not typed as the renderer's AbortSignal: issue #148 was exactly
+ * that confusion. session.fetch runs in the main process and checks
+ * `instanceof AbortSignal` against the main process's own class, so a renderer
+ * signal arrives as a proxy and is rejected before any request goes out
+ * ("RequestInit: Expected signal ... to be an instance of AbortSignal"). A
+ * main-process signal round-trips back to its real object and passes.
+ */
+interface MainProcessSignal {
+	readonly __mainProcessSignal: unique symbol;
+}
+
 interface ElectronSessionLike {
 	fetch?(
 		url: string,
@@ -410,12 +424,13 @@ interface ElectronSessionLike {
 			body: string;
 			headers: Record<string, string>;
 			credentials?: 'include' | 'omit' | 'same-origin';
-			signal?: AbortSignal;
+			signal?: MainProcessSignal;
 		},
 	): Promise<ElectronSessionFetchResponse>;
 }
 interface ElectronRemoteLike {
 	session?: { fromPartition(partition: string): ElectronSessionLike };
+	getGlobal?(name: string): unknown;
 }
 interface ElectronLike {
 	remote?: ElectronRemoteLike;
@@ -427,6 +442,31 @@ type SessionWithFetch = ElectronSessionLike & {
 
 function hasFetch(session: ElectronSessionLike): session is SessionWithFetch {
 	return typeof session.fetch === 'function';
+}
+
+type MainTimeout = (ms: number) => MainProcessSignal;
+
+/**
+ * The main process's `AbortSignal.timeout`, bound to its class, or null when
+ * the remote surface does not expose it. Null is a hard stop for the caller:
+ * a refresh POST with no working timeout could stall forever and wedge every
+ * later refresh behind the in-flight guard, which is worse than reporting the
+ * refresh unavailable.
+ */
+function mainProcessTimeout(remote: ElectronRemoteLike): MainTimeout | null {
+	if (typeof remote.getGlobal !== 'function') {
+		return null;
+	}
+	const mainAbortSignal = remote.getGlobal('AbortSignal');
+	if (!isRecord(mainAbortSignal) && typeof mainAbortSignal !== 'function') {
+		return null;
+	}
+	const timeout: unknown = Reflect.get(mainAbortSignal, 'timeout');
+	if (typeof timeout !== 'function') {
+		return null;
+	}
+	return (ms) =>
+		Reflect.apply(timeout, mainAbortSignal, [ms]) as MainProcessSignal;
 }
 
 function requireElectron(): ElectronLike | null {
@@ -461,14 +501,19 @@ export function buildPartitionPost(partition: string): SessionPost | null {
 	// from "broken". Whatever goes wrong reaching the remote surface, the
 	// answer callers need is the same one.
 	let session: ElectronSessionLike | undefined;
+	let timeoutSignal: MainTimeout | null = null;
 	try {
-		session = requireElectron()?.remote?.session?.fromPartition(partition);
+		const remote = requireElectron()?.remote;
+		session = remote?.session?.fromPartition(partition);
+		timeoutSignal =
+			remote === undefined ? null : mainProcessTimeout(remote);
 	} catch {
 		return null;
 	}
-	if (session === undefined || !hasFetch(session)) {
+	if (session === undefined || !hasFetch(session) || timeoutSignal === null) {
 		return null;
 	}
+	const makeSignal = timeoutSignal;
 	return async (url, body, headers) => {
 		// Member call (not a detached reference) so `this` stays bound to session.
 		// credentials:'include' is REQUIRED: these POSTs authenticate purely with
@@ -478,13 +523,14 @@ export function buildPartitionPost(partition: string): SessionPost | null {
 		// The abort signal bounds the whole call (request AND body read): the
 		// caller holds refreshInFlight/reauthInFlight until this settles, so a
 		// stalled request with no timeout would wedge every future refresh and
-		// the manual Sign in until restart.
+		// the manual Sign in until restart. The signal is made in the main
+		// process, fresh per call; see MainProcessSignal for why (issue #148).
 		const res = await session.fetch(url, {
 			method: 'POST',
 			body,
 			headers: { ...headers },
 			credentials: 'include',
-			signal: AbortSignal.timeout(NET_REFRESH_TIMEOUT_MS),
+			signal: makeSignal(NET_REFRESH_TIMEOUT_MS),
 		});
 		const text = await res.text();
 		return { status: res.status, text };

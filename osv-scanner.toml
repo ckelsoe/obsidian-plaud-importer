@@ -2,11 +2,17 @@
 # accepted and what would let us drop it. Revisit whenever the dependency tree
 # changes (a new lockfile may remove the transitive path entirely).
 #
-# There are currently NO suppressions. The brace-expansion advisories
-# (GHSA-mh99-v99m-4gvg and its bypass GHSA-rgw5-rvv9-x895), fast-uri
-# (GHSA-7p8r-x3mc-p8w7), and js-yaml (GHSA-5p4m-2wfm-xmqj) that once needed one
-# were all resolved by patched transitive versions on 2026-08-10; a plain
-# `npm audit fix` cleared them without breaking the toolchain, so nothing needs
-# ignoring. Add an entry below only for an advisory that is genuinely unfixable
-# without breaking a build (dev-only, not reachable, no non-breaking upgrade),
-# and say what would let us remove it.
+# One active suppression, below: braces has no fixed release at all. Every
+# other dev-only advisory is FIXED rather than ignored: the package.json
+# `overrides` block pins brace-expansion, fast-uri, handlebars, and moment to
+# patched versions (2026-10-15), and the earlier brace-expansion, fast-uri, and
+# js-yaml advisories were cleared the same way on 2026-08-10.
+#
+# Add an [[IgnoredVulns]] entry here only for an advisory that is genuinely
+# unfixable without breaking a build (dev-only, not reachable, no non-breaking
+# upgrade), and say what would let us remove it.
+
+[[IgnoredVulns]]
+id = "GHSA-vfj7-8cjw-p6xm"
+ignoreUntil = 2026-12-31
+reason = "braces: stack exhaustion on deeply nested patterns. No fixed release exists (every version through 3.0.3, the latest, is affected; published 2026-09-18, widened 2026-10-02). Dev-only: reached through type-coverage > fast-glob > micromatch, which globs this repo's own source at lint time and never ships in main.js. Drop this entry, and add a package.json override, as soon as braces publishes a fixed version."

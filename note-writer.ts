@@ -499,7 +499,7 @@ export const PLAUD_WEB_URL_V3 = 'https://web.plaud.ai';
  * clicks to open the recording in Plaud's browser UI. The `/file/{id}` path
  * shape is the same on every portal, so only the origin differs: a v3 (prod)
  * account links to `https://web.plaud.ai`, a v4 (new portal) account to its own
- * web app (e.g. `https://beta.plaud.ai`). The caller passes the environment's
+ * sign-in portal (`https://web.plaud.ai` by default). The caller passes the environment's
  * base via `webBase`; it defaults to the prod portal so an unthreaded caller
  * stays correct for v3. Confirmed from a live Plaud session on 2026-04-14.
  *
@@ -2793,7 +2793,7 @@ export interface FormatMarkdownOptions {
 	/**
 	 * Origin of the web portal for this account's `plaud-url` permalink and the
 	 * "Open in Plaud" link. A v3 (prod) account uses `https://web.plaud.ai`, a
-	 * v4 (new portal) account its own web app (e.g. `https://beta.plaud.ai`).
+	 * v4 (new portal) account its sign-in portal (`https://web.plaud.ai` by default).
 	 * Omitted defaults to the prod portal. See `formatPlaudWebUrl`.
 	 */
 	readonly webBaseUrl?: string;

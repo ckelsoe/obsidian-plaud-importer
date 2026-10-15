@@ -1,6 +1,10 @@
 import { runInNewContext } from 'vm';
 
-import { PROBE_JS, normalizeApiDomain } from '../plaud-login';
+import {
+	PROBE_JS,
+	normalizeApiDomain,
+	productionPortalApiFallback,
+} from '../plaud-login';
 import { isUsableUserToken } from '../plaud-token';
 import {
 	MAX_COLLECTED_CANDIDATES,
@@ -637,5 +641,30 @@ describe('PROBE_JS on the pld_session layout (web.plaud.ai 4.0)', () => {
 		});
 		expect(out.workspaceId).toBeNull();
 		expect(usableFrom(out)).toEqual([wt(1)]);
+	});
+});
+
+describe('productionPortalApiFallback', () => {
+	// web.plaud.ai's own bundle calls https://api.plaud.ai when its page has no
+	// workspace domain, so a sign-in there must not fall back to a stored host
+	// (for an ex-beta vault, Plaud's api-test cluster).
+	it.each([
+		'https://web.plaud.ai/',
+		'https://web.plaud.ai/file-list?x=1',
+		'https://WEB.plaud.ai/',
+	])('returns production for %p', (href) => {
+		expect(productionPortalApiFallback(href)).toBe('https://api.plaud.ai');
+	});
+
+	it.each([
+		'https://beta.plaud.ai/',
+		'https://alpha.plaud.ai/',
+		'https://web.theplaud.com/',
+		'https://web.plaud.ai.evil.example/',
+		'not a url',
+		null,
+		undefined,
+	])('returns null for %p', (href) => {
+		expect(productionPortalApiFallback(href)).toBeNull();
 	});
 });

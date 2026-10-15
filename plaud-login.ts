@@ -13,7 +13,7 @@
 //
 // Capture strategy: read the user token from the sign-in window's own
 // `localStorage` on the origin this window loads (the configured portal,
-// beta.plaud.ai by default; web.plaud.ai on the prod build); the web app sends it as
+// web.plaud.ai by default); the web app sends it as
 // `Authorization: Bearer <token>` on every data call. Its lifetime
 // varies by account: ~300 days observed on US accounts, 24 hours reported on an
 // APSE1 account (issue #78), so the capture notes the measured lifetime and
@@ -41,6 +41,7 @@ import {
 	plaudPartition,
 } from './plaud-partition';
 import { isUsableUserToken, readTokenLifetime } from './plaud-token';
+import { DEFAULT_SIGN_IN_PORTAL_URL } from './settings-types';
 import {
 	MAX_COLLECTED_CANDIDATES,
 	MAX_COLLECTED_REFRESH,
@@ -53,9 +54,9 @@ import { trimTrailingChars } from './text-trim';
 // client tags its requests `app-platform: web` / `edit-from: web` (see
 // plaud-client-re.ts), so the captured token must come from the web client to
 // match. Verified against a live web.plaud.ai HAR capture on 2026-06-18.
-// Alpha build: sign in on the new portal so the captured token, api domain,
-// and workspace are the v4 ones. (The prod build uses web.plaud.ai.)
-const PLAUD_LOGIN_URL = 'https://beta.plaud.ai';
+// The fallback portal when the configured one is not a trusted Plaud URL:
+// the same default the settings use (Plaud's production web app).
+const PLAUD_LOGIN_URL = DEFAULT_SIGN_IN_PORTAL_URL;
 // The partition is persistent (a returning user keeps their Plaud session and
 // does not sign in every time), isolated from Obsidian's own web sessions, and
 // PER VAULT since issue #87. It is derived once per operation from the vault's
@@ -324,7 +325,7 @@ export interface PlaudLoginResult {
 export interface PlaudLoginOptions {
 	readonly debugLogger?: DebugLogger;
 	// The Plaud portal URL to load in the sign-in window. Lets a user point the
-	// sign-in at their own regional portal (or the beta portal) instead of a
+	// sign-in at their own regional portal (or another Plaud portal) instead of a
 	// fixed host, so the token, workspace, region, and API domain are captured
 	// from whichever portal they actually use. Ignored unless it is an https URL
 	// on a trusted Plaud host; otherwise the default portal is loaded.
@@ -715,7 +716,9 @@ class PlaudLoginSession {
 						)
 						.filter((v) => v.length > 0)
 				: [];
-			const apiBaseUrl = normalizeApiDomain(probe?.domain);
+			const apiBaseUrl =
+				normalizeApiDomain(probe?.domain) ??
+				productionPortalApiFallback(probe?.href);
 			const workspaceId = cleanScopeValue(probe?.workspaceId);
 			const deviceId = cleanScopeValue(probe?.deviceId);
 			// Only ever read the token off a Plaud origin. The window loads
@@ -915,6 +918,33 @@ function cleanScopeValue(value: unknown): string | null {
 	}
 	const trimmed = value.trim();
 	return trimmed.length > 0 ? trimmed : null;
+}
+
+/**
+ * The API origin web.plaud.ai itself falls back to when its page reports no
+ * workspace domain: production, https://api.plaud.ai (the app's bundle
+ * hard-codes it; measured 2026-10-15). Null for any other page, which keeps
+ * the old behavior of probing the configured host.
+ *
+ * Without this, a sign-in on web.plaud.ai that reports no domain would probe,
+ * and keep, whatever host the vault had stored. For a vault that used to sign
+ * in on beta.plaud.ai that is Plaud's test cluster (api-test.plaud.ai), so the
+ * move to the production portal would never actually reach production. A
+ * regional account still lands on its own host: api.plaud.ai answers it with
+ * the -302 region redirect the probe follows.
+ */
+export function productionPortalApiFallback(
+	href: string | null | undefined,
+): string | null {
+	if (typeof href !== 'string') {
+		return null;
+	}
+	try {
+		const host = new URL(href).hostname.toLowerCase().replace(/\.$/, '');
+		return host === 'web.plaud.ai' ? 'https://api.plaud.ai' : null;
+	} catch {
+		return null;
+	}
 }
 
 // Normalize the regional host into an https origin, or null when missing or

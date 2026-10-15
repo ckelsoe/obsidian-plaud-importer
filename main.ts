@@ -98,6 +98,8 @@ import {
 import {
 	CURRENT_SETTINGS_VERSION,
 	DEFAULT_SETTINGS,
+	DEFAULT_SIGN_IN_PORTAL_URL,
+	migrateSignInPortalUrl,
 	resolveRibbonIconId,
 	type PlaudImporterSettings,
 	type StoredDevice,
@@ -128,12 +130,7 @@ const LEGACY_REFRESH_SECRET_ID = 'plaud-importer-refresh-token';
 
 // Plaud web app, opened in the system browser for the browser-based sign-in
 // flow (where Google/Apple SSO work, unlike an embedded webview).
-const PLAUD_WEB_URL = 'https://beta.plaud.ai';
-
-// The pre-beta portal default. A data.json that still pins this (from a build
-// before the portal left alpha) is migrated to the current default on load, so
-// a user who never touched the setting is not stranded on the retired portal.
-const RETIRED_ALPHA_PORTAL_URL = 'https://alpha.plaud.ai';
+const PLAUD_WEB_URL = DEFAULT_SIGN_IN_PORTAL_URL;
 
 // Standalone HTML page opened in the system browser for one-time bookmark
 // setup. It offers the sign-in bookmarklet (token-candidates.ts) as a
@@ -2806,17 +2803,14 @@ export default class PlaudImporterPlugin extends Plugin {
 		if (!isPlaudVersion(this.settings.plaudDetectedVersion)) {
 			this.settings.plaudDetectedVersion = '';
 		}
-		// The sign-in portal moved from alpha.plaud.ai to beta.plaud.ai when the
-		// new portal left alpha. Migrate a stored value that still pins the
-		// retired alpha default (or is malformed) to the current default; a user
-		// who set a custom portal keeps it.
-		if (
-			typeof this.settings.signInPortalUrl !== 'string' ||
-			this.settings.signInPortalUrl.trim().length === 0 ||
-			this.settings.signInPortalUrl === RETIRED_ALPHA_PORTAL_URL
-		) {
-			this.settings.signInPortalUrl = DEFAULT_SETTINGS.signInPortalUrl;
-		}
+		// The sign-in portal default moved alpha.plaud.ai, then beta.plaud.ai,
+		// then web.plaud.ai. A stored value that still pins a retired default (or
+		// is malformed) moves to the current one; a custom portal is kept. Only
+		// the next sign-in reads it: the stored API host is left as is, so a
+		// running session keeps renewing where it was captured.
+		this.settings.signInPortalUrl = migrateSignInPortalUrl(
+			this.settings.signInPortalUrl,
+		);
 		// Repair a hand-edited or unknown transcript placement to the default, so
 		// the dropdown and the writer agree on what is in effect.
 		if (!isTranscriptPlacement(this.settings.transcriptPlacement)) {

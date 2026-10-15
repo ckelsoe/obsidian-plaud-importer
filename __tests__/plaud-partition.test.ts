@@ -90,6 +90,9 @@ function installFakeElectron(): FetchCall[] {
 	const win = window as unknown as { require: (id: string) => unknown };
 	win.require = () => ({
 		remote: {
+			// The main-process AbortSignal the adapter builds its timeout from
+			// (issue #148). Without it the adapter reports unavailable.
+			getGlobal: () => ({ timeout: () => ({}) }),
 			session: {
 				fromPartition: (partition: string) => ({
 					fetch: (url: string) => {
