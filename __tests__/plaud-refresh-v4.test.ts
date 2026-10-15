@@ -1,6 +1,7 @@
 import { parseV4RefreshResponse, performV4Refresh } from '../plaud-refresh-v4';
 import type { PlaudHttpFetcher, PlaudHttpResponse } from '../plaud-client-re';
 import { at } from './helpers/checked';
+import { isRefreshFailure } from '../refresh-failure';
 
 // Build a minimal unsigned JWT. The module only reads unverified payload/header
 // claims, so an unsigned token with a dummy signature is a faithful fixture.
@@ -59,43 +60,58 @@ function recordingFetch(responses: PlaudHttpResponse[]): {
 describe('parseV4RefreshResponse', () => {
 	it('extracts the fresh workspace token and the rotated refresh token', () => {
 		expect(
-			parseV4RefreshResponse({
-				status: 0,
-				data: {
-					workspace_token: FRESH_WT,
-					refresh_token: ROTATED_REFRESH_TOKEN,
-					wt_expires_at: 123,
+			parseV4RefreshResponse(
+				{
+					status: 0,
+					data: {
+						workspace_token: FRESH_WT,
+						refresh_token: ROTATED_REFRESH_TOKEN,
+						wt_expires_at: 123,
+					},
 				},
-			}),
+				'current-wrt',
+			),
 		).toEqual({ token: FRESH_WT, refreshToken: ROTATED_REFRESH_TOKEN });
 	});
 
-	it('returns null when the rotated refresh token is missing', () => {
-		// A fresh WT with no new refresh token cannot be renewed again (the bearer
-		// just spent is single-use), so it is not a usable success.
+	it('keeps the current refresh token when the response omits it', () => {
+		// Plaud's own 4.0 app does the same (refresh_token ?? previous). The
+		// caller still validates the kept token before storing it.
 		expect(
-			parseV4RefreshResponse({
-				status: 0,
-				data: { workspace_token: FRESH_WT },
-			}),
-		).toBeNull();
+			parseV4RefreshResponse(
+				{
+					status: 0,
+					data: { workspace_token: FRESH_WT },
+				},
+				' current-wrt ',
+			),
+		).toEqual({ token: FRESH_WT, refreshToken: 'current-wrt' });
 	});
 
 	it('returns null on a non-zero status or a missing workspace token', () => {
 		expect(
-			parseV4RefreshResponse({
-				status: -420,
-				data: { workspace_token: FRESH_WT, refresh_token: 'x' },
-			}),
+			parseV4RefreshResponse(
+				{
+					status: -420,
+					data: { workspace_token: FRESH_WT, refresh_token: 'x' },
+				},
+				'current-wrt',
+			),
 		).toBeNull();
 		expect(
-			parseV4RefreshResponse({ status: 0, data: { refresh_token: 'x' } }),
+			parseV4RefreshResponse(
+				{ status: 0, data: { refresh_token: 'x' } },
+				'current-wrt',
+			),
 		).toBeNull();
 		expect(
-			parseV4RefreshResponse({
-				status: 0,
-				data: { workspace_token: '', refresh_token: 'x' },
-			}),
+			parseV4RefreshResponse(
+				{
+					status: 0,
+					data: { workspace_token: '', refresh_token: 'x' },
+				},
+				'current-wrt',
+			),
 		).toBeNull();
 	});
 });
@@ -149,7 +165,7 @@ describe('performV4Refresh', () => {
 		expect(at(calls, 0).headers['x-device-id']).toBeUndefined();
 	});
 
-	it('returns null (no call) when the stored token has no ws_ wid', async () => {
+	it('is denied (no call) when the stored token has no ws_ wid', async () => {
 		const { fetch, calls } = recordingFetch([]);
 		const result = await performV4Refresh({
 			currentToken: makeJwt({ typ: 'WT' }, { sub: 'x' }),
@@ -157,11 +173,11 @@ describe('performV4Refresh', () => {
 			baseUrl: 'https://api-test.plaud.ai',
 			fetch,
 		});
-		expect(result).toBeNull();
+		expect(result).toEqual({ failed: 'denied', reason: 'session-ended' });
 		expect(calls).toHaveLength(0);
 	});
 
-	it('returns null (no call) when the refresh token is empty', async () => {
+	it('is denied (no call) when the refresh token is empty', async () => {
 		const { fetch, calls } = recordingFetch([]);
 		const result = await performV4Refresh({
 			currentToken: STORED_WT,
@@ -169,11 +185,11 @@ describe('performV4Refresh', () => {
 			baseUrl: 'https://api-test.plaud.ai',
 			fetch,
 		});
-		expect(result).toBeNull();
+		expect(result).toEqual({ failed: 'denied', reason: 'session-ended' });
 		expect(calls).toHaveLength(0);
 	});
 
-	it('returns null (no call) when the base host is not a trusted Plaud host', async () => {
+	it('is denied (no call) when the base host is not a trusted Plaud host', async () => {
 		const { fetch, calls } = recordingFetch([]);
 		const result = await performV4Refresh({
 			currentToken: STORED_WT,
@@ -181,11 +197,11 @@ describe('performV4Refresh', () => {
 			baseUrl: 'https://evil.com',
 			fetch,
 		});
-		expect(result).toBeNull();
+		expect(result).toEqual({ failed: 'denied', reason: 'session-ended' });
 		expect(calls).toHaveLength(0);
 	});
 
-	it('returns null on a non-2xx response', async () => {
+	it('is unreachable on a 5xx response', async () => {
 		const { fetch } = recordingFetch([
 			{ status: 500, json: null, text: 'oops' },
 		]);
@@ -196,10 +212,10 @@ describe('performV4Refresh', () => {
 				baseUrl: 'https://api-test.plaud.ai',
 				fetch,
 			}),
-		).resolves.toBeNull();
+		).resolves.toMatchObject({ failed: 'unreachable' });
 	});
 
-	it('returns null on an in-band WRT_EXPIRED (-420)', async () => {
+	it('is denied on an in-band WRT_EXPIRED (-420)', async () => {
 		const { fetch } = recordingFetch([
 			jsonResponse(200, {
 				status: -420,
@@ -213,10 +229,14 @@ describe('performV4Refresh', () => {
 				baseUrl: 'https://api-test.plaud.ai',
 				fetch,
 			}),
-		).resolves.toBeNull();
+		).resolves.toEqual({
+			failed: 'denied',
+			reason: 'session-ended',
+			status: -420,
+		});
 	});
 
-	it('returns null when the body is not JSON', async () => {
+	it('is unreachable when the body is not JSON', async () => {
 		const { fetch } = recordingFetch([
 			{ status: 200, json: null, text: 'not json' },
 		]);
@@ -227,10 +247,10 @@ describe('performV4Refresh', () => {
 				baseUrl: 'https://api-test.plaud.ai',
 				fetch,
 			}),
-		).resolves.toBeNull();
+		).resolves.toMatchObject({ failed: 'unreachable' });
 	});
 
-	it('returns null (never throws) when the transport throws', async () => {
+	it('is unreachable (never throws) when the transport throws', async () => {
 		const fetch: PlaudHttpFetcher = () =>
 			Promise.reject(new Error('network down'));
 		await expect(
@@ -240,7 +260,7 @@ describe('performV4Refresh', () => {
 				baseUrl: 'https://api-test.plaud.ai',
 				fetch,
 			}),
-		).resolves.toBeNull();
+		).resolves.toMatchObject({ failed: 'unreachable' });
 	});
 
 	it('never throws when the injected log sink throws', async () => {
@@ -255,7 +275,7 @@ describe('performV4Refresh', () => {
 					throw new Error('logger boom');
 				},
 			}),
-		).resolves.toBeNull();
+		).resolves.toMatchObject({ failed: 'unreachable' });
 	});
 
 	it('redacts a JWT-shaped string from a logged failure body', async () => {
@@ -272,7 +292,7 @@ describe('performV4Refresh', () => {
 			log: (_message, payload) =>
 				logged.push(payload as { body?: string }),
 		});
-		expect(result).toBeNull();
+		expect(isRefreshFailure(result)).toBe(true);
 		const bodies = logged
 			.map((p) => p?.body)
 			.filter((b): b is string => typeof b === 'string')

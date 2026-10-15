@@ -68,6 +68,15 @@
 import { decodeJwtPayload } from './plaud-token';
 import { isTrustedPlaudHost } from './plaud-hosts';
 import { redactJwtLike } from './jwt-redact';
+import {
+	HTTP_GONE,
+	classifyEnvelope,
+	classifyHttpStatus,
+	denied,
+	isSsoRequired,
+	unreachable,
+	type RefreshFailure,
+} from './refresh-failure';
 
 /**
  * A non-empty string claim off the stored token's payload, or null.
@@ -126,6 +135,15 @@ export interface NetRefreshDeps {
 	 * FAILING response; never a token value.
 	 */
 	readonly log?: (message: string, payload?: unknown) => void;
+	/** Wait between conflict retries. Injected so tests do not sleep. */
+	readonly sleep?: (ms: number) => Promise<void>;
+	/**
+	 * Checked before every request after the first. False when the caller no
+	 * longer owns this refresh (sign-out, a new credential, unload) or has no
+	 * request budget left, so a conflict retry or the mint does not go out on
+	 * a session nobody is using.
+	 */
+	readonly mayContinue?: () => boolean;
 }
 
 /**
@@ -271,14 +289,31 @@ function baseHeaders(clientId: string): Record<string, string> {
 	};
 }
 
+// Step 1 conflict retry, copied from Plaud's own 4.0 app: an in-band -4302 or
+// an HTTP 409 on /auth/refresh-user-token is retried up to three more times,
+// one second apart. Both read as "another refresh is rotating this session
+// right now", not as a dead session. Bounded and fast, so it costs at most
+// three extra calls against the hourly ceiling and only when Plaud asks.
+const STATUS_REFRESH_CONFLICT = -4302;
+const HTTP_CONFLICT = 409;
+const MAX_CONFLICT_RETRIES = 3;
+const CONFLICT_RETRY_DELAY_MS = 1000;
+
+function defaultSleep(ms: number): Promise<void> {
+	return new Promise((resolve) => {
+		window.setTimeout(resolve, ms);
+	});
+}
+
 /**
  * Run the two-step direct refresh. Returns a candidate WT (never stores it),
- * or null on any failure so the caller can pause and prompt the user. Never
- * throws.
+ * or a classified failure: `denied` when the session is over and only the user
+ * can fix it, `unreachable` when Plaud could not be reached or answered
+ * something unrecognized (see refresh-failure.ts). Never throws.
  */
 export async function performNetRefresh(
 	deps: NetRefreshDeps,
-): Promise<NetRefreshResult | null> {
+): Promise<NetRefreshResult | RefreshFailure> {
 	// Wrap the injected sink so a throwing logger can never break this function's
 	// "never throws" contract (it runs in the background refresh timer).
 	const log = (message: string, payload?: unknown): void => {
@@ -288,13 +323,16 @@ export async function performNetRefresh(
 			// A logging failure must not propagate into the timer or the sync tick.
 		}
 	};
+	const sleep = deps.sleep ?? defaultSleep;
+	const mayContinue = deps.mayContinue ?? (() => true);
 	try {
 		const wid = extractWorkspaceId(deps.currentToken);
 		if (wid === null) {
 			log(
 				'net refresh aborted: stored token has no wid claim to mint against',
 			);
-			return null;
+			// Only a fresh sign-in can supply one, so this is not worth a retry.
+			return denied('session-ended');
 		}
 		const clientId =
 			readJwtPayloadClaim(deps.currentToken, 'client_id') ?? 'web';
@@ -312,16 +350,82 @@ export async function performNetRefresh(
 					baseUrl: deps.baseUrl,
 				},
 			);
-			return null;
+			return denied('session-ended');
 		}
 		let apiBaseUrl: string | null = null;
-		for (let attempt = 0; attempt < 2; attempt++) {
+		let redirects = 0;
+		let conflicts = 0;
+		for (;;) {
 			const res = await deps.post(
 				`${base}${REFRESH_USER_TOKEN_PATH}`,
 				'{}',
 				headers,
 			);
 			const envelope = parseEnvelope(res.text);
+			// The SSO demand outranks everything, whatever the HTTP status.
+			if (envelope !== null && isSsoRequired(envelope)) {
+				log(
+					'net refresh step 1 (refresh-user-token): company SSO required',
+					{
+						httpStatus: res.status,
+					},
+				);
+				return denied('sso-required', res.status);
+			}
+			// An HTTP 409, or an in-band -4302 on a 2xx. A -4302 riding on a
+			// 401/403 is a refusal, classified below by its HTTP status.
+			const conflict =
+				res.status === HTTP_CONFLICT ||
+				(res.status >= 200 &&
+					res.status < 300 &&
+					envelope?.status === STATUS_REFRESH_CONFLICT);
+			if (conflict) {
+				if (conflicts < MAX_CONFLICT_RETRIES) {
+					conflicts++;
+					log(
+						'net refresh step 1 (refresh-user-token): conflict, retrying',
+						{
+							httpStatus: res.status,
+							envelopeStatus: envelope?.status,
+							attempt: conflicts,
+						},
+					);
+					await sleep(CONFLICT_RETRY_DELAY_MS);
+					if (!mayContinue()) {
+						log(
+							'net refresh stopped: the caller no longer owns this refresh or has no request budget left',
+						);
+						return unreachable('stopped before a conflict retry');
+					}
+					continue;
+				}
+				log(
+					'net refresh step 1 (refresh-user-token): conflict retries exhausted',
+					{
+						httpStatus: res.status,
+						envelopeStatus: envelope?.status,
+					},
+				);
+				return unreachable('refresh conflict retries exhausted');
+			}
+			// A non-2xx status decides on its own, JSON body or not: a 401 with
+			// {"message":"Unauthorized"} is a refusal, not an unknown status.
+			// Only the SSO demand in such a body is more specific.
+			if (res.status < 200 || res.status >= 300) {
+				const failure =
+					envelope !== null && isSsoRequired(envelope)
+						? denied('sso-required', res.status)
+						: classifyHttpStatus(res.status);
+				log(
+					'net refresh step 1 (refresh-user-token): non-2xx response',
+					{
+						httpStatus: res.status,
+						body: bodySnippet(res.text),
+						failure,
+					},
+				);
+				return failure;
+			}
 			if (envelope === null) {
 				log(
 					'net refresh step 1 (refresh-user-token): non-JSON response',
@@ -330,35 +434,67 @@ export async function performNetRefresh(
 						body: bodySnippet(res.text),
 					},
 				);
-				return null;
+				return unreachable('non-JSON response');
 			}
 			if (envelope.status === STATUS_OK) {
 				break;
 			}
 			const redirect = readRegionRedirect(envelope);
-			if (redirect === null || attempt === 1) {
-				log(
-					'net refresh step 1 (refresh-user-token): non-OK envelope',
-					{
-						httpStatus: res.status,
-						envelopeStatus: envelope.status,
-						message: envelopeMessage(envelope),
-					},
-				);
-				return null;
+			if (redirect !== null && redirects === 0) {
+				redirects++;
+				base = redirect;
+				apiBaseUrl = redirect;
+				if (!mayContinue()) {
+					return unreachable('stopped before the region retry');
+				}
+				continue;
 			}
-			base = redirect;
-			apiBaseUrl = redirect;
+			const failure =
+				redirect !== null
+					? unreachable('second region redirect')
+					: classifyEnvelope(envelope);
+			log('net refresh step 1 (refresh-user-token): non-OK envelope', {
+				httpStatus: res.status,
+				envelopeStatus: envelope.status,
+				message: envelopeMessage(envelope),
+				failure,
+			});
+			return failure;
 		}
 
 		// Step 2: mint the workspace token. The fresh UT cookie from step 1 is
 		// already in the session jar, so this call just needs the cookie + wid.
+		if (!mayContinue()) {
+			log(
+				'net refresh stopped before the mint: the caller no longer owns this refresh',
+			);
+			return unreachable('stopped before the mint');
+		}
 		const mint = await deps.post(
 			`${base}${WORKSPACE_TOKEN_PATH_PREFIX}${wid}`,
 			'{}',
 			headers,
 		);
+		// Plaud's app reads HTTP 410 on the mint as "user not found".
+		if (mint.status === HTTP_GONE) {
+			log('net refresh step 2 (workspace token mint): HTTP 410', {
+				httpStatus: mint.status,
+			});
+			return denied('user-not-found', mint.status);
+		}
 		const mintEnvelope = parseEnvelope(mint.text);
+		if (mint.status < 200 || mint.status >= 300) {
+			const failure =
+				mintEnvelope !== null && isSsoRequired(mintEnvelope)
+					? denied('sso-required', mint.status)
+					: classifyHttpStatus(mint.status);
+			log('net refresh step 2 (workspace token mint): non-2xx response', {
+				httpStatus: mint.status,
+				body: bodySnippet(mint.text),
+				failure,
+			});
+			return failure;
+		}
 		if (mintEnvelope === null) {
 			log(
 				'net refresh step 2 (workspace token mint): non-JSON response',
@@ -367,19 +503,24 @@ export async function performNetRefresh(
 					body: bodySnippet(mint.text),
 				},
 			);
-			return null;
+			return unreachable('non-JSON response');
 		}
 		const parsed = parseWorkspaceTokenResponse(mintEnvelope);
 		if (parsed === null) {
+			const failure =
+				mintEnvelope.status === STATUS_OK
+					? unreachable('mint succeeded without a workspace_token')
+					: classifyEnvelope(mintEnvelope);
 			log(
 				'net refresh step 2 (workspace token mint): no workspace_token',
 				{
 					httpStatus: mint.status,
 					envelopeStatus: mintEnvelope.status,
 					message: envelopeMessage(mintEnvelope),
+					failure,
 				},
 			);
-			return null;
+			return failure;
 		}
 		log('net refresh succeeded via the direct (windowless) path');
 		return {
@@ -389,10 +530,11 @@ export async function performNetRefresh(
 		};
 	} catch (err) {
 		// A refresh bug must never throw into the timer or the auto-sync tick.
+		// A throw here is the transport (timeout, offline, DNS), so transient.
 		log('net refresh threw', {
 			error: err instanceof Error ? err.message : String(err),
 		});
-		return null;
+		return unreachable('transport error');
 	}
 }
 

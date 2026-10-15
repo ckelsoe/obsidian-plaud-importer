@@ -80,6 +80,8 @@ interface Harness {
 	fetchCalls: number;
 	stored: Array<{ token: string; refreshToken?: string | null }>;
 	debug: Array<{ kind: string; message: string }>;
+	/** Text of every action notice shown (the reconnect prompts). */
+	notices: string[];
 	setFetch: (fetch: PlaudHttpFetcher) => void;
 	setStoreOutcome: (outcome: CaptureStoreResult) => void;
 	/** Simulate a swallowed refresh-secret write: 'stored' but the WRT does not land. */
@@ -96,7 +98,10 @@ afterEach(() => {
 	built.length = 0;
 });
 
-function makeHarness(overrides: Partial<PlaudImporterSettings> = {}): Harness {
+function makeHarness(
+	overrides: Partial<PlaudImporterSettings> = {},
+	isDisposed: () => boolean = () => false,
+): Harness {
 	const settings: PlaudImporterSettings = {
 		...DEFAULT_SETTINGS,
 		signInMethod: 'browser',
@@ -115,10 +120,11 @@ function makeHarness(overrides: Partial<PlaudImporterSettings> = {}): Harness {
 	};
 	const stored: Array<{ token: string; refreshToken?: string | null }> = [];
 	const debug: Array<{ kind: string; message: string }> = [];
+	const notices: string[] = [];
 
 	const host: SessionRenewalHost = {
 		getSettings: () => settings,
-		isDisposed: () => false,
+		isDisposed,
 		getAppId: () => 'app-1',
 		readStoredTokenValue: () => storedToken.value,
 		readStoredRefreshTokenValue: () => storedRefresh.value,
@@ -129,7 +135,10 @@ function makeHarness(overrides: Partial<PlaudImporterSettings> = {}): Harness {
 		saveSettings: () => Promise.resolve(),
 		debugLog: (entry) =>
 			debug.push({ kind: entry.kind, message: entry.message }),
-		showActionNotice: () => ({ hide: () => {} }) as never,
+		showActionNotice: (message) => {
+			notices.push(message);
+			return { hide: () => {} } as never;
+		},
 		forgetActionNotice: () => {},
 		redrawSettings: () => {},
 		isReauthInFlight: () => false,
@@ -167,6 +176,7 @@ function makeHarness(overrides: Partial<PlaudImporterSettings> = {}): Harness {
 		},
 		stored,
 		debug,
+		notices,
 		setFetch: (fetch) => {
 			state.fetch = fetch;
 		},
@@ -279,5 +289,314 @@ describe('refreshNow on a browser (v4) session', () => {
 		h.setDropRefreshWrite(true);
 		expect(await h.renewal.refreshNow()).toBe('failed');
 		expect(h.renewal.paused).toBe(true);
+	});
+});
+
+// --- Failure classification and the transient retry ladder ----------------
+//
+// Modeled on Plaud's own 4.0 app: a session Plaud refuses ("denied") pauses
+// renewal at once with a reason-specific prompt, while one Plaud could not be
+// reached ("unreachable") is kept and retried on a bounded ladder.
+
+function httpError(status: number, body = 'oops'): PlaudHttpResponse {
+	return { status, json: null, text: body };
+}
+
+function envelope(body: Record<string, unknown>): PlaudHttpResponse {
+	return { status: 200, json: body, text: JSON.stringify(body) };
+}
+
+describe('transient refresh failures retry on a ladder', () => {
+	beforeEach(() => {
+		jest.useFakeTimers();
+	});
+	afterEach(() => {
+		jest.useRealTimers();
+	});
+
+	it('keeps the session and schedules a retry when Plaud is unreachable', async () => {
+		const h = makeHarness();
+		h.setFetch(() => Promise.resolve(httpError(503)));
+		expect(await h.renewal.refreshNow()).toBe('retrying');
+		expect(h.renewal.paused).toBe(false);
+		expect(h.notices).toHaveLength(0);
+		expect(h.debug.map((d) => d.message).join('\n')).toContain(
+			'retry 1 of 3 in 5 minutes',
+		);
+	});
+
+	it('retries at 5, 20 and 60 minutes, then pauses and prompts once', async () => {
+		const h = makeHarness();
+		h.setFetch(() => Promise.resolve(httpError(503)));
+		expect(await h.renewal.refreshNow()).toBe('retrying');
+		expect(h.fetchCalls).toBe(1);
+
+		await jest.advanceTimersByTimeAsync(4 * 60_000);
+		expect(h.fetchCalls).toBe(1);
+		await jest.advanceTimersByTimeAsync(60_000);
+		expect(h.fetchCalls).toBe(2);
+		await jest.advanceTimersByTimeAsync(20 * 60_000);
+		expect(h.fetchCalls).toBe(3);
+		expect(h.renewal.paused).toBe(false);
+		await jest.advanceTimersByTimeAsync(60 * 60_000);
+		expect(h.fetchCalls).toBe(4);
+
+		expect(h.renewal.paused).toBe(true);
+		// One reconnect prompt. The fixture token has expired by now, so it is
+		// the expiry warning rather than the separate failure notice.
+		expect(h.notices).toHaveLength(1);
+		expect(at(h.notices, 0)).toContain('Reconnect');
+		// Paused means no more attempts against the hourly ceiling.
+		await jest.advanceTimersByTimeAsync(3 * 60 * 60_000);
+		expect(h.fetchCalls).toBe(4);
+	});
+
+	it('does not let an unrelated reconcile pull a retry forward', async () => {
+		const h = makeHarness();
+		h.setFetch(() => Promise.resolve(httpError(503)));
+		expect(await h.renewal.refreshNow()).toBe('retrying');
+		h.renewal.reconcileRefresh();
+		await jest.advanceTimersByTimeAsync(60_000);
+		expect(h.fetchCalls).toBe(1);
+	});
+
+	it('renews on a retry and stores the fresh token', async () => {
+		const h = makeHarness();
+		let calls = 0;
+		h.setFetch(() =>
+			Promise.resolve(calls++ === 0 ? httpError(503) : okRefresh()),
+		);
+		expect(await h.renewal.refreshNow()).toBe('retrying');
+		await jest.advanceTimersByTimeAsync(5 * 60_000);
+		expect(h.stored).toEqual([
+			{ token: FRESH_WT, refreshToken: ROTATED_REFRESH },
+		]);
+		expect(h.renewal.paused).toBe(false);
+	});
+});
+
+describe('denied refresh failures pause at once with the reason', () => {
+	it.each([
+		[
+			'step-up (-2114)',
+			envelope({ status: -2114, msg: 'step up' }),
+			'Plaud wants you to confirm your identity again before renewing your session. Reconnect to sign in.',
+		],
+		[
+			'workspace invalid (-3003)',
+			envelope({ status: -3003 }),
+			'You no longer have access to this Plaud workspace. Reconnect to sign in to your current workspace.',
+		],
+		[
+			'company SSO required',
+			httpError(
+				403,
+				JSON.stringify({
+					status: -1,
+					data: {
+						error_code: 'SSO_REQUIRED',
+						workos_organization_id: 'org_1',
+					},
+				}),
+			),
+			'Your Plaud workspace now requires company single sign-on, so this session cannot be renewed here. Reconnect and sign in through your browser.',
+		],
+		[
+			'expired refresh token (-420)',
+			envelope({ status: -420 }),
+			'Your Plaud session has ended. Reconnect to keep imports and auto-sync running.',
+		],
+		[
+			'HTTP 401',
+			httpError(401),
+			'Your Plaud session has ended. Reconnect to keep imports and auto-sync running.',
+		],
+	])('%s', async (_label, response, notice) => {
+		const h = makeHarness();
+		h.setFetch(() => Promise.resolve(response));
+		expect(await h.renewal.refreshNow()).toBe('failed');
+		expect(h.renewal.paused).toBe(true);
+		expect(h.fetchCalls).toBe(1);
+		expect(h.notices).toEqual([notice]);
+	});
+});
+
+// --- Email (window) session: cookie path first, bearer as the fallback ------
+
+interface FakeCookieResponse {
+	status: number;
+	body: string;
+}
+
+/** Fake Electron whose session.fetch answers the cookie path in order. */
+function installCookieTransport(responses: FakeCookieResponse[]): string[] {
+	const urls: string[] = [];
+	let i = 0;
+	const win = window as unknown as { require: (id: string) => unknown };
+	win.require = () => ({
+		remote: {
+			getGlobal: () => ({ timeout: () => ({}) }),
+			session: {
+				fromPartition: () => ({
+					fetch: (url: string) => {
+						urls.push(url);
+						const r = at(
+							responses,
+							Math.min(i++, responses.length - 1),
+						);
+						return Promise.resolve({
+							status: r.status,
+							text: () => Promise.resolve(r.body),
+						});
+					},
+				}),
+			},
+		},
+	});
+	return urls;
+}
+
+describe('email session renewal falls back to the bearer refresh', () => {
+	afterEach(() => {
+		delete (window as unknown as { require?: unknown }).require;
+	});
+
+	it('renews by bearer when the cookie path is refused', async () => {
+		const cookieUrls = installCookieTransport([
+			{ status: 200, body: JSON.stringify({ status: -401 }) },
+		]);
+		const h = makeHarness({ signInMethod: 'window' });
+		expect(await h.renewal.refreshNow()).toBe('refreshed');
+		expect(cookieUrls).toHaveLength(1);
+		expect(h.fetchCalls).toBe(1);
+		expect(h.stored).toEqual([
+			{ token: FRESH_WT, refreshToken: ROTATED_REFRESH },
+		]);
+	});
+
+	it('pauses with the cookie reason when there is no refresh token to fall back on', async () => {
+		installCookieTransport([
+			{ status: 200, body: JSON.stringify({ status: -401 }) },
+		]);
+		const h = makeHarness({ signInMethod: 'window' });
+		h.storedRefresh.value = '';
+		expect(await h.renewal.refreshNow()).toBe('failed');
+		expect(h.fetchCalls).toBe(0);
+		expect(h.notices).toEqual([
+			'Your Plaud session has ended. Reconnect to keep imports and auto-sync running.',
+		]);
+	});
+
+	it('retries when either path could not reach Plaud', async () => {
+		installCookieTransport([{ status: 502, body: 'bad gateway' }]);
+		const h = makeHarness({ signInMethod: 'window' });
+		h.setFetch(() => Promise.resolve(envelope({ status: -420 })));
+		expect(await h.renewal.refreshNow()).toBe('retrying');
+		expect(h.renewal.paused).toBe(false);
+	});
+});
+
+// --- Review findings: lock, request budget, cancellation --------------------
+
+describe('renewal safety around the fallback and retries', () => {
+	afterEach(() => {
+		delete (window as unknown as { require?: unknown }).require;
+		jest.useRealTimers();
+	});
+
+	it('holds the in-flight lock until the bearer fallback has stored', async () => {
+		installCookieTransport([
+			{ status: 200, body: JSON.stringify({ status: -401 }) },
+		]);
+		const h = makeHarness({ signInMethod: 'window' });
+		let release: (r: PlaudHttpResponse) => void = () => {};
+		h.setFetch(
+			() =>
+				new Promise<PlaudHttpResponse>((resolve) => {
+					release = resolve;
+				}),
+		);
+		const pending = h.renewal.refreshNow();
+		// Let the cookie path settle and the bearer request go out.
+		for (let i = 0; i < 20 && h.fetchCalls === 0; i++) {
+			await Promise.resolve();
+		}
+		expect(h.fetchCalls).toBe(1);
+		expect(h.renewal.refreshInFlight).toBe(true);
+		release(okRefresh());
+		expect(await pending).toBe('refreshed');
+		expect(h.renewal.refreshInFlight).toBe(false);
+	});
+
+	it('keeps persistent conflicts within 8 requests an hour', async () => {
+		jest.useFakeTimers();
+		const urls = installCookieTransport([
+			{ status: 200, body: JSON.stringify({ status: -4302 }) },
+		]);
+		const h = makeHarness({ signInMethod: 'window' });
+		h.storedRefresh.value = '';
+		void h.renewal.refreshNow();
+		await jest.advanceTimersByTimeAsync(59 * 60_000);
+		// Two attempts of four step-1 calls each fill the budget, so the next
+		// ladder step waits for the first attempt to age out of the hour
+		// instead of firing at 25 minutes.
+		expect(urls).toHaveLength(8);
+		expect(h.renewal.paused).toBe(false);
+		expect(h.debug.map((d) => d.message).join('\n')).toContain(
+			'retry 2 of 3 in 55 minutes',
+		);
+	});
+
+	it('ends a pending conflict wait on unload without another request', async () => {
+		jest.useFakeTimers();
+		const urls = installCookieTransport([
+			{ status: 200, body: JSON.stringify({ status: -4302 }) },
+		]);
+		let disposed = false;
+		const h = makeHarness({ signInMethod: 'window' }, () => disposed);
+		const pending = h.renewal.refreshNow();
+		await jest.advanceTimersByTimeAsync(0);
+		expect(urls).toHaveLength(1);
+		disposed = true;
+		h.renewal.dispose();
+		expect(jest.getTimerCount()).toBe(0);
+		expect(await pending).toBe('failed');
+		expect(urls).toHaveLength(1);
+	});
+
+	it('defers, not pauses, when the bearer fallback does not fit the budget', async () => {
+		// Each attempt: step 1 ok, mint 401, then the bearer. Three requests.
+		const urls = installCookieTransport([
+			{ status: 200, body: JSON.stringify({ status: 0, data: {} }) },
+			{ status: 401, body: '{}' },
+			{ status: 200, body: JSON.stringify({ status: 0, data: {} }) },
+			{ status: 401, body: '{}' },
+			{ status: 200, body: JSON.stringify({ status: 0, data: {} }) },
+			{ status: 401, body: '{}' },
+		]);
+		const h = makeHarness({ signInMethod: 'window' });
+		expect(await h.renewal.refreshNow()).toBe('refreshed');
+		expect(await h.renewal.refreshNow()).toBe('refreshed');
+		// Six requests spent; this attempt's step 1 and mint fill the budget.
+		expect(await h.renewal.refreshNow()).toBe('retrying');
+		expect(urls).toHaveLength(6);
+		expect(h.fetchCalls).toBe(2);
+		expect(h.renewal.paused).toBe(false);
+	});
+
+	it('stops a conflict retry when the user signs out meanwhile', async () => {
+		jest.useFakeTimers();
+		const urls = installCookieTransport([
+			{ status: 200, body: JSON.stringify({ status: -4302 }) },
+		]);
+		const h = makeHarness({ signInMethod: 'window' });
+		const pending = h.renewal.refreshNow();
+		await jest.advanceTimersByTimeAsync(0);
+		expect(urls).toHaveLength(1);
+		h.storedToken.value = '';
+		await jest.advanceTimersByTimeAsync(1000);
+		expect(await pending).toBe('superseded');
+		expect(urls).toHaveLength(1);
+		expect(h.fetchCalls).toBe(0);
 	});
 });

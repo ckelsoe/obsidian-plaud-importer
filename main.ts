@@ -99,6 +99,7 @@ import {
 	CURRENT_SETTINGS_VERSION,
 	DEFAULT_SETTINGS,
 	DEFAULT_SIGN_IN_PORTAL_URL,
+	migrateApiBaseUrl,
 	migrateSignInPortalUrl,
 	resolveRibbonIconId,
 	type PlaudImporterSettings,
@@ -612,9 +613,11 @@ export default class PlaudImporterPlugin extends Plugin {
 										? 'A session refresh is already running.'
 										: outcome === 'superseded'
 											? 'Session refresh skipped: the stored sign-in changed while it ran.'
-											: outcome === 'unsupported'
-												? 'This session cannot be refreshed in the background. Reconnect to sign in again.'
-												: 'Session refresh failed. See the debug log, then reconnect.',
+											: outcome === 'retrying'
+												? 'Could not reach Plaud. The plugin will try again in a few minutes.'
+												: outcome === 'unsupported'
+													? 'This session cannot be refreshed in the background. Reconnect to sign in again.'
+													: 'Session refresh failed. See the debug log, then reconnect.',
 							);
 						})
 						.catch((err: unknown) => {
@@ -2806,11 +2809,14 @@ export default class PlaudImporterPlugin extends Plugin {
 		// The sign-in portal default moved alpha.plaud.ai, then beta.plaud.ai,
 		// then web.plaud.ai. A stored value that still pins a retired default (or
 		// is malformed) moves to the current one; a custom portal is kept. Only
-		// the next sign-in reads it: the stored API host is left as is, so a
-		// running session keeps renewing where it was captured.
+		// the next sign-in reads it.
 		this.settings.signInPortalUrl = migrateSignInPortalUrl(
 			this.settings.signInPortalUrl,
 		);
+		// And the API host: a session captured on the retiring beta portal
+		// moves off Plaud's pre-release servers to production without a new
+		// sign-in (see migrateApiBaseUrl for why that is safe).
+		this.settings.apiBaseUrl = migrateApiBaseUrl(this.settings.apiBaseUrl);
 		// Repair a hand-edited or unknown transcript placement to the default, so
 		// the dropdown and the writer agree on what is in effect.
 		if (!isTranscriptPlacement(this.settings.transcriptPlacement)) {
