@@ -6,6 +6,19 @@ All notable changes to Plaud Importer will be documented in this file.
 
 ## [Unreleased]
 
+## [0.45.0] - 2026-10-15
+
+### Changed
+
+- **Background renewal no longer gives up on a network hiccup.** Before, any failed renewal paused renewal and asked you to reconnect, even when Plaud just could not be reached for a moment. Now the plugin works like Plaud's own web app: if Plaud cannot be reached, it keeps your session and tries again after 5, 20, and 60 minutes, and asks you to reconnect only if all of those fail. A brief conflict with another renewal is retried within a few seconds.
+- **The reconnect prompt says why when Plaud gives a reason.** For example: your workspace now requires company single sign-on, Plaud wants you to confirm your identity again, or you no longer have access to the workspace.
+- **Email sign-ins have a second way to renew.** If the usual renewal fails, the plugin also tries the workspace renewal token captured at sign-in before asking you to reconnect.
+- **Sessions still on Plaud's beta servers move to production automatically.** The beta portal is being retired. A session signed in through beta.plaud.ai now switches to Plaud's main servers the next time Obsidian starts, with no new sign-in needed.
+
+### Fixed
+
+- **A renewal that returned no new renewal token no longer fails.** The plugin now keeps the current one, as Plaud's web app does.
+
 ## [0.44.0] - 2026-10-15
 
 ### Fixed

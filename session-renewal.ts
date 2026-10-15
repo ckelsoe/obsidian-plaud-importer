@@ -29,6 +29,12 @@ import {
 	performNetRefresh,
 } from './plaud-refresh-net';
 import { performV4Refresh } from './plaud-refresh-v4';
+import {
+	deniedNoticeText,
+	isRefreshFailure,
+	unreachable,
+	type RefreshFailure,
+} from './refresh-failure';
 import { selectRefreshTokenForWorkspace } from './token-candidates';
 import type { PlaudHttpFetcher } from './plaud-client-re';
 import type { CaptureStoreResult } from './capture-store';
@@ -38,7 +44,56 @@ import { ssoReconnectHint } from './reconnect-routing';
 
 /** What one renewal attempt did. Reported by the debug command verbatim. */
 export type RefreshOutcome =
-	'refreshed' | 'unsupported' | 'failed' | 'busy' | 'superseded';
+	| 'refreshed'
+	| 'unsupported'
+	| 'failed'
+	| 'busy'
+	| 'superseded'
+	// Plaud could not be reached; another attempt is scheduled.
+	| 'retrying';
+
+// Retry ladder for a transient ("unreachable") refresh failure, per credential.
+// Renewal starts REFRESH_LEAD_MS (4 hours) before expiry and the reconnect
+// warning comes at 2 hours, so all three retries finish before the warning
+// would. A DENIED failure is never retried: the session is over, and retrying
+// a dead session is what would burn the hourly refresh ceiling (step 1
+// reports login_total_per_hour: 10). That rule, not "never retry", is what the
+// ceiling needs; Plaud's own 4.0 app keeps a session it cannot reach and tries
+// again later, and so does this.
+const TRANSIENT_RETRY_DELAYS_MS: readonly number[] = [
+	5 * 60 * 1000,
+	20 * 60 * 1000,
+	60 * 60 * 1000,
+];
+
+// A rolling budget for refresh REQUESTS, shared by every path and retry
+// layer: the cookie path's two calls and its conflict retries, the bearer
+// call, and the ladder above. Plaud reports login_total_per_hour: 10; staying
+// at 8 leaves headroom for a sign-in the user starts by hand. An attempt that
+// would not fit waits until enough requests age out of the window.
+const REFRESH_CALL_BUDGET = 8;
+const BUDGET_WINDOW_MS = 60 * 60 * 1000;
+// What one attempt needs to be worth starting: step 1 plus the mint.
+const ATTEMPT_CALL_COST = 2;
+
+/**
+ * One failure from two refresh paths (the cookie path, then the bearer path it
+ * fell back to). If either could not reach Plaud the session may still be
+ * fine, so the result is transient. If both refused, the more specific reason
+ * wins over a plain "session ended".
+ */
+function combineFailures(
+	first: RefreshFailure | undefined,
+	second: RefreshFailure,
+): RefreshFailure {
+	if (first === undefined) return second;
+	if (first.failed === 'unreachable' || second.failed === 'unreachable') {
+		return unreachable(
+			`cookie path: ${first.reason}; bearer path: ${second.reason}`,
+		);
+	}
+	return first.reason === 'session-ended' ? second : first;
+}
 
 /** A log entry shaped the way BufferedDebugLogger takes one. */
 interface DebugEntry {
@@ -115,6 +170,23 @@ export class SessionRenewal {
 	// Shown when renewal fails outside the warning window, so the user is not
 	// left with no sign that it stopped. Cleared wherever the expiry notice is.
 	private sessionRefreshFailureNotice: Notice | null = null;
+	// Transient-failure retries, scoped to one credential: retryForToken is the
+	// stored token they belong to, so a new sign-in starts the ladder fresh.
+	// retryNotBeforeMs is a floor reconcileRefresh honors, so an unrelated
+	// reconcile (a settings save, a capture) cannot pull a retry forward.
+	private transientRetries = 0;
+	private retryForToken = '';
+	private retryNotBeforeMs = 0;
+	// Why Plaud refused the current credential, when it said. The expiry
+	// warning uses it in place of its generic text, so the reason is not lost
+	// when the warning is already on screen (it usually is on a 24 hour token).
+	private deniedNotice: string | null = null;
+	// When each refresh request went out, oldest first, for the budget above.
+	private refreshCallTimes: number[] = [];
+	// Pending conflict-retry waits. dispose() clears each timer and resolves
+	// its wait early, so nothing outlives unload; the refresh then sees it is
+	// disposed and stops before sending anything.
+	private readonly sleepTimers = new Map<number, () => void>();
 
 	constructor(private readonly host: SessionRenewalHost) {}
 
@@ -134,6 +206,69 @@ export class SessionRenewal {
 	 */
 	clearFailure(): void {
 		this.sessionRefreshFailed = false;
+		this.deniedNotice = null;
+		this.resetTransientRetries();
+	}
+
+	private resetTransientRetries(): void {
+		this.transientRetries = 0;
+		this.retryForToken = '';
+		this.retryNotBeforeMs = 0;
+	}
+
+	private ownedSleep(ms: number): Promise<void> {
+		return new Promise((resolve) => {
+			const id = window.setTimeout(() => {
+				this.sleepTimers.delete(id);
+				resolve();
+			}, ms);
+			this.sleepTimers.set(id, resolve);
+		});
+	}
+
+	// ---- Refresh request budget (see REFRESH_CALL_BUDGET) -----------------
+
+	private recordRefreshCall(): void {
+		this.refreshCallTimes.push(Date.now());
+	}
+
+	private pruneRefreshCalls(now: number): void {
+		this.refreshCallTimes = this.refreshCallTimes.filter(
+			(t) => now - t < BUDGET_WINDOW_MS,
+		);
+	}
+
+	private hasRefreshBudget(calls: number): boolean {
+		this.pruneRefreshCalls(Date.now());
+		return this.refreshCallTimes.length + calls <= REFRESH_CALL_BUDGET;
+	}
+
+	// The earliest time `calls` more requests fit in the budget.
+	private refreshBudgetFreeAtMs(calls: number): number {
+		const now = Date.now();
+		this.pruneRefreshCalls(now);
+		const excess =
+			this.refreshCallTimes.length + calls - REFRESH_CALL_BUDGET;
+		if (excess <= 0) return now;
+		const oldestToExpire = this.refreshCallTimes[excess - 1] ?? now;
+		return oldestToExpire + BUDGET_WINDOW_MS + 1000;
+	}
+
+	// No budget for an attempt right now: schedule one for when there is,
+	// without spending a ladder step (nothing was tried).
+	private deferForBudget(current: string): RefreshOutcome {
+		if (this.retryForToken !== current) {
+			this.retryForToken = current;
+			this.transientRetries = 0;
+		}
+		this.retryNotBeforeMs = this.refreshBudgetFreeAtMs(ATTEMPT_CALL_COST);
+		this.host.debugLog({
+			kind: 'note',
+			endpoint: '/session-refresh',
+			message: `session refresh deferred: the hourly request budget is spent; next attempt in ${Math.ceil((this.retryNotBeforeMs - Date.now()) / 60000)} minutes`,
+		});
+		this.reconcileRefresh();
+		return 'retrying';
 	}
 
 	/** Cancel both timers and drop the notice references. Called from onunload. */
@@ -148,6 +283,11 @@ export class SessionRenewal {
 		}
 		this.sessionExpiryNotice = null;
 		this.sessionRefreshFailureNotice = null;
+		for (const [id, resolve] of this.sleepTimers) {
+			window.clearTimeout(id);
+			resolve();
+		}
+		this.sleepTimers.clear();
 	}
 
 	// ---- Pre-expiry session warning (issue #78, 0.34.0) ------------------
@@ -219,9 +359,13 @@ export class SessionRenewal {
 		const baseMessage = decision.expired
 			? 'Your Plaud session has expired. Reconnect to keep imports and auto-sync running.'
 			: `Your Plaud session expires in about ${timeLeft}. Reconnect now to avoid an interruption.`;
+		// A known refusal reason replaces the generic text, and drops the
+		// "use email sign-in" hint, which is wrong advice for, say, a workspace
+		// that now requires company SSO.
 		this.sessionExpiryNotice = this.host.showActionNotice(
-			baseMessage +
-				ssoReconnectHint(this.host.getSettings().signInMethod),
+			this.deniedNotice ??
+				baseMessage +
+					ssoReconnectHint(this.host.getSettings().signInMethod),
 			'Reconnect',
 			() => this.reconnectFreshFromExpiryNotice(),
 		);
@@ -282,8 +426,16 @@ export class SessionRenewal {
 		} else {
 			return;
 		}
-		const delay = computeRefreshDelayMs(token, Date.now());
-		if (delay === null) return;
+		const scheduled = computeRefreshDelayMs(token, Date.now());
+		if (scheduled === null) return;
+		// A pending transient retry for this same credential is a floor: a
+		// due token's normal delay is the 30 second minimum, which would
+		// otherwise run the retry almost at once.
+		const now = Date.now();
+		const delay =
+			this.retryForToken === token && this.retryNotBeforeMs > now
+				? Math.max(scheduled, this.retryNotBeforeMs - now)
+				: scheduled;
 		this.sessionRefreshTimeoutId = window.setTimeout(() => {
 			this.sessionRefreshTimeoutId = undefined;
 			// Belt and braces on top of the store's own catch: nothing on a
@@ -317,7 +469,8 @@ export class SessionRenewal {
 		// token would run to expiry with no further attempt. Re-arm instead.
 		// "superseded" re-arms through the newer credential's own store, but
 		// reconciling again is idempotent and keeps the rule simple. "failed"
-		// deliberately does not re-arm; "unsupported" has nothing to arm.
+		// deliberately does not re-arm; "unsupported" has nothing to arm;
+		// "retrying" already armed its own retry.
 		if (outcome === 'busy' || outcome === 'superseded') {
 			this.reconcileRefresh();
 		}
@@ -329,10 +482,13 @@ export class SessionRenewal {
 	// a 'browser' (v4) session takes the cookieless bearer path, everything else
 	// the v3 cookie path below.
 	//
-	// No retry, by measurement: step 1 reports `login_total_per_hour: 10`, so a
-	// backoff ladder against a dead session spends the account's whole refresh
-	// budget and can lock it out of renewing at all. One attempt; on failure
-	// pause and prompt Reconnect.
+	// Failures are classified (refresh-failure.ts). A denied one pauses and
+	// prompts Reconnect with no retry, because step 1 reports
+	// `login_total_per_hour: 10` and retrying a dead session would spend that
+	// budget. A transient one retries on TRANSIENT_RETRY_DELAYS_MS. An email
+	// (window) session whose cookie path fails falls back to the bearer
+	// refresh when a workspace refresh token was captured, the order Plaud's
+	// own app uses in reverse (it tries the bearer first, then the mint).
 	async refreshNow(): Promise<RefreshOutcome> {
 		if (this.sessionRefreshInFlight) return 'busy';
 		// Never run underneath an open sign-in window. Reconnect CLEARS the
@@ -372,12 +528,27 @@ export class SessionRenewal {
 		// user could start a sign-in during validation and storage, and that
 		// window can capture the partition's stale token and write it over the
 		// one this call just minted.
+		if (!this.hasRefreshBudget(ATTEMPT_CALL_COST)) {
+			return this.deferForBudget(current);
+		}
+		const countedPost: typeof post = (url, body, headers) => {
+			this.recordRefreshCall();
+			return post(url, body, headers);
+		};
 		this.sessionRefreshInFlight = true;
 		try {
 			const result = await performNetRefresh({
 				currentToken: current,
 				baseUrl: this.host.getSettings().apiBaseUrl,
-				post,
+				post: countedPost,
+				// Stop a conflict retry or the mint once this refresh no longer
+				// belongs to the stored credential, or the budget is spent.
+				sleep: (ms) => this.ownedSleep(ms),
+				mayContinue: () =>
+					!this.host.isDisposed() &&
+					this.host.readStoredTokenValue() === current &&
+					this.host.getSettings().secretId === currentSecretId &&
+					this.hasRefreshBudget(1),
 				log: (message, payload) => {
 					this.host.debugLog({
 						kind: 'note',
@@ -432,8 +603,39 @@ export class SessionRenewal {
 			// hour. Refusing it leaves the old token in place to expire
 			// normally, which surfaces as the ordinary reconnect prompt
 			// instead of a retry storm.
+			if (isRefreshFailure(result)) {
+				this.host.debugLog({
+					kind: 'error',
+					endpoint: '/session-refresh',
+					message: `session refresh: the two-step refresh did not return a token (${result.failed}: ${result.reason})`,
+				});
+				// Second path: a captured workspace refresh token can renew this
+				// session by bearer even when the cookie path cannot.
+				const refreshToken = this.host.readStoredRefreshTokenValue();
+				const wid = workspaceIdFromToken(current);
+				const canFallBack = refreshToken.length > 0 && wid !== null;
+				// A fallback that exists but does not fit the budget is
+				// deferred, not skipped: skipping would let a cookie refusal
+				// pause renewal without ever trying the bearer.
+				if (canFallBack && !this.hasRefreshBudget(1)) {
+					return this.deferForBudget(current);
+				}
+				if (canFallBack) {
+					// Awaited, not returned bare: a bare return would run the
+					// finally below and drop the in-flight lock while the bearer
+					// request is still out.
+					return await this.runBearerRefresh(
+						'window',
+						current,
+						currentSecretId,
+						refreshToken,
+						wid,
+						result,
+					);
+				}
+				return this.onRefreshFailure(current, result);
+			}
 			if (
-				result === null ||
 				!isUsableUserToken(result.token) ||
 				!isWorkspaceToken(result.token) ||
 				extractWorkspaceId(result.token) === null ||
@@ -442,16 +644,13 @@ export class SessionRenewal {
 				this.host.debugLog({
 					kind: 'error',
 					endpoint: '/session-refresh',
-					message:
-						result === null
-							? 'session refresh failed: the two-step refresh did not return a token'
-							: !isUsableUserToken(result.token)
-								? 'session refresh failed: the minted value did not pass the capture guard'
-								: !isWorkspaceToken(result.token)
-									? 'session refresh failed: the minted value is not a workspace token'
-									: extractWorkspaceId(result.token) === null
-										? 'session refresh failed: the minted value carries no workspace id to refresh against'
-										: 'session refresh failed: the minted token is already inside the refresh window',
+					message: !isUsableUserToken(result.token)
+						? 'session refresh failed: the minted value did not pass the capture guard'
+						: !isWorkspaceToken(result.token)
+							? 'session refresh failed: the minted value is not a workspace token'
+							: extractWorkspaceId(result.token) === null
+								? 'session refresh failed: the minted value carries no workspace id to refresh against'
+								: 'session refresh failed: the minted token is already inside the refresh window',
 				});
 				this.onSessionRefreshFailed();
 				return 'failed';
@@ -522,6 +721,8 @@ export class SessionRenewal {
 				return 'failed';
 			}
 			this.sessionRefreshFailed = false;
+			this.deniedNotice = null;
+			this.resetTransientRetries();
 			this.host.debugLog({
 				kind: 'note',
 				endpoint: '/session-refresh',
@@ -562,190 +763,215 @@ export class SessionRenewal {
 		// Which secret the WT came from, not just its value, so a picker pointed
 		// at a different secret holding the same value is treated as a change.
 		const currentSecretId = this.host.getSettings().secretId;
-		const deviceId = this.host.getSettings().plaudDeviceId.trim();
+		if (!this.hasRefreshBudget(ATTEMPT_CALL_COST)) {
+			return this.deferForBudget(current);
+		}
 		// Held until the fresh token is STORED, not merely fetched, so a sign-in
 		// started during validation cannot re-capture the stale portal token and
 		// write it over the one this call just minted.
 		this.sessionRefreshInFlight = true;
 		try {
-			const result = await performV4Refresh({
-				currentToken: current,
+			return await this.runBearerRefresh(
+				'browser',
+				current,
+				currentSecretId,
 				refreshToken,
-				baseUrl: this.host.getSettings().apiBaseUrl,
-				deviceId: deviceId.length > 0 ? deviceId : undefined,
-				fetch: this.host.httpFetch,
-				log: (message, payload) => {
-					this.host.debugLog({
-						kind: 'note',
-						endpoint: '/workspace-refresh',
-						message,
-						payload,
-					});
-				},
-			});
-			// A plugin unloaded mid-refresh must not write storage.
-			if (this.host.isDisposed()) return 'failed';
-			// Supersede check FIRST, ahead of both branches, for the same reason as
-			// the window path: a reconnect, a paste, a different linked secret or a
-			// sign out can land while the call is in flight, and neither a success
-			// nor a failure belongs to a credential nobody is using any more. The
-			// refresh token is part of that identity: a concurrent capture can
-			// rotate the WRT while keeping the same WT and secret, and overwriting
-			// that newer bearer with this call's rotation (or failing the new
-			// session on this call's error) would be the same clobber.
-			if (
-				this.host.readStoredTokenValue() !== current ||
-				this.host.getSettings().secretId !== currentSecretId ||
-				this.host.readStoredRefreshTokenValue() !== refreshToken
-			) {
+				currentWid,
+			);
+		} finally {
+			this.sessionRefreshInFlight = false;
+		}
+	}
+
+	// The bearer refresh itself. Assumes the caller holds sessionRefreshInFlight.
+	// `method` is the sign-in method to store the result under: 'browser' for an
+	// SSO/browser session, 'window' when an email session's cookie path failed
+	// and this is its fallback (`priorFailure` is that cookie failure).
+	private async runBearerRefresh(
+		method: SignInMethod,
+		current: string,
+		currentSecretId: string,
+		refreshToken: string,
+		currentWid: string,
+		priorFailure?: RefreshFailure,
+	): Promise<RefreshOutcome> {
+		const deviceId = this.host.getSettings().plaudDeviceId.trim();
+		const result = await performV4Refresh({
+			currentToken: current,
+			refreshToken,
+			baseUrl: this.host.getSettings().apiBaseUrl,
+			deviceId: deviceId.length > 0 ? deviceId : undefined,
+			fetch: (request) => {
+				this.recordRefreshCall();
+				return this.host.httpFetch(request);
+			},
+			log: (message, payload) => {
 				this.host.debugLog({
 					kind: 'note',
 					endpoint: '/workspace-refresh',
-					message:
-						'v4 session refresh discarded: the stored credential changed while it ran',
+					message,
+					payload,
 				});
-				return 'superseded';
-			}
-			// Validate the minted WT before storing: a usable, future-dated
-			// workspace token that MOVED the expiry past the refresh window AND
-			// stays on the SAME workspace. Binding the wid to the original is what
-			// stops a refresh (a stale refresh secret paired with a newly linked WT,
-			// say) from quietly switching the account to another workspace, which
-			// the v4 client would then send as x-scope-id on every call. The rotated
-			// refresh token is bound the same way: it is what the next cycle bears,
-			// and one for a different workspace could not renew this one. The
-			// in-window check refuses a mint already inside the refresh window, which
-			// would store as a success and then re-fire at the 30s floor against the
-			// hourly ceiling.
-			// The rotated refresh token has to be a real, live refresh token for
-			// THIS workspace, not merely a JWT that carries the right wid. Reusing
-			// selectRefreshTokenForWorkspace applies the exact capture-time guard
-			// (typ WRT, future exp, ws_ wid matching the fresh WT), so an expired or
-			// wrong-type value the endpoint might hand back is rejected instead of
-			// stored as the next cycle's unusable bearer.
-			const rotatedRefreshValid =
-				result !== null &&
-				selectRefreshTokenForWorkspace(
-					[result.refreshToken],
-					result.token,
-				) === result.refreshToken;
-			if (
-				result === null ||
-				!isUsableUserToken(result.token) ||
-				!isWorkspaceToken(result.token) ||
-				workspaceIdFromToken(result.token) !== currentWid ||
-				!rotatedRefreshValid ||
-				isRefreshDue(result.token, Date.now())
-			) {
-				this.host.debugLog({
-					kind: 'error',
-					endpoint: '/workspace-refresh',
-					message:
-						result === null
-							? 'v4 session refresh failed: the bearer refresh did not return a token'
-							: !isUsableUserToken(result.token)
-								? 'v4 session refresh failed: the minted value did not pass the capture guard'
-								: !isWorkspaceToken(result.token)
-									? 'v4 session refresh failed: the minted value is not a workspace token'
-									: workspaceIdFromToken(result.token) !==
-										  currentWid
-										? 'v4 session refresh failed: the minted token is for a different workspace'
-										: !rotatedRefreshValid
-											? 'v4 session refresh failed: the rotated refresh token is not a valid refresh token for this workspace'
-											: 'v4 session refresh failed: the minted token is already inside the refresh window',
-				});
-				this.onSessionRefreshFailed();
-				return 'failed';
-			}
-			// Store the fresh WT and the ROTATED refresh token in one
-			// batch. The refresh token is 'browser', with no host or scope change
-			// (v4 has no region redirect and the workspace rides in the token). The
-			// ownership guard is re-run inside the store for the same reason the
-			// window path re-runs it.
-			let stored: CaptureStoreResult;
-			try {
-				stored = await this.host.storeAccessToken(
-					result.token,
-					'browser',
-					undefined,
-					true,
-					() =>
-						!this.host.isDisposed() &&
-						this.host.readStoredTokenValue() === current &&
-						this.host.getSettings().secretId === currentSecretId &&
-						this.host.readStoredRefreshTokenValue() ===
-							refreshToken,
-					result.refreshToken,
-				);
-			} catch (err) {
-				this.host.debugLog({
-					kind: 'error',
-					endpoint: '/workspace-refresh',
-					message:
-						'v4 session refresh failed: storing the fresh token threw',
-					payload: {
-						error: err instanceof Error ? err.message : String(err),
-					},
-				});
-				this.onSessionRefreshFailed();
-				return 'failed';
-			}
-			if (stored.outcome === 'superseded') {
-				this.host.debugLog({
-					kind: 'note',
-					endpoint: '/workspace-refresh',
-					message:
-						'v4 session refresh discarded: the stored credential changed while the store was queued',
-				});
-				return 'superseded';
-			}
-			if (stored.outcome !== 'stored') {
-				this.host.debugLog({
-					kind: 'error',
-					endpoint: '/workspace-refresh',
-					message:
-						stored.outcome === 'save-failed'
-							? 'v4 session refresh failed: the vault would not accept the settings write, so the fresh token was not stored and the previous session is unchanged'
-							: stored.outcome === 'torn'
-								? 'v4 session refresh failed: the settings write landed but the credential write did not, so data.json names a session whose token was never stored'
-								: 'v4 session refresh failed: the minted token did not pass the capture guard at store time',
-				});
-				this.onSessionRefreshFailed();
-				return 'failed';
-			}
-			// The rotated refresh token MUST have landed. The store writes it in a
-			// guarded step (a failed write leaves the WT stored and only degrades
-			// renewal, which is right for a sign-in), so a 'stored' outcome does not
-			// prove the new bearer persisted. Read it back: if the write was
-			// swallowed the secret still holds the OLD bearer, and reporting success
-			// here would clear the failure state and re-arm as healthy while the next
-			// cycle silently bears a spent token. Treat that as a failure so the
-			// user is prompted to reconnect instead.
-			if (
-				this.host.readStoredRefreshTokenValue() !== result.refreshToken
-			) {
-				this.host.debugLog({
-					kind: 'error',
-					endpoint: '/workspace-refresh',
-					message:
-						'v4 session refresh failed: the fresh workspace token was stored but the rotated refresh token was not, so the next renewal has no valid bearer',
-				});
-				this.onSessionRefreshFailed();
-				return 'failed';
-			}
-			this.sessionRefreshFailed = false;
+			},
+		});
+		// A plugin unloaded mid-refresh must not write storage.
+		if (this.host.isDisposed()) return 'failed';
+		// Supersede check FIRST, ahead of both branches, for the same reason as
+		// the window path: a reconnect, a paste, a different linked secret or a
+		// sign out can land while the call is in flight, and neither a success
+		// nor a failure belongs to a credential nobody is using any more. The
+		// refresh token is part of that identity: a concurrent capture can
+		// rotate the WRT while keeping the same WT and secret, and overwriting
+		// that newer bearer with this call's rotation (or failing the new
+		// session on this call's error) would be the same clobber.
+		if (
+			this.host.readStoredTokenValue() !== current ||
+			this.host.getSettings().secretId !== currentSecretId ||
+			this.host.readStoredRefreshTokenValue() !== refreshToken
+		) {
 			this.host.debugLog({
 				kind: 'note',
 				endpoint: '/workspace-refresh',
 				message:
-					'v4 session refresh succeeded; a fresh token is stored',
+					'v4 session refresh discarded: the stored credential changed while it ran',
 			});
-			this.host.resumeAutoSyncIfPaused();
-			// storeAccessToken already reconciled the warning and this schedule.
-			return 'refreshed';
-		} finally {
-			this.sessionRefreshInFlight = false;
+			return 'superseded';
 		}
+		// Validate the minted WT before storing: a usable, future-dated
+		// workspace token that MOVED the expiry past the refresh window AND
+		// stays on the SAME workspace. Binding the wid to the original is what
+		// stops a refresh (a stale refresh secret paired with a newly linked WT,
+		// say) from quietly switching the account to another workspace, which
+		// the v4 client would then send as x-scope-id on every call. The rotated
+		// refresh token is bound the same way: it is what the next cycle bears,
+		// and one for a different workspace could not renew this one. The
+		// in-window check refuses a mint already inside the refresh window, which
+		// would store as a success and then re-fire at the 30s floor against the
+		// hourly ceiling.
+		// The rotated refresh token has to be a real, live refresh token for
+		// THIS workspace, not merely a JWT that carries the right wid. Reusing
+		// selectRefreshTokenForWorkspace applies the exact capture-time guard
+		// (typ WRT, future exp, ws_ wid matching the fresh WT), so an expired or
+		// wrong-type value the endpoint might hand back is rejected instead of
+		// stored as the next cycle's unusable bearer.
+		if (isRefreshFailure(result)) {
+			return this.onRefreshFailure(
+				current,
+				combineFailures(priorFailure, result),
+			);
+		}
+		const rotatedRefreshValid =
+			selectRefreshTokenForWorkspace(
+				[result.refreshToken],
+				result.token,
+			) === result.refreshToken;
+		if (
+			!isUsableUserToken(result.token) ||
+			!isWorkspaceToken(result.token) ||
+			workspaceIdFromToken(result.token) !== currentWid ||
+			!rotatedRefreshValid ||
+			isRefreshDue(result.token, Date.now())
+		) {
+			this.host.debugLog({
+				kind: 'error',
+				endpoint: '/workspace-refresh',
+				message: !isUsableUserToken(result.token)
+					? 'v4 session refresh failed: the minted value did not pass the capture guard'
+					: !isWorkspaceToken(result.token)
+						? 'v4 session refresh failed: the minted value is not a workspace token'
+						: workspaceIdFromToken(result.token) !== currentWid
+							? 'v4 session refresh failed: the minted token is for a different workspace'
+							: !rotatedRefreshValid
+								? 'v4 session refresh failed: the rotated refresh token is not a valid refresh token for this workspace'
+								: 'v4 session refresh failed: the minted token is already inside the refresh window',
+			});
+			this.onSessionRefreshFailed();
+			return 'failed';
+		}
+		// Store the fresh WT and the ROTATED refresh token in one
+		// batch. The refresh token is 'browser', with no host or scope change
+		// (v4 has no region redirect and the workspace rides in the token). The
+		// ownership guard is re-run inside the store for the same reason the
+		// window path re-runs it.
+		let stored: CaptureStoreResult;
+		try {
+			stored = await this.host.storeAccessToken(
+				result.token,
+				method,
+				undefined,
+				true,
+				() =>
+					!this.host.isDisposed() &&
+					this.host.readStoredTokenValue() === current &&
+					this.host.getSettings().secretId === currentSecretId &&
+					this.host.readStoredRefreshTokenValue() === refreshToken,
+				result.refreshToken,
+			);
+		} catch (err) {
+			this.host.debugLog({
+				kind: 'error',
+				endpoint: '/workspace-refresh',
+				message:
+					'v4 session refresh failed: storing the fresh token threw',
+				payload: {
+					error: err instanceof Error ? err.message : String(err),
+				},
+			});
+			this.onSessionRefreshFailed();
+			return 'failed';
+		}
+		if (stored.outcome === 'superseded') {
+			this.host.debugLog({
+				kind: 'note',
+				endpoint: '/workspace-refresh',
+				message:
+					'v4 session refresh discarded: the stored credential changed while the store was queued',
+			});
+			return 'superseded';
+		}
+		if (stored.outcome !== 'stored') {
+			this.host.debugLog({
+				kind: 'error',
+				endpoint: '/workspace-refresh',
+				message:
+					stored.outcome === 'save-failed'
+						? 'v4 session refresh failed: the vault would not accept the settings write, so the fresh token was not stored and the previous session is unchanged'
+						: stored.outcome === 'torn'
+							? 'v4 session refresh failed: the settings write landed but the credential write did not, so data.json names a session whose token was never stored'
+							: 'v4 session refresh failed: the minted token did not pass the capture guard at store time',
+			});
+			this.onSessionRefreshFailed();
+			return 'failed';
+		}
+		// The rotated refresh token MUST have landed. The store writes it in a
+		// guarded step (a failed write leaves the WT stored and only degrades
+		// renewal, which is right for a sign-in), so a 'stored' outcome does not
+		// prove the new bearer persisted. Read it back: if the write was
+		// swallowed the secret still holds the OLD bearer, and reporting success
+		// here would clear the failure state and re-arm as healthy while the next
+		// cycle silently bears a spent token. Treat that as a failure so the
+		// user is prompted to reconnect instead.
+		if (this.host.readStoredRefreshTokenValue() !== result.refreshToken) {
+			this.host.debugLog({
+				kind: 'error',
+				endpoint: '/workspace-refresh',
+				message:
+					'v4 session refresh failed: the fresh workspace token was stored but the rotated refresh token was not, so the next renewal has no valid bearer',
+			});
+			this.onSessionRefreshFailed();
+			return 'failed';
+		}
+		this.sessionRefreshFailed = false;
+		this.deniedNotice = null;
+		this.resetTransientRetries();
+		this.host.debugLog({
+			kind: 'note',
+			endpoint: '/workspace-refresh',
+			message: 'v4 session refresh succeeded; a fresh token is stored',
+		});
+		this.host.resumeAutoSyncIfPaused();
+		// storeAccessToken already reconciled the warning and this schedule.
+		return 'refreshed';
 	}
 
 	// Fire-and-forget settings write, for the paths that are synchronous by
@@ -761,10 +987,59 @@ export class SessionRenewal {
 		});
 	}
 
+	// Route a classified network failure: a transient one retries on the
+	// ladder (returning 'retrying'), a denied one, or a transient one whose
+	// retries are spent, pauses and prompts Reconnect (returning 'failed').
+	private onRefreshFailure(
+		current: string,
+		failure: RefreshFailure,
+	): RefreshOutcome {
+		if (this.retryForToken !== current) {
+			this.retryForToken = current;
+			this.transientRetries = 0;
+		}
+		const delay =
+			failure.failed === 'unreachable'
+				? TRANSIENT_RETRY_DELAYS_MS[this.transientRetries]
+				: undefined;
+		if (delay !== undefined) {
+			this.transientRetries++;
+			// The ladder step, or later if the request budget needs it.
+			this.retryNotBeforeMs = Math.max(
+				Date.now() + delay,
+				this.refreshBudgetFreeAtMs(ATTEMPT_CALL_COST),
+			);
+			this.host.debugLog({
+				kind: 'note',
+				endpoint: '/session-refresh',
+				message: `session refresh could not reach Plaud (${failure.reason}); retry ${this.transientRetries} of ${TRANSIENT_RETRY_DELAYS_MS.length} in ${Math.round((this.retryNotBeforeMs - Date.now()) / 60000)} minutes`,
+			});
+			this.reconcileRefresh();
+			return 'retrying';
+		}
+		this.host.debugLog({
+			kind: 'error',
+			endpoint: '/session-refresh',
+			message:
+				failure.failed === 'denied'
+					? `session refresh failed: Plaud refused the session (${failure.reason}${failure.status === undefined ? '' : `, status ${failure.status}`})`
+					: `session refresh failed: still could not reach Plaud after ${TRANSIENT_RETRY_DELAYS_MS.length} retries (${failure.reason})`,
+		});
+		this.onSessionRefreshFailed(
+			failure.failed === 'denied'
+				? deniedNoticeText(failure.reason)
+				: undefined,
+		);
+		return 'failed';
+	}
+
 	// A failed refresh pauses unattended renewal and asks for a reconnect. It
-	// deliberately does NOT re-arm: see the no-retry note above.
-	private onSessionRefreshFailed(): void {
+	// deliberately does NOT re-arm: a denied session cannot be retried (see
+	// TRANSIENT_RETRY_DELAYS_MS), and a transient one only reaches here once
+	// its retries are spent. `message` names the reason when Plaud gave one.
+	private onSessionRefreshFailed(message?: string): void {
 		this.sessionRefreshFailed = true;
+		this.deniedNotice = message ?? null;
 		if (this.sessionRefreshTimeoutId !== undefined) {
 			window.clearTimeout(this.sessionRefreshTimeoutId);
 			this.sessionRefreshTimeoutId = undefined;
@@ -809,7 +1084,8 @@ export class SessionRenewal {
 		// notice is already up, so the two never stack.
 		if (this.sessionExpiryNotice === null) {
 			this.sessionRefreshFailureNotice = this.host.showActionNotice(
-				'Could not renew your Plaud session automatically. Reconnect to keep imports and auto-sync running.',
+				message ??
+					'Could not renew your Plaud session automatically. Reconnect to keep imports and auto-sync running.',
 				'Reconnect',
 				() => this.reconnectFreshFromExpiryNotice(),
 			);

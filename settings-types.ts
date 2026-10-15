@@ -269,6 +269,46 @@ const RETIRED_PORTAL_DEFAULTS: readonly string[] = [
 	'https://beta.plaud.ai',
 ];
 
+const PRODUCTION_API_BASE_URL = 'https://api.plaud.ai';
+
+/**
+ * True for one of Plaud's pre-release API hosts, the ones beta.plaud.ai talks
+ * to: `api-test.plaud.ai`, and regional `api-pre-<region>.plaud.ai` (an EU
+ * beta account lands on `api-pre-euc1`, issue #148).
+ */
+export function isPreReleaseApiHost(host: string): boolean {
+	const h = host.toLowerCase();
+	if (h === 'api-test.plaud.ai') return true;
+	const prefix = 'api-pre-';
+	const suffix = '.plaud.ai';
+	if (!h.startsWith(prefix) || !h.endsWith(suffix)) return false;
+	const region = h.slice(prefix.length, h.length - suffix.length);
+	return region.length > 0 && /^[a-z0-9-]+$/.test(region);
+}
+
+/**
+ * The API host to use for a stored settings value. A pre-release host moves to
+ * production: beta.plaud.ai is being retired, and its servers share accounts,
+ * sign-in, and recordings with production (measured 2026-10-15: one token
+ * lists the same recordings on api-test and api.plaud.ai, and the session
+ * cookies are scoped to .plaud.ai, so renewal keeps working across the move).
+ * A regional account then follows Plaud's -302 region redirect from
+ * api.plaud.ai to its own production host, which every client path already
+ * handles. Any other value, including a malformed one, is returned unchanged.
+ */
+export function migrateApiBaseUrl(stored: unknown): string {
+	if (typeof stored !== 'string' || stored.trim().length === 0) {
+		return PRODUCTION_API_BASE_URL;
+	}
+	try {
+		return isPreReleaseApiHost(new URL(stored.trim()).hostname)
+			? PRODUCTION_API_BASE_URL
+			: stored;
+	} catch {
+		return stored;
+	}
+}
+
 /**
  * The sign-in portal to use for a stored settings value: the current default
  * for a missing, blank, or retired-default value, else the stored value as is.
@@ -286,7 +326,7 @@ export function migrateSignInPortalUrl(stored: unknown): string {
 
 export const DEFAULT_SETTINGS: PlaudImporterSettings = {
 	secretId: '',
-	apiBaseUrl: 'https://api.plaud.ai',
+	apiBaseUrl: PRODUCTION_API_BASE_URL,
 	plaudWorkspaceId: '',
 	plaudDeviceId: '',
 	plaudVersionOverride: 'auto',

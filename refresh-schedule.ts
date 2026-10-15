@@ -4,14 +4,13 @@
 // `exp - iat` is 86400 on the nose). The refresh re-mints it from the sign-in
 // partition's cookies, so it has to land BEFORE that expiry, not after.
 //
-// There is no retry ladder here, and that is deliberate. The mint's own step-1
+// This module only decides when the NORMAL attempt runs. Retries live in
+// session-renewal.ts, and only for a transient failure: the mint's step-1
 // response reports `login_total_per_hour: 10`, a server-side ceiling on how
-// often an account may refresh. A backoff ladder against a genuinely dead
-// session spends that budget and can lock the account out of refreshing at all,
-// which is the opposite of what a recovery path should do. One attempt per
-// cycle; a failure pauses and asks the user to reconnect, and the next success
-// re-arms the normal cadence. The retired 0.32.0 subsystem had a four-step
-// ladder (REFRESH_RETRY_BACKOFF_MS); it is not restored.
+// often an account may refresh, so a session Plaud refuses is never retried
+// (that would spend the budget against a dead session). A transient failure
+// retries on a short ladder under a shared hourly request budget; see
+// TRANSIENT_RETRY_DELAYS_MS and REFRESH_CALL_BUDGET there.
 //
 // Deliberately free of Obsidian and Electron imports so the timing rules are
 // unit-testable without the plugin runtime.

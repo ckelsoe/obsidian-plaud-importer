@@ -24,10 +24,11 @@
 // documents the previous token as single-use (in-band -420 WRT_EXPIRED once
 // spent), but a live check on 2026-09-18 saw the previous token still accepted
 // (in-band 0) on the test host, so this path does NOT depend on the old one
-// expiring: it always stores and uses the newest, and treats any non-zero status
-// (including -419 WT_EXPIRED and -420 WRT_EXPIRED) as a failed refresh that
-// leaves the old token in place and prompts a reconnect. Every status is in-band
-// on an HTTP 200, like every other Plaud endpoint.
+// expiring: it always stores and uses the newest. A success that omits
+// `refresh_token` keeps the current one, as Plaud's own app does. Failures are
+// classified (refresh-failure.ts): -419/-420, step-up, workspace-invalid and
+// SSO-required end the session and prompt a reconnect; transport errors and
+// unrecognized statuses are transient and retried later by the caller.
 //
 // FAIL-SAFE, exactly like plaud-refresh-net.ts: this module only ever RETURNS a
 // candidate {WT, rotated WRT}; it never writes storage. The caller re-validates
@@ -43,6 +44,14 @@ import type { PlaudHttpFetcher } from './plaud-client-re';
 import { normalizeTrustedOrigin } from './plaud-refresh-net';
 import { readTokenClientId, workspaceIdFromToken } from './plaud-token';
 import { redactJwtLike } from './jwt-redact';
+import {
+	classifyEnvelope,
+	classifyHttpStatus,
+	denied,
+	isSsoRequired,
+	unreachable,
+	type RefreshFailure,
+} from './refresh-failure';
 
 const WORKSPACE_REFRESH_PATH_PREFIX = '/user-app/auth/workspace/refresh/';
 
@@ -115,17 +124,21 @@ function bodySnippet(text: string): string {
 }
 
 /**
- * Extract the fresh workspace token AND the rotated refresh token from a refresh
- * response, or null when the envelope is not a success carrying BOTH strings.
+ * Extract the fresh workspace token and the refresh token to keep from a
+ * refresh response, or null when the envelope is not a success carrying a
+ * workspace token.
  *
- * Both are required. The success contract returns a rotated `refresh_token`
- * every time, so a response missing it is a shape we do not understand; treating
- * it as a success would store a WT with no fresh bearer to renew against next
- * time. Refusing it leaves the previous credential in place to expire normally,
- * which surfaces as the ordinary reconnect prompt. Exported for unit testing.
+ * A success normally rotates `refresh_token` (measured 2026-09-18). When the
+ * response leaves it out, the CURRENT refresh token is kept, which is what
+ * Plaud's own 4.0 app does (`refresh_token ?? previous.refreshToken`, read from
+ * its bundle 2026-10-15). Refusing the whole response instead, as this used to,
+ * threw away a valid fresh workspace token and asked the user to reconnect. The
+ * caller still validates whichever refresh token comes back before storing it.
+ * Exported for unit testing.
  */
 export function parseV4RefreshResponse(
 	envelope: Record<string, unknown>,
+	currentRefreshToken: string,
 ): V4RefreshResult | null {
 	if (envelope.status !== STATUS_OK) {
 		return null;
@@ -135,16 +148,17 @@ export function parseV4RefreshResponse(
 		return null;
 	}
 	const token = data.workspace_token;
-	const refresh = data.refresh_token;
-	if (
-		typeof token !== 'string' ||
-		token.length === 0 ||
-		typeof refresh !== 'string' ||
-		refresh.length === 0
-	) {
+	if (typeof token !== 'string' || token.length === 0) {
 		return null;
 	}
-	return { token, refreshToken: refresh };
+	const refresh = data.refresh_token;
+	return {
+		token,
+		refreshToken:
+			typeof refresh === 'string' && refresh.length > 0
+				? refresh
+				: currentRefreshToken.trim(),
+	};
 }
 
 /**
@@ -154,7 +168,7 @@ export function parseV4RefreshResponse(
  */
 export async function performV4Refresh(
 	deps: V4RefreshDeps,
-): Promise<V4RefreshResult | null> {
+): Promise<V4RefreshResult | RefreshFailure> {
 	// Wrap the injected sink so a throwing logger can never break the "never
 	// throws" contract.
 	const log = (message: string, payload?: unknown): void => {
@@ -167,12 +181,12 @@ export async function performV4Refresh(
 	try {
 		if (deps.refreshToken.trim().length === 0) {
 			log('v4 refresh aborted: no stored workspace refresh token');
-			return null;
+			return denied('session-ended');
 		}
 		const wid = workspaceIdFromToken(deps.currentToken);
 		if (wid === null) {
 			log('v4 refresh aborted: stored token carries no ws_ workspace id');
-			return null;
+			return denied('session-ended');
 		}
 		// Validate the host BEFORE attaching the bearer: a malformed or tampered
 		// stored base must never send the refresh token to a non-Plaud origin.
@@ -184,7 +198,7 @@ export async function performV4Refresh(
 					baseUrl: deps.baseUrl,
 				},
 			);
-			return null;
+			return denied('session-ended');
 		}
 		// app-platform tracks the token's client_id so the server's parse-mode
 		// check agrees, matching plaud-client-v4 and plaud-refresh-net.
@@ -216,15 +230,22 @@ export async function performV4Refresh(
 			log('v4 refresh: transport error', {
 				error: err instanceof Error ? err.message : String(err),
 			});
-			return null;
+			return unreachable('transport error');
 		}
 
 		if (res.status < 200 || res.status >= 300) {
+			// A non-2xx body may still carry the SSO demand Plaud's app checks.
+			const errorEnvelope = parseEnvelope(res.text ?? '');
+			const failure =
+				errorEnvelope !== null && isSsoRequired(errorEnvelope)
+					? denied('sso-required', res.status)
+					: classifyHttpStatus(res.status);
 			log('v4 refresh: non-2xx response', {
 				httpStatus: res.status,
 				body: bodySnippet(res.text ?? ''),
+				failure,
 			});
-			return null;
+			return failure;
 		}
 		const envelope = parseEnvelope(res.text ?? '');
 		if (envelope === null) {
@@ -232,18 +253,24 @@ export async function performV4Refresh(
 				httpStatus: res.status,
 				body: bodySnippet(res.text ?? ''),
 			});
-			return null;
+			return unreachable('non-JSON response');
 		}
-		const parsed = parseV4RefreshResponse(envelope);
+		const parsed = parseV4RefreshResponse(envelope, deps.refreshToken);
 		if (parsed === null) {
-			// -419 WT_EXPIRED / -420 WRT_EXPIRED land here, as does any other
-			// non-zero status or a success missing either token.
+			// -419 WT_EXPIRED / -420 WRT_EXPIRED mean the bearer is spent or
+			// expired; with no cookie session behind it, that is the end of this
+			// session. Anything unrecognized is treated as transient.
+			const failure =
+				envelope.status === STATUS_OK
+					? unreachable('refresh succeeded without a workspace_token')
+					: classifyEnvelope(envelope, { expiredMeansDenied: true });
 			log('v4 refresh: non-OK envelope', {
 				httpStatus: res.status,
 				envelopeStatus: envelope.status,
 				message: envelopeMessage(envelope),
+				failure,
 			});
-			return null;
+			return failure;
 		}
 		log('v4 refresh succeeded via the bearer (cookieless) path');
 		return parsed;
@@ -252,6 +279,6 @@ export async function performV4Refresh(
 		log('v4 refresh threw', {
 			error: err instanceof Error ? err.message : String(err),
 		});
-		return null;
+		return unreachable('refresh threw');
 	}
 }
