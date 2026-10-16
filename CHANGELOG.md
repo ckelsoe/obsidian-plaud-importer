@@ -6,6 +6,10 @@ All notable changes to Plaud Importer will be documented in this file.
 
 ## [Unreleased]
 
+## [0.45.1] - 2026-10-16
+
+No functional changes. Re-release of 0.45.0 so the Obsidian community store reprocesses it after its automated review failed on the store side.
+
 ## [0.45.0] - 2026-10-15
 
 ### Changed
