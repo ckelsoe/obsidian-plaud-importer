@@ -63,7 +63,7 @@ Plaud does not offer an official API yet, so this plugin works by using Plaud's 
   - An `Open in Plaud` link under the H1 for quick round-tripping
 - **Downloads attachments** (images, mind-map PNGs, card PNGs, other files) into a `<note-name>-assets/` folder and references them from the note.
 - **Optional audio download.** Turn on **Audio** to save each recording's original audio next to the note and embed it as a playable clip under an `Audio` heading. Off by default because audio is large (roughly 15 MB per hour). Missing or expired audio never fails an import.
-- **Background auto-sync (optional, off by default).** Checks Plaud on a schedule and imports new recordings automatically, and re-imports recordings you changed in Plaud (edited transcript, corrected speaker names). A re-import overwrites that note and its artifacts with Plaud's current version; unchanged notes are never touched. See [Auto-sync](#auto-sync).
+- **Background auto-sync (optional, off by default).** Checks Plaud on a schedule and imports new recordings automatically, and re-imports recordings you changed in Plaud (edited transcript, corrected speaker names). A re-import overwrites the imported section of that note and its artifacts with Plaud's current version, and keeps text you wrote above or below that section; unchanged notes are never touched. See [Auto-sync](#auto-sync) and [Your own text in an imported note](#your-own-text-in-an-imported-note).
 - **Placeholder notes for unprocessed recordings.** When Plaud has a recording but no transcript or summary yet, the importer writes a small placeholder note (recording ID plus a link back to Plaud) instead of a bare failure, and a later import replaces it automatically. Optional, on by default.
 - **Organize into dated subfolders.** An optional path template (for example `{{YYYY-MM}}`) files notes into per-month, per-week, or per-quarter folders built from the recording date, instead of one flat folder. Attachments follow their note.
 - **Configurable note names.** A note-name template (the same Moment date formats as the subfolder setting, plus a `{{title}}` token) puts the recording date wherever you want it and formats every note name the same way. A Plaud title with no date gets a `YYYY-MM-DD` prefix so notes sort chronologically. The default reproduces the previous `YYYY-MM-DD <title>` naming, so nothing changes unless you set it.
@@ -73,7 +73,7 @@ Plaud does not offer an official API yet, so this plugin works by using Plaud's 
 - **Filter the import list, and ignore recordings you never want.** A filter bar at the top of the import dialog hides recordings you have already imported (on by default), so the list shows what is left to import instead of everything. Separate toggles also hide update-available, ignored, and trashed recordings. Each row has an eye button to **ignore** a recording (a junk or personal clip): ignored recordings drop out of the list and are skipped by background auto-sync, and ignoring works even on recordings you never imported. Recordings in Plaud's trash show a **Trashed** badge when you choose to show them.
 - **Import only from selected recording sources.** Choose which of your paired Plaud devices to import from, and whether to include recordings made in the Plaud app or imported, so a device you keep for personal recordings stays out of your vault. Applies to manual import and background auto-sync alike, off by default. See [Recording sources](#recording-sources).
 - **Resume an interrupted import.** If your Plaud session expires partway through a multi-select import, the run stops at the first recording that fails to authenticate, keeps what it already imported, and lets you sign in again right there; a **Resume remaining** button then finishes the recordings that were left.
-- **Duplicate handling** is configurable: Skip, Overwrite, or Ask each time. "Ask each time" prompts per file with an explicit warning that the existing note body AND its `-assets` folder will be replaced; in a multi-select import you can escalate to "Overwrite all remaining" / "Skip all remaining" or cancel the batch.
+- **Duplicate handling** is configurable: Skip, Overwrite, or Ask each time. "Ask each time" prompts per file with an explicit warning that the note's imported section AND its `-assets` folder will be replaced; in a multi-select import you can escalate to "Overwrite all remaining" / "Skip all remaining" or cancel the batch.
 - **Transcript layout and folding.** Put the transcript under a heading, in a collapsed callout, or in its own file (embedded or linked). Imported notes open with the transcript collapsed by default so the summary is what you see first. Both are in settings.
 - **Debug log.** An opt-in in-memory buffer of API requests/responses for troubleshooting; auth headers are never captured.
 
@@ -247,8 +247,26 @@ The title sent to Plaud is your new note name exactly, so Plaud matches what you
 What the importer does when a note for a recording already exists in the output folder:
 
 - **Skip.** Leave the existing note untouched. The importer reports it as `skipped` in the summary.
-- **Overwrite.** Replace the existing note body and clear its matching `-assets` folder before re-downloading. A confirmation modal fires once per import batch before any overwrite happens.
-- **Ask each time** (default). Prompt per duplicate at write time. The modal shows the recording title and the exact target path, warns that the existing note AND its `-assets` folder will be replaced, and offers Overwrite, Skip, or (in multi-item batches) Overwrite all remaining, Skip all remaining, and Cancel import.
+- **Overwrite.** Replace the imported section of the note and clear its matching `-assets` folder before re-downloading. Text you wrote outside the imported section is kept (see [Your own text in an imported note](#your-own-text-in-an-imported-note)). A confirmation modal fires once per import batch before any overwrite happens.
+- **Ask each time** (default). Prompt per duplicate at write time. The modal shows the recording title and the exact target path, warns that the note's imported section AND its `-assets` folder will be replaced, and offers Overwrite, Skip, or (in multi-item batches) Overwrite all remaining, Skip all remaining, and Cancel import.
+
+### Your own text in an imported note
+
+Everything the plugin writes below the frontmatter sits between two hidden marker lines:
+
+```markdown
+<!-- plaud:managed:start -->
+# 2026-04-14 Morning standup
+...summary, attachments, transcript...
+<!-- plaud:managed:end -->
+```
+
+Reading view hides the markers. When a recording is re-imported, only the text between them is replaced. Anything you write above the start marker or below the end marker stays exactly as you left it, and so do frontmatter properties you added (see **Preserve unknown frontmatter on re-import** in settings). Edits inside the markers are replaced by Plaud's current version.
+
+- A note imported before this feature has no markers. Its next re-import rebuilds it whole and adds them, so protection starts after that re-import.
+- If a marker is deleted, duplicated, or moved out of order, the plugin cannot tell its text from yours, so it does not update that note. A manual import reports it in the import summary, and background auto-sync skips it while the recording keeps its Update available badge. Restore one start and one end marker, or delete both to let the next import rebuild the whole note.
+- If you have written text below the end marker, a re-import does not collapse the transcript heading, because the fold would hide your text too. The callout layout is unaffected.
+- To detect that a recording changed (for example from a script or another plugin), watch the `plaud-version-ms` property. It holds Plaud's version stamp for the recording, so it changes when Plaud's copy of the recording changes.
 
 ### Default artifact selection
 
@@ -261,7 +279,7 @@ Optional background sync, **off by default**. When enabled, the plugin checks Pl
 - **Enable auto-sync.** Turns the background job on or off.
 - **Sync interval.** How often it checks, from every 15 minutes to once a day.
 
-It also re-imports recordings you changed in Plaud since importing them (an edited transcript, corrected speaker names, a regenerated summary), including older recordings you edited today. **A re-import overwrites that note and its downloaded artifacts with Plaud's current version, so any edits you made to a synced note are replaced.** Only recordings that actually changed are touched; unchanged notes are never modified. This tradeoff is called out in the settings.
+It also re-imports recordings you changed in Plaud since importing them (an edited transcript, corrected speaker names, a regenerated summary), including older recordings you edited today. **A re-import overwrites the imported section of that note and its downloaded artifacts with Plaud's current version, so edits you made inside that section are replaced.** Text you wrote above or below it is kept. Only recordings that actually changed are touched; unchanged notes are never modified. This tradeoff is called out in the settings.
 
 If your Plaud session expires, auto-sync pauses with a single notice and resumes automatically when you reconnect (Test connection, a manual import, re-entering your token, or toggling auto-sync off and on). The notice's **Reconnect** button opens the sign-in that matches your account: the email window for password logins, or the browser bookmarklet flow for Google and Apple accounts.
 

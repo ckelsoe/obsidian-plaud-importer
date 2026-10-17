@@ -11,7 +11,7 @@ import {
 	NoteWriterError,
 	type DuplicatePolicy,
 	type DuplicatePromptCallback,
-	findTranscriptHeadingLine,
+	findTranscriptFoldLine,
 	effectiveCaptureOffsetMinutes,
 } from './note-writer';
 import { runImport } from './import-runner';
@@ -290,7 +290,7 @@ class OverwriteConfirmationModal extends Modal {
 			} with duplicate handling set to overwrite.`,
 		});
 		contentEl.createEl('p', {
-			text: 'If a note already exists, the note content and its imported files/images in the matching -assets folder will be replaced. Any manual edits to that note or those imported attachments can be lost.',
+			text: 'If a note already exists, the imported section of the note and its imported files/images in the matching -assets folder will be replaced. Text you wrote above or below the imported section is kept. Edits inside the imported section, or to those imported attachments, can be lost. A note imported before version 0.46.0 has no imported-section markers yet, so its first re-import still replaces it whole.',
 		});
 		contentEl.createEl('p', {
 			text: 'Choose how to continue:',
@@ -379,7 +379,7 @@ class DuplicateDecisionModal extends Modal {
 		const warning = contentEl.createEl('p', { cls: 'mod-warning' });
 		warning.createEl('strong', { text: 'Warning: ' });
 		warning.appendText(
-			'Continuing with overwrite will replace the existing note content and clear its matching -assets folder. Any manual edits to that note or its imported attachments will be lost.',
+			'Continuing with overwrite will replace the imported section of the note and clear its matching -assets folder. Text you wrote above or below the imported section is kept. Edits inside the imported section, or to its imported attachments, will be lost. A note imported before version 0.46.0 has no imported-section markers yet, so its first re-import still replaces it whole.',
 		);
 		contentEl.createEl('p', { text: 'Choose how to handle this note:' });
 
@@ -2828,11 +2828,13 @@ export class ImportModal extends Modal {
 			const headerLevel =
 				this.noteWriterOptions.transcriptHeaderLevel ?? 4;
 			// Fold the wrapping transcript heading so the chaptered transcript
-			// opens collapsed. The transcript is the final section, so this
-			// single heading-fold collapses it to end-of-note. Template outputs
+			// opens collapsed. The transcript is the managed block's final
+			// section, so this single heading-fold collapses it to end-of-note;
+			// with the user's text below the block there is no fold (#59), since
+			// it would hide that text. Template outputs
 			// stay expanded (folding their shallower H2 would subsume the
 			// deeper transcript heading).
-			const transcriptHeadingLine = findTranscriptHeadingLine(
+			const transcriptHeadingLine = findTranscriptFoldLine(
 				body,
 				headerLevel,
 			);

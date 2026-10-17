@@ -114,7 +114,7 @@ const SIGN_IN_NOTE =
 // is set by Plaud and varies by account, so this promises no specific
 // lifetime.
 const AUTO_SYNC_DESC =
-	"Off by default. Runs a background import on a schedule, unattended and never prompting. It uses your default import options: new recordings are imported, and a recording you changed in Plaud (edited speaker names, corrected transcript, or finished processing) is re-imported. IMPORTANT: a re-import OVERWRITES that note and its downloaded artifacts with Plaud's current version, so edits you made to a synced note or its attachment files are lost on the next change. Only recordings that actually changed are touched; unchanged notes are never modified. Desktop only. The background sync runs between sign-ins for as long as your Plaud session lasts (set by Plaud and shown in the status line under Plaud token), pausing for a one-click reconnection when the session expires.";
+	"Off by default. Runs a background import on a schedule, unattended and never prompting. It uses your default import options: new recordings are imported, and a recording you changed in Plaud (edited speaker names, corrected transcript, or finished processing) is re-imported. IMPORTANT: a re-import OVERWRITES the imported section of that note and its downloaded artifacts with Plaud's current version, so edits you made inside that section or to its attachment files are lost on the next change. Text you write above or below the imported section is kept, except on the first re-import of a note imported before version 0.46.0, which replaces it whole. Only recordings that actually changed are touched; unchanged notes are never modified. Desktop only. The background sync runs between sign-ins for as long as your Plaud session lasts (set by Plaud and shown in the status line under Plaud token), pausing for a one-click reconnection when the session expires.";
 
 // Transcript rendering rows, shared by both settings paths so they cannot drift.
 const TRANSCRIPT_PLACEMENT_NAME = 'Transcript layout';
@@ -127,7 +127,7 @@ const TRANSCRIPT_PLACEMENT_OPTIONS: Record<string, string> = {
 	'file-link': 'Separate file, linked from the note',
 };
 const FOLD_TRANSCRIPT_DESC =
-	"Collapse the transcript heading when the note is created so the transcript doesn't dominate the view on open. Click the chevron next to the heading to expand it. Does not apply to the callout layout, which is always collapsed.";
+	"Collapse the transcript heading when the note is created so the transcript doesn't dominate the view on open. Click the chevron next to the heading to expand it. Does not apply to the callout layout, which is always collapsed. Skipped on a re-import when you have written text below the imported section, because collapsing the transcript would hide that text too.";
 const TRANSCRIPT_HEADING_LEVEL_DESC =
 	"Heading level of the 'transcript' heading in the heading and separate-file layouts. Chapter headings in the heading layout render one level below (level 4 gives an h4 transcript and h5 chapters). Not used by the callout layout.";
 
@@ -257,7 +257,7 @@ const PRESERVE_UNKNOWN_FRONTMATTER_DESC =
 
 const DUPLICATE_HANDLING_NAME = 'Duplicate handling for manual imports';
 const DUPLICATE_HANDLING_DESC =
-	'Controls what happens when you run Import recent recordings and a note for the recording already exists. Skip keeps your copy, overwrite replaces it, and ask each time prompts you for each one. Automatic sync ignores this and never prompts.';
+	'Controls what happens when you run Import recent recordings and a note for the recording already exists. Skip keeps your copy, overwrite replaces the imported section (text you wrote around it is kept), and ask each time prompts you for each one. Automatic sync ignores this and never prompts.';
 
 // [label, template] preset buttons. All dashes, so every preset is filename-safe.
 // ISO/US/EU cover the common date orders; putting the date after {{title}} (the

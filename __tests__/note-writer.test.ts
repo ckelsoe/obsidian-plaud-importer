@@ -8,6 +8,7 @@ import {
 	extractPlaudIdFromFrontmatter,
 	extractPlaudPlaceholderFlag,
 	extractSpeakers,
+	findTranscriptFoldLine,
 	findTranscriptHeadingLine,
 	formatChapterIndexSection,
 	formatDurationHoursMinutes,
@@ -50,6 +51,7 @@ import {
 	type TranscriptChapterGroup,
 	type VaultLike,
 } from '../note-writer';
+import { MANAGED_BLOCK_END, MANAGED_BLOCK_START } from '../managed-block';
 import type {
 	Chapter,
 	ConsumerNote,
@@ -6637,5 +6639,173 @@ describe('# and ^ in note names', () => {
 		);
 		expect(migrateCalls).toEqual([[OLD, NEW]]);
 		expect(outcome.path).toBe(NEW);
+	});
+});
+
+// Managed body block (#59) -------------------------------------------------
+
+describe('managed body block (#59)', () => {
+	const PATH = 'Plaud/2026-04-14 Morning standup.md';
+	const CHAPTERS: readonly Chapter[] = [
+		{ title: 'Opening', startSeconds: 0 },
+		{ title: 'Close', startSeconds: 14 },
+	];
+
+	function overwriter(vault: FakeVault): NoteWriter {
+		return new NoteWriter(vault, {
+			outputFolder: 'Plaud',
+			onDuplicate: 'overwrite',
+		});
+	}
+
+	function rendered(summaryText: string): string {
+		return formatMarkdown(
+			makeRecording(),
+			makeTranscript(),
+			makeSummary({ text: summaryText }),
+		);
+	}
+
+	it('wraps the generated body in one start and one end marker', () => {
+		const md = rendered('s');
+		expect(md.split(MANAGED_BLOCK_START)).toHaveLength(2);
+		expect(md.split(MANAGED_BLOCK_END)).toHaveLength(2);
+		// After the frontmatter, before the title; the end marker closes the note.
+		expect(md).toMatch(
+			new RegExp(`\\n---\\n\\n${MANAGED_BLOCK_START}\\n\\n# `),
+		);
+		expect(md.endsWith(`\n\n${MANAGED_BLOCK_END}\n`)).toBe(true);
+	});
+
+	it('keeps user text above and below the block and refreshes the block', async () => {
+		const vault = makeFakeVault();
+		const old = rendered('old summary');
+		const [frontmatter, rest] = [
+			old.slice(0, old.indexOf(MANAGED_BLOCK_START)),
+			old.slice(old.indexOf(MANAGED_BLOCK_START)),
+		];
+		vault.files.set(
+			PATH,
+			`${frontmatter}## My notes\n\n- [ ] follow up\n\n${rest}\n## Decisions\n\nShip it.\n`,
+		);
+
+		const outcome = await overwriter(vault).writeNote(
+			makeRecording(),
+			makeTranscript(),
+			makeSummary({ text: 'new summary' }),
+		);
+
+		expect(outcome.status).toBe('overwritten');
+		const written = vault.files.get(PATH) ?? '';
+		expect(written).toContain('new summary');
+		expect(written).not.toContain('old summary');
+		expect(written).toContain(
+			`## My notes\n\n- [ ] follow up\n\n${MANAGED_BLOCK_START}\n`,
+		);
+		expect(
+			written.endsWith(
+				`${MANAGED_BLOCK_END}\n\n## Decisions\n\nShip it.\n`,
+			),
+		).toBe(true);
+	});
+
+	it('rebuilds a legacy note without markers and adds them', async () => {
+		const vault = makeFakeVault();
+		vault.files.set(
+			PATH,
+			'---\nplaud-id: abc123\n---\n\n# Old\n\nold body\n',
+		);
+
+		await overwriter(vault).writeNote(
+			makeRecording(),
+			makeTranscript(),
+			makeSummary({ text: 'new summary' }),
+		);
+
+		expect(vault.files.get(PATH)).toBe(rendered('new summary'));
+	});
+
+	it('leaves a note with damaged markers untouched and reports it', async () => {
+		const vault = makeFakeVault();
+		const damaged = `---\nplaud-id: abc123\n---\n\n${MANAGED_BLOCK_START}\n\n# Old\n\nmy edits\n`;
+		vault.files.set(PATH, damaged);
+
+		await expect(
+			overwriter(vault).writeNote(
+				makeRecording(),
+				makeTranscript(),
+				makeSummary(),
+			),
+		).rejects.toThrow(NoteWriterError);
+		await expect(
+			overwriter(vault).writeNote(
+				makeRecording(),
+				makeTranscript(),
+				makeSummary(),
+			),
+		).rejects.toThrow(/markers are damaged/);
+		expect(vault.files.get(PATH)).toBe(damaged);
+		expect(vault.overwrittenPaths).toEqual([]);
+	});
+
+	it('reports the fold line of the note as written, below the user text', async () => {
+		const vault = makeFakeVault();
+		const old = formatMarkdown(
+			makeRecording(),
+			makeTranscript(),
+			makeSummary(),
+			CHAPTERS,
+		);
+		const markerAt = old.indexOf(MANAGED_BLOCK_START);
+		vault.files.set(
+			PATH,
+			`${old.slice(0, markerAt)}one\n\ntwo\n\nthree\n\n${old.slice(markerAt)}`,
+		);
+
+		const outcome = await overwriter(vault).writeNote(
+			makeRecording(),
+			makeTranscript(),
+			makeSummary(),
+			CHAPTERS,
+		);
+
+		expect(outcome.status).toBe('overwritten');
+		const written = vault.files.get(PATH) ?? '';
+		const lines = written.split('\n');
+		const foldInfo =
+			outcome.status === 'overwritten' ? outcome.foldInfo : undefined;
+		expect(foldInfo).toBeDefined();
+		expect(lines[foldInfo?.transcriptHeadingLine ?? -1]).toBe(
+			'#### Transcript',
+		);
+		expect(foldInfo?.totalLines).toBe(lines.length);
+		expect(written).toContain('one\n\ntwo\n\nthree\n\n');
+	});
+
+	it('finds the fold heading inside the block, not a matching heading the user wrote above it', () => {
+		const md = formatMarkdown(
+			makeRecording(),
+			makeTranscript(),
+			makeSummary(),
+			CHAPTERS,
+		);
+		const markerAt = md.indexOf(MANAGED_BLOCK_START);
+		const withUserHeading = `${md.slice(0, markerAt)}#### Transcript\n\nmy notes\n\n${md.slice(markerAt)}`;
+		const line = findTranscriptFoldLine(withUserHeading, 4);
+		expect(line).toBe((findTranscriptHeadingLine(md, 4) ?? -10) + 4);
+		expect(withUserHeading.split('\n')[line ?? -1]).toBe('#### Transcript');
+		expect(line).not.toBe(withUserHeading.indexOf('#### Transcript'));
+	});
+
+	it('does not fold when the user has text below the block, which the fold would hide', () => {
+		const md = formatMarkdown(
+			makeRecording(),
+			makeTranscript(),
+			makeSummary(),
+			CHAPTERS,
+		);
+		expect(findTranscriptFoldLine(md, 4)).not.toBeNull();
+		expect(findTranscriptFoldLine(`${md}\nmy notes\n`, 4)).toBeNull();
+		expect(findTranscriptFoldLine(`${md}\n\n`, 4)).not.toBeNull();
 	});
 });
