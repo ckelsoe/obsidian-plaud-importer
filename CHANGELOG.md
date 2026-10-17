@@ -6,6 +6,10 @@ All notable changes to Plaud Importer will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **Your own text in an imported note survives a re-import (#59).** Everything the plugin writes below the frontmatter now sits between two hidden marker lines, `<!-- plaud:managed:start -->` and `<!-- plaud:managed:end -->`. A re-import (manual overwrite or auto-sync) replaces only what is between them, so headings, task lists, and notes you write above or below the imported section stay exactly as you left them. Attachments and audio are refreshed inside the imported section too. A note imported before this release is rebuilt whole on its next re-import, which adds the markers; protection starts after that. If a marker is deleted, duplicated, or out of order, the plugin leaves that note untouched instead of guessing, and a manual import reports it. If you have written text below the imported section, a re-import no longer collapses the transcript heading, since the fold would hide your text too. The overwrite warnings in the import dialog and the auto-sync setting now say what is kept.
+
 ## [0.45.1] - 2026-10-16
 
 No functional changes. Re-release of 0.45.0 so the Obsidian community store reprocesses it after its automated review failed on the store side.

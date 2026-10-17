@@ -10,6 +10,8 @@
 //   source: plaud
 //   ---
 //
+//   <!-- plaud:managed:start -->
+//
 //   # <title>
 //
 //   ## Summary
@@ -18,6 +20,8 @@
 //   > [!note]- Transcript
 //   > **[MM:SS]** Speaker: text
 //   > ...
+//
+//   <!-- plaud:managed:end -->
 //
 // The file exists as a separate module from main.ts / import-modal.ts so
 // that unit tests can cover the pure format helpers in isolation. The
@@ -39,6 +43,13 @@ import type {
 import { recordingSourceLabel } from './plaud-client';
 import { canonicalPlaudId } from './vault-index';
 import { trimChars, trimTrailingChars } from './text-trim';
+import {
+	MANAGED_BLOCK_END,
+	MANAGED_BLOCK_START,
+	locateManagedBlock,
+	managedBodyRegion,
+	spliceManagedBlock,
+} from './managed-block';
 
 // -----------------------------------------------------------------------------
 // Errors
@@ -294,8 +305,10 @@ export interface NoteWriterOptions {
  * markdown contains a wrapping transcript heading. `transcriptHeadingLine`
  * is the 0-based line index of the single heading the caller should
  * fold (the wrapping `Transcript` heading at the configured level);
- * `totalLines` is the full line count of the rendered markdown needed
- * to build a complete `FoldInfo` payload for `app.foldManager.save`.
+ * `totalLines` is the full line count of the note as written (the rendered
+ * markdown, or that markdown spliced between the user's own text on an
+ * overwrite, #59) needed to build a complete `FoldInfo` payload for
+ * `app.foldManager.save`. Omitted when the user has text below the block.
  */
 export interface WriteFoldInfo {
 	readonly transcriptHeadingLine: number;
@@ -2585,6 +2598,54 @@ export function findTranscriptHeadingLine(
 }
 
 /**
+ * The line to fold so a note on disk opens with its transcript collapsed, or
+ * null for none. Searches only the managed block so a `Transcript` heading the
+ * user wrote outside it never captures the fold (#59), and returns a whole-note
+ * line index. Returns null when the user has text below the block: Obsidian
+ * folds a heading down to the next heading of the same or higher level, so the
+ * collapsed transcript would hide that text too.
+ */
+export function findTranscriptFoldLine(
+	content: string,
+	headerLevel: HeadingLevel,
+): number | null {
+	const { body, lineOffset, textBelow } = managedBodyRegion(content);
+	if (textBelow) {
+		return null;
+	}
+	const line = findTranscriptHeadingLine(body, headerLevel);
+	return line === null ? null : line + lineOffset;
+}
+
+/**
+ * Fold metadata for the note as it landed on disk. Equal to the rendered note's
+ * when the write replaced the file whole; recomputed against the managed block
+ * when the write spliced it between the user's own text.
+ */
+function foldInfoForWrittenNote(
+	written: string,
+	rendered: string,
+	renderedFoldInfo: WriteFoldInfo | undefined,
+	options: Pick<FormatMarkdownOptions, 'transcriptHeaderLevel'>,
+): WriteFoldInfo | undefined {
+	if (written === rendered || renderedFoldInfo === undefined) {
+		return renderedFoldInfo;
+	}
+	const transcriptHeadingLine = findTranscriptFoldLine(
+		written,
+		options.transcriptHeaderLevel ?? 4,
+	);
+	return transcriptHeadingLine === null
+		? undefined
+		: { transcriptHeadingLine, totalLines: written.split('\n').length };
+}
+
+/** The error text for a re-import refused over ambiguous block markers. */
+function managedBlockRefusal(notePath: string, reason: string): string {
+	return `Did not update ${notePath}: its ${MANAGED_BLOCK_START} / ${MANAGED_BLOCK_END} markers are damaged (${reason}), so the plugin cannot tell its own text from yours. Restore one start and one end marker around the imported section, or delete both to let the next import rebuild the whole note.`;
+}
+
+/**
  * The fixed H2 heading that wraps all consumer_note template outputs. Defined
  * once so the renderer and the fold-line finder agree on the exact string.
  */
@@ -2983,6 +3044,10 @@ export function formatMarkdown(
 			options.plaudLocation ?? '',
 		),
 		'',
+		// Everything from here to MANAGED_BLOCK_END is plugin-owned. A re-import
+		// replaces only this block, so the user's text around it survives (#59).
+		MANAGED_BLOCK_START,
+		'',
 		`# ${expandedTitle}`,
 		'',
 		// Visible "Open in Plaud" link right under the H1. Duplicates
@@ -3046,6 +3111,7 @@ export function formatMarkdown(
 	if (transcriptSection.length > 0) {
 		parts.push('---', '', transcriptSection, '');
 	}
+	parts.push(MANAGED_BLOCK_END, '');
 	return parts.join('\n');
 }
 
@@ -3837,6 +3903,17 @@ export class NoteWriter {
 			}
 		}
 
+		// A note whose managed-block markers are ambiguous is never overwritten
+		// (#59): its body cannot be split into plugin text and user text, so any
+		// write could destroy the user's edits. Checked before the migration so
+		// a refusal never leaves the note renamed.
+		const existingBlock = locateManagedBlock(existingContent);
+		if (existingBlock.kind === 'malformed') {
+			throw new NoteWriterError(
+				managedBlockRefusal(notePath, existingBlock.reason),
+			);
+		}
+
 		// Issue A migration: when the recording's recomputed target path differs
 		// from where its note currently lives (a title or subfolder change since
 		// the last import), move the note and its assets folder to the new path
@@ -3896,11 +3973,31 @@ export class NoteWriter {
 
 		// Overwrite path — use process so the write is atomic and
 		// respects any other plugin's read-modify-write of the same
-		// file. The callback ignores the previous content by design: we
-		// are replacing the entire file with our regenerated markdown.
+		// file. The callback splices the regenerated block into the FRESH
+		// content, so the user's text outside the block survives (#59). A note
+		// without markers is replaced whole and adopts them.
+		let written = markdown;
 		try {
-			await this.vault.process(writeTarget, () => markdown);
+			await this.vault.process(writeTarget, (current) => {
+				const spliced = spliceManagedBlock(current, markdown);
+				if (spliced === null) {
+					const block = locateManagedBlock(current);
+					throw new NoteWriterError(
+						managedBlockRefusal(
+							writePath,
+							block.kind === 'malformed'
+								? block.reason
+								: 'the rendered note has no managed block',
+						),
+					);
+				}
+				written = spliced;
+				return spliced;
+			});
 		} catch (cause) {
+			if (cause instanceof NoteWriterError) {
+				throw cause;
+			}
 			throw new NoteWriterError(
 				`Failed to overwrite ${writePath} for recording ${recording.id}: ${
 					cause instanceof Error ? cause.message : String(cause)
@@ -3912,7 +4009,19 @@ export class NoteWriter {
 			transcript,
 			finalOptions,
 		);
-		return { status: 'overwritten', path: writePath, foldInfo };
+		// The user's text above the block shifts the transcript heading, so
+		// report the fold line of the note as written, not as rendered.
+		const writtenFoldInfo = foldInfoForWrittenNote(
+			written,
+			markdown,
+			foldInfo,
+			finalOptions,
+		);
+		return {
+			status: 'overwritten',
+			path: writePath,
+			foldInfo: writtenFoldInfo,
+		};
 	}
 
 	/**

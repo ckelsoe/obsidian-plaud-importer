@@ -8,6 +8,7 @@ import {
 } from 'obsidian';
 import type { AttachmentAsset } from './plaud-client';
 import { TRANSCRIPT_FILE_NAME } from './note-writer';
+import { transformManagedBody } from './managed-block';
 import { NoopDebugLogger, type DebugLogger } from './debug-logger';
 import type { ArtifactSelection } from './import-core';
 import { PLAUD_MARK_DATA_TYPE } from './import-core';
@@ -629,7 +630,7 @@ export class AttachmentImporter {
 			return;
 		}
 
-		await this.app.vault.process(noteFile, (content) => {
+		const rewriteBody = (content: string): string => {
 			// Repoint Plaud's inline `![](permanent/...)` summary embeds at the
 			// local copies we just downloaded (issue #52) BEFORE building the
 			// managed section. The managed section uses `![[...]]` wikilinks,
@@ -658,7 +659,12 @@ export class AttachmentImporter {
 				trimmed,
 				renderedSection,
 			);
-		});
+		};
+		// Rewrite the managed block only (#59): the user's text outside it is
+		// never scanned, and a section appended "at the end" stays inside it.
+		await this.app.vault.process(noteFile, (note) =>
+			transformManagedBody(note, rewriteBody),
+		);
 		this.logAttachmentDebug('attachments section appended to note', {
 			notePath,
 			renderedLinkCount:
@@ -811,7 +817,7 @@ export class AttachmentImporter {
 				await this.app.vault.createBinary(audioPath, bytes);
 			}
 
-			await this.app.vault.process(noteFile, (content) => {
+			const rewriteBody = (content: string): string => {
 				const withoutManaged = this.stripManagedAudioSection(content);
 				const trimmed = withoutManaged.trimEnd();
 				const section = [
@@ -822,7 +828,10 @@ export class AttachmentImporter {
 					`![[${audioPath}]]`,
 				].join('\n');
 				return this.insertSectionBeforeTranscript(trimmed, section);
-			});
+			};
+			await this.app.vault.process(noteFile, (note) =>
+				transformManagedBody(note, rewriteBody),
+			);
 		} catch (err) {
 			this.logAttachmentDebug('audio write failed', {
 				notePath,
