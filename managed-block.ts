@@ -37,10 +37,15 @@ export type ManagedBlockLocation =
 			readonly after: string;
 	  };
 
+/** Every whole-line match of `pattern`, using a fresh regex so no `lastIndex` leaks between calls. */
 function lineMatches(content: string, pattern: RegExp): RegExpExecArray[] {
 	return [...content.matchAll(new RegExp(pattern.source, pattern.flags))];
 }
 
+/**
+ * Find the managed block in a note. Markers count only when alone on their
+ * line, so a marker quoted inline in the user's prose is ignored.
+ */
 export function locateManagedBlock(content: string): ManagedBlockLocation {
 	const starts = lineMatches(content, START_LINE);
 	const ends = lineMatches(content, END_LINE);
