@@ -4,7 +4,7 @@
 
 All notable changes to Plaud Importer will be documented in this file.
 
-## [Unreleased]
+## [0.46.2] - 2026-10-18
 
 ### Fixed
 
@@ -12,7 +12,7 @@ All notable changes to Plaud Importer will be documented in this file.
 
 ### Changed
 
-- **"Show trashed recordings" is hidden for Plaud 4.0 accounts.** Plaud's 4.0 recording list contains only active recordings, so the setting and the import dialog's **Trashed** filter could never change anything there. Accounts on Plaud 3.0 keep both.
+- **"Show trashed recordings" is hidden for Plaud 4.0 accounts.** Plaud's 4.0 recording list contains only active recordings, so the setting and the import dialog's **Trashed** filter could never change anything there. Accounts on Plaud 3.0 keep both. Changing the **Plaud version** setting shows or hides the setting right away.
 - **Settings order.** **Duplicate handling** moved from **Output** to **Import dialog**, next to the other import-time choices, and **Appearance** moved below **Default artifact selection**.
 
 ## [0.46.1] - 2026-10-18
