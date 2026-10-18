@@ -14,6 +14,7 @@ import {
 	type EditorState,
 	type Extension,
 	type Range,
+	type Transaction,
 } from '@codemirror/state';
 import { Decoration, EditorView, type DecorationSet } from '@codemirror/view';
 import { editorLivePreviewField } from 'obsidian';
@@ -24,10 +25,15 @@ interface LineSpan {
 	readonly to: number;
 }
 
-/** Every marker line in the document, rescanned only when the text changes. */
+/**
+ * Every marker line in the document. Built by one full scan, then kept current
+ * per edit: untouched spans are mapped through the change and only the lines
+ * an edit touched are rescanned, so typing in a long note does not rescan it.
+ */
 const markerLinesField = StateField.define<readonly LineSpan[]>({
 	create: (state) => findMarkerLines(state),
-	update: (spans, tr) => (tr.docChanged ? findMarkerLines(tr.state) : spans),
+	update: (spans, tr) =>
+		tr.docChanged ? updateMarkerLines(spans, tr) : spans,
 });
 
 function findMarkerLines(state: EditorState): LineSpan[] {
@@ -40,6 +46,34 @@ function findMarkerLines(state: EditorState): LineSpan[] {
 		from += text.length + 1;
 	}
 	return spans;
+}
+
+function updateMarkerLines(
+	spans: readonly LineSpan[],
+	tr: Transaction,
+): LineSpan[] {
+	const byStart = new Map<number, LineSpan>();
+	for (const span of spans) {
+		// A span an edit touches may no longer be a marker; its line is
+		// rescanned below with the other changed lines.
+		if (!tr.changes.touchesRange(span.from, span.to)) {
+			const from = tr.changes.mapPos(span.from);
+			byStart.set(from, { from, to: tr.changes.mapPos(span.to) });
+		}
+	}
+	const { doc } = tr.state;
+	tr.changes.iterChangedRanges((_fromA, _toA, fromB, toB) => {
+		const last = doc.lineAt(toB).number;
+		for (let n = doc.lineAt(fromB).number; n <= last; n++) {
+			const line = doc.line(n);
+			// A kept span is never stale here: if this line was a marker the
+			// edit touched, its span was dropped above.
+			if (isManagedMarkerLine(line.text)) {
+				byStart.set(line.from, { from: line.from, to: line.to });
+			}
+		}
+	});
+	return [...byStart.values()].sort((a, b) => a.from - b.from);
 }
 
 /**

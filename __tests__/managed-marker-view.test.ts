@@ -113,3 +113,44 @@ describe('hideManagedMarkers extension', () => {
 		]);
 	});
 });
+
+describe('marker tracking across edits', () => {
+	// Deterministic pseudo-random edits; the incrementally tracked markers must
+	// always match a fresh full scan of the same text.
+	function rng(seed: number): () => number {
+		let s = seed;
+		return () => {
+			s = (s * 1103515245 + 12345) % 2147483648;
+			return s / 2147483648;
+		};
+	}
+	const PIECES = [
+		'\n',
+		'x',
+		'<!-- plaud:managed:start -->',
+		'<!-- plaud:managed:end -->',
+		'\n<!-- plaud:managed:end -->\n',
+		'',
+	];
+
+	it('matches a full rescan after every edit', () => {
+		const rand = rng(59);
+		let state = stateWith(DOC, DOC.length);
+		for (let i = 0; i < 400; i++) {
+			const len = state.doc.length;
+			const from = Math.floor(rand() * (len + 1));
+			const to = Math.min(len, from + Math.floor(rand() * 30));
+			const insert = PIECES[Math.floor(rand() * PIECES.length)] ?? '';
+			state = state.update({
+				changes: { from, to, insert },
+				selection: EditorSelection.cursor(0),
+			}).state;
+			const fresh = stateWith(state.doc.toString());
+			expect(
+				hiddenTexts(state, managedMarkerDecorations(state, true)),
+			).toEqual(
+				hiddenTexts(fresh, managedMarkerDecorations(fresh, true)),
+			);
+		}
+	});
+});
