@@ -18,7 +18,6 @@ import {
 	SecretComponent,
 	Setting,
 	type TextComponent,
-	type SettingDefinition,
 	type SettingDefinitionItem,
 	setIcon,
 } from 'obsidian';
@@ -464,6 +463,9 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 	// Set by renderPlaudVersionControl() so a sign-in, a sign-out, or a detected
 	// account move can redraw the version row. Null until that row has rendered.
 	private versionRefresh: (() => void) | null = null;
+	// Set by renderTrashedToggle() so a Plaud version change can show or hide
+	// the row. Null until that row has rendered.
+	private trashRowRefresh: (() => void) | null = null;
 
 	constructor(app: App, plugin: SettingsTabHost) {
 		super(app, plugin);
@@ -480,6 +482,7 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 		this.signinRefresh = null;
 		this.tokenRefresh = null;
 		this.versionRefresh = null;
+		this.trashRowRefresh = null;
 		this.previewRefreshers.clear();
 		super.hide();
 	}
@@ -724,15 +727,13 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 			'When Plaud has a recording but reports no transcript or summary for it yet (a Plaud-side issue, not a plugin error), write a placeholder note with the recording ID and a link back to Plaud instead of recording a failure. A later successful import replaces the placeholder automatically. Turn off to keep such recordings as plain failures with no file written.',
 			'writePlaceholderForUnprocessed',
 		);
-		// Plaud 4.0 lists active recordings only, so there is no trash to show.
-		if (!this.plugin.usesV4Portal()) {
-			this.addToggleRow(
+		this.renderTrashedToggle(
+			this.makeSetting(
 				containerEl,
 				'Show trashed recordings',
 				'Include recordings that are in your Plaud trash in the import list. Off by default, matching the Plaud app, which hides trash. Trashed recordings are usually short accidental clips with no transcript. Turn on to import something you trashed in Plaud but still want in your vault.',
-				'showTrashedRecordings',
-			);
-		}
+			),
+		);
 		this.addToggleRow(
 			containerEl,
 			'Update the recording title on rename',
@@ -1275,6 +1276,8 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 			}
 			statusEl.setText(status);
 			statusEl.toggleClass('plaud-importer-version-mismatch', mismatch);
+			// The version decides whether the trash row applies at all.
+			this.trashRowRefresh?.();
 		};
 		this.versionRefresh = refresh;
 		setting.addDropdown((dd) => {
@@ -2000,6 +2003,28 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 		return new Setting(containerEl).setName(name).setDesc(desc);
 	}
 
+	/**
+	 * The "Show trashed recordings" toggle, shared by both render paths. Plaud
+	 * 4.0 lists active recordings only, so the row is hidden there; the version
+	 * row's refresh re-runs this check when the version changes.
+	 */
+	private renderTrashedToggle(setting: Setting): void {
+		setting.addToggle((toggle) =>
+			toggle
+				.setValue(this.readSettingBool('showTrashedRecordings'))
+				.onChange(async (value) => {
+					await this.applyControlChange(
+						'showTrashedRecordings',
+						value,
+					);
+				}),
+		);
+		this.trashRowRefresh = () => {
+			setting.settingEl.toggle(!this.plugin.usesV4Portal());
+		};
+		this.trashRowRefresh();
+	}
+
 	// Imperative row helpers used only by display(). Each binds to the plugin's
 	// settings through the same applyControlChange() the declarative path uses,
 	// so coercion and side effects stay in one place.
@@ -2094,19 +2119,6 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 	}
 
 	getSettingDefinitions(): SettingDefinitionItem[] {
-		// Plaud 4.0 lists active recordings only, so there is no trash to show.
-		const trashRows: SettingDefinition[] = this.plugin.usesV4Portal()
-			? []
-			: [
-					{
-						name: 'Show trashed recordings',
-						desc: 'Include recordings that are in your Plaud trash in the import list. Off by default, matching the Plaud app, which hides trash. Trashed recordings are usually short accidental clips with no transcript. Turn on to import something you trashed in Plaud but still want in your vault.',
-						control: {
-							type: 'toggle',
-							key: 'showTrashedRecordings',
-						},
-					},
-				];
 		return [
 			{
 				name: 'Plaud token',
@@ -2404,7 +2416,15 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 							key: 'writePlaceholderForUnprocessed',
 						},
 					},
-					...trashRows,
+					{
+						name: 'Show trashed recordings',
+						desc: 'Include recordings that are in your Plaud trash in the import list. Off by default, matching the Plaud app, which hides trash. Trashed recordings are usually short accidental clips with no transcript. Turn on to import something you trashed in Plaud but still want in your vault.',
+						// The renderer applies `visible` after render callbacks run,
+						// so it must agree with renderTrashedToggle's own check.
+						visible: () => !this.plugin.usesV4Portal(),
+						render: (setting: Setting) =>
+							this.renderTrashedToggle(setting),
+					},
 					{
 						name: 'Update the recording title on rename',
 						desc: "Off by default. When on, renaming an imported recording (with the Rename recording command or by renaming the note in the file explorer) also updates that recording's title in Plaud to match the new note name, including any date prefix. This is the only change the plugin writes back to Plaud. When off, the Rename recording command asks each time whether to update Plaud, and a file-explorer rename stays local.",
