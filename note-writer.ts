@@ -1996,10 +1996,8 @@ function bodyEnd(content: string, start: number, fenceNewline: number): number {
 
 /**
  * The value of the first `key:` line in a frontmatter body, or null when no
- * line starts with `key:`. A linear scan that returns exactly what
- * `body.match(/^key:\s*(.*?)\s*$/m)?.[1]` returned. Note that the regex's `\s*`
- * crosses line breaks, so an empty `key:` yields the NEXT line's text; that is
- * kept as-is here so this change does not alter behavior.
+ * line starts with `key:`. The value is the rest of that line with surrounding
+ * whitespace removed, so an empty `key:` yields '' rather than the next line.
  */
 function frontmatterKeyValue(body: string, key: string): string | null {
 	const prefix = `${key}:`;
@@ -2009,7 +2007,8 @@ function frontmatterKeyValue(body: string, key: string): string | null {
 			let valueStart = lineStart + prefix.length;
 			while (
 				valueStart < body.length &&
-				isRegexWhitespace(body.charAt(valueStart))
+				isRegexWhitespace(body.charAt(valueStart)) &&
+				!LINE_TERMINATORS.includes(body.charAt(valueStart))
 			) {
 				valueStart++;
 			}

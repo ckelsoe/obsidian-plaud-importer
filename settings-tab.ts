@@ -85,6 +85,8 @@ export interface SettingsTabHost extends Plugin {
 	testPlaudConnection(): Promise<{ ok: boolean; message: string }>;
 	loadPlaudDevices(): Promise<readonly StoredDevice[]>;
 	plaudVersionStatus(): { auto: PlaudVersion; detected: PlaudVersion | '' };
+	/** True on Plaud 4.0, whose recording list never includes trash. */
+	usesV4Portal(): boolean;
 	setPlaudVersionOverride(value: PlaudVersionOverride): Promise<void>;
 	syncClientToPlaudVersion(): void;
 	reauthenticate(): Promise<ReauthOutcome>;
@@ -461,6 +463,9 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 	// Set by renderPlaudVersionControl() so a sign-in, a sign-out, or a detected
 	// account move can redraw the version row. Null until that row has rendered.
 	private versionRefresh: (() => void) | null = null;
+	// Set by renderTrashedToggle() so a Plaud version change can show or hide
+	// the row. Null until that row has rendered.
+	private trashRowRefresh: (() => void) | null = null;
 
 	constructor(app: App, plugin: SettingsTabHost) {
 		super(app, plugin);
@@ -477,6 +482,7 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 		this.signinRefresh = null;
 		this.tokenRefresh = null;
 		this.versionRefresh = null;
+		this.trashRowRefresh = null;
 		this.previewRefreshers.clear();
 		super.hide();
 	}
@@ -605,28 +611,6 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 			'forbiddenCharReplacement',
 			'-',
 		);
-		this.addDropdownRow(
-			containerEl,
-			DUPLICATE_HANDLING_NAME,
-			DUPLICATE_HANDLING_DESC,
-			'onDuplicate',
-			{ skip: 'Skip', overwrite: 'Overwrite', prompt: 'Ask each time' },
-		);
-
-		new Setting(containerEl).setName('Appearance').setHeading();
-		this.addToggleRow(
-			containerEl,
-			'Show ribbon icon',
-			"Display the plaud importer icon in Obsidian's left rail. Turn off if you prefer to launch imports only from the command palette.",
-			'showRibbonIcon',
-		);
-		this.renderRibbonControl(
-			this.makeSetting(
-				containerEl,
-				'Ribbon icon',
-				"Which icon to display in the left rail. Only applies when 'show ribbon icon' is on.",
-			),
-		);
 
 		new Setting(containerEl)
 			.setName('Default artifact selection')
@@ -674,6 +658,21 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 			'defaultIncludeAudio',
 		);
 
+		new Setting(containerEl).setName('Appearance').setHeading();
+		this.addToggleRow(
+			containerEl,
+			'Show ribbon icon',
+			"Display the plaud importer icon in Obsidian's left rail. Turn off if you prefer to launch imports only from the command palette.",
+			'showRibbonIcon',
+		);
+		this.renderRibbonControl(
+			this.makeSetting(
+				containerEl,
+				'Ribbon icon',
+				"Which icon to display in the left rail. Only applies when 'show ribbon icon' is on.",
+			),
+		);
+
 		new Setting(containerEl).setName('Tags').setHeading();
 		this.addDropdownRow(
 			containerEl,
@@ -702,6 +701,13 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 		);
 
 		new Setting(containerEl).setName('Import dialog').setHeading();
+		this.addDropdownRow(
+			containerEl,
+			DUPLICATE_HANDLING_NAME,
+			DUPLICATE_HANDLING_DESC,
+			'onDuplicate',
+			{ skip: 'Skip', overwrite: 'Overwrite', prompt: 'Ask each time' },
+		);
 		this.addToggleRow(
 			containerEl,
 			'Auto-close summary',
@@ -721,11 +727,12 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 			'When Plaud has a recording but reports no transcript or summary for it yet (a Plaud-side issue, not a plugin error), write a placeholder note with the recording ID and a link back to Plaud instead of recording a failure. A later successful import replaces the placeholder automatically. Turn off to keep such recordings as plain failures with no file written.',
 			'writePlaceholderForUnprocessed',
 		);
-		this.addToggleRow(
-			containerEl,
-			'Show trashed recordings',
-			'Include recordings that are in your Plaud trash in the import list. Off by default, matching the Plaud app, which hides trash. Trashed recordings are usually short accidental clips with no transcript. Turn on to import something you trashed in Plaud but still want in your vault.',
-			'showTrashedRecordings',
+		this.renderTrashedToggle(
+			this.makeSetting(
+				containerEl,
+				'Show trashed recordings',
+				'Include recordings that are in your Plaud trash in the import list. Off by default, matching the Plaud app, which hides trash. Trashed recordings are usually short accidental clips with no transcript. Turn on to import something you trashed in Plaud but still want in your vault.',
+			),
 		);
 		this.addToggleRow(
 			containerEl,
@@ -1269,6 +1276,8 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 			}
 			statusEl.setText(status);
 			statusEl.toggleClass('plaud-importer-version-mismatch', mismatch);
+			// The version decides whether the trash row applies at all.
+			this.trashRowRefresh?.();
 		};
 		this.versionRefresh = refresh;
 		setting.addDropdown((dd) => {
@@ -1994,6 +2003,28 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 		return new Setting(containerEl).setName(name).setDesc(desc);
 	}
 
+	/**
+	 * The "Show trashed recordings" toggle, shared by both render paths. Plaud
+	 * 4.0 lists active recordings only, so the row is hidden there; the version
+	 * row's refresh re-runs this check when the version changes.
+	 */
+	private renderTrashedToggle(setting: Setting): void {
+		setting.addToggle((toggle) =>
+			toggle
+				.setValue(this.readSettingBool('showTrashedRecordings'))
+				.onChange(async (value) => {
+					await this.applyControlChange(
+						'showTrashedRecordings',
+						value,
+					);
+				}),
+		);
+		this.trashRowRefresh = () => {
+			setting.settingEl.toggle(!this.plugin.usesV4Portal());
+		};
+		this.trashRowRefresh();
+	}
+
 	// Imperative row helpers used only by display(). Each binds to the plugin's
 	// settings through the same applyControlChange() the declarative path uses,
 	// so coercion and side effects stay in one place.
@@ -2236,37 +2267,6 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 							placeholder: '-',
 						},
 					},
-					{
-						name: DUPLICATE_HANDLING_NAME,
-						desc: DUPLICATE_HANDLING_DESC,
-						control: {
-							type: 'dropdown',
-							key: 'onDuplicate',
-							options: {
-								skip: 'Skip',
-								overwrite: 'Overwrite',
-								prompt: 'Ask each time',
-							},
-						},
-					},
-				],
-			},
-			{
-				type: 'group',
-				heading: 'Appearance',
-				items: [
-					{
-						name: 'Show ribbon icon',
-						desc: "Display the plaud importer icon in Obsidian's left rail. Turn off if you prefer to launch imports only from the command palette.",
-						control: { type: 'toggle', key: 'showRibbonIcon' },
-					},
-					{
-						name: 'Ribbon icon',
-						desc: "Which icon to display in the left rail. Only applies when 'show ribbon icon' is on.",
-						searchable: false,
-						render: (setting: Setting) =>
-							this.renderRibbonControl(setting),
-					},
 				],
 			},
 			{
@@ -2324,6 +2324,24 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 			},
 			{
 				type: 'group',
+				heading: 'Appearance',
+				items: [
+					{
+						name: 'Show ribbon icon',
+						desc: "Display the plaud importer icon in Obsidian's left rail. Turn off if you prefer to launch imports only from the command palette.",
+						control: { type: 'toggle', key: 'showRibbonIcon' },
+					},
+					{
+						name: 'Ribbon icon',
+						desc: "Which icon to display in the left rail. Only applies when 'show ribbon icon' is on.",
+						searchable: false,
+						render: (setting: Setting) =>
+							this.renderRibbonControl(setting),
+					},
+				],
+			},
+			{
+				type: 'group',
 				heading: 'Tags',
 				items: [
 					{
@@ -2364,6 +2382,19 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 				heading: 'Import dialog',
 				items: [
 					{
+						name: DUPLICATE_HANDLING_NAME,
+						desc: DUPLICATE_HANDLING_DESC,
+						control: {
+							type: 'dropdown',
+							key: 'onDuplicate',
+							options: {
+								skip: 'Skip',
+								overwrite: 'Overwrite',
+								prompt: 'Ask each time',
+							},
+						},
+					},
+					{
 						name: 'Auto-close summary',
 						desc: 'Close the import window automatically after a fully successful import. A run with any failure keeps the window open so the errors stay visible. Clicking inside the window cancels the countdown.',
 						control: { type: 'toggle', key: 'autoCloseSummary' },
@@ -2388,10 +2419,11 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 					{
 						name: 'Show trashed recordings',
 						desc: 'Include recordings that are in your Plaud trash in the import list. Off by default, matching the Plaud app, which hides trash. Trashed recordings are usually short accidental clips with no transcript. Turn on to import something you trashed in Plaud but still want in your vault.',
-						control: {
-							type: 'toggle',
-							key: 'showTrashedRecordings',
-						},
+						// The renderer applies `visible` after render callbacks run,
+						// so it must agree with renderTrashedToggle's own check.
+						visible: () => !this.plugin.usesV4Portal(),
+						render: (setting: Setting) =>
+							this.renderTrashedToggle(setting),
 					},
 					{
 						name: 'Update the recording title on rename',

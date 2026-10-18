@@ -4,6 +4,17 @@
 
 All notable changes to Plaud Importer will be documented in this file.
 
+## [Unreleased]
+
+### Fixed
+
+- **An empty `plaud-id:` property is no longer read as the next line.** A note whose frontmatter had `plaud-id:` with no value was treated as having the next property's text as its id. That always failed safe (the plugin refused to overwrite the note), but it now reads as an empty id. `plaud-placeholder:` had the same flaw and is fixed too.
+
+### Changed
+
+- **"Show trashed recordings" is hidden for Plaud 4.0 accounts.** Plaud's 4.0 recording list contains only active recordings, so the setting and the import dialog's **Trashed** filter could never change anything there. Accounts on Plaud 3.0 keep both.
+- **Settings order.** **Duplicate handling** moved from **Output** to **Import dialog**, next to the other import-time choices, and **Appearance** moved below **Default artifact selection**.
+
 ## [0.46.1] - 2026-10-18
 
 ### Changed
