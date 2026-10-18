@@ -86,6 +86,12 @@ export interface ImportModalOptions extends NoteWriterOptions {
 	 */
 	readonly showTrashedRecordings?: boolean;
 	/**
+	 * False when the account's recording list never includes trash (Plaud
+	 * 4.0, whose list is the active recordings only). The dialog then leaves
+	 * out its Trashed filter, which could change nothing. Defaults to true.
+	 */
+	readonly trashListed?: boolean;
+	/**
 	 * Hide recordings already imported AND unchanged since import. New and
 	 * changed (update-available) recordings always show. Defaults to true.
 	 * A dialog view preference, toggled from the filter bar; not a settings-tab

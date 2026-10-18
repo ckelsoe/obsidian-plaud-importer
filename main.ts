@@ -790,7 +790,7 @@ export default class PlaudImporterPlugin extends Plugin {
 	 * client. Clearing sign-in clears the detected version, the workspace, and
 	 * the token, so this returns false unless v4 is pinned.
 	 */
-	private usesV4Portal(): boolean {
+	usesV4Portal(): boolean {
 		return this.plaudVersion() === 'v4';
 	}
 
@@ -2726,6 +2726,9 @@ export default class PlaudImporterPlugin extends Plugin {
 				// (issue #78): a browser/bookmarklet (SSO) session must not be
 				// pushed at the embedded email window on auth-error screens.
 				prefersSsoReauth: !this.reconnectPrefersWindow(),
+				// The 4.0 list never includes trash, so its Trashed filter
+				// would do nothing.
+				trashListed: !this.usesV4Portal(),
 				// After a successful in-modal re-auth, clear any auth pause so
 				// background sync resumes without waiting for the settings tab.
 				onReauth: async () => {

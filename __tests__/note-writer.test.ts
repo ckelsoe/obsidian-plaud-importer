@@ -4273,6 +4273,19 @@ describe('extractPlaudIdFromFrontmatter', () => {
 		expect(extractPlaudIdFromFrontmatter(content)).toBe('abc123');
 	});
 
+	it('returns null for an empty plaud-id instead of reading the next line', () => {
+		expect(
+			extractPlaudIdFromFrontmatter(
+				'---\nplaud-id:\ndate: 2026-04-14\n---\n\nbody',
+			),
+		).toBeNull();
+		expect(
+			extractPlaudIdFromFrontmatter(
+				'---\r\nplaud-id:   \r\ndate: 2026-04-14\r\n---\r\n',
+			),
+		).toBeNull();
+	});
+
 	it('round-trips a quoted id from formatFrontmatter', () => {
 		// The frontmatter writer quotes reserved words and numeric IDs;
 		// the extractor must round-trip them.
@@ -5414,6 +5427,12 @@ describe('extractPlaudPlaceholderFlag', () => {
 		expect(
 			extractPlaudPlaceholderFlag('---\nplaud-placeholder: YES\n---'),
 		).toBe(true);
+	});
+
+	it('returns false for an empty marker even when the next line reads true', () => {
+		expect(
+			extractPlaudPlaceholderFlag('---\nplaud-placeholder:\ntrue\n---'),
+		).toBe(false);
 	});
 
 	it('returns false for a real note with no marker', () => {

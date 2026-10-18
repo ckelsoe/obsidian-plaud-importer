@@ -18,6 +18,7 @@ import {
 	SecretComponent,
 	Setting,
 	type TextComponent,
+	type SettingDefinition,
 	type SettingDefinitionItem,
 	setIcon,
 } from 'obsidian';
@@ -85,6 +86,8 @@ export interface SettingsTabHost extends Plugin {
 	testPlaudConnection(): Promise<{ ok: boolean; message: string }>;
 	loadPlaudDevices(): Promise<readonly StoredDevice[]>;
 	plaudVersionStatus(): { auto: PlaudVersion; detected: PlaudVersion | '' };
+	/** True on Plaud 4.0, whose recording list never includes trash. */
+	usesV4Portal(): boolean;
 	setPlaudVersionOverride(value: PlaudVersionOverride): Promise<void>;
 	syncClientToPlaudVersion(): void;
 	reauthenticate(): Promise<ReauthOutcome>;
@@ -605,28 +608,6 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 			'forbiddenCharReplacement',
 			'-',
 		);
-		this.addDropdownRow(
-			containerEl,
-			DUPLICATE_HANDLING_NAME,
-			DUPLICATE_HANDLING_DESC,
-			'onDuplicate',
-			{ skip: 'Skip', overwrite: 'Overwrite', prompt: 'Ask each time' },
-		);
-
-		new Setting(containerEl).setName('Appearance').setHeading();
-		this.addToggleRow(
-			containerEl,
-			'Show ribbon icon',
-			"Display the plaud importer icon in Obsidian's left rail. Turn off if you prefer to launch imports only from the command palette.",
-			'showRibbonIcon',
-		);
-		this.renderRibbonControl(
-			this.makeSetting(
-				containerEl,
-				'Ribbon icon',
-				"Which icon to display in the left rail. Only applies when 'show ribbon icon' is on.",
-			),
-		);
 
 		new Setting(containerEl)
 			.setName('Default artifact selection')
@@ -674,6 +655,21 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 			'defaultIncludeAudio',
 		);
 
+		new Setting(containerEl).setName('Appearance').setHeading();
+		this.addToggleRow(
+			containerEl,
+			'Show ribbon icon',
+			"Display the plaud importer icon in Obsidian's left rail. Turn off if you prefer to launch imports only from the command palette.",
+			'showRibbonIcon',
+		);
+		this.renderRibbonControl(
+			this.makeSetting(
+				containerEl,
+				'Ribbon icon',
+				"Which icon to display in the left rail. Only applies when 'show ribbon icon' is on.",
+			),
+		);
+
 		new Setting(containerEl).setName('Tags').setHeading();
 		this.addDropdownRow(
 			containerEl,
@@ -702,6 +698,13 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 		);
 
 		new Setting(containerEl).setName('Import dialog').setHeading();
+		this.addDropdownRow(
+			containerEl,
+			DUPLICATE_HANDLING_NAME,
+			DUPLICATE_HANDLING_DESC,
+			'onDuplicate',
+			{ skip: 'Skip', overwrite: 'Overwrite', prompt: 'Ask each time' },
+		);
 		this.addToggleRow(
 			containerEl,
 			'Auto-close summary',
@@ -721,12 +724,15 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 			'When Plaud has a recording but reports no transcript or summary for it yet (a Plaud-side issue, not a plugin error), write a placeholder note with the recording ID and a link back to Plaud instead of recording a failure. A later successful import replaces the placeholder automatically. Turn off to keep such recordings as plain failures with no file written.',
 			'writePlaceholderForUnprocessed',
 		);
-		this.addToggleRow(
-			containerEl,
-			'Show trashed recordings',
-			'Include recordings that are in your Plaud trash in the import list. Off by default, matching the Plaud app, which hides trash. Trashed recordings are usually short accidental clips with no transcript. Turn on to import something you trashed in Plaud but still want in your vault.',
-			'showTrashedRecordings',
-		);
+		// Plaud 4.0 lists active recordings only, so there is no trash to show.
+		if (!this.plugin.usesV4Portal()) {
+			this.addToggleRow(
+				containerEl,
+				'Show trashed recordings',
+				'Include recordings that are in your Plaud trash in the import list. Off by default, matching the Plaud app, which hides trash. Trashed recordings are usually short accidental clips with no transcript. Turn on to import something you trashed in Plaud but still want in your vault.',
+				'showTrashedRecordings',
+			);
+		}
 		this.addToggleRow(
 			containerEl,
 			'Update the recording title on rename',
@@ -2088,6 +2094,19 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 	}
 
 	getSettingDefinitions(): SettingDefinitionItem[] {
+		// Plaud 4.0 lists active recordings only, so there is no trash to show.
+		const trashRows: SettingDefinition[] = this.plugin.usesV4Portal()
+			? []
+			: [
+					{
+						name: 'Show trashed recordings',
+						desc: 'Include recordings that are in your Plaud trash in the import list. Off by default, matching the Plaud app, which hides trash. Trashed recordings are usually short accidental clips with no transcript. Turn on to import something you trashed in Plaud but still want in your vault.',
+						control: {
+							type: 'toggle',
+							key: 'showTrashedRecordings',
+						},
+					},
+				];
 		return [
 			{
 				name: 'Plaud token',
@@ -2236,37 +2255,6 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 							placeholder: '-',
 						},
 					},
-					{
-						name: DUPLICATE_HANDLING_NAME,
-						desc: DUPLICATE_HANDLING_DESC,
-						control: {
-							type: 'dropdown',
-							key: 'onDuplicate',
-							options: {
-								skip: 'Skip',
-								overwrite: 'Overwrite',
-								prompt: 'Ask each time',
-							},
-						},
-					},
-				],
-			},
-			{
-				type: 'group',
-				heading: 'Appearance',
-				items: [
-					{
-						name: 'Show ribbon icon',
-						desc: "Display the plaud importer icon in Obsidian's left rail. Turn off if you prefer to launch imports only from the command palette.",
-						control: { type: 'toggle', key: 'showRibbonIcon' },
-					},
-					{
-						name: 'Ribbon icon',
-						desc: "Which icon to display in the left rail. Only applies when 'show ribbon icon' is on.",
-						searchable: false,
-						render: (setting: Setting) =>
-							this.renderRibbonControl(setting),
-					},
 				],
 			},
 			{
@@ -2324,6 +2312,24 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 			},
 			{
 				type: 'group',
+				heading: 'Appearance',
+				items: [
+					{
+						name: 'Show ribbon icon',
+						desc: "Display the plaud importer icon in Obsidian's left rail. Turn off if you prefer to launch imports only from the command palette.",
+						control: { type: 'toggle', key: 'showRibbonIcon' },
+					},
+					{
+						name: 'Ribbon icon',
+						desc: "Which icon to display in the left rail. Only applies when 'show ribbon icon' is on.",
+						searchable: false,
+						render: (setting: Setting) =>
+							this.renderRibbonControl(setting),
+					},
+				],
+			},
+			{
+				type: 'group',
 				heading: 'Tags',
 				items: [
 					{
@@ -2364,6 +2370,19 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 				heading: 'Import dialog',
 				items: [
 					{
+						name: DUPLICATE_HANDLING_NAME,
+						desc: DUPLICATE_HANDLING_DESC,
+						control: {
+							type: 'dropdown',
+							key: 'onDuplicate',
+							options: {
+								skip: 'Skip',
+								overwrite: 'Overwrite',
+								prompt: 'Ask each time',
+							},
+						},
+					},
+					{
 						name: 'Auto-close summary',
 						desc: 'Close the import window automatically after a fully successful import. A run with any failure keeps the window open so the errors stay visible. Clicking inside the window cancels the countdown.',
 						control: { type: 'toggle', key: 'autoCloseSummary' },
@@ -2385,14 +2404,7 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 							key: 'writePlaceholderForUnprocessed',
 						},
 					},
-					{
-						name: 'Show trashed recordings',
-						desc: 'Include recordings that are in your Plaud trash in the import list. Off by default, matching the Plaud app, which hides trash. Trashed recordings are usually short accidental clips with no transcript. Turn on to import something you trashed in Plaud but still want in your vault.',
-						control: {
-							type: 'toggle',
-							key: 'showTrashedRecordings',
-						},
-					},
+					...trashRows,
 					{
 						name: 'Update the recording title on rename',
 						desc: "Off by default. When on, renaming an imported recording (with the Rename recording command or by renaming the note in the file explorer) also updates that recording's title in Plaud to match the new note name, including any date prefix. This is the only change the plugin writes back to Plaud. When off, the Rename recording command asks each time whether to update Plaud, and a file-explorer rename stays local.",

@@ -1328,8 +1328,8 @@ export class ImportModal extends Modal {
 		this.updateImportButtonState();
 	}
 
-	// Filter bar above the list: a compact "Hide:" group of four view toggles on
-	// one line. Each writes its setting through onViewStateChange (so it survives
+	// Filter bar above the list: a compact "Hide:" group of view toggles on one
+	// line (four, or three on Plaud 4.0, which lists no trash). Each writes its setting through onViewStateChange (so it survives
 	// reopen and auto-sync sees the same ignore/show state) and re-renders the
 	// list in place.
 	private renderFilterBar(parent: HTMLElement): void {
@@ -1369,6 +1369,9 @@ export class ImportModal extends Modal {
 				this.persistViewState({ hideIgnoredRecordings: checked });
 			},
 		);
+		if (this.noteWriterOptions.trashListed === false) {
+			return;
+		}
 		this.renderFilterToggle(
 			bar,
 			'Trashed',
