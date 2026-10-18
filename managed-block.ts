@@ -37,6 +37,16 @@ export type ManagedBlockLocation =
 			readonly after: string;
 	  };
 
+// Single-line forms of the patterns above. No `g` flag, so `test` keeps no
+// `lastIndex` state and the regexes can be shared.
+const START_ONE_LINE = new RegExp(START_LINE.source);
+const END_ONE_LINE = new RegExp(END_LINE.source);
+
+/** True when `line` (one line, no newline) is a start or end marker line. */
+export function isManagedMarkerLine(line: string): boolean {
+	return START_ONE_LINE.test(line) || END_ONE_LINE.test(line);
+}
+
 /** Every whole-line match of `pattern`, using a fresh regex so no `lastIndex` leaks between calls. */
 function lineMatches(content: string, pattern: RegExp): RegExpExecArray[] {
 	return [...content.matchAll(new RegExp(pattern.source, pattern.flags))];
