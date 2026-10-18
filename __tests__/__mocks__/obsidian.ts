@@ -127,6 +127,7 @@ export class Plugin {
 		return id;
 	}
 	registerDomEvent(_el: unknown, _type: string, _cb: unknown): void {}
+	registerEditorExtension(_extension: unknown): void {}
 	loadData(): Promise<unknown> {
 		return Promise.resolve(null);
 	}
@@ -328,4 +329,12 @@ export function setIcon(_el: unknown, _icon: string): void {}
 // Scoped off for __mocks__ in the eslint config rather than disabled inline,
 // because the config forbids inline disables of that rule.
 import * as moment from 'moment';
+import { StateField } from '@codemirror/state';
 export { moment };
+
+// Obsidian's Live Preview flag. The stub always reports Live Preview on; a test
+// that needs source mode passes its own value to the decoration builder.
+export const editorLivePreviewField = StateField.define<boolean>({
+	create: () => true,
+	update: (value) => value,
+});

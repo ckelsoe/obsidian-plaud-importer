@@ -37,6 +37,14 @@ export type ManagedBlockLocation =
 			readonly after: string;
 	  };
 
+/** True when `line` (one line, no newline) is a start or end marker line. */
+export function isManagedMarkerLine(line: string): boolean {
+	return (
+		new RegExp(START_LINE.source).test(line) ||
+		new RegExp(END_LINE.source).test(line)
+	);
+}
+
 /** Every whole-line match of `pattern`, using a fresh regex so no `lastIndex` leaks between calls. */
 function lineMatches(content: string, pattern: RegExp): RegExpExecArray[] {
 	return [...content.matchAll(new RegExp(pattern.source, pattern.flags))];

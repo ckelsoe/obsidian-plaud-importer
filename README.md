@@ -261,7 +261,7 @@ Everything the plugin writes below the frontmatter sits between two hidden marke
 <!-- plaud:managed:end -->
 ```
 
-Reading view hides the markers. When a recording is re-imported, only the text between them is replaced. Anything you write above the start marker or below the end marker stays exactly as you left it, and so do frontmatter properties you added (see **Preserve unknown frontmatter on re-import** in settings). Edits inside the markers are replaced by Plaud's current version.
+Reading view and Live Preview hide the markers. In Live Preview a marker line shows again while your cursor or selection is on it, so you can still see or delete it; source mode always shows them. When a recording is re-imported, only the text between them is replaced. Anything you write above the start marker or below the end marker stays exactly as you left it, and so do frontmatter properties you added (see **Preserve unknown frontmatter on re-import** in settings). Edits inside the markers are replaced by Plaud's current version.
 
 - A note imported before this feature has no markers. Its next re-import rebuilds it whole and adds them, so protection starts after that re-import.
 - If a marker is deleted, duplicated, or moved out of order, the plugin cannot tell its text from yours, so it does not update that note. A manual import reports it in the import summary, and background auto-sync skips it while the recording keeps its Update available badge. Restore one start and one end marker, or delete both to let the next import rebuild the whole note.

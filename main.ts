@@ -113,6 +113,7 @@ import {
 	RenameRecordingModal,
 } from './modals';
 import { trimTrailingChars } from './text-trim';
+import { hideManagedMarkers } from './managed-marker-view';
 import {
 	isPlaudVersion,
 	isPlaudVersionOverride,
@@ -483,6 +484,10 @@ export default class PlaudImporterPlugin extends Plugin {
 		});
 
 		this.addSettingTab(new PlaudImporterSettingsTab(this.app, this));
+
+		// Live Preview shows the managed-block marker comments (#59); hide them
+		// there the way reading view does.
+		this.registerEditorExtension(hideManagedMarkers);
 
 		// Receive tokens handed back from the user's external browser (the
 		// browser sign-in flow) via obsidian://plaud-importer-token?tokens=…

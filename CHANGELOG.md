@@ -4,6 +4,12 @@
 
 All notable changes to Plaud Importer will be documented in this file.
 
+## [Unreleased]
+
+### Changed
+
+- **The marker lines around the imported section are hidden in Live Preview too (#59).** In 0.46.0 Live Preview showed `<!-- plaud:managed:start -->` and `<!-- plaud:managed:end -->` as dimmed lines; now they are hidden there as in reading view. A marker line shows again while your cursor or selection is on it, and source mode still shows both. Nothing in the note changes.
+
 ## [0.46.0] - 2026-10-18
 
 ### Added
