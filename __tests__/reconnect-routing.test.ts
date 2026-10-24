@@ -55,6 +55,10 @@ describe('ssoReconnectHint', () => {
 		const hint = ssoReconnectHint('browser');
 		expect(hint).toMatch(/Google and Apple/);
 		expect(hint).toMatch(/email sign-in/);
+		// Email sign-in is only offered to accounts that already have a password;
+		// Plaud cannot add one to a Google/Apple-registered account (issue #158).
+		expect(hint).toMatch(/also has a password/);
+		expect(hint).not.toMatch(/add a password to your Plaud account/);
 		// Leads with a space so callers can concatenate it onto a message.
 		expect(hint.startsWith(' ')).toBe(true);
 	});
