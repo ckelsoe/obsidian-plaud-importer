@@ -4,6 +4,12 @@
 
 All notable changes to Plaud Importer will be documented in this file.
 
+## [Unreleased]
+
+### Fixed
+
+- **Sign-in advice no longer tells Google and Apple users to add a password.** The README, the sign-in help in settings, and the Reconnect notice suggested adding a password to your Plaud account so you could use the email sign-in. Plaud support has confirmed that a password cannot be added to an account registered through Google or Apple, so that advice was a dead end for most SSO users. The email sign-in is now recommended only for accounts that already have a password, and accounts created with Google or Apple are pointed at the bookmark sign-in. (#158)
+
 ## [0.46.2] - 2026-10-18
 
 ### Fixed
