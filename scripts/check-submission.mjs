@@ -103,7 +103,8 @@ try {
 // with patterns, so an aliased or namespace import is followed, strings and
 // comments are never mistaken for code, and a local `moment` (a parameter, a
 // method) that shadows the import is not reported.
-const TEST_PATH = /(?:^|\/)(?:__tests__|__mocks__)\/|\.test\.[cm]?[jt]sx?$/;
+const TEST_DIR = /(?:^|\/)(?:__tests__|__mocks__)\//;
+const TEST_FILE = /\.test\.[cm]?[jt]sx?$/;
 const MOMENT_WHY =
 	"moment from obsidian is `any` in the marketplace scan. Use Date and Intl (with getLanguage()), or go through `(moment as typeof import('moment'))`.";
 
@@ -121,7 +122,7 @@ function isMomentCastType(node) {
 }
 
 for (const file of walkCode(".")) {
-	if (TEST_PATH.test(file)) continue;
+	if (TEST_DIR.test(file) || TEST_FILE.test(file)) continue;
 	const text = readFileSync(file, "utf8");
 	if (!text.includes("moment")) continue;
 	// One file, nothing resolved: enough for the checker to bind each name to
