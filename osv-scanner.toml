@@ -16,3 +16,8 @@
 id = "GHSA-vfj7-8cjw-p6xm"
 ignoreUntil = 2026-12-31
 reason = "braces: stack exhaustion on deeply nested patterns. No fixed release exists (every version through 3.0.3, the latest, is affected; published 2026-09-18, widened 2026-10-02). Dev-only: reached through type-coverage > fast-glob > micromatch, which globs this repo's own source at lint time and never ships in main.js. Drop this entry, and add a package.json override, as soon as braces publishes a fixed version."
+
+[[IgnoredVulns]]
+id = "GHSA-gcqx-w48m-w2h4"
+ignoreUntil = 2026-12-31
+reason = "deepmerge: prototype poisoning of objects returned by mergeObject(). No fixed release exists (4.3.1 is the latest and is affected). Dev-only: reached through jest > @jest/core > jest-config, which merges this repo's own test config and never ships in main.js. Drop this entry, and add a package.json override, as soon as deepmerge publishes a fixed version."
