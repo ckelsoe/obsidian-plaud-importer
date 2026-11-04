@@ -65,6 +65,7 @@ import {
 import { planMigration, type MigrationPlan } from './migration-plan';
 import { MigrationPreviewModal } from './migration-modal';
 import { runImport } from './import-runner';
+import { plaudFolderLoader } from './folder-catalog';
 import {
 	PAGE_SIZE,
 	buildSourceFilter,
@@ -1783,7 +1784,7 @@ export default class PlaudImporterPlugin extends Plugin {
 				options,
 				fetchArtifacts,
 				fetchAudioUrl,
-				fetchFolderCatalog: () => client.getFolderCatalog(),
+				loadFolders: plaudFolderLoader(() => client.getFolderCatalog()),
 				// Stop between recordings if the plugin unloads mid-tick, so a
 				// disable/re-enable cannot leave this loop writing while a fresh
 				// instance starts its own tick.

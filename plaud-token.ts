@@ -17,6 +17,10 @@
 // rejects it with `-3900 "invalid auth header"`. So the guard validates the
 // decoded claims, never the key name.
 
+import { SHORT_LIFETIME_HOURS } from './session-expiry';
+
+export { SHORT_LIFETIME_HOURS };
+
 // A single base64url segment. Anchored with one character class, so it is
 // linear-time: no polynomial/ReDoS backtracking on adversarial input.
 const B64URL_SEGMENT = /^[A-Za-z0-9_-]+$/;
@@ -152,14 +156,6 @@ export function workspaceIdFromToken(value: string): string | null {
 	const raw = payload.wid;
 	return typeof raw === 'string' && raw.startsWith('ws_') ? raw : null;
 }
-
-/**
- * Advisory threshold, in hours: a measured issued lifetime at or below this is
- * "short". The 24h tokens issue #78 reported fall under it; every long-lived
- * token observed so far (~137 to ~300 days) is far above it. Advisory only:
- * lifetime informs status text and a capture-time heads-up, never a gate.
- */
-export const SHORT_LIFETIME_HOURS = 72;
 
 /** Measured lifetime facts about a stored token. All *Ms fields are epoch ms. */
 export interface TokenLifetime {

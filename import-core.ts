@@ -782,16 +782,6 @@ export interface ArtifactSelection {
 }
 
 /**
- * `AttachmentAsset.dataType` the import runner stamps on a recording's marks
- * (screenshots) so the attachment importer routes them to the dedicated `mark`
- * kind: gated by the screenshots selection, downloaded, and repointed inline
- * WITHOUT a managed "Images and Attachments" entry (note-writer already renders
- * them in a `## Screenshots` section). Lives here in the shared core so the
- * runner and the importer agree on the exact string without a module cycle.
- */
-export const PLAUD_MARK_DATA_TYPE = 'plaud_mark';
-
-/**
  * Five-button per-duplicate prompt used when the user has chosen "Ask
  * each time" duplicate handling. The last three buttons (overwrite-all,
  * skip-all, cancel) escalate the decision: the caller uses them to

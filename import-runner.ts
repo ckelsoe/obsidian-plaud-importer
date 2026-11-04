@@ -15,11 +15,11 @@
 // acyclic side of the former import-modal <-> attachment-importer cycle.
 // -----------------------------------------------------------------------------
 
-import type { PlaudFolder, TranscriptAndSummary } from './plaud-client';
 import type {
 	RecordingId,
 	Recording,
 	AttachmentAsset,
+	RecordingArtifacts,
 } from './recording-model';
 import {
 	NoteWriterCancelledError,
@@ -28,15 +28,8 @@ import {
 	type FormatMarkdownOptions,
 } from './note-writer';
 import {
-	buildFolderNameMap,
-	folderNameToTag,
-	normalizePlaudLocation,
-	resolveFolderNames,
-} from './folder-catalog';
-import {
 	classifyError,
 	categoryAllowsReauth,
-	PLAUD_MARK_DATA_TYPE,
 	type ImportResult,
 	type ArtifactSelection,
 	type ImportModalOptions,
@@ -93,6 +86,42 @@ export interface ImportRunObserver {
 	shouldAbort?(): boolean;
 }
 
+/** Writes one granular event to the run's debug log, when one is enabled. */
+export type ImportDebugLog = (message: string, payload?: unknown) => void;
+
+/** Where a recording sits in the service's folders, as its note records it. */
+interface RecordingFolders {
+	/** Folder names for the `<prefix>-folder:` key; empty or omitted writes none. */
+	readonly names?: readonly string[];
+	/**
+	 * Location for the `<prefix>-location:` key, for a recording that is not in
+	 * a real folder. Omitted writes none.
+	 */
+	readonly location?: string;
+	/** Folder-derived tags, the base `buildNoteTags` adds keywords and custom tags to. */
+	readonly tags: readonly string[];
+}
+
+/** Resolves one recording's folders; built once per run by `loadFolders`. */
+export type FolderResolver = (recording: Recording) => RecordingFolders;
+
+const NO_FOLDERS: FolderResolver = () => ({ tags: [] });
+
+async function loadFolderResolver(
+	deps: ImportRunDeps,
+	log: ImportDebugLog,
+): Promise<FolderResolver> {
+	if (!deps.loadFolders) return NO_FOLDERS;
+	try {
+		return await deps.loadFolders(log);
+	} catch (err) {
+		log('folder catalog failed; importing without folders', {
+			error: err instanceof Error ? err.message : String(err),
+		});
+		return NO_FOLDERS;
+	}
+}
+
 export interface ImportRunDeps {
 	/** Already filtered to the user's selection, in display order. */
 	readonly recordings: readonly Recording[];
@@ -106,16 +135,15 @@ export interface ImportRunDeps {
 	 * injects its warm `ensureArtifactsForRecording` so a prior "review
 	 * artifacts" preflight is not re-fetched.
 	 */
-	fetchArtifacts(recordingId: RecordingId): Promise<TranscriptAndSummary>;
+	fetchArtifacts(recordingId: RecordingId): Promise<RecordingArtifacts>;
 	/**
-	 * Resolves the account's flat folder/tag catalog, called ONCE per run to
-	 * turn each recording's `filetag_id_list` into folder names (issue #16).
-	 * Optional: a caller that omits it (or whose fetch fails) simply resolves no
-	 * folders. The import still runs; notes just carry no `plaud-folder:` and no
-	 * folder-derived tags. The modal and auto-sync both inject the client's
-	 * cached `getFolderCatalog`.
+	 * Prepares the service's folder lookup, called ONCE per run. Optional: a
+	 * service without folders omits it and its notes carry no folder keys and
+	 * no folder-derived tags. A hook may handle its own failures (what a failed
+	 * catalog fetch still resolves is service-specific); one that throws costs
+	 * the run its folders, never the import.
 	 */
-	fetchFolderCatalog?(): Promise<readonly PlaudFolder[]>;
+	loadFolders?(log: ImportDebugLog): Promise<FolderResolver>;
 	/**
 	 * Resolves one recording's original-audio download URL, or null when Plaud
 	 * exposes none. Only invoked when `selection.includeAudio` is set, so a
@@ -188,26 +216,9 @@ export async function runImport(
 	const total = recordings.length;
 	const shouldAbort = (): boolean => observer?.shouldAbort?.() ?? false;
 
-	// Resolve the folder/tag catalog ONCE for the whole batch (issue #16), then
-	// reuse the id->name map for every recording. Best-effort: a fetch failure
-	// (or an absent dep for older callers/tests) degrades to an empty map, so
-	// notes just carry no folder data rather than the import failing. This is
-	// also what fixes the latent bug where raw filetag ids leaked into `tags:`:
-	// names replace ids below, and an unresolved id is dropped, never shown raw.
-	let folderNameMap: ReadonlyMap<string, string> = new Map();
-	if (deps.fetchFolderCatalog) {
-		try {
-			folderNameMap = buildFolderNameMap(await deps.fetchFolderCatalog());
-		} catch (err) {
-			emitImportDebug(
-				options,
-				'folder catalog fetch failed; folders unresolved',
-				{
-					reason: err instanceof Error ? err.message : String(err),
-				},
-			);
-		}
-	}
+	const debugLog: ImportDebugLog = (message, payload) =>
+		emitImportDebug(options, message, payload);
+	const resolveFolders = await loadFolderResolver(deps, debugLog);
 
 	// Serial -> device name map for the {{device}} frontmatter token (issue #110
 	// follow-up). Resolved once from the host's live getter; a batch shares one
@@ -284,7 +295,7 @@ export async function runImport(
 			const markAttachments: readonly AttachmentAsset[] =
 				selection.includeScreenshots && marks !== undefined
 					? marks.map((mark) => ({
-							dataType: PLAUD_MARK_DATA_TYPE,
+							dataType: options.profile.markDataType,
 							url: mark.url,
 						}))
 					: [];
@@ -302,44 +313,7 @@ export async function runImport(
 					summaryLinkedAttachments,
 				),
 			);
-			// Issue #16: a recording's `tags` are its raw filetag_id_list (opaque
-			// folder ids). Resolve them to folder names via the catalog before
-			// building the note: the pretty names go to `plaud-folder:`, and the
-			// slugified names become the base for `tags:` (replacing the ids that
-			// leaked before). An id with no catalog entry is dropped, not shown
-			// raw. Empty-after-slug names (a punctuation-only folder) are filtered.
-			const { names: folderNames, missing: missingFolderIds } =
-				resolveFolderNames(recording.tags, folderNameMap);
-			if (missingFolderIds.length > 0) {
-				emitImportDebug(
-					options,
-					'folder ids not in catalog; dropped from tags/plaud-folder',
-					{
-						recordingId: recording.id,
-						missing: missingFolderIds,
-					},
-				);
-			}
-			// A recording in a Plaud SYSTEM bucket (nonzero system_folder_type) is
-			// not filed in a real folder: record its location
-			// (unfiled/import/conflict) as plaud-location and emit no folder tag or
-			// plaud-folder, so the default "Recordings" bucket never becomes a
-			// `#recordings` tag. A real folder (0/undefined, incl. every v3
-			// recording) keeps the folder tag + plaud-folder unchanged.
-			const isSystemFolder =
-				typeof recording.systemFolderType === 'number' &&
-				recording.systemFolderType !== 0;
-			const plaudLocation = isSystemFolder
-				? normalizePlaudLocation(
-						recording.systemFolderType,
-						folderNames[0],
-					)
-				: '';
-			const folderTags = isSystemFolder
-				? []
-				: folderNames
-						.map(folderNameToTag)
-						.filter((tag) => tag.length > 0);
+			const folders = resolveFolders(recording);
 			// DD-004: combine Plaud's AI-generated keyword list (from
 			// /file/detail/), the recording's folder-derived tags, and the
 			// user's custom tags before the note is rendered. buildNoteTags
@@ -351,7 +325,7 @@ export async function runImport(
 			// formatFrontmatter omits empty tags:/keywords: keys.
 			const tagResult = buildNoteTags(
 				options.profile,
-				folderTags,
+				folders.tags,
 				aiKeywords,
 				{
 					tagMode: options.tagMode ?? 'plaud',
@@ -364,13 +338,8 @@ export async function runImport(
 				includeTranscript: selection.includeTranscript,
 				includeSummary: selection.includeSummary,
 				keywords: tagResult.keywords,
-				// A system-bucket recording gets plaud-location, not plaud-folder;
-				// the two are mutually exclusive. folderNames still feeds the
-				// location label above (e.g. an unknown system type falls back to
-				// Plaud's own name).
-				folders: isSystemFolder ? undefined : folderNames,
-				plaudLocation:
-					plaudLocation.length > 0 ? plaudLocation : undefined,
+				folders: folders.names,
+				plaudLocation: folders.location,
 				consumerNotes,
 				marks: selection.includeScreenshots ? marks : undefined,
 				additionalSummaries: selection.includeSummary

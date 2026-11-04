@@ -11,6 +11,7 @@ import {
 	effectiveCaptureOffsetMinutes,
 } from './note-writer';
 import { runImport } from './import-runner';
+import { plaudFolderLoader } from './folder-catalog';
 import {
 	buildImportedIndex,
 	findImportedNote,
@@ -2470,7 +2471,9 @@ export class ImportModal extends Modal {
 			options: this.noteWriterOptions,
 			fetchArtifacts: (id) => this.ensureArtifactsForRecording(id),
 			fetchAudioUrl: (id) => this.client.getAudioTempUrl(id),
-			fetchFolderCatalog: () => this.client.getFolderCatalog(),
+			loadFolders: plaudFolderLoader(() =>
+				this.client.getFolderCatalog(),
+			),
 			applyFold: (filePath) => this.applyNoteFolds(filePath),
 			observer: {
 				onRecordingStart: (index, total) => {

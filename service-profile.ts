@@ -32,6 +32,13 @@ export interface ServiceProfile {
 	 */
 	readonly placeholderCallout: readonly string[];
 	/**
+	 * `AttachmentAsset.dataType` the import runner stamps on a recording's marks
+	 * (screenshots), so the service's attachment pipeline can route them apart
+	 * from other assets. Stored in no note, but it must match what that
+	 * pipeline checks for.
+	 */
+	readonly markDataType: string;
+	/**
 	 * Fills the service's own template tokens in a summary body. Omitted when
 	 * the service's summaries carry none.
 	 */

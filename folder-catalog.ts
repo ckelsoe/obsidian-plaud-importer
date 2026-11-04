@@ -13,6 +13,7 @@
 // with the reverse name->id direction.
 // -----------------------------------------------------------------------------
 
+import type { FolderResolver, ImportDebugLog } from './import-runner';
 import type { PlaudFolder } from './plaud-client';
 import { trimChars } from './text-trim';
 
@@ -120,4 +121,70 @@ export function normalizePlaudLocation(
 			return name.length > 0 ? name : 'system';
 		}
 	}
+}
+
+/**
+ * Plaud's `loadFolders` hook for the import runner: fetches the catalog once
+ * per run, then resolves each recording's `filetag_id_list` to folder names,
+ * folder tags and, for a system bucket, a `plaud-location`.
+ */
+export function plaudFolderLoader(
+	fetchCatalog: () => Promise<readonly PlaudFolder[]>,
+): (log: ImportDebugLog) => Promise<FolderResolver> {
+	return async (log) => {
+		// Best-effort: a fetch failure degrades to an empty map, so notes just
+		// carry no folder data rather than the import failing. A system bucket
+		// still gets its location from systemFolderType alone. This also fixes
+		// the latent bug where raw filetag ids leaked into `tags:`: names
+		// replace ids, and an unresolved id is dropped, never shown raw.
+		let folderNameMap: ReadonlyMap<string, string> = new Map();
+		try {
+			folderNameMap = buildFolderNameMap(await fetchCatalog());
+		} catch (err) {
+			log('folder catalog fetch failed; folders unresolved', {
+				reason: err instanceof Error ? err.message : String(err),
+			});
+		}
+		return (recording) => {
+			// Empty-after-slug names (a punctuation-only folder) are filtered.
+			const { names: folderNames, missing: missingFolderIds } =
+				resolveFolderNames(recording.tags, folderNameMap);
+			if (missingFolderIds.length > 0) {
+				log(
+					'folder ids not in catalog; dropped from tags/plaud-folder',
+					{
+						recordingId: recording.id,
+						missing: missingFolderIds,
+					},
+				);
+			}
+			// A recording in a Plaud SYSTEM bucket (nonzero system_folder_type) is
+			// not filed in a real folder: record its location
+			// (unfiled/import/conflict) as plaud-location and emit no folder tag or
+			// plaud-folder, so the default "Recordings" bucket never becomes a
+			// `#recordings` tag. A real folder (0/undefined, incl. every v3
+			// recording) keeps the folder tag + plaud-folder unchanged. The two
+			// keys are mutually exclusive; folderNames still feeds the location
+			// label (an unknown system type falls back to Plaud's own name).
+			const isSystemFolder =
+				typeof recording.systemFolderType === 'number' &&
+				recording.systemFolderType !== 0;
+			if (isSystemFolder) {
+				const location = normalizePlaudLocation(
+					recording.systemFolderType,
+					folderNames[0],
+				);
+				return {
+					location: location.length > 0 ? location : undefined,
+					tags: [],
+				};
+			}
+			return {
+				names: folderNames,
+				tags: folderNames
+					.map(folderNameToTag)
+					.filter((tag) => tag.length > 0),
+			};
+		};
+	};
 }

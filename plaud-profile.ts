@@ -84,6 +84,15 @@ export function substitutePlaudPlaceholders(
 	});
 }
 
+/**
+ * `AttachmentAsset.dataType` the import runner stamps on a recording's marks
+ * (screenshots) so the attachment importer routes them to the dedicated `mark`
+ * kind: gated by the screenshots selection, downloaded, and repointed inline
+ * WITHOUT a managed "Images and Attachments" entry (note-writer already renders
+ * them in a `## Screenshots` section). The runner reads it from the profile.
+ */
+export const PLAUD_MARK_DATA_TYPE = 'plaud_mark';
+
 export const PLAUD_PROFILE: ServiceProfile = {
 	keyPrefix: 'plaud',
 	pluginId: 'plaud-importer',
@@ -109,6 +118,7 @@ export const PLAUD_PROFILE: ServiceProfile = {
 		'> nothing to import.',
 		'>',
 	],
+	markDataType: PLAUD_MARK_DATA_TYPE,
 	expandSummaryTokens: substitutePlaudPlaceholders,
 	devices: { label: recordingSourceLabel, sampleName: 'Plaud Note' },
 };

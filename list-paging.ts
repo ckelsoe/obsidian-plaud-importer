@@ -1,4 +1,5 @@
-// Sequential page fetching that works on both Plaud clients.
+// Sequential page fetching that works on both Plaud clients, or any client
+// with the same offset or cursor list calls.
 //
 // The prod reverse-engineered client pages by offset (`skip`); the v4 portal
 // client pages by an opaque cursor (`listRecordingsPage`). Auto-sync and the
@@ -11,8 +12,23 @@
 //
 // No `obsidian` import, so it is unit-tested with a stub client.
 
-import type { PlaudClient } from './plaud-client';
-import type { Recording } from './recording-model';
+import type { Recording, RecordingPage } from './recording-model';
+
+type ListSort = 'start_time' | 'edit_time';
+
+/** The list calls a service client offers: by offset, and by cursor when it pages that way. */
+export interface PagedRecordingList {
+	listRecordings(filter: {
+		sortBy: ListSort;
+		skip: number;
+		limit: number;
+	}): Promise<readonly Recording[]>;
+	listRecordingsPage?(filter: {
+		sortBy: ListSort;
+		cursor?: string;
+		limit: number;
+	}): Promise<RecordingPage>;
+}
 
 export type SequentialPageFetcher = (
 	skip: number,
@@ -27,8 +43,8 @@ export type SequentialPageFetcher = (
  * scan gets its own fetcher (its own closure cursor).
  */
 export function createSequentialPageFetcher(
-	client: PlaudClient,
-	sortBy: 'start_time' | 'edit_time',
+	client: PagedRecordingList,
+	sortBy: ListSort,
 ): SequentialPageFetcher {
 	if (client.listRecordingsPage === undefined) {
 		// Offset client: a plain passthrough. Idempotent per skip.

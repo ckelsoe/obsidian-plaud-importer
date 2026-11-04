@@ -4,6 +4,8 @@
  * markers and keys are the only ones it recognizes.
  */
 import type { App } from 'obsidian';
+import type { ServiceErrorPolicy } from '../import-core';
+import { runImport } from '../import-runner';
 import { locateManagedBlock, managedMarkers } from '../managed-block';
 import {
 	NoteWriter,
@@ -12,6 +14,7 @@ import {
 } from '../note-writer';
 import { PLAUD_PROFILE } from '../plaud-profile';
 import type {
+	AttachmentAsset,
 	Chapter,
 	RecordingId,
 	Recording,
@@ -19,6 +22,7 @@ import type {
 } from '../recording-model';
 import type { ServiceProfile } from '../service-profile';
 import { buildImportedIndex } from '../vault-index';
+import { asyncResult } from './helpers/async-result';
 import { makeFakeVault } from './helpers/fake-vault';
 
 const COMU: ServiceProfile = {
@@ -32,6 +36,7 @@ const COMU: ServiceProfile = {
 		'> [!warning] Not imported: Comu has nothing yet',
 		'>',
 	],
+	markDataType: 'comu_mark',
 };
 
 const RECORDING: Recording = {
@@ -161,5 +166,107 @@ describe('a non-Plaud service profile', () => {
 		for (const text of [written, stub]) {
 			expect(text).not.toMatch(/plaud/i);
 		}
+	});
+});
+
+describe('runImport with a non-Plaud service', () => {
+	const policy: ServiceErrorPolicy = {
+		pluginName: 'Comu Importer',
+		classify: () => null,
+		isUnprocessed: () => false,
+	};
+
+	it('writes the note with no folder hook and stamps marks with its own data type', async () => {
+		const vault = makeFakeVault();
+		const options = {
+			profile: COMU,
+			outputFolder: 'Comu',
+			onDuplicate: 'overwrite' as const,
+			errorPolicy: policy,
+		};
+		const queued: AttachmentAsset[] = [];
+		const outcome = await runImport({
+			recordings: [{ ...RECORDING, tags: ['raw-folder-id'] }],
+			selection: {
+				includeSummary: true,
+				includeTranscript: true,
+				includeAttachments: false,
+				includeMindmap: false,
+				includeCard: false,
+				includeScreenshots: true,
+				includeAudio: false,
+			},
+			writer: new NoteWriter(vault, options),
+			attachments: {
+				extractAttachmentAssetsFromSummaryMarkdown: () => [],
+				mergeAttachmentAssets: (base, extra) => [...base, ...extra],
+				importAttachmentsForNote: (_path, attachments) =>
+					asyncResult(() => {
+						queued.push(...attachments);
+					}),
+				importAudioForNote: () => asyncResult(() => null),
+			},
+			options,
+			fetchArtifacts: () =>
+				asyncResult(() => ({
+					transcript: TRANSCRIPT,
+					summary: { id: RECORDING.id, text: 'Summary' },
+					marks: [
+						{ offsetSeconds: 1, url: 'https://comu.example/m.png' },
+					],
+				})),
+		});
+
+		expect(outcome.stop).toBe('completed');
+		expect(outcome.results[0]).toMatchObject({ kind: 'written' });
+		const note = [...vault.files.values()][0] ?? '';
+		expect(note).toMatch(/^comu-id: abc123$/m);
+		expect(note).not.toMatch(/^comu-(folder|location):/m);
+		expect(note).not.toContain('raw-folder-id');
+		expect(note).not.toMatch(/plaud/i);
+		expect(queued).toEqual([
+			{ dataType: 'comu_mark', url: 'https://comu.example/m.png' },
+		]);
+	});
+
+	it('still imports when the folder hook throws', async () => {
+		const vault = makeFakeVault();
+		const options = {
+			profile: COMU,
+			outputFolder: 'Comu',
+			onDuplicate: 'overwrite' as const,
+			errorPolicy: policy,
+		};
+		const outcome = await runImport({
+			recordings: [RECORDING],
+			selection: {
+				includeSummary: true,
+				includeTranscript: true,
+				includeAttachments: false,
+				includeMindmap: false,
+				includeCard: false,
+				includeScreenshots: false,
+				includeAudio: false,
+			},
+			writer: new NoteWriter(vault, options),
+			attachments: {
+				extractAttachmentAssetsFromSummaryMarkdown: () => [],
+				mergeAttachmentAssets: (base, extra) => [...base, ...extra],
+				importAttachmentsForNote: () => asyncResult(() => undefined),
+				importAudioForNote: () => asyncResult(() => null),
+			},
+			options,
+			loadFolders: () =>
+				asyncResult(() => {
+					throw new Error('catalog down');
+				}),
+			fetchArtifacts: () =>
+				asyncResult(() => ({
+					transcript: TRANSCRIPT,
+					summary: { id: RECORDING.id, text: 'Summary' },
+				})),
+		});
+		expect(outcome.stop).toBe('completed');
+		expect(outcome.results[0]).toMatchObject({ kind: 'written' });
 	});
 });

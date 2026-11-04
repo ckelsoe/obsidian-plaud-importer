@@ -16,7 +16,7 @@ import {
 import type { ServiceProfile } from './service-profile';
 import { NoopDebugLogger, type DebugLogger } from './debug-logger';
 import type { ArtifactSelection } from './import-core';
-import { PLAUD_MARK_DATA_TYPE } from './import-core';
+import { PLAUD_MARK_DATA_TYPE } from './plaud-profile';
 import { trimTrailingChars } from './text-trim';
 import { isTrustedPlaudUrl } from './plaud-hosts';
 

@@ -28,6 +28,7 @@ import { PlaudApiError } from '../plaud-client-re';
 import type { ArtifactSelection, ImportModalOptions } from '../import-core';
 import { PLAUD_ERROR_POLICY } from '../plaud-errors';
 import { PLAUD_PROFILE } from '../plaud-profile';
+import { plaudFolderLoader } from '../folder-catalog';
 import type { PlaudFolder, TranscriptAndSummary } from '../plaud-client';
 import type {
 	AttachmentAsset,
@@ -249,7 +250,11 @@ async function run(scenario: Scenario): Promise<Record<string, unknown>> {
 				calls.push(['applyFold', path]);
 			}),
 		...(scenario.withFolders
-			? { fetchFolderCatalog: () => asyncResult(() => FOLDERS) }
+			? {
+					loadFolders: plaudFolderLoader(() =>
+						asyncResult(() => FOLDERS),
+					),
+				}
 			: {}),
 		...(scenario.withAudio
 			? {

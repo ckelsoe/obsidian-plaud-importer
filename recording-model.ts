@@ -17,7 +17,7 @@ export type RecordingId = string & {
 };
 
 /**
- * A summary beyond the primary one (see `TranscriptAndSummary.additionalSummaries`).
+ * A summary beyond the primary one (see `RecordingArtifacts.additionalSummaries`).
  * `heading` is the note section title derived from the summary's object type
  * (e.g. `SUMMARY_BETA` -> "Summary (beta)"); `text` is the markdown body, already
  * image-resolved by the client. Rendered as its own `## <heading>` section.
@@ -256,4 +256,89 @@ export interface Summary {
 interface SummarySection {
 	readonly heading: string;
 	readonly body: string;
+}
+
+/**
+ * Bundle of derived artifacts for a single recording: what the import runner
+ * fetches per recording and writes into the note. Every field past `transcript`
+ * and `summary` is optional; a service fills only what it has.
+ *
+ * Either field may be null independently: a recording can have a
+ * transcript without an AI summary (or vice versa) depending on the
+ * service's processing status.
+ */
+export interface RecordingArtifacts {
+	readonly transcript: Transcript | null;
+	readonly summary: Summary | null;
+	/**
+	 * Optional map of relative Plaud asset paths to pre-signed download URLs
+	 * returned by `/ai/transsumm/{id}` (for example `download_link_map`).
+	 * Used by attachment import to resolve `picture_link` entries to real image
+	 * bytes instead of HTML wrapper pages.
+	 */
+	readonly nestedAssetLinks?: Readonly<Record<string, string>>;
+	/**
+	 * AI-generated keyword tags from Plaud, when the client can reach a
+	 * source that provides them. Populated by the RE client from
+	 * `/file/detail/{id}` → `data.extra_data.aiContentHeader.keywords`,
+	 * left undefined when the field is absent (older recordings, or when
+	 * the detail fetch failed silently). Consumers should route these
+	 * through `buildNoteTags` in note-writer.ts so the tag-mode setting,
+	 * namespacing, and dedup rules stay in one place.
+	 */
+	readonly aiKeywords?: readonly string[];
+	/**
+	 * Ordered list of AI-generated chapter markers for the recording.
+	 * Populated by the RE client from the `outline` entry inside
+	 * `/file/detail/{id}`'s `content_list`, which points at a pre-signed
+	 * S3 URL whose body is the chapter list. Left undefined when the
+	 * outline is absent (older recordings) or the S3 fetch/parse failed.
+	 *
+	 * The exact wire shape of the S3 body is still being pinned down — the
+	 * RE client's `parseOutlineBody` handles the shapes seen so far and
+	 * logs the raw body at debug level when it can't recognize it, so
+	 * Charles can inspect and we can widen the parser in a follow-up.
+	 */
+	readonly chapters?: readonly Chapter[];
+	/**
+	 * Downloadable asset references discovered from `/file/detail/{id}`.
+	 * These are typically pre-signed URLs (short-lived) for supplemental
+	 * artifacts such as screenshots or other generated media.
+	 *
+	 * The RE client treats this as best-effort discovery: unknown data types
+	 * with a `data_link` URL are surfaced, while known transcript/summary
+	 * pipeline entries stay excluded. Import-time consumers should download
+	 * these immediately and persist them into the vault, because pre-signed
+	 * links expire quickly.
+	 */
+	readonly attachments?: readonly AttachmentAsset[];
+	/**
+	 * Additional AI template outputs the user generated in Plaud (Key Points,
+	 * Daily Journal, Meeting Summary, etc.). Each is a `content_list` entry of
+	 * `data_type: consumer_note` whose pre-signed S3 link serves a `text/plain`
+	 * Markdown body. The RE client fetches each body during the detail pass and
+	 * surfaces it here so note-writer can fold it into the note as a section
+	 * rather than the import pipeline saving it as an unreadable `.bin`
+	 * attachment. Left undefined when the recording has none.
+	 */
+	readonly consumerNotes?: readonly ConsumerNote[];
+	/**
+	 * Screenshots ("marks") the user captured during the recording, each a
+	 * pre-signed image URL plus its offset into the recording. Populated by the
+	 * v4 client from the file-detail's `MARK_MEMO` object; left undefined when the
+	 * recording has no marks or the source does not provide them (the v3 client).
+	 * Note-writer renders these as a Screenshots section and the attachment
+	 * pipeline downloads them into the note's `-assets` folder.
+	 */
+	readonly marks?: readonly RecordingMark[];
+	/**
+	 * Summaries BEYOND the primary one in `summary`. A v4 recording can carry more
+	 * than one summary object (e.g. the classic `SUMMARY` plus a `SUMMARY_BETA`),
+	 * and when the user selects the Summary artifact ALL of them are imported, not
+	 * just the first. The primary (`SUMMARY`, or the first summary when there is no
+	 * classic one) stays in `summary`; every other summary lands here with its own
+	 * section `heading` (e.g. "Summary (beta)"). Left undefined when the recording
+	 * has only one summary or the source provides no extras (the v3 client).
+	 */
+	readonly additionalSummaries?: readonly AdditionalSummary[];
 }
