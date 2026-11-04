@@ -46,8 +46,6 @@ import {
 	TEMPLATE_PREVIEW_DATE,
 	TEMPLATE_PREVIEW_TITLE,
 	substitutePlaudPlaceholders,
-	type FileLike,
-	type FolderLike,
 	type TranscriptChapterGroup,
 	type VaultLike,
 } from '../note-writer';
@@ -66,6 +64,7 @@ import type {
 // test can flip the global locale and observe the formatter's pinned English.
 import { moment } from 'obsidian';
 import { asyncResult } from './helpers/async-result';
+import { makeFakeVault, type FakeVault } from './helpers/fake-vault';
 import { at } from './helpers/checked';
 
 // Fixtures ------------------------------------------------------------------
@@ -2554,65 +2553,6 @@ describe('formatMarkdown', () => {
 });
 
 // NoteWriter class ---------------------------------------------------------
-
-type FakeVault = VaultLike & {
-	files: Map<string, string>;
-	folders: Set<string>;
-	createdPaths: string[];
-	overwrittenPaths: string[];
-	createFolderCalls: string[];
-};
-
-function makeFakeVault(): FakeVault {
-	const files = new Map<string, string>();
-	const folders = new Set<string>();
-	const createdPaths: string[] = [];
-	const overwrittenPaths: string[] = [];
-	const createFolderCalls: string[] = [];
-
-	const vault: FakeVault = {
-		files,
-		folders,
-		createdPaths,
-		overwrittenPaths,
-		createFolderCalls,
-		getFileByPath(path: string): FileLike | null {
-			return files.has(path) ? { path } : null;
-		},
-		getFolderByPath(path: string): FolderLike | null {
-			return folders.has(path) ? { path } : null;
-		},
-		createFolder(path: string): Promise<FolderLike> {
-			return asyncResult(() => {
-				createFolderCalls.push(path);
-				folders.add(path);
-				return { path };
-			});
-		},
-		create(path: string, data: string): Promise<FileLike> {
-			return asyncResult(() => {
-				files.set(path, data);
-				createdPaths.push(path);
-				return { path };
-			});
-		},
-		read(file: FileLike): Promise<string> {
-			return asyncResult(() => {
-				return files.get(file.path) ?? '';
-			});
-		},
-		process(file: FileLike, fn: (data: string) => string): Promise<string> {
-			return asyncResult(() => {
-				const current = files.get(file.path) ?? '';
-				const next = fn(current);
-				files.set(file.path, next);
-				overwrittenPaths.push(file.path);
-				return next;
-			});
-		},
-	};
-	return vault;
-}
 
 // renameRecordingNote ------------------------------------------------------
 

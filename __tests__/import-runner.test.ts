@@ -6,8 +6,6 @@ import {
 } from '../import-runner';
 import {
 	NoteWriter,
-	type FileLike,
-	type FolderLike,
 	type VaultLike,
 	type DuplicatePromptDecision,
 } from '../note-writer';
@@ -22,62 +20,18 @@ import type {
 	TranscriptAndSummary,
 } from '../plaud-client';
 import { asyncResult } from './helpers/async-result';
+import { makeFakeVault } from './helpers/fake-vault';
 import { at, defined } from './helpers/checked';
 
 // -----------------------------------------------------------------------------
 // Test doubles
 //
 // The runner is headless: a REAL NoteWriter writes into an in-memory fake vault
-// (the same shape note-writer.test.ts uses), the attachment pipeline is a stub
+// (the shared helpers/fake-vault.ts), the attachment pipeline is a stub
 // that records its calls, and the observer/fetchArtifacts are spies so we can
 // assert ordering and call counts. No `obsidian` import is needed because the
 // runner has none.
 // -----------------------------------------------------------------------------
-
-type FakeVault = VaultLike & {
-	files: Map<string, string>;
-	folders: Set<string>;
-};
-
-function makeFakeVault(): FakeVault {
-	const files = new Map<string, string>();
-	const folders = new Set<string>();
-	const vault: FakeVault = {
-		files,
-		folders,
-		getFileByPath(path: string): FileLike | null {
-			return files.has(path) ? { path } : null;
-		},
-		getFolderByPath(path: string): FolderLike | null {
-			return folders.has(path) ? { path } : null;
-		},
-		createFolder(path: string): Promise<FolderLike> {
-			return asyncResult(() => {
-				folders.add(path);
-				return { path };
-			});
-		},
-		create(path: string, data: string): Promise<FileLike> {
-			return asyncResult(() => {
-				files.set(path, data);
-				return { path };
-			});
-		},
-		read(file: FileLike): Promise<string> {
-			return asyncResult(() => {
-				return files.get(file.path) ?? '';
-			});
-		},
-		process(file: FileLike, fn: (data: string) => string): Promise<string> {
-			return asyncResult(() => {
-				const next = fn(files.get(file.path) ?? '');
-				files.set(file.path, next);
-				return next;
-			});
-		},
-	};
-	return vault;
-}
 
 function makeWriter(
 	vault: VaultLike,
