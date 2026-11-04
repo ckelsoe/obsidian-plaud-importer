@@ -13,19 +13,21 @@
 // so it can be unit-tested with a stub fetcher.
 
 import type {
-	AdditionalSummary,
 	PlaudClient,
 	PlaudDevice,
 	PlaudFolder,
 	PlaudMark,
-	PlaudRecordingId,
-	Recording,
 	RecordingFilter,
+	TranscriptAndSummary,
+} from './plaud-client';
+import type {
+	AdditionalSummary,
+	RecordingId,
+	Recording,
 	RecordingPage,
 	Summary,
 	Transcript,
-	TranscriptAndSummary,
-} from './plaud-client';
+} from './recording-model';
 import type { DebugLogger } from './debug-logger';
 import { isTrustedPlaudHost } from './plaud-hosts';
 import {
@@ -417,7 +419,7 @@ export class PlaudV4Client implements PlaudClient {
 	}
 
 	async getTranscriptAndSummary(
-		id: PlaudRecordingId,
+		id: RecordingId,
 	): Promise<TranscriptAndSummary> {
 		if (id.length === 0) {
 			throw new PlaudApiError(
@@ -474,7 +476,7 @@ export class PlaudV4Client implements PlaudClient {
 		};
 	}
 
-	async getAudioTempUrl(id: PlaudRecordingId): Promise<string | null> {
+	async getAudioTempUrl(id: RecordingId): Promise<string | null> {
 		const detail = await this.fetchDetail(id);
 		const objects = readArray(detail['objects']);
 		const audio = findObject(objects, OBJ_AUDIO);
@@ -491,7 +493,7 @@ export class PlaudV4Client implements PlaudClient {
 	 * conflict; refuses a blank title. Throws PlaudApiError/PlaudParseError on
 	 * failure so the caller can surface it.
 	 */
-	async updateTitle(id: PlaudRecordingId, filename: string): Promise<void> {
+	async updateTitle(id: RecordingId, filename: string): Promise<void> {
 		const endpoint = '/file-app/v4/nodes/rename/:id';
 		const title = filename.trim();
 		if (title.length === 0) {
@@ -545,7 +547,7 @@ export class PlaudV4Client implements PlaudClient {
 	 * immediately before the write.
 	 */
 	private async fetchNodeForRename(
-		id: PlaudRecordingId,
+		id: RecordingId,
 	): Promise<{ nodeId: string; version: number }> {
 		const endpoint = '/file-app/v4/files/detail/:id';
 		const url = `${this.resolveBaseUrl()}/file-app/v4/files/detail/${encodeURIComponent(
@@ -573,7 +575,7 @@ export class PlaudV4Client implements PlaudClient {
 	// --- internals -------------------------------------------------------
 
 	private async fetchDetail(
-		id: PlaudRecordingId,
+		id: RecordingId,
 	): Promise<Record<string, unknown>> {
 		if (
 			this.lastDetail !== null &&
@@ -590,7 +592,7 @@ export class PlaudV4Client implements PlaudClient {
 	}
 
 	private async resolveTranscript(
-		id: PlaudRecordingId,
+		id: RecordingId,
 		objects: readonly unknown[],
 	): Promise<Transcript | null> {
 		// Prefer the polished (user-renamed) transcript when it has been
@@ -627,7 +629,7 @@ export class PlaudV4Client implements PlaudClient {
 	 * transient error never silently drops a summary.
 	 */
 	private async resolveSummaries(
-		id: PlaudRecordingId,
+		id: RecordingId,
 		objects: readonly unknown[],
 		relationContentMapping: Readonly<Record<string, string>>,
 	): Promise<{
@@ -690,7 +692,7 @@ export class PlaudV4Client implements PlaudClient {
 	 * a fetch failure so a transient error never silently drops a summary.
 	 */
 	private async fetchSummaryText(
-		id: PlaudRecordingId,
+		id: RecordingId,
 		obj: Record<string, unknown>,
 		relationContentMapping: Readonly<Record<string, string>>,
 	): Promise<string | null> {
@@ -734,7 +736,7 @@ export class PlaudV4Client implements PlaudClient {
 	 * re-import overwrite an existing note's screenshots with nothing.
 	 */
 	private async resolveMarks(
-		id: PlaudRecordingId,
+		id: RecordingId,
 		objects: readonly unknown[],
 		relationContentMapping: Readonly<Record<string, string>>,
 	): Promise<readonly PlaudMark[]> {
@@ -1090,7 +1092,7 @@ export class PlaudV4Client implements PlaudClient {
 		const versionMs = readFiniteNumber(raw['version_ms']);
 
 		return {
-			id: fileId as PlaudRecordingId,
+			id: fileId as RecordingId,
 			title,
 			createdAt: new Date(createdMs),
 			endsAt: new Date(createdMs + durationMs),

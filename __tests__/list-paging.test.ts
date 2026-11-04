@@ -1,10 +1,6 @@
 import { createSequentialPageFetcher } from '../list-paging';
-import type {
-	PlaudClient,
-	Recording,
-	RecordingFilter,
-	RecordingPage,
-} from '../plaud-client';
+import type { PlaudClient, RecordingFilter } from '../plaud-client';
+import type { Recording, RecordingPage } from '../recording-model';
 
 function rec(id: string): Recording {
 	return {

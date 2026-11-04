@@ -1,4 +1,4 @@
-import type { PlaudRecordingId, Recording } from '../plaud-client';
+import type { RecordingId, Recording } from '../recording-model';
 import type { ImportedIndex, ImportedRecord } from '../vault-index';
 import { runAutoSyncTick, type AutoSyncTickDeps } from '../auto-sync-runner';
 import { asyncResult } from './helpers/async-result';
@@ -10,7 +10,7 @@ function emptyIndex(): ImportedIndex {
 
 function rec(id: string, versionMs: number): Recording {
 	return {
-		id: id as PlaudRecordingId,
+		id: id as RecordingId,
 		title: `t-${id}`,
 		createdAt: new Date('2026-06-01T00:00:00Z'),
 		endsAt: new Date('2026-06-01T00:01:00Z'),
@@ -26,9 +26,9 @@ function rec(id: string, versionMs: number): Recording {
 function idx(
 	entries: ReadonlyArray<readonly [string, number | undefined]>,
 ): ImportedIndex {
-	const byId = new Map<PlaudRecordingId, ImportedRecord>(
+	const byId = new Map<RecordingId, ImportedRecord>(
 		entries.map(([id, v]) => [
-			id as PlaudRecordingId,
+			id as RecordingId,
 			{ path: `Plaud/${id}.md`, versionMs: v, plaudId: id },
 		]),
 	);
@@ -186,7 +186,7 @@ describe('runAutoSyncTick', () => {
 		const { deps: d, importCalls } = deps({
 			index: emptyIndex(),
 			pageSize: 10,
-			ignoredIds: new Set(['junk' as PlaudRecordingId]),
+			ignoredIds: new Set(['junk' as RecordingId]),
 			pages: [[rec('junk', 900), rec('keep', 800)]],
 		});
 		const result = await runAutoSyncTick(d);

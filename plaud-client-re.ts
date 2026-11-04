@@ -9,21 +9,23 @@
 // implements and §4.2 for the source research on the endpoint shapes.
 
 import type {
-	AttachmentAsset,
-	Chapter,
-	ConsumerNote,
 	PlaudClient,
 	PlaudDevice,
 	PlaudFolder,
-	PlaudRecordingId,
-	Recording,
 	RecordingFilter,
+	TranscriptAndSummary,
+} from './plaud-client';
+import type {
+	AttachmentAsset,
+	Chapter,
+	ConsumerNote,
+	RecordingId,
+	Recording,
 	RecordingSource,
 	Summary,
 	Transcript,
-	TranscriptAndSummary,
 	TranscriptSegment,
-} from './plaud-client';
+} from './recording-model';
 import type { DebugLogger } from './debug-logger';
 import { trimTrailingChars } from './text-trim';
 
@@ -314,7 +316,7 @@ export class ReverseEngineeredPlaudClient implements PlaudClient {
 	}
 
 	async getTranscriptAndSummary(
-		id: PlaudRecordingId,
+		id: RecordingId,
 	): Promise<TranscriptAndSummary> {
 		if (id.length === 0) {
 			throw new PlaudApiError(
@@ -484,7 +486,7 @@ export class ReverseEngineeredPlaudClient implements PlaudClient {
 	 * returns must be downloaded WITHOUT the bearer (it carries its own
 	 * signature), which AttachmentImporter enforces via shouldSendAuthHeader.
 	 */
-	async getAudioTempUrl(id: PlaudRecordingId): Promise<string | null> {
+	async getAudioTempUrl(id: RecordingId): Promise<string | null> {
 		const endpoint = `/file/temp-url/${encodeURIComponent(id)}`;
 		const url = `${this.baseUrl}${endpoint}`;
 		const raw = await this.fetchJson(url, endpoint);
@@ -503,7 +505,7 @@ export class ReverseEngineeredPlaudClient implements PlaudClient {
 	 * JSON so a successful write is never misread as a failure that could
 	 * prompt a re-write.
 	 */
-	async updateTitle(id: PlaudRecordingId, filename: string): Promise<void> {
+	async updateTitle(id: RecordingId, filename: string): Promise<void> {
 		const endpoint = `/file/${encodeURIComponent(id)}`;
 		const trimmed = filename.trim();
 		if (trimmed.length === 0) {
@@ -530,7 +532,7 @@ export class ReverseEngineeredPlaudClient implements PlaudClient {
 	 * fetchPolishedTranscript on top.
 	 */
 	private async fetchLegacyTranssumm(
-		id: PlaudRecordingId,
+		id: RecordingId,
 	): Promise<TranscriptAndSummary> {
 		const endpoint = `/ai/transsumm/${encodeURIComponent(id)}`;
 		const url = `${this.baseUrl}${endpoint}`;
@@ -565,7 +567,7 @@ export class ReverseEngineeredPlaudClient implements PlaudClient {
 	 * 5-minute pre-signed S3 URLs don't expire in between.
 	 */
 	private async fetchFileDetailBundle(
-		id: PlaudRecordingId,
+		id: RecordingId,
 	): Promise<FileDetailBundle> {
 		const detailEndpoint = `/file/detail/${encodeURIComponent(id)}`;
 		const detailUrl = `${this.baseUrl}${detailEndpoint}`;
@@ -798,7 +800,7 @@ export class ReverseEngineeredPlaudClient implements PlaudClient {
 	private async fetchConsumerNotes(
 		rawDetail: unknown,
 		detailEndpoint: string,
-		id: PlaudRecordingId,
+		id: RecordingId,
 	): Promise<readonly ConsumerNote[]> {
 		const refs = findConsumerNoteEntries(rawDetail, detailEndpoint);
 		const notes: ConsumerNote[] = [];
@@ -1669,7 +1671,7 @@ function parseRecording(raw: RawRecording, endpoint: string): Recording {
 			: { kind: 'app' };
 
 	return {
-		id: raw.id as PlaudRecordingId,
+		id: raw.id as RecordingId,
 		title: raw.filename,
 		createdAt: new Date(raw.start_time),
 		endsAt: new Date(endMs),
@@ -2889,7 +2891,7 @@ function findRawTranscriptLink(raw: unknown, endpoint: string): string | null {
 }
 
 function parseTranssummResponse(
-	id: PlaudRecordingId,
+	id: RecordingId,
 	raw: unknown,
 	endpoint: string,
 ): TranscriptAndSummary {
@@ -2938,7 +2940,7 @@ function parseTranssummResponse(
 // identical `{content, speaker, original_speaker, start_time(ms), end_time(ms)}`
 // shape. Keep this in sync with any v4 divergence rather than forking it.
 export function parseTranscriptField(
-	id: PlaudRecordingId,
+	id: RecordingId,
 	rawSegments: unknown,
 	endpoint: string,
 ): Transcript | null {
@@ -2981,7 +2983,7 @@ export function parseTranscriptField(
 function parseTranscriptSegment(
 	raw: unknown,
 	index: number,
-	id: PlaudRecordingId,
+	id: RecordingId,
 	endpoint: string,
 ): TranscriptSegment {
 	if (!isRecord(raw)) {
@@ -3085,7 +3087,7 @@ function pickNonEmptyString(...values: unknown[]): string | undefined {
  * surfaces loudly per viability doc §10.
  */
 function parseSummaryField(
-	id: PlaudRecordingId,
+	id: RecordingId,
 	rawSumm: unknown,
 	endpoint: string,
 ): Summary | null {
@@ -3176,7 +3178,7 @@ function parseSummaryField(
 // load-bearing for the import to succeed. Open to new unknown keys: any
 // novel field Plaud adds is ignored without breaking.
 function buildSummary(
-	id: PlaudRecordingId,
+	id: RecordingId,
 	text: string,
 	envelope: unknown,
 ): Summary {

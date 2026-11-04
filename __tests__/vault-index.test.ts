@@ -4,7 +4,7 @@
 // Obsidian runtime needed.
 
 import type { App, TFile } from 'obsidian';
-import type { PlaudRecordingId } from '../plaud-client';
+import type { RecordingId } from '../recording-model';
 import {
 	buildImportedIndex,
 	buildImportedIndexWithColdCheck,
@@ -62,10 +62,10 @@ describe('buildImportedIndex byId', () => {
 		]);
 		const index = buildImportedIndex(app, 'Plaud');
 		expect(index.byId.size).toBe(2);
-		expect(index.byId.get('rec-a' as PlaudRecordingId)?.path).toBe(
+		expect(index.byId.get('rec-a' as RecordingId)?.path).toBe(
 			'Plaud/note-a.md',
 		);
-		expect(index.byId.get('rec-b' as PlaudRecordingId)?.path).toBe(
+		expect(index.byId.get('rec-b' as RecordingId)?.path).toBe(
 			'Plaud/note-b.md',
 		);
 	});
@@ -77,8 +77,8 @@ describe('buildImportedIndex byId', () => {
 		]);
 		const index = buildImportedIndex(app, 'Plaud');
 		expect(index.byId.size).toBe(1);
-		expect(index.byId.has('rec-inside' as PlaudRecordingId)).toBe(true);
-		expect(index.byId.has('rec-outside' as PlaudRecordingId)).toBe(false);
+		expect(index.byId.has('rec-inside' as RecordingId)).toBe(true);
+		expect(index.byId.has('rec-outside' as RecordingId)).toBe(false);
 	});
 
 	it('recurses into subfolders under the output folder', () => {
@@ -86,7 +86,7 @@ describe('buildImportedIndex byId', () => {
 			['Plaud/2026/q2/meeting.md', { 'plaud-id': 'rec-nested' }],
 		]);
 		const index = buildImportedIndex(app, 'Plaud');
-		expect(index.byId.get('rec-nested' as PlaudRecordingId)?.path).toBe(
+		expect(index.byId.get('rec-nested' as RecordingId)?.path).toBe(
 			'Plaud/2026/q2/meeting.md',
 		);
 	});
@@ -123,17 +123,17 @@ describe('buildImportedIndex byId', () => {
 			],
 		]);
 		const index = buildImportedIndex(app, 'Plaud');
-		expect(index.byId.get('rec-num' as PlaudRecordingId)?.versionMs).toBe(
+		expect(index.byId.get('rec-num' as RecordingId)?.versionMs).toBe(
 			1782918853105,
 		);
-		expect(index.byId.get('rec-str' as PlaudRecordingId)?.versionMs).toBe(
+		expect(index.byId.get('rec-str' as RecordingId)?.versionMs).toBe(
 			1744628400000,
 		);
 		expect(
-			index.byId.get('rec-none' as PlaudRecordingId)?.versionMs,
+			index.byId.get('rec-none' as RecordingId)?.versionMs,
 		).toBeUndefined();
 		expect(
-			index.byId.get('rec-bad' as PlaudRecordingId)?.versionMs,
+			index.byId.get('rec-bad' as RecordingId)?.versionMs,
 		).toBeUndefined();
 	});
 
@@ -150,7 +150,7 @@ describe('buildImportedIndex byId', () => {
 		]);
 		const index = buildImportedIndex(app, 'Plaud');
 		expect(index.byId.size).toBe(1);
-		expect(index.byId.has('rec-new' as PlaudRecordingId)).toBe(true);
+		expect(index.byId.has('rec-new' as RecordingId)).toBe(true);
 	});
 
 	it('skips notes with no frontmatter or no plaud-id', () => {
@@ -163,7 +163,7 @@ describe('buildImportedIndex byId', () => {
 		]);
 		const index = buildImportedIndex(app, 'Plaud');
 		expect(index.byId.size).toBe(1);
-		expect(index.byId.has('rec-ok' as PlaudRecordingId)).toBe(true);
+		expect(index.byId.has('rec-ok' as RecordingId)).toBe(true);
 	});
 
 	it('captures the note plaud-id, summary version, and id from frontmatter', () => {
@@ -178,7 +178,7 @@ describe('buildImportedIndex byId', () => {
 			],
 		]);
 		const entry = buildImportedIndex(app, 'Plaud').byId.get(
-			'rec-rich' as PlaudRecordingId,
+			'rec-rich' as RecordingId,
 		);
 		expect(entry?.plaudId).toBe('rec-rich');
 		expect(entry?.summaryVersion).toBe('3');
@@ -192,7 +192,7 @@ describe('buildImportedIndex byId', () => {
 		]);
 		const index = buildImportedIndex(app, 'Plaud');
 		expect(index.byId.size).toBe(1);
-		expect(index.byId.get('rec-dup' as PlaudRecordingId)?.path).toBe(
+		expect(index.byId.get('rec-dup' as RecordingId)?.path).toBe(
 			'Plaud/second.md',
 		);
 	});
@@ -466,12 +466,10 @@ describe('buildImportedIndexWithColdCheck', () => {
 		expect([...state.index.byId.entries()]).toEqual([
 			...reference.byId.entries(),
 		]);
-		expect(
-			state.index.byId.get('rec-a' as PlaudRecordingId)?.versionMs,
-		).toBe(111);
-		expect(state.index.byId.has('rec-outside' as PlaudRecordingId)).toBe(
-			false,
+		expect(state.index.byId.get('rec-a' as RecordingId)?.versionMs).toBe(
+			111,
 		);
+		expect(state.index.byId.has('rec-outside' as RecordingId)).toBe(false);
 	});
 
 	it('is warm with an empty index when the folder has no notes', () => {

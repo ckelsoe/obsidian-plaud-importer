@@ -6,7 +6,7 @@ import {
 	type RequestUrlResponse,
 	type TAbstractFile,
 } from 'obsidian';
-import type { AttachmentAsset } from './plaud-client';
+import type { AttachmentAsset } from './recording-model';
 import { TRANSCRIPT_FILE_NAME } from './note-writer';
 import { transformManagedBody } from './managed-block';
 import { NoopDebugLogger, type DebugLogger } from './debug-logger';

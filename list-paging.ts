@@ -11,7 +11,8 @@
 //
 // No `obsidian` import, so it is unit-tested with a stub client.
 
-import type { PlaudClient, Recording } from './plaud-client';
+import type { PlaudClient } from './plaud-client';
+import type { Recording } from './recording-model';
 
 export type SequentialPageFetcher = (
 	skip: number,

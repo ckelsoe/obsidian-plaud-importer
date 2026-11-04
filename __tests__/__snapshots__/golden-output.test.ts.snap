@@ -1,0 +1,3103 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`golden output (stored format must not change) all tag mode with keywords, v4 portal URL 1`] = `
+{
+  "files": {
+    "Plaud/2026-04-14 Quarterly planning.md": "---
+plaud-id: a1b2c3d4
+plaud-url: "https://app.plaud.ai/file/a1b2c3d4"
+date: 2026-04-14
+start-time: "2026-04-14T10:30:00-04:00"
+end-time: "2026-04-14T11:32:05-04:00"
+duration-seconds: 3725
+duration: "1h 2m"
+speakers: [Charles, Mary]
+tags: [work, plaud-meeting, "team/planning", "plaud/pricing", "plaud/roadmap-review", "plaud/q2"]
+plaud-folder: [Work]
+source: plaud
+plaud-version-ms: 1
+plaud-headline: Pricing leads the quarter
+plaud-category: Meeting
+plaud-industry: Software
+plaud-language: en
+plaud-template: Meeting notes
+plaud-model: gpt-5
+plaud-note-id: note-77
+plaud-summary-id: sum-88
+plaud-summary-version: "3"
+---
+
+<!-- plaud:managed:start -->
+
+# 2026-04-14 Quarterly planning
+
+[Open in Plaud →](https://app.plaud.ai/file/a1b2c3d4)
+
+## Summary
+
+- Pricing first
+- Three options by Friday
+
+![[mindmap.png]]
+
+## AI Suggestions
+
+Send the options to finance early.
+
+## Key Points
+
+- Pricing
+- Timeline
+
+## Daily Journal
+
+A productive planning day.
+
+## Template outputs
+
+### My note
+
+Remember the **budget** cap.
+
+## Screenshots
+
+**0:42**
+
+![Screenshot at 0:42](https://cdn.example/mark-42.jpg)
+
+**11:40**
+
+![Screenshot at 11:40](https://cdn.example/mark-700.jpg)
+
+---
+
+#### Transcript
+
+##### Chapters
+
+- [[#00:00 Roadmap|**[00:00]** Roadmap]]
+- [[#01:35 Pricing -1 / options|**[01:35]** Pricing #1 / options]]
+- [[#10:10 Wrap-up|**[10:10]** Wrap-up]]
+
+^plaud-chapters
+
+---
+
+##### 00:00 Roadmap
+
+[[#^plaud-chapters|Back to Chapters]]
+
+**[00:00]** Charles: Let us start with the roadmap.
+**[00:12]** Mary: Pricing comes first.
+
+##### 01:35 Pricing -1 / options
+
+[[#^plaud-chapters|Back to Chapters]]
+
+**[01:35]** Charles: Agreed. Three options by Friday.
+
+##### 10:10 Wrap-up
+
+[[#^plaud-chapters|Back to Chapters]]
+
+**[10:10]** Unknown: Unattributed closing remarks.
+
+<!-- plaud:managed:end -->
+",
+  },
+  "folders": [
+    "Plaud",
+  ],
+  "pipeline": [
+    [
+      "extractFromSummary",
+      "## Key points
+
+- Pricing first
+- Three options by Friday
+
+![[mindmap.png]]",
+    ],
+    [
+      "extractFromSummary",
+      "- Pricing
+- Timeline",
+    ],
+    [
+      "extractFromSummary",
+      "A productive planning day.",
+    ],
+    [
+      "merge",
+      [
+        {
+          "dataType": "mindmap",
+          "mimeType": "image/png",
+          "name": "mindmap.png",
+          "url": "https://cdn.example/mindmap.png",
+        },
+        {
+          "dataType": "card",
+          "name": "card.png",
+          "url": "https://cdn.example/card.png",
+        },
+        {
+          "dataType": "image",
+          "url": "https://cdn.example/photo.jpg",
+        },
+      ],
+      [],
+    ],
+    [
+      "merge",
+      [
+        {
+          "dataType": "plaud_mark",
+          "url": "https://cdn.example/mark-42.jpg",
+        },
+        {
+          "dataType": "plaud_mark",
+          "url": "https://cdn.example/mark-700.jpg",
+        },
+      ],
+      [
+        {
+          "dataType": "mindmap",
+          "mimeType": "image/png",
+          "name": "mindmap.png",
+          "url": "https://cdn.example/mindmap.png",
+        },
+        {
+          "dataType": "card",
+          "name": "card.png",
+          "url": "https://cdn.example/card.png",
+        },
+        {
+          "dataType": "image",
+          "url": "https://cdn.example/photo.jpg",
+        },
+      ],
+    ],
+    [
+      "importAttachments",
+      "Plaud/2026-04-14 Quarterly planning.md",
+      [
+        {
+          "dataType": "plaud_mark",
+          "url": "https://cdn.example/mark-42.jpg",
+        },
+        {
+          "dataType": "plaud_mark",
+          "url": "https://cdn.example/mark-700.jpg",
+        },
+        {
+          "dataType": "mindmap",
+          "mimeType": "image/png",
+          "name": "mindmap.png",
+          "url": "https://cdn.example/mindmap.png",
+        },
+        {
+          "dataType": "card",
+          "name": "card.png",
+          "url": "https://cdn.example/card.png",
+        },
+        {
+          "dataType": "image",
+          "url": "https://cdn.example/photo.jpg",
+        },
+      ],
+      {
+        "includeAttachments": true,
+        "includeAudio": true,
+        "includeCard": true,
+        "includeMindmap": true,
+        "includeScreenshots": true,
+        "includeSummary": true,
+        "includeTranscript": true,
+      },
+      false,
+      "a1b2c3d4",
+      {
+        "pic/1.png": "https://cdn.example/signed/1.png",
+      },
+    ],
+    [
+      "applyFold",
+      "Plaud/2026-04-14 Quarterly planning.md",
+    ],
+  ],
+  "results": [
+    {
+      "kind": "written",
+      "recording": {
+        "captureOffsetMinutes": -240,
+        "createdAt": 2026-04-14T14:30:00.000Z,
+        "durationSeconds": 3725,
+        "endsAt": 2026-04-14T15:32:05.000Z,
+        "id": "a1b2c3d4",
+        "isTrashed": false,
+        "summaryAvailable": true,
+        "tags": [
+          "f-work",
+        ],
+        "title": "Quarterly planning",
+        "transcriptAvailable": true,
+        "versionMs": 1,
+      },
+      "writeOutcome": {
+        "foldInfo": {
+          "totalLines": 101,
+          "transcriptHeadingLine": 68,
+        },
+        "path": "Plaud/2026-04-14 Quarterly planning.md",
+        "status": "created",
+      },
+    },
+  ],
+  "stop": "completed",
+}
+`;
+
+exports[`golden output (stored format must not change) callout layout 1`] = `
+{
+  "files": {
+    "Plaud/2026-04-14 Quarterly planning.md": "---
+plaud-id: a1b2c3d4
+plaud-url: "https://web.plaud.ai/file/a1b2c3d4"
+date: 2026-04-14
+start-time: "2026-04-14T10:30:00-04:00"
+end-time: "2026-04-14T11:32:05-04:00"
+duration-seconds: 3725
+duration: "1h 2m"
+speakers: [Charles, Mary]
+keywords: [pricing, Roadmap Review, q2]
+source: plaud
+plaud-headline: Pricing leads the quarter
+plaud-category: Meeting
+plaud-industry: Software
+plaud-language: en
+plaud-template: Meeting notes
+plaud-model: gpt-5
+plaud-note-id: note-77
+plaud-summary-id: sum-88
+plaud-summary-version: "3"
+---
+
+<!-- plaud:managed:start -->
+
+# 2026-04-14 Quarterly planning
+
+[Open in Plaud →](https://web.plaud.ai/file/a1b2c3d4)
+
+## Summary
+
+- Pricing first
+- Three options by Friday
+
+![[mindmap.png]]
+
+## AI Suggestions
+
+Send the options to finance early.
+
+## Key Points
+
+- Pricing
+- Timeline
+
+## Daily Journal
+
+A productive planning day.
+
+## Template outputs
+
+### My note
+
+Remember the **budget** cap.
+
+## Screenshots
+
+**0:42**
+
+![Screenshot at 0:42](https://cdn.example/mark-42.jpg)
+
+**11:40**
+
+![Screenshot at 11:40](https://cdn.example/mark-700.jpg)
+
+---
+
+> [!note]- Transcript
+> **Chapters**
+>
+> - **[00:00]** Roadmap
+> - **[01:35]** Pricing #1 / options
+> - **[10:10]** Wrap-up
+>
+> ---
+>
+> **00:00 Roadmap**
+>
+> **[00:00]** Charles: Let us start with the roadmap.
+> **[00:12]** Mary: Pricing comes first.
+>
+> **01:35 Pricing -1 / options**
+>
+> **[01:35]** Charles: Agreed. Three options by Friday.
+>
+> **10:10 Wrap-up**
+>
+> **[10:10]** Unknown: Unattributed closing remarks.
+
+<!-- plaud:managed:end -->
+",
+  },
+  "folders": [
+    "Plaud",
+  ],
+  "pipeline": [
+    [
+      "extractFromSummary",
+      "## Key points
+
+- Pricing first
+- Three options by Friday
+
+![[mindmap.png]]",
+    ],
+    [
+      "extractFromSummary",
+      "- Pricing
+- Timeline",
+    ],
+    [
+      "extractFromSummary",
+      "A productive planning day.",
+    ],
+    [
+      "merge",
+      [
+        {
+          "dataType": "mindmap",
+          "mimeType": "image/png",
+          "name": "mindmap.png",
+          "url": "https://cdn.example/mindmap.png",
+        },
+        {
+          "dataType": "card",
+          "name": "card.png",
+          "url": "https://cdn.example/card.png",
+        },
+        {
+          "dataType": "image",
+          "url": "https://cdn.example/photo.jpg",
+        },
+      ],
+      [],
+    ],
+    [
+      "merge",
+      [
+        {
+          "dataType": "plaud_mark",
+          "url": "https://cdn.example/mark-42.jpg",
+        },
+        {
+          "dataType": "plaud_mark",
+          "url": "https://cdn.example/mark-700.jpg",
+        },
+      ],
+      [
+        {
+          "dataType": "mindmap",
+          "mimeType": "image/png",
+          "name": "mindmap.png",
+          "url": "https://cdn.example/mindmap.png",
+        },
+        {
+          "dataType": "card",
+          "name": "card.png",
+          "url": "https://cdn.example/card.png",
+        },
+        {
+          "dataType": "image",
+          "url": "https://cdn.example/photo.jpg",
+        },
+      ],
+    ],
+    [
+      "importAttachments",
+      "Plaud/2026-04-14 Quarterly planning.md",
+      [
+        {
+          "dataType": "plaud_mark",
+          "url": "https://cdn.example/mark-42.jpg",
+        },
+        {
+          "dataType": "plaud_mark",
+          "url": "https://cdn.example/mark-700.jpg",
+        },
+        {
+          "dataType": "mindmap",
+          "mimeType": "image/png",
+          "name": "mindmap.png",
+          "url": "https://cdn.example/mindmap.png",
+        },
+        {
+          "dataType": "card",
+          "name": "card.png",
+          "url": "https://cdn.example/card.png",
+        },
+        {
+          "dataType": "image",
+          "url": "https://cdn.example/photo.jpg",
+        },
+      ],
+      {
+        "includeAttachments": true,
+        "includeAudio": true,
+        "includeCard": true,
+        "includeMindmap": true,
+        "includeScreenshots": true,
+        "includeSummary": true,
+        "includeTranscript": true,
+      },
+      false,
+      "a1b2c3d4",
+      {
+        "pic/1.png": "https://cdn.example/signed/1.png",
+      },
+    ],
+  ],
+  "results": [
+    {
+      "kind": "written",
+      "recording": {
+        "captureOffsetMinutes": -240,
+        "createdAt": 2026-04-14T14:30:00.000Z,
+        "durationSeconds": 3725,
+        "endsAt": 2026-04-14T15:32:05.000Z,
+        "id": "a1b2c3d4",
+        "isTrashed": false,
+        "summaryAvailable": true,
+        "title": "Quarterly planning",
+        "transcriptAvailable": true,
+      },
+      "writeOutcome": {
+        "foldInfo": undefined,
+        "path": "Plaud/2026-04-14 Quarterly planning.md",
+        "status": "created",
+      },
+    },
+  ],
+  "stop": "completed",
+}
+`;
+
+exports[`golden output (stored format must not change) heading layout, H3 transcript, not folded 1`] = `
+{
+  "files": {
+    "Plaud/2026-04-14 Quarterly planning.md": "---
+plaud-id: a1b2c3d4
+plaud-url: "https://web.plaud.ai/file/a1b2c3d4"
+date: 2026-04-14
+start-time: "2026-04-14T10:30:00-04:00"
+end-time: "2026-04-14T11:32:05-04:00"
+duration-seconds: 3725
+duration: "1h 2m"
+speakers: [Charles, Mary]
+keywords: [pricing, Roadmap Review, q2]
+source: plaud
+plaud-headline: Pricing leads the quarter
+plaud-category: Meeting
+plaud-industry: Software
+plaud-language: en
+plaud-template: Meeting notes
+plaud-model: gpt-5
+plaud-note-id: note-77
+plaud-summary-id: sum-88
+plaud-summary-version: "3"
+---
+
+<!-- plaud:managed:start -->
+
+# 2026-04-14 Quarterly planning
+
+[Open in Plaud →](https://web.plaud.ai/file/a1b2c3d4)
+
+## Summary
+
+- Pricing first
+- Three options by Friday
+
+![[mindmap.png]]
+
+## AI Suggestions
+
+Send the options to finance early.
+
+## Key Points
+
+- Pricing
+- Timeline
+
+## Daily Journal
+
+A productive planning day.
+
+## Template outputs
+
+### My note
+
+Remember the **budget** cap.
+
+## Screenshots
+
+**0:42**
+
+![Screenshot at 0:42](https://cdn.example/mark-42.jpg)
+
+**11:40**
+
+![Screenshot at 11:40](https://cdn.example/mark-700.jpg)
+
+---
+
+### Transcript
+
+#### Chapters
+
+- [[#00:00 Roadmap|**[00:00]** Roadmap]]
+- [[#01:35 Pricing -1 / options|**[01:35]** Pricing #1 / options]]
+- [[#10:10 Wrap-up|**[10:10]** Wrap-up]]
+
+^plaud-chapters
+
+---
+
+#### 00:00 Roadmap
+
+[[#^plaud-chapters|Back to Chapters]]
+
+**[00:00]** Charles: Let us start with the roadmap.
+**[00:12]** Mary: Pricing comes first.
+
+#### 01:35 Pricing -1 / options
+
+[[#^plaud-chapters|Back to Chapters]]
+
+**[01:35]** Charles: Agreed. Three options by Friday.
+
+#### 10:10 Wrap-up
+
+[[#^plaud-chapters|Back to Chapters]]
+
+**[10:10]** Unknown: Unattributed closing remarks.
+
+<!-- plaud:managed:end -->
+",
+  },
+  "folders": [
+    "Plaud",
+  ],
+  "pipeline": [
+    [
+      "extractFromSummary",
+      "## Key points
+
+- Pricing first
+- Three options by Friday
+
+![[mindmap.png]]",
+    ],
+    [
+      "extractFromSummary",
+      "- Pricing
+- Timeline",
+    ],
+    [
+      "extractFromSummary",
+      "A productive planning day.",
+    ],
+    [
+      "merge",
+      [
+        {
+          "dataType": "mindmap",
+          "mimeType": "image/png",
+          "name": "mindmap.png",
+          "url": "https://cdn.example/mindmap.png",
+        },
+        {
+          "dataType": "card",
+          "name": "card.png",
+          "url": "https://cdn.example/card.png",
+        },
+        {
+          "dataType": "image",
+          "url": "https://cdn.example/photo.jpg",
+        },
+      ],
+      [],
+    ],
+    [
+      "merge",
+      [
+        {
+          "dataType": "plaud_mark",
+          "url": "https://cdn.example/mark-42.jpg",
+        },
+        {
+          "dataType": "plaud_mark",
+          "url": "https://cdn.example/mark-700.jpg",
+        },
+      ],
+      [
+        {
+          "dataType": "mindmap",
+          "mimeType": "image/png",
+          "name": "mindmap.png",
+          "url": "https://cdn.example/mindmap.png",
+        },
+        {
+          "dataType": "card",
+          "name": "card.png",
+          "url": "https://cdn.example/card.png",
+        },
+        {
+          "dataType": "image",
+          "url": "https://cdn.example/photo.jpg",
+        },
+      ],
+    ],
+    [
+      "importAttachments",
+      "Plaud/2026-04-14 Quarterly planning.md",
+      [
+        {
+          "dataType": "plaud_mark",
+          "url": "https://cdn.example/mark-42.jpg",
+        },
+        {
+          "dataType": "plaud_mark",
+          "url": "https://cdn.example/mark-700.jpg",
+        },
+        {
+          "dataType": "mindmap",
+          "mimeType": "image/png",
+          "name": "mindmap.png",
+          "url": "https://cdn.example/mindmap.png",
+        },
+        {
+          "dataType": "card",
+          "name": "card.png",
+          "url": "https://cdn.example/card.png",
+        },
+        {
+          "dataType": "image",
+          "url": "https://cdn.example/photo.jpg",
+        },
+      ],
+      {
+        "includeAttachments": true,
+        "includeAudio": true,
+        "includeCard": true,
+        "includeMindmap": true,
+        "includeScreenshots": true,
+        "includeSummary": true,
+        "includeTranscript": true,
+      },
+      false,
+      "a1b2c3d4",
+      {
+        "pic/1.png": "https://cdn.example/signed/1.png",
+      },
+    ],
+  ],
+  "results": [
+    {
+      "kind": "written",
+      "recording": {
+        "captureOffsetMinutes": -240,
+        "createdAt": 2026-04-14T14:30:00.000Z,
+        "durationSeconds": 3725,
+        "endsAt": 2026-04-14T15:32:05.000Z,
+        "id": "a1b2c3d4",
+        "isTrashed": false,
+        "summaryAvailable": true,
+        "title": "Quarterly planning",
+        "transcriptAvailable": true,
+      },
+      "writeOutcome": {
+        "foldInfo": {
+          "totalLines": 99,
+          "transcriptHeadingLine": 66,
+        },
+        "path": "Plaud/2026-04-14 Quarterly planning.md",
+        "status": "created",
+      },
+    },
+  ],
+  "stop": "completed",
+}
+`;
+
+exports[`golden output (stored format must not change) re-import keeps user text and preserved frontmatter outside the managed block 1`] = `
+{
+  "files": {
+    "Plaud/2026-04-14 Quarterly planning.md": "---
+plaud-id: a1b2c3d4
+plaud-url: "https://web.plaud.ai/file/a1b2c3d4"
+date: 2026-04-14
+start-time: "2026-04-14T10:30:00-04:00"
+end-time: "2026-04-14T11:32:05-04:00"
+duration-seconds: 3725
+duration: "1h 2m"
+speakers: [Charles, Mary]
+keywords: [pricing, Roadmap Review, q2]
+source: plaud
+plaud-version-ms: 2
+plaud-headline: Pricing leads the quarter
+plaud-category: Meeting
+plaud-industry: Software
+plaud-language: en
+plaud-template: Meeting notes
+plaud-model: gpt-5
+plaud-note-id: note-77
+plaud-summary-id: sum-88
+plaud-summary-version: "3"
+status: reviewed
+my-own-key: keep me
+---
+My notes above the import.
+
+<!-- plaud:managed:start -->
+
+# 2026-04-14 Quarterly planning
+
+[Open in Plaud →](https://web.plaud.ai/file/a1b2c3d4)
+
+## Summary
+
+- Pricing first
+- Three options by Friday
+
+![[mindmap.png]]
+
+## AI Suggestions
+
+Send the options to finance early.
+
+## Key Points
+
+- Pricing
+- Timeline
+
+## Daily Journal
+
+A productive planning day.
+
+## Template outputs
+
+### My note
+
+Remember the **budget** cap.
+
+## Screenshots
+
+**0:42**
+
+![Screenshot at 0:42](https://cdn.example/mark-42.jpg)
+
+**11:40**
+
+![Screenshot at 11:40](https://cdn.example/mark-700.jpg)
+
+---
+
+#### Transcript
+
+##### Chapters
+
+- [[#00:00 Roadmap|**[00:00]** Roadmap]]
+- [[#01:35 Pricing -1 / options|**[01:35]** Pricing #1 / options]]
+- [[#10:10 Wrap-up|**[10:10]** Wrap-up]]
+
+^plaud-chapters
+
+---
+
+##### 00:00 Roadmap
+
+[[#^plaud-chapters|Back to Chapters]]
+
+**[00:00]** Charles: Let us start with the roadmap.
+**[00:12]** Mary: Pricing comes first.
+
+##### 01:35 Pricing -1 / options
+
+[[#^plaud-chapters|Back to Chapters]]
+
+**[01:35]** Charles: Agreed. Three options by Friday.
+
+##### 10:10 Wrap-up
+
+[[#^plaud-chapters|Back to Chapters]]
+
+**[10:10]** Unknown: Unattributed closing remarks.
+
+<!-- plaud:managed:end -->
+
+My notes below the import.
+",
+  },
+  "folders": [
+    "Plaud",
+  ],
+  "pipeline": [
+    [
+      "extractFromSummary",
+      "## Key points
+
+- Pricing first
+- Three options by Friday
+
+![[mindmap.png]]",
+    ],
+    [
+      "extractFromSummary",
+      "- Pricing
+- Timeline",
+    ],
+    [
+      "extractFromSummary",
+      "A productive planning day.",
+    ],
+    [
+      "merge",
+      [
+        {
+          "dataType": "mindmap",
+          "mimeType": "image/png",
+          "name": "mindmap.png",
+          "url": "https://cdn.example/mindmap.png",
+        },
+        {
+          "dataType": "card",
+          "name": "card.png",
+          "url": "https://cdn.example/card.png",
+        },
+        {
+          "dataType": "image",
+          "url": "https://cdn.example/photo.jpg",
+        },
+      ],
+      [],
+    ],
+    [
+      "merge",
+      [
+        {
+          "dataType": "plaud_mark",
+          "url": "https://cdn.example/mark-42.jpg",
+        },
+        {
+          "dataType": "plaud_mark",
+          "url": "https://cdn.example/mark-700.jpg",
+        },
+      ],
+      [
+        {
+          "dataType": "mindmap",
+          "mimeType": "image/png",
+          "name": "mindmap.png",
+          "url": "https://cdn.example/mindmap.png",
+        },
+        {
+          "dataType": "card",
+          "name": "card.png",
+          "url": "https://cdn.example/card.png",
+        },
+        {
+          "dataType": "image",
+          "url": "https://cdn.example/photo.jpg",
+        },
+      ],
+    ],
+    [
+      "importAttachments",
+      "Plaud/2026-04-14 Quarterly planning.md",
+      [
+        {
+          "dataType": "plaud_mark",
+          "url": "https://cdn.example/mark-42.jpg",
+        },
+        {
+          "dataType": "plaud_mark",
+          "url": "https://cdn.example/mark-700.jpg",
+        },
+        {
+          "dataType": "mindmap",
+          "mimeType": "image/png",
+          "name": "mindmap.png",
+          "url": "https://cdn.example/mindmap.png",
+        },
+        {
+          "dataType": "card",
+          "name": "card.png",
+          "url": "https://cdn.example/card.png",
+        },
+        {
+          "dataType": "image",
+          "url": "https://cdn.example/photo.jpg",
+        },
+      ],
+      {
+        "includeAttachments": true,
+        "includeAudio": true,
+        "includeCard": true,
+        "includeMindmap": true,
+        "includeScreenshots": true,
+        "includeSummary": true,
+        "includeTranscript": true,
+      },
+      true,
+      "a1b2c3d4",
+      {
+        "pic/1.png": "https://cdn.example/signed/1.png",
+      },
+    ],
+    [
+      "applyFold",
+      "Plaud/2026-04-14 Quarterly planning.md",
+    ],
+  ],
+  "results": [
+    {
+      "kind": "written",
+      "recording": {
+        "captureOffsetMinutes": -240,
+        "createdAt": 2026-04-14T14:30:00.000Z,
+        "durationSeconds": 3725,
+        "endsAt": 2026-04-14T15:32:05.000Z,
+        "id": "a1b2c3d4",
+        "isTrashed": false,
+        "summaryAvailable": true,
+        "title": "Quarterly planning",
+        "transcriptAvailable": true,
+        "versionMs": 2,
+      },
+      "writeOutcome": {
+        "foldInfo": undefined,
+        "path": "Plaud/2026-04-14 Quarterly planning.md",
+        "status": "overwritten",
+      },
+    },
+  ],
+  "stop": "completed",
+}
+`;
+
+exports[`golden output (stored format must not change) rich recording, default options, heading layout 1`] = `
+{
+  "files": {
+    "Plaud/2026-04-14 Quarterly planning.md": "---
+plaud-id: a1b2c3d4
+plaud-url: "https://web.plaud.ai/file/a1b2c3d4"
+date: 2026-04-14
+start-time: "2026-04-14T10:30:00-04:00"
+end-time: "2026-04-14T11:32:05-04:00"
+duration-seconds: 3725
+duration: "1h 2m"
+speakers: [Charles, Mary]
+tags: [work, planning-q2]
+plaud-folder: [Work, "Planning/Q2"]
+keywords: [pricing, Roadmap Review, q2]
+source: plaud
+plaud-version-ms: 1782918853105
+plaud-headline: Pricing leads the quarter
+plaud-category: Meeting
+plaud-industry: Software
+plaud-language: en
+plaud-template: Meeting notes
+plaud-model: gpt-5
+plaud-note-id: note-77
+plaud-summary-id: sum-88
+plaud-summary-version: "3"
+---
+
+<!-- plaud:managed:start -->
+
+# 2026-04-14 Quarterly planning
+
+[Open in Plaud →](https://web.plaud.ai/file/a1b2c3d4)
+
+## Summary
+
+- Pricing first
+- Three options by Friday
+
+![[mindmap.png]]
+
+## AI Suggestions
+
+Send the options to finance early.
+
+## Key Points
+
+- Pricing
+- Timeline
+
+## Daily Journal
+
+A productive planning day.
+
+## Template outputs
+
+### My note
+
+Remember the **budget** cap.
+
+## Screenshots
+
+**0:42**
+
+![Screenshot at 0:42](https://cdn.example/mark-42.jpg)
+
+**11:40**
+
+![Screenshot at 11:40](https://cdn.example/mark-700.jpg)
+
+---
+
+#### Transcript
+
+##### Chapters
+
+- [[#00:00 Roadmap|**[00:00]** Roadmap]]
+- [[#01:35 Pricing -1 / options|**[01:35]** Pricing #1 / options]]
+- [[#10:10 Wrap-up|**[10:10]** Wrap-up]]
+
+^plaud-chapters
+
+---
+
+##### 00:00 Roadmap
+
+[[#^plaud-chapters|Back to Chapters]]
+
+**[00:00]** Charles: Let us start with the roadmap.
+**[00:12]** Mary: Pricing comes first.
+
+##### 01:35 Pricing -1 / options
+
+[[#^plaud-chapters|Back to Chapters]]
+
+**[01:35]** Charles: Agreed. Three options by Friday.
+
+##### 10:10 Wrap-up
+
+[[#^plaud-chapters|Back to Chapters]]
+
+**[10:10]** Unknown: Unattributed closing remarks.
+
+<!-- plaud:managed:end -->
+",
+  },
+  "folders": [
+    "Plaud",
+  ],
+  "pipeline": [
+    [
+      "extractFromSummary",
+      "## Key points
+
+- Pricing first
+- Three options by Friday
+
+![[mindmap.png]]",
+    ],
+    [
+      "extractFromSummary",
+      "- Pricing
+- Timeline",
+    ],
+    [
+      "extractFromSummary",
+      "A productive planning day.",
+    ],
+    [
+      "merge",
+      [
+        {
+          "dataType": "mindmap",
+          "mimeType": "image/png",
+          "name": "mindmap.png",
+          "url": "https://cdn.example/mindmap.png",
+        },
+        {
+          "dataType": "card",
+          "name": "card.png",
+          "url": "https://cdn.example/card.png",
+        },
+        {
+          "dataType": "image",
+          "url": "https://cdn.example/photo.jpg",
+        },
+      ],
+      [],
+    ],
+    [
+      "merge",
+      [
+        {
+          "dataType": "plaud_mark",
+          "url": "https://cdn.example/mark-42.jpg",
+        },
+        {
+          "dataType": "plaud_mark",
+          "url": "https://cdn.example/mark-700.jpg",
+        },
+      ],
+      [
+        {
+          "dataType": "mindmap",
+          "mimeType": "image/png",
+          "name": "mindmap.png",
+          "url": "https://cdn.example/mindmap.png",
+        },
+        {
+          "dataType": "card",
+          "name": "card.png",
+          "url": "https://cdn.example/card.png",
+        },
+        {
+          "dataType": "image",
+          "url": "https://cdn.example/photo.jpg",
+        },
+      ],
+    ],
+    [
+      "importAttachments",
+      "Plaud/2026-04-14 Quarterly planning.md",
+      [
+        {
+          "dataType": "plaud_mark",
+          "url": "https://cdn.example/mark-42.jpg",
+        },
+        {
+          "dataType": "plaud_mark",
+          "url": "https://cdn.example/mark-700.jpg",
+        },
+        {
+          "dataType": "mindmap",
+          "mimeType": "image/png",
+          "name": "mindmap.png",
+          "url": "https://cdn.example/mindmap.png",
+        },
+        {
+          "dataType": "card",
+          "name": "card.png",
+          "url": "https://cdn.example/card.png",
+        },
+        {
+          "dataType": "image",
+          "url": "https://cdn.example/photo.jpg",
+        },
+      ],
+      {
+        "includeAttachments": true,
+        "includeAudio": true,
+        "includeCard": true,
+        "includeMindmap": true,
+        "includeScreenshots": true,
+        "includeSummary": true,
+        "includeTranscript": true,
+      },
+      false,
+      "a1b2c3d4",
+      {
+        "pic/1.png": "https://cdn.example/signed/1.png",
+      },
+    ],
+    [
+      "importAudio",
+      "Plaud/2026-04-14 Quarterly planning.md",
+      "https://cdn.example/audio/a1b2c3d4.mp3",
+      "a1b2c3d4",
+    ],
+    [
+      "applyFold",
+      "Plaud/2026-04-14 Quarterly planning.md",
+    ],
+  ],
+  "results": [
+    {
+      "kind": "written",
+      "recording": {
+        "captureOffsetMinutes": -240,
+        "createdAt": 2026-04-14T14:30:00.000Z,
+        "durationSeconds": 3725,
+        "endsAt": 2026-04-14T15:32:05.000Z,
+        "id": "a1b2c3d4",
+        "isTrashed": false,
+        "summaryAvailable": true,
+        "tags": [
+          "f-work",
+          "f-plan",
+        ],
+        "title": "Quarterly planning",
+        "transcriptAvailable": true,
+        "versionMs": 1782918853105,
+      },
+      "writeOutcome": {
+        "foldInfo": {
+          "totalLines": 102,
+          "transcriptHeadingLine": 69,
+        },
+        "path": "Plaud/2026-04-14 Quarterly planning.md",
+        "status": "created",
+      },
+    },
+  ],
+  "stop": "completed",
+}
+`;
+
+exports[`golden output (stored format must not change) separate transcript file, embedded 1`] = `
+{
+  "files": {
+    "Plaud/2026-04-14 Quarterly planning-assets/Transcript.md": "%% plaud-importer: managed transcript %%
+
+# Transcript
+
+Transcript of [[Plaud/2026-04-14 Quarterly planning|2026-04-14 Quarterly planning]]. The plugin rewrites this file on re-import, so edits here are lost.
+
+## Chapters
+
+- [[#00:00 Roadmap|**[00:00]** Roadmap]]
+- [[#01:35 Pricing -1 / options|**[01:35]** Pricing #1 / options]]
+- [[#10:10 Wrap-up|**[10:10]** Wrap-up]]
+
+^plaud-chapters
+
+---
+
+## 00:00 Roadmap
+
+[[#^plaud-chapters|Back to Chapters]]
+
+**[00:00]** Charles: Let us start with the roadmap.
+**[00:12]** Mary: Pricing comes first.
+
+## 01:35 Pricing -1 / options
+
+[[#^plaud-chapters|Back to Chapters]]
+
+**[01:35]** Charles: Agreed. Three options by Friday.
+
+## 10:10 Wrap-up
+
+[[#^plaud-chapters|Back to Chapters]]
+
+**[10:10]** Unknown: Unattributed closing remarks.
+",
+    "Plaud/2026-04-14 Quarterly planning.md": "---
+plaud-id: a1b2c3d4
+plaud-url: "https://web.plaud.ai/file/a1b2c3d4"
+date: 2026-04-14
+start-time: "2026-04-14T10:30:00-04:00"
+end-time: "2026-04-14T11:32:05-04:00"
+duration-seconds: 3725
+duration: "1h 2m"
+speakers: [Charles, Mary]
+keywords: [pricing, Roadmap Review, q2]
+source: plaud
+plaud-headline: Pricing leads the quarter
+plaud-category: Meeting
+plaud-industry: Software
+plaud-language: en
+plaud-template: Meeting notes
+plaud-model: gpt-5
+plaud-note-id: note-77
+plaud-summary-id: sum-88
+plaud-summary-version: "3"
+---
+
+<!-- plaud:managed:start -->
+
+# 2026-04-14 Quarterly planning
+
+[Open in Plaud →](https://web.plaud.ai/file/a1b2c3d4)
+
+## Summary
+
+- Pricing first
+- Three options by Friday
+
+![[mindmap.png]]
+
+## AI Suggestions
+
+Send the options to finance early.
+
+## Key Points
+
+- Pricing
+- Timeline
+
+## Daily Journal
+
+A productive planning day.
+
+## Template outputs
+
+### My note
+
+Remember the **budget** cap.
+
+## Screenshots
+
+**0:42**
+
+![Screenshot at 0:42](https://cdn.example/mark-42.jpg)
+
+**11:40**
+
+![Screenshot at 11:40](https://cdn.example/mark-700.jpg)
+
+---
+
+#### Transcript
+
+![[Plaud/2026-04-14 Quarterly planning-assets/Transcript]]
+
+<!-- plaud:managed:end -->
+",
+  },
+  "folders": [
+    "Plaud",
+    "Plaud/2026-04-14 Quarterly planning-assets",
+  ],
+  "pipeline": [
+    [
+      "extractFromSummary",
+      "## Key points
+
+- Pricing first
+- Three options by Friday
+
+![[mindmap.png]]",
+    ],
+    [
+      "extractFromSummary",
+      "- Pricing
+- Timeline",
+    ],
+    [
+      "extractFromSummary",
+      "A productive planning day.",
+    ],
+    [
+      "merge",
+      [
+        {
+          "dataType": "mindmap",
+          "mimeType": "image/png",
+          "name": "mindmap.png",
+          "url": "https://cdn.example/mindmap.png",
+        },
+        {
+          "dataType": "card",
+          "name": "card.png",
+          "url": "https://cdn.example/card.png",
+        },
+        {
+          "dataType": "image",
+          "url": "https://cdn.example/photo.jpg",
+        },
+      ],
+      [],
+    ],
+    [
+      "merge",
+      [
+        {
+          "dataType": "plaud_mark",
+          "url": "https://cdn.example/mark-42.jpg",
+        },
+        {
+          "dataType": "plaud_mark",
+          "url": "https://cdn.example/mark-700.jpg",
+        },
+      ],
+      [
+        {
+          "dataType": "mindmap",
+          "mimeType": "image/png",
+          "name": "mindmap.png",
+          "url": "https://cdn.example/mindmap.png",
+        },
+        {
+          "dataType": "card",
+          "name": "card.png",
+          "url": "https://cdn.example/card.png",
+        },
+        {
+          "dataType": "image",
+          "url": "https://cdn.example/photo.jpg",
+        },
+      ],
+    ],
+    [
+      "importAttachments",
+      "Plaud/2026-04-14 Quarterly planning.md",
+      [
+        {
+          "dataType": "plaud_mark",
+          "url": "https://cdn.example/mark-42.jpg",
+        },
+        {
+          "dataType": "plaud_mark",
+          "url": "https://cdn.example/mark-700.jpg",
+        },
+        {
+          "dataType": "mindmap",
+          "mimeType": "image/png",
+          "name": "mindmap.png",
+          "url": "https://cdn.example/mindmap.png",
+        },
+        {
+          "dataType": "card",
+          "name": "card.png",
+          "url": "https://cdn.example/card.png",
+        },
+        {
+          "dataType": "image",
+          "url": "https://cdn.example/photo.jpg",
+        },
+      ],
+      {
+        "includeAttachments": true,
+        "includeAudio": true,
+        "includeCard": true,
+        "includeMindmap": true,
+        "includeScreenshots": true,
+        "includeSummary": true,
+        "includeTranscript": true,
+      },
+      false,
+      "a1b2c3d4",
+      {
+        "pic/1.png": "https://cdn.example/signed/1.png",
+      },
+    ],
+    [
+      "applyFold",
+      "Plaud/2026-04-14 Quarterly planning.md",
+    ],
+  ],
+  "results": [
+    {
+      "kind": "written",
+      "recording": {
+        "captureOffsetMinutes": -240,
+        "createdAt": 2026-04-14T14:30:00.000Z,
+        "durationSeconds": 3725,
+        "endsAt": 2026-04-14T15:32:05.000Z,
+        "id": "a1b2c3d4",
+        "isTrashed": false,
+        "summaryAvailable": true,
+        "title": "Quarterly planning",
+        "transcriptAvailable": true,
+      },
+      "writeOutcome": {
+        "foldInfo": {
+          "totalLines": 72,
+          "transcriptHeadingLine": 66,
+        },
+        "path": "Plaud/2026-04-14 Quarterly planning.md",
+        "status": "created",
+      },
+    },
+  ],
+  "stop": "completed",
+}
+`;
+
+exports[`golden output (stored format must not change) separate transcript file, linked 1`] = `
+{
+  "files": {
+    "Plaud/2026-04-14 Quarterly planning-assets/Transcript.md": "%% plaud-importer: managed transcript %%
+
+# Transcript
+
+Transcript of [[Plaud/2026-04-14 Quarterly planning|2026-04-14 Quarterly planning]]. The plugin rewrites this file on re-import, so edits here are lost.
+
+## Chapters
+
+- [[#00:00 Roadmap|**[00:00]** Roadmap]]
+- [[#01:35 Pricing -1 / options|**[01:35]** Pricing #1 / options]]
+- [[#10:10 Wrap-up|**[10:10]** Wrap-up]]
+
+^plaud-chapters
+
+---
+
+## 00:00 Roadmap
+
+[[#^plaud-chapters|Back to Chapters]]
+
+**[00:00]** Charles: Let us start with the roadmap.
+**[00:12]** Mary: Pricing comes first.
+
+## 01:35 Pricing -1 / options
+
+[[#^plaud-chapters|Back to Chapters]]
+
+**[01:35]** Charles: Agreed. Three options by Friday.
+
+## 10:10 Wrap-up
+
+[[#^plaud-chapters|Back to Chapters]]
+
+**[10:10]** Unknown: Unattributed closing remarks.
+",
+    "Plaud/2026-04-14 Quarterly planning.md": "---
+plaud-id: a1b2c3d4
+plaud-url: "https://web.plaud.ai/file/a1b2c3d4"
+date: 2026-04-14
+start-time: "2026-04-14T10:30:00-04:00"
+end-time: "2026-04-14T11:32:05-04:00"
+duration-seconds: 3725
+duration: "1h 2m"
+speakers: [Charles, Mary]
+keywords: [pricing, Roadmap Review, q2]
+source: plaud
+plaud-headline: Pricing leads the quarter
+plaud-category: Meeting
+plaud-industry: Software
+plaud-language: en
+plaud-template: Meeting notes
+plaud-model: gpt-5
+plaud-note-id: note-77
+plaud-summary-id: sum-88
+plaud-summary-version: "3"
+---
+
+<!-- plaud:managed:start -->
+
+# 2026-04-14 Quarterly planning
+
+[Open in Plaud →](https://web.plaud.ai/file/a1b2c3d4)
+
+## Summary
+
+- Pricing first
+- Three options by Friday
+
+![[mindmap.png]]
+
+## AI Suggestions
+
+Send the options to finance early.
+
+## Key Points
+
+- Pricing
+- Timeline
+
+## Daily Journal
+
+A productive planning day.
+
+## Template outputs
+
+### My note
+
+Remember the **budget** cap.
+
+## Screenshots
+
+**0:42**
+
+![Screenshot at 0:42](https://cdn.example/mark-42.jpg)
+
+**11:40**
+
+![Screenshot at 11:40](https://cdn.example/mark-700.jpg)
+
+---
+
+#### Transcript
+
+[[Plaud/2026-04-14 Quarterly planning-assets/Transcript|Open the transcript]]
+
+<!-- plaud:managed:end -->
+",
+  },
+  "folders": [
+    "Plaud",
+    "Plaud/2026-04-14 Quarterly planning-assets",
+  ],
+  "pipeline": [
+    [
+      "extractFromSummary",
+      "## Key points
+
+- Pricing first
+- Three options by Friday
+
+![[mindmap.png]]",
+    ],
+    [
+      "extractFromSummary",
+      "- Pricing
+- Timeline",
+    ],
+    [
+      "extractFromSummary",
+      "A productive planning day.",
+    ],
+    [
+      "merge",
+      [
+        {
+          "dataType": "mindmap",
+          "mimeType": "image/png",
+          "name": "mindmap.png",
+          "url": "https://cdn.example/mindmap.png",
+        },
+        {
+          "dataType": "card",
+          "name": "card.png",
+          "url": "https://cdn.example/card.png",
+        },
+        {
+          "dataType": "image",
+          "url": "https://cdn.example/photo.jpg",
+        },
+      ],
+      [],
+    ],
+    [
+      "merge",
+      [
+        {
+          "dataType": "plaud_mark",
+          "url": "https://cdn.example/mark-42.jpg",
+        },
+        {
+          "dataType": "plaud_mark",
+          "url": "https://cdn.example/mark-700.jpg",
+        },
+      ],
+      [
+        {
+          "dataType": "mindmap",
+          "mimeType": "image/png",
+          "name": "mindmap.png",
+          "url": "https://cdn.example/mindmap.png",
+        },
+        {
+          "dataType": "card",
+          "name": "card.png",
+          "url": "https://cdn.example/card.png",
+        },
+        {
+          "dataType": "image",
+          "url": "https://cdn.example/photo.jpg",
+        },
+      ],
+    ],
+    [
+      "importAttachments",
+      "Plaud/2026-04-14 Quarterly planning.md",
+      [
+        {
+          "dataType": "plaud_mark",
+          "url": "https://cdn.example/mark-42.jpg",
+        },
+        {
+          "dataType": "plaud_mark",
+          "url": "https://cdn.example/mark-700.jpg",
+        },
+        {
+          "dataType": "mindmap",
+          "mimeType": "image/png",
+          "name": "mindmap.png",
+          "url": "https://cdn.example/mindmap.png",
+        },
+        {
+          "dataType": "card",
+          "name": "card.png",
+          "url": "https://cdn.example/card.png",
+        },
+        {
+          "dataType": "image",
+          "url": "https://cdn.example/photo.jpg",
+        },
+      ],
+      {
+        "includeAttachments": true,
+        "includeAudio": true,
+        "includeCard": true,
+        "includeMindmap": true,
+        "includeScreenshots": true,
+        "includeSummary": true,
+        "includeTranscript": true,
+      },
+      false,
+      "a1b2c3d4",
+      {
+        "pic/1.png": "https://cdn.example/signed/1.png",
+      },
+    ],
+    [
+      "applyFold",
+      "Plaud/2026-04-14 Quarterly planning.md",
+    ],
+  ],
+  "results": [
+    {
+      "kind": "written",
+      "recording": {
+        "captureOffsetMinutes": -240,
+        "createdAt": 2026-04-14T14:30:00.000Z,
+        "durationSeconds": 3725,
+        "endsAt": 2026-04-14T15:32:05.000Z,
+        "id": "a1b2c3d4",
+        "isTrashed": false,
+        "summaryAvailable": true,
+        "title": "Quarterly planning",
+        "transcriptAvailable": true,
+      },
+      "writeOutcome": {
+        "foldInfo": {
+          "totalLines": 72,
+          "transcriptHeadingLine": 66,
+        },
+        "path": "Plaud/2026-04-14 Quarterly planning.md",
+        "status": "created",
+      },
+    },
+  ],
+  "stop": "completed",
+}
+`;
+
+exports[`golden output (stored format must not change) summary and transcript excluded, no attachments 1`] = `
+{
+  "files": {
+    "Plaud/2026-04-14 Quarterly planning.md": "---
+plaud-id: a1b2c3d4
+plaud-url: "https://web.plaud.ai/file/a1b2c3d4"
+date: 2026-04-14
+start-time: "2026-04-14T10:30:00-04:00"
+end-time: "2026-04-14T11:32:05-04:00"
+duration-seconds: 3725
+duration: "1h 2m"
+speakers: [Charles, Mary]
+keywords: [pricing, Roadmap Review, q2]
+source: plaud
+plaud-headline: Pricing leads the quarter
+plaud-category: Meeting
+plaud-industry: Software
+plaud-language: en
+plaud-template: Meeting notes
+plaud-model: gpt-5
+plaud-note-id: note-77
+plaud-summary-id: sum-88
+plaud-summary-version: "3"
+---
+
+<!-- plaud:managed:start -->
+
+# 2026-04-14 Quarterly planning
+
+[Open in Plaud →](https://web.plaud.ai/file/a1b2c3d4)
+
+## Template outputs
+
+### My note
+
+Remember the **budget** cap.
+
+<!-- plaud:managed:end -->
+",
+  },
+  "folders": [
+    "Plaud",
+  ],
+  "pipeline": [
+    [
+      "extractFromSummary",
+      "## Key points
+
+- Pricing first
+- Three options by Friday
+
+![[mindmap.png]]",
+    ],
+    [
+      "extractFromSummary",
+      "- Pricing
+- Timeline",
+    ],
+    [
+      "extractFromSummary",
+      "A productive planning day.",
+    ],
+    [
+      "merge",
+      [
+        {
+          "dataType": "mindmap",
+          "mimeType": "image/png",
+          "name": "mindmap.png",
+          "url": "https://cdn.example/mindmap.png",
+        },
+        {
+          "dataType": "card",
+          "name": "card.png",
+          "url": "https://cdn.example/card.png",
+        },
+        {
+          "dataType": "image",
+          "url": "https://cdn.example/photo.jpg",
+        },
+      ],
+      [],
+    ],
+    [
+      "merge",
+      [],
+      [
+        {
+          "dataType": "mindmap",
+          "mimeType": "image/png",
+          "name": "mindmap.png",
+          "url": "https://cdn.example/mindmap.png",
+        },
+        {
+          "dataType": "card",
+          "name": "card.png",
+          "url": "https://cdn.example/card.png",
+        },
+        {
+          "dataType": "image",
+          "url": "https://cdn.example/photo.jpg",
+        },
+      ],
+    ],
+    [
+      "applyFold",
+      "Plaud/2026-04-14 Quarterly planning.md",
+    ],
+  ],
+  "results": [
+    {
+      "kind": "written",
+      "recording": {
+        "captureOffsetMinutes": -240,
+        "createdAt": 2026-04-14T14:30:00.000Z,
+        "durationSeconds": 3725,
+        "endsAt": 2026-04-14T15:32:05.000Z,
+        "id": "a1b2c3d4",
+        "isTrashed": false,
+        "summaryAvailable": true,
+        "title": "Quarterly planning",
+        "transcriptAvailable": true,
+      },
+      "writeOutcome": {
+        "foldInfo": undefined,
+        "path": "Plaud/2026-04-14 Quarterly planning.md",
+        "status": "created",
+      },
+    },
+  ],
+  "stop": "completed",
+}
+`;
+
+exports[`golden output (stored format must not change) system folder recording records plaud-location 1`] = `
+{
+  "files": {
+    "Plaud/2026-04-14 Quarterly planning.md": "---
+plaud-id: unfiled1
+plaud-url: "https://web.plaud.ai/file/unfiled1"
+date: 2026-04-14
+start-time: "2026-04-14T10:30:00-04:00"
+end-time: "2026-04-14T11:32:05-04:00"
+duration-seconds: 3725
+duration: "1h 2m"
+speakers: [Charles, Mary]
+plaud-location: unfiled
+keywords: [pricing, Roadmap Review, q2]
+source: plaud
+plaud-headline: Pricing leads the quarter
+plaud-category: Meeting
+plaud-industry: Software
+plaud-language: en
+plaud-template: Meeting notes
+plaud-model: gpt-5
+plaud-note-id: note-77
+plaud-summary-id: sum-88
+plaud-summary-version: "3"
+---
+
+<!-- plaud:managed:start -->
+
+# 2026-04-14 Quarterly planning
+
+[Open in Plaud →](https://web.plaud.ai/file/unfiled1)
+
+## Summary
+
+- Pricing first
+- Three options by Friday
+
+![[mindmap.png]]
+
+## AI Suggestions
+
+Send the options to finance early.
+
+## Key Points
+
+- Pricing
+- Timeline
+
+## Daily Journal
+
+A productive planning day.
+
+## Template outputs
+
+### My note
+
+Remember the **budget** cap.
+
+## Screenshots
+
+**0:42**
+
+![Screenshot at 0:42](https://cdn.example/mark-42.jpg)
+
+**11:40**
+
+![Screenshot at 11:40](https://cdn.example/mark-700.jpg)
+
+---
+
+#### Transcript
+
+##### Chapters
+
+- [[#00:00 Roadmap|**[00:00]** Roadmap]]
+- [[#01:35 Pricing -1 / options|**[01:35]** Pricing #1 / options]]
+- [[#10:10 Wrap-up|**[10:10]** Wrap-up]]
+
+^plaud-chapters
+
+---
+
+##### 00:00 Roadmap
+
+[[#^plaud-chapters|Back to Chapters]]
+
+**[00:00]** Charles: Let us start with the roadmap.
+**[00:12]** Mary: Pricing comes first.
+
+##### 01:35 Pricing -1 / options
+
+[[#^plaud-chapters|Back to Chapters]]
+
+**[01:35]** Charles: Agreed. Three options by Friday.
+
+##### 10:10 Wrap-up
+
+[[#^plaud-chapters|Back to Chapters]]
+
+**[10:10]** Unknown: Unattributed closing remarks.
+
+<!-- plaud:managed:end -->
+",
+  },
+  "folders": [
+    "Plaud",
+  ],
+  "pipeline": [
+    [
+      "extractFromSummary",
+      "## Key points
+
+- Pricing first
+- Three options by Friday
+
+![[mindmap.png]]",
+    ],
+    [
+      "extractFromSummary",
+      "- Pricing
+- Timeline",
+    ],
+    [
+      "extractFromSummary",
+      "A productive planning day.",
+    ],
+    [
+      "merge",
+      [
+        {
+          "dataType": "mindmap",
+          "mimeType": "image/png",
+          "name": "mindmap.png",
+          "url": "https://cdn.example/mindmap.png",
+        },
+        {
+          "dataType": "card",
+          "name": "card.png",
+          "url": "https://cdn.example/card.png",
+        },
+        {
+          "dataType": "image",
+          "url": "https://cdn.example/photo.jpg",
+        },
+      ],
+      [],
+    ],
+    [
+      "merge",
+      [
+        {
+          "dataType": "plaud_mark",
+          "url": "https://cdn.example/mark-42.jpg",
+        },
+        {
+          "dataType": "plaud_mark",
+          "url": "https://cdn.example/mark-700.jpg",
+        },
+      ],
+      [
+        {
+          "dataType": "mindmap",
+          "mimeType": "image/png",
+          "name": "mindmap.png",
+          "url": "https://cdn.example/mindmap.png",
+        },
+        {
+          "dataType": "card",
+          "name": "card.png",
+          "url": "https://cdn.example/card.png",
+        },
+        {
+          "dataType": "image",
+          "url": "https://cdn.example/photo.jpg",
+        },
+      ],
+    ],
+    [
+      "importAttachments",
+      "Plaud/2026-04-14 Quarterly planning.md",
+      [
+        {
+          "dataType": "plaud_mark",
+          "url": "https://cdn.example/mark-42.jpg",
+        },
+        {
+          "dataType": "plaud_mark",
+          "url": "https://cdn.example/mark-700.jpg",
+        },
+        {
+          "dataType": "mindmap",
+          "mimeType": "image/png",
+          "name": "mindmap.png",
+          "url": "https://cdn.example/mindmap.png",
+        },
+        {
+          "dataType": "card",
+          "name": "card.png",
+          "url": "https://cdn.example/card.png",
+        },
+        {
+          "dataType": "image",
+          "url": "https://cdn.example/photo.jpg",
+        },
+      ],
+      {
+        "includeAttachments": true,
+        "includeAudio": true,
+        "includeCard": true,
+        "includeMindmap": true,
+        "includeScreenshots": true,
+        "includeSummary": true,
+        "includeTranscript": true,
+      },
+      false,
+      "unfiled1",
+      {
+        "pic/1.png": "https://cdn.example/signed/1.png",
+      },
+    ],
+    [
+      "applyFold",
+      "Plaud/2026-04-14 Quarterly planning.md",
+    ],
+  ],
+  "results": [
+    {
+      "kind": "written",
+      "recording": {
+        "captureOffsetMinutes": -240,
+        "createdAt": 2026-04-14T14:30:00.000Z,
+        "durationSeconds": 3725,
+        "endsAt": 2026-04-14T15:32:05.000Z,
+        "id": "unfiled1",
+        "isTrashed": false,
+        "summaryAvailable": true,
+        "systemFolderType": 1,
+        "title": "Quarterly planning",
+        "transcriptAvailable": true,
+      },
+      "writeOutcome": {
+        "foldInfo": {
+          "totalLines": 100,
+          "transcriptHeadingLine": 67,
+        },
+        "path": "Plaud/2026-04-14 Quarterly planning.md",
+        "status": "created",
+      },
+    },
+  ],
+  "stop": "completed",
+}
+`;
+
+exports[`golden output (stored format must not change) templates: subfolder, note name, datetime, custom frontmatter, replacement char 1`] = `
+{
+  "files": {
+    "Plaud/2026/04 April/Plan_ Q2 _ review 2026-04-14.md": "---
+plaud-id: a1b2c3d4
+plaud-url: "https://web.plaud.ai/file/a1b2c3d4"
+date: 2026-04-14
+start-time: "2026-04-14T10:30:00-04:00"
+end-time: "2026-04-14T11:32:05-04:00"
+datetime: "2026-04-14T10:30"
+duration-seconds: 3725
+duration: "1h 2m"
+speakers: [Charles, Mary]
+keywords: [pricing, Roadmap Review, q2]
+source: plaud
+plaud-headline: Pricing leads the quarter
+plaud-category: Meeting
+plaud-industry: Software
+plaud-language: en
+plaud-template: Meeting notes
+plaud-model: gpt-5
+plaud-note-id: note-77
+plaud-summary-id: sum-88
+plaud-summary-version: "3"
+project: atlas
+device: Plaud device
+status: new
+---
+
+<!-- plaud:managed:start -->
+
+# Plan: Q2 * review 2026-04-14
+
+[Open in Plaud →](https://web.plaud.ai/file/a1b2c3d4)
+
+## Summary
+
+- Pricing first
+- Three options by Friday
+
+![[mindmap.png]]
+
+## AI Suggestions
+
+Send the options to finance early.
+
+## Key Points
+
+- Pricing
+- Timeline
+
+## Daily Journal
+
+A productive planning day.
+
+## Template outputs
+
+### My note
+
+Remember the **budget** cap.
+
+## Screenshots
+
+**0:42**
+
+![Screenshot at 0:42](https://cdn.example/mark-42.jpg)
+
+**11:40**
+
+![Screenshot at 11:40](https://cdn.example/mark-700.jpg)
+
+---
+
+#### Transcript
+
+##### Chapters
+
+- [[#00:00 Roadmap|**[00:00]** Roadmap]]
+- [[#01:35 Pricing -1 / options|**[01:35]** Pricing #1 / options]]
+- [[#10:10 Wrap-up|**[10:10]** Wrap-up]]
+
+^plaud-chapters
+
+---
+
+##### 00:00 Roadmap
+
+[[#^plaud-chapters|Back to Chapters]]
+
+**[00:00]** Charles: Let us start with the roadmap.
+**[00:12]** Mary: Pricing comes first.
+
+##### 01:35 Pricing -1 / options
+
+[[#^plaud-chapters|Back to Chapters]]
+
+**[01:35]** Charles: Agreed. Three options by Friday.
+
+##### 10:10 Wrap-up
+
+[[#^plaud-chapters|Back to Chapters]]
+
+**[10:10]** Unknown: Unattributed closing remarks.
+
+<!-- plaud:managed:end -->
+",
+  },
+  "folders": [
+    "Plaud",
+    "Plaud/2026",
+    "Plaud/2026/04 April",
+  ],
+  "pipeline": [
+    [
+      "extractFromSummary",
+      "## Key points
+
+- Pricing first
+- Three options by Friday
+
+![[mindmap.png]]",
+    ],
+    [
+      "extractFromSummary",
+      "- Pricing
+- Timeline",
+    ],
+    [
+      "extractFromSummary",
+      "A productive planning day.",
+    ],
+    [
+      "merge",
+      [
+        {
+          "dataType": "mindmap",
+          "mimeType": "image/png",
+          "name": "mindmap.png",
+          "url": "https://cdn.example/mindmap.png",
+        },
+        {
+          "dataType": "card",
+          "name": "card.png",
+          "url": "https://cdn.example/card.png",
+        },
+        {
+          "dataType": "image",
+          "url": "https://cdn.example/photo.jpg",
+        },
+      ],
+      [],
+    ],
+    [
+      "merge",
+      [
+        {
+          "dataType": "plaud_mark",
+          "url": "https://cdn.example/mark-42.jpg",
+        },
+        {
+          "dataType": "plaud_mark",
+          "url": "https://cdn.example/mark-700.jpg",
+        },
+      ],
+      [
+        {
+          "dataType": "mindmap",
+          "mimeType": "image/png",
+          "name": "mindmap.png",
+          "url": "https://cdn.example/mindmap.png",
+        },
+        {
+          "dataType": "card",
+          "name": "card.png",
+          "url": "https://cdn.example/card.png",
+        },
+        {
+          "dataType": "image",
+          "url": "https://cdn.example/photo.jpg",
+        },
+      ],
+    ],
+    [
+      "importAttachments",
+      "Plaud/2026/04 April/Plan_ Q2 _ review 2026-04-14.md",
+      [
+        {
+          "dataType": "plaud_mark",
+          "url": "https://cdn.example/mark-42.jpg",
+        },
+        {
+          "dataType": "plaud_mark",
+          "url": "https://cdn.example/mark-700.jpg",
+        },
+        {
+          "dataType": "mindmap",
+          "mimeType": "image/png",
+          "name": "mindmap.png",
+          "url": "https://cdn.example/mindmap.png",
+        },
+        {
+          "dataType": "card",
+          "name": "card.png",
+          "url": "https://cdn.example/card.png",
+        },
+        {
+          "dataType": "image",
+          "url": "https://cdn.example/photo.jpg",
+        },
+      ],
+      {
+        "includeAttachments": true,
+        "includeAudio": true,
+        "includeCard": true,
+        "includeMindmap": true,
+        "includeScreenshots": true,
+        "includeSummary": true,
+        "includeTranscript": true,
+      },
+      false,
+      "a1b2c3d4",
+      {
+        "pic/1.png": "https://cdn.example/signed/1.png",
+      },
+    ],
+    [
+      "applyFold",
+      "Plaud/2026/04 April/Plan_ Q2 _ review 2026-04-14.md",
+    ],
+  ],
+  "results": [
+    {
+      "kind": "written",
+      "recording": {
+        "captureOffsetMinutes": -240,
+        "createdAt": 2026-04-14T14:30:00.000Z,
+        "durationSeconds": 3725,
+        "endsAt": 2026-04-14T15:32:05.000Z,
+        "id": "a1b2c3d4",
+        "isTrashed": false,
+        "source": {
+          "kind": "device",
+          "serial": "SN-1",
+        },
+        "summaryAvailable": true,
+        "title": "Plan: Q2 * review",
+        "transcriptAvailable": true,
+      },
+      "writeOutcome": {
+        "foldInfo": {
+          "totalLines": 103,
+          "transcriptHeadingLine": 70,
+        },
+        "path": "Plaud/2026/04 April/Plan_ Q2 _ review 2026-04-14.md",
+        "status": "created",
+      },
+    },
+  ],
+  "stop": "completed",
+}
+`;
+
+exports[`golden output (stored format must not change) title collision between two recordings on the same day 1`] = `
+{
+  "files": {
+    "Plaud/2026-04-14 Standup 2.md": "---
+plaud-id: dup-2
+plaud-url: "https://web.plaud.ai/file/dup-2"
+date: 2026-04-14
+start-time: "2026-04-14T14:00:00-04:00"
+end-time: "2026-04-14T15:02:05-04:00"
+duration-seconds: 3725
+duration: "1h 2m"
+speakers: [Charles, Mary]
+keywords: [pricing, Roadmap Review, q2]
+source: plaud
+plaud-headline: Pricing leads the quarter
+plaud-category: Meeting
+plaud-industry: Software
+plaud-language: en
+plaud-template: Meeting notes
+plaud-model: gpt-5
+plaud-note-id: note-77
+plaud-summary-id: sum-88
+plaud-summary-version: "3"
+---
+
+<!-- plaud:managed:start -->
+
+# 2026-04-14 Standup
+
+[Open in Plaud →](https://web.plaud.ai/file/dup-2)
+
+## Summary
+
+- Pricing first
+- Three options by Friday
+
+![[mindmap.png]]
+
+## AI Suggestions
+
+Send the options to finance early.
+
+## Key Points
+
+- Pricing
+- Timeline
+
+## Daily Journal
+
+A productive planning day.
+
+## Template outputs
+
+### My note
+
+Remember the **budget** cap.
+
+## Screenshots
+
+**0:42**
+
+![Screenshot at 0:42](https://cdn.example/mark-42.jpg)
+
+**11:40**
+
+![Screenshot at 11:40](https://cdn.example/mark-700.jpg)
+
+---
+
+#### Transcript
+
+##### Chapters
+
+- [[#00:00 Roadmap|**[00:00]** Roadmap]]
+- [[#01:35 Pricing -1 / options|**[01:35]** Pricing #1 / options]]
+- [[#10:10 Wrap-up|**[10:10]** Wrap-up]]
+
+^plaud-chapters
+
+---
+
+##### 00:00 Roadmap
+
+[[#^plaud-chapters|Back to Chapters]]
+
+**[00:00]** Charles: Let us start with the roadmap.
+**[00:12]** Mary: Pricing comes first.
+
+##### 01:35 Pricing -1 / options
+
+[[#^plaud-chapters|Back to Chapters]]
+
+**[01:35]** Charles: Agreed. Three options by Friday.
+
+##### 10:10 Wrap-up
+
+[[#^plaud-chapters|Back to Chapters]]
+
+**[10:10]** Unknown: Unattributed closing remarks.
+
+<!-- plaud:managed:end -->
+",
+    "Plaud/2026-04-14 Standup.md": "---
+plaud-id: dup-1
+plaud-url: "https://web.plaud.ai/file/dup-1"
+date: 2026-04-14
+start-time: "2026-04-14T10:30:00-04:00"
+end-time: "2026-04-14T11:32:05-04:00"
+duration-seconds: 3725
+duration: "1h 2m"
+speakers: [Charles, Mary]
+keywords: [pricing, Roadmap Review, q2]
+source: plaud
+plaud-headline: Pricing leads the quarter
+plaud-category: Meeting
+plaud-industry: Software
+plaud-language: en
+plaud-template: Meeting notes
+plaud-model: gpt-5
+plaud-note-id: note-77
+plaud-summary-id: sum-88
+plaud-summary-version: "3"
+---
+
+<!-- plaud:managed:start -->
+
+# 2026-04-14 Standup
+
+[Open in Plaud →](https://web.plaud.ai/file/dup-1)
+
+## Summary
+
+- Pricing first
+- Three options by Friday
+
+![[mindmap.png]]
+
+## AI Suggestions
+
+Send the options to finance early.
+
+## Key Points
+
+- Pricing
+- Timeline
+
+## Daily Journal
+
+A productive planning day.
+
+## Template outputs
+
+### My note
+
+Remember the **budget** cap.
+
+## Screenshots
+
+**0:42**
+
+![Screenshot at 0:42](https://cdn.example/mark-42.jpg)
+
+**11:40**
+
+![Screenshot at 11:40](https://cdn.example/mark-700.jpg)
+
+---
+
+#### Transcript
+
+##### Chapters
+
+- [[#00:00 Roadmap|**[00:00]** Roadmap]]
+- [[#01:35 Pricing -1 / options|**[01:35]** Pricing #1 / options]]
+- [[#10:10 Wrap-up|**[10:10]** Wrap-up]]
+
+^plaud-chapters
+
+---
+
+##### 00:00 Roadmap
+
+[[#^plaud-chapters|Back to Chapters]]
+
+**[00:00]** Charles: Let us start with the roadmap.
+**[00:12]** Mary: Pricing comes first.
+
+##### 01:35 Pricing -1 / options
+
+[[#^plaud-chapters|Back to Chapters]]
+
+**[01:35]** Charles: Agreed. Three options by Friday.
+
+##### 10:10 Wrap-up
+
+[[#^plaud-chapters|Back to Chapters]]
+
+**[10:10]** Unknown: Unattributed closing remarks.
+
+<!-- plaud:managed:end -->
+",
+  },
+  "folders": [
+    "Plaud",
+  ],
+  "pipeline": [
+    [
+      "extractFromSummary",
+      "## Key points
+
+- Pricing first
+- Three options by Friday
+
+![[mindmap.png]]",
+    ],
+    [
+      "extractFromSummary",
+      "- Pricing
+- Timeline",
+    ],
+    [
+      "extractFromSummary",
+      "A productive planning day.",
+    ],
+    [
+      "merge",
+      [
+        {
+          "dataType": "mindmap",
+          "mimeType": "image/png",
+          "name": "mindmap.png",
+          "url": "https://cdn.example/mindmap.png",
+        },
+        {
+          "dataType": "card",
+          "name": "card.png",
+          "url": "https://cdn.example/card.png",
+        },
+        {
+          "dataType": "image",
+          "url": "https://cdn.example/photo.jpg",
+        },
+      ],
+      [],
+    ],
+    [
+      "merge",
+      [
+        {
+          "dataType": "plaud_mark",
+          "url": "https://cdn.example/mark-42.jpg",
+        },
+        {
+          "dataType": "plaud_mark",
+          "url": "https://cdn.example/mark-700.jpg",
+        },
+      ],
+      [
+        {
+          "dataType": "mindmap",
+          "mimeType": "image/png",
+          "name": "mindmap.png",
+          "url": "https://cdn.example/mindmap.png",
+        },
+        {
+          "dataType": "card",
+          "name": "card.png",
+          "url": "https://cdn.example/card.png",
+        },
+        {
+          "dataType": "image",
+          "url": "https://cdn.example/photo.jpg",
+        },
+      ],
+    ],
+    [
+      "importAttachments",
+      "Plaud/2026-04-14 Standup.md",
+      [
+        {
+          "dataType": "plaud_mark",
+          "url": "https://cdn.example/mark-42.jpg",
+        },
+        {
+          "dataType": "plaud_mark",
+          "url": "https://cdn.example/mark-700.jpg",
+        },
+        {
+          "dataType": "mindmap",
+          "mimeType": "image/png",
+          "name": "mindmap.png",
+          "url": "https://cdn.example/mindmap.png",
+        },
+        {
+          "dataType": "card",
+          "name": "card.png",
+          "url": "https://cdn.example/card.png",
+        },
+        {
+          "dataType": "image",
+          "url": "https://cdn.example/photo.jpg",
+        },
+      ],
+      {
+        "includeAttachments": true,
+        "includeAudio": true,
+        "includeCard": true,
+        "includeMindmap": true,
+        "includeScreenshots": true,
+        "includeSummary": true,
+        "includeTranscript": true,
+      },
+      false,
+      "dup-1",
+      {
+        "pic/1.png": "https://cdn.example/signed/1.png",
+      },
+    ],
+    [
+      "applyFold",
+      "Plaud/2026-04-14 Standup.md",
+    ],
+    [
+      "extractFromSummary",
+      "## Key points
+
+- Pricing first
+- Three options by Friday
+
+![[mindmap.png]]",
+    ],
+    [
+      "extractFromSummary",
+      "- Pricing
+- Timeline",
+    ],
+    [
+      "extractFromSummary",
+      "A productive planning day.",
+    ],
+    [
+      "merge",
+      [
+        {
+          "dataType": "mindmap",
+          "mimeType": "image/png",
+          "name": "mindmap.png",
+          "url": "https://cdn.example/mindmap.png",
+        },
+        {
+          "dataType": "card",
+          "name": "card.png",
+          "url": "https://cdn.example/card.png",
+        },
+        {
+          "dataType": "image",
+          "url": "https://cdn.example/photo.jpg",
+        },
+      ],
+      [],
+    ],
+    [
+      "merge",
+      [
+        {
+          "dataType": "plaud_mark",
+          "url": "https://cdn.example/mark-42.jpg",
+        },
+        {
+          "dataType": "plaud_mark",
+          "url": "https://cdn.example/mark-700.jpg",
+        },
+      ],
+      [
+        {
+          "dataType": "mindmap",
+          "mimeType": "image/png",
+          "name": "mindmap.png",
+          "url": "https://cdn.example/mindmap.png",
+        },
+        {
+          "dataType": "card",
+          "name": "card.png",
+          "url": "https://cdn.example/card.png",
+        },
+        {
+          "dataType": "image",
+          "url": "https://cdn.example/photo.jpg",
+        },
+      ],
+    ],
+    [
+      "importAttachments",
+      "Plaud/2026-04-14 Standup 2.md",
+      [
+        {
+          "dataType": "plaud_mark",
+          "url": "https://cdn.example/mark-42.jpg",
+        },
+        {
+          "dataType": "plaud_mark",
+          "url": "https://cdn.example/mark-700.jpg",
+        },
+        {
+          "dataType": "mindmap",
+          "mimeType": "image/png",
+          "name": "mindmap.png",
+          "url": "https://cdn.example/mindmap.png",
+        },
+        {
+          "dataType": "card",
+          "name": "card.png",
+          "url": "https://cdn.example/card.png",
+        },
+        {
+          "dataType": "image",
+          "url": "https://cdn.example/photo.jpg",
+        },
+      ],
+      {
+        "includeAttachments": true,
+        "includeAudio": true,
+        "includeCard": true,
+        "includeMindmap": true,
+        "includeScreenshots": true,
+        "includeSummary": true,
+        "includeTranscript": true,
+      },
+      false,
+      "dup-2",
+      {
+        "pic/1.png": "https://cdn.example/signed/1.png",
+      },
+    ],
+    [
+      "applyFold",
+      "Plaud/2026-04-14 Standup 2.md",
+    ],
+  ],
+  "results": [
+    {
+      "kind": "written",
+      "recording": {
+        "captureOffsetMinutes": -240,
+        "createdAt": 2026-04-14T14:30:00.000Z,
+        "durationSeconds": 3725,
+        "endsAt": 2026-04-14T15:32:05.000Z,
+        "id": "dup-1",
+        "isTrashed": false,
+        "summaryAvailable": true,
+        "title": "Standup",
+        "transcriptAvailable": true,
+      },
+      "writeOutcome": {
+        "foldInfo": {
+          "totalLines": 99,
+          "transcriptHeadingLine": 66,
+        },
+        "path": "Plaud/2026-04-14 Standup.md",
+        "status": "created",
+      },
+    },
+    {
+      "kind": "written",
+      "recording": {
+        "captureOffsetMinutes": -240,
+        "createdAt": 2026-04-14T18:00:00.000Z,
+        "durationSeconds": 3725,
+        "endsAt": 2026-04-14T19:02:05.000Z,
+        "id": "dup-2",
+        "isTrashed": false,
+        "summaryAvailable": true,
+        "title": "Standup",
+        "transcriptAvailable": true,
+      },
+      "writeOutcome": {
+        "foldInfo": {
+          "totalLines": 99,
+          "transcriptHeadingLine": 66,
+        },
+        "path": "Plaud/2026-04-14 Standup 2.md",
+        "status": "created",
+      },
+    },
+  ],
+  "stop": "completed",
+}
+`;
+
+exports[`golden output (stored format must not change) transcript only, no summary available 1`] = `
+{
+  "files": {
+    "Plaud/2026-04-14 Quarterly planning.md": "---
+plaud-id: a1b2c3d4
+plaud-url: "https://web.plaud.ai/file/a1b2c3d4"
+date: 2026-04-14
+start-time: "2026-04-14T10:30:00-04:00"
+end-time: "2026-04-14T11:32:05-04:00"
+duration-seconds: 3725
+duration: "1h 2m"
+speakers: [Charles, Mary]
+source: plaud
+---
+
+<!-- plaud:managed:start -->
+
+# 2026-04-14 Quarterly planning
+
+[Open in Plaud →](https://web.plaud.ai/file/a1b2c3d4)
+
+## Summary
+
+_No summary available._
+
+---
+
+#### Transcript
+
+##### Chapters
+
+- [[#00:00 Roadmap|**[00:00]** Roadmap]]
+- [[#01:35 Pricing -1 / options|**[01:35]** Pricing #1 / options]]
+- [[#10:10 Wrap-up|**[10:10]** Wrap-up]]
+
+^plaud-chapters
+
+---
+
+##### 00:00 Roadmap
+
+[[#^plaud-chapters|Back to Chapters]]
+
+**[00:00]** Charles: Let us start with the roadmap.
+**[00:12]** Mary: Pricing comes first.
+
+##### 01:35 Pricing -1 / options
+
+[[#^plaud-chapters|Back to Chapters]]
+
+**[01:35]** Charles: Agreed. Three options by Friday.
+
+##### 10:10 Wrap-up
+
+[[#^plaud-chapters|Back to Chapters]]
+
+**[10:10]** Unknown: Unattributed closing remarks.
+
+<!-- plaud:managed:end -->
+",
+  },
+  "folders": [
+    "Plaud",
+  ],
+  "pipeline": [
+    [
+      "extractFromSummary",
+      null,
+    ],
+    [
+      "merge",
+      [],
+      [],
+    ],
+    [
+      "merge",
+      [],
+      [],
+    ],
+    [
+      "applyFold",
+      "Plaud/2026-04-14 Quarterly planning.md",
+    ],
+  ],
+  "results": [
+    {
+      "kind": "written",
+      "recording": {
+        "captureOffsetMinutes": -240,
+        "createdAt": 2026-04-14T14:30:00.000Z,
+        "durationSeconds": 3725,
+        "endsAt": 2026-04-14T15:32:05.000Z,
+        "id": "a1b2c3d4",
+        "isTrashed": false,
+        "summaryAvailable": false,
+        "title": "Quarterly planning",
+        "transcriptAvailable": true,
+      },
+      "writeOutcome": {
+        "foldInfo": {
+          "totalLines": 57,
+          "transcriptHeadingLine": 24,
+        },
+        "path": "Plaud/2026-04-14 Quarterly planning.md",
+        "status": "created",
+      },
+    },
+  ],
+  "stop": "completed",
+}
+`;
+
+exports[`golden output (stored format must not change) unprocessed recording writes a placeholder 1`] = `
+{
+  "files": {
+    "Plaud/2026-04-14 Still processing.md": "---
+plaud-id: pending1
+plaud-url: "https://web.plaud.ai/file/pending1"
+date: 2026-04-14
+start-time: "2026-04-14T10:30:00-04:00"
+end-time: "2026-04-14T11:32:05-04:00"
+source: plaud
+plaud-placeholder: true
+---
+
+# 2026-04-14 Still processing
+
+[Open in Plaud →](https://web.plaud.ai/file/pending1)
+
+> [!warning] Not imported: Plaud has no transcript or summary
+> Plaud has no transcript or summary available for this recording. This is a
+> Plaud-side condition, not a problem reading the data. A common cause is that
+> the audio has no detectable speech (Plaud shows "No speech detected"). It can
+> also mean the recording is still processing. Open it in Plaud to see the exact
+> reason. If Plaud later has content for it, re-run the import and this
+> placeholder is replaced automatically. If Plaud reports no speech, there is
+> nothing to import.
+>
+> Recording ID: \`pending1\`
+>
+> Plaud reported: in-band error from /ai/transsumm: -12 start trans task error
+",
+  },
+  "folders": [
+    "Plaud",
+  ],
+  "pipeline": [],
+  "results": [
+    {
+      "classification": {
+        "canRetry": true,
+        "category": "api-error",
+        "message": "Plaud has no transcript or summary for this recording. A common cause is audio with no detectable speech (Plaud shows "No speech detected"); it can also mean the recording is still processing. This is a Plaud-side issue, not a problem with the plugin reading the data. The plugin received and parsed Plaud's response correctly. Open the recording in the Plaud app to check the exact reason, then re-import if content becomes available. (in-band error from /ai/transsumm: -12 start trans task error)",
+      },
+      "kind": "placeholder-written",
+      "outcome": {
+        "path": "Plaud/2026-04-14 Still processing.md",
+        "status": "created",
+      },
+      "reason": "Plaud has no transcript or summary for this recording. A common cause is audio with no detectable speech (Plaud shows "No speech detected"); it can also mean the recording is still processing. This is a Plaud-side issue, not a problem with the plugin reading the data. The plugin received and parsed Plaud's response correctly. Open the recording in the Plaud app to check the exact reason, then re-import if content becomes available. (in-band error from /ai/transsumm: -12 start trans task error)",
+      "recording": {
+        "captureOffsetMinutes": -240,
+        "createdAt": 2026-04-14T14:30:00.000Z,
+        "durationSeconds": 3725,
+        "endsAt": 2026-04-14T15:32:05.000Z,
+        "id": "pending1",
+        "isTrashed": false,
+        "summaryAvailable": true,
+        "title": "Still processing",
+        "transcriptAvailable": true,
+      },
+    },
+  ],
+  "stop": "completed",
+}
+`;

@@ -17,7 +17,7 @@ import {
 } from 'obsidian';
 import { AttachmentImporter } from '../attachment-importer';
 import type { ArtifactSelection } from '../import-core';
-import type { AttachmentAsset } from '../plaud-client';
+import type { AttachmentAsset } from '../recording-model';
 import { asyncResult } from './helpers/async-result';
 import { at, defined } from './helpers/checked';
 

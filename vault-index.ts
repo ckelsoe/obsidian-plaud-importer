@@ -29,7 +29,7 @@
 // - Only notes carrying a `plaud-id` are indexed (this plugin's own notes).
 
 import type { App, TFile } from 'obsidian';
-import type { PlaudRecordingId } from './plaud-client';
+import type { RecordingId } from './recording-model';
 import {
 	stableKeysFromFrontmatter,
 	stableKeysFromRecording,
@@ -57,7 +57,7 @@ export interface ImportedRecord {
  * `findImportedNote` treats that as no match.
  */
 export interface ImportedIndex {
-	readonly byId: Map<PlaudRecordingId, ImportedRecord>;
+	readonly byId: Map<RecordingId, ImportedRecord>;
 	readonly byInstant: Map<string, ImportedRecord | null>;
 	readonly byDay: Map<string, ImportedRecord | null>;
 }
@@ -86,7 +86,7 @@ export interface RecordingIdentity {
 
 function newIndex(): ImportedIndex {
 	return {
-		byId: new Map<PlaudRecordingId, ImportedRecord>(),
+		byId: new Map<RecordingId, ImportedRecord>(),
 		byInstant: new Map<string, ImportedRecord | null>(),
 		byDay: new Map<string, ImportedRecord | null>(),
 	};
@@ -139,10 +139,7 @@ function indexNote(
 	if (parsed === null) return;
 	// Key by the canonical id so a note storing the bare v3 id and a note storing
 	// the `of_`-prefixed v4 id land on the same key and both match their recording.
-	index.byId.set(
-		canonicalPlaudId(parsed.id) as PlaudRecordingId,
-		parsed.record,
-	);
+	index.byId.set(canonicalPlaudId(parsed.id) as RecordingId, parsed.record);
 	const keys = stableKeysFromFrontmatter(rawFm);
 	addFallback(index.byInstant, keys.instant, parsed.record);
 	addFallback(index.byDay, keys.day, parsed.record);
@@ -215,9 +212,7 @@ export function findImportedNote(
 	// a single recording with no batch context.
 	ambiguousKeys: ReadonlySet<string> = NO_AMBIGUOUS_KEYS,
 ): { readonly record: ImportedRecord; readonly matchedBy: ImportMatch } | null {
-	const byId = index.byId.get(
-		canonicalPlaudId(recording.id) as PlaudRecordingId,
-	);
+	const byId = index.byId.get(canonicalPlaudId(recording.id) as RecordingId);
 	if (byId !== undefined) {
 		return { record: byId, matchedBy: 'id' };
 	}

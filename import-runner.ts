@@ -15,13 +15,12 @@
 // acyclic side of the former import-modal <-> attachment-importer cycle.
 // -----------------------------------------------------------------------------
 
+import type { PlaudFolder, TranscriptAndSummary } from './plaud-client';
 import type {
-	PlaudRecordingId,
-	PlaudFolder,
+	RecordingId,
 	Recording,
-	TranscriptAndSummary,
 	AttachmentAsset,
-} from './plaud-client';
+} from './recording-model';
 import {
 	NoteWriterCancelledError,
 	buildNoteTags,
@@ -37,7 +36,6 @@ import {
 import {
 	classifyError,
 	categoryAllowsReauth,
-	isPlaudUnprocessedError,
 	PLAUD_MARK_DATA_TYPE,
 	type ImportResult,
 	type ArtifactSelection,
@@ -108,9 +106,7 @@ export interface ImportRunDeps {
 	 * injects its warm `ensureArtifactsForRecording` so a prior "review
 	 * artifacts" preflight is not re-fetched.
 	 */
-	fetchArtifacts(
-		recordingId: PlaudRecordingId,
-	): Promise<TranscriptAndSummary>;
+	fetchArtifacts(recordingId: RecordingId): Promise<TranscriptAndSummary>;
 	/**
 	 * Resolves the account's flat folder/tag catalog, called ONCE per run to
 	 * turn each recording's `filetag_id_list` into folder names (issue #16).
@@ -125,7 +121,7 @@ export interface ImportRunDeps {
 	 * exposes none. Only invoked when `selection.includeAudio` is set, so a
 	 * caller that never imports audio (or a headless auto-sync) may omit it.
 	 */
-	fetchAudioUrl?(recordingId: PlaudRecordingId): Promise<string | null>;
+	fetchAudioUrl?(recordingId: RecordingId): Promise<string | null>;
 	/** Optional post-write transcript fold. Omitted by headless callers. */
 	applyFold?(path: string): Promise<void>;
 	readonly observer?: ImportRunObserver;
@@ -480,7 +476,10 @@ export async function runImport(
 					// those to the outer handler that stops the batch and
 					// offers inline re-auth.
 					if (
-						categoryAllowsReauth(classifyError(audioErr).category)
+						categoryAllowsReauth(
+							classifyError(audioErr, options.errorPolicy)
+								.category,
+						)
 					) {
 						throw audioErr;
 					}
@@ -530,7 +529,7 @@ export async function runImport(
 				`Plaud importer: import failed for recording ${recording.id} "${recording.title}"`,
 				err,
 			);
-			const classification = classifyError(err);
+			const classification = classifyError(err, options.errorPolicy);
 
 			// A rejected token mid-batch (an expired or revoked session) is
 			// a batch-level terminal condition, not a per-recording failure:
@@ -556,7 +555,7 @@ export async function runImport(
 			// falls through to the normal failure path below.
 			if (
 				options.writePlaceholderForUnprocessed !== false &&
-				isPlaudUnprocessedError(err)
+				options.errorPolicy.isUnprocessed(err)
 			) {
 				try {
 					// Pass Plaud's own concise error line as the stub's reason

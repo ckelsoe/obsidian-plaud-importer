@@ -1,4 +1,4 @@
-import type { PlaudRecordingId, Recording } from '../plaud-client';
+import type { RecordingId, Recording } from '../recording-model';
 import type { ImportedIndex, ImportedRecord } from '../vault-index';
 import {
 	buildSourceFilter,
@@ -12,7 +12,7 @@ function rec(
 	overrides: Partial<Omit<Recording, 'id'>> & { id: string },
 ): Recording {
 	return {
-		id: overrides.id as PlaudRecordingId,
+		id: overrides.id as RecordingId,
 		title: overrides.title ?? `title-${overrides.id}`,
 		createdAt: overrides.createdAt ?? new Date('2026-06-01T00:00:00Z'),
 		endsAt: overrides.endsAt ?? new Date('2026-06-01T00:01:00Z'),
@@ -33,14 +33,14 @@ function idx(
 	entries: ReadonlyArray<readonly [string, ImportedRecord]>,
 ): ImportedIndex {
 	return {
-		byId: new Map(entries.map(([id, r]) => [id as PlaudRecordingId, r])),
+		byId: new Map(entries.map(([id, r]) => [id as RecordingId, r])),
 		byInstant: new Map(),
 		byDay: new Map(),
 	};
 }
 
-function ignored(ids: readonly string[]): Set<PlaudRecordingId> {
-	return new Set(ids.map((id) => id as PlaudRecordingId));
+function ignored(ids: readonly string[]): Set<RecordingId> {
+	return new Set(ids.map((id) => id as RecordingId));
 }
 
 function filter(over: Partial<ListViewFilter>): ListViewFilter {

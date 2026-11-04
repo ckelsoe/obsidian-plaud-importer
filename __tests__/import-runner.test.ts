@@ -6,78 +6,33 @@ import {
 } from '../import-runner';
 import {
 	NoteWriter,
-	type FileLike,
-	type FolderLike,
 	type VaultLike,
 	type DuplicatePromptDecision,
 } from '../note-writer';
 import { PlaudApiError, PlaudAuthError } from '../plaud-client-re';
 import type { ArtifactSelection, ImportModalOptions } from '../import-core';
+import { PLAUD_ERROR_POLICY } from '../plaud-errors';
+import type { TranscriptAndSummary } from '../plaud-client';
 import type {
 	AttachmentAsset,
-	PlaudRecordingId,
+	RecordingId,
 	Recording,
 	Summary,
 	Transcript,
-	TranscriptAndSummary,
-} from '../plaud-client';
+} from '../recording-model';
 import { asyncResult } from './helpers/async-result';
+import { makeFakeVault } from './helpers/fake-vault';
 import { at, defined } from './helpers/checked';
 
 // -----------------------------------------------------------------------------
 // Test doubles
 //
 // The runner is headless: a REAL NoteWriter writes into an in-memory fake vault
-// (the same shape note-writer.test.ts uses), the attachment pipeline is a stub
+// (the shared helpers/fake-vault.ts), the attachment pipeline is a stub
 // that records its calls, and the observer/fetchArtifacts are spies so we can
 // assert ordering and call counts. No `obsidian` import is needed because the
 // runner has none.
 // -----------------------------------------------------------------------------
-
-type FakeVault = VaultLike & {
-	files: Map<string, string>;
-	folders: Set<string>;
-};
-
-function makeFakeVault(): FakeVault {
-	const files = new Map<string, string>();
-	const folders = new Set<string>();
-	const vault: FakeVault = {
-		files,
-		folders,
-		getFileByPath(path: string): FileLike | null {
-			return files.has(path) ? { path } : null;
-		},
-		getFolderByPath(path: string): FolderLike | null {
-			return folders.has(path) ? { path } : null;
-		},
-		createFolder(path: string): Promise<FolderLike> {
-			return asyncResult(() => {
-				folders.add(path);
-				return { path };
-			});
-		},
-		create(path: string, data: string): Promise<FileLike> {
-			return asyncResult(() => {
-				files.set(path, data);
-				return { path };
-			});
-		},
-		read(file: FileLike): Promise<string> {
-			return asyncResult(() => {
-				return files.get(file.path) ?? '';
-			});
-		},
-		process(file: FileLike, fn: (data: string) => string): Promise<string> {
-			return asyncResult(() => {
-				const next = fn(files.get(file.path) ?? '');
-				files.set(file.path, next);
-				return next;
-			});
-		},
-	};
-	return vault;
-}
 
 function makeWriter(
 	vault: VaultLike,
@@ -96,7 +51,7 @@ function makeRecording(overrides: Partial<Recording> = {}): Recording {
 	const createdAt = overrides.createdAt ?? new Date(2026, 5, 28, 9, 0);
 	const durationSeconds = overrides.durationSeconds ?? 600;
 	return {
-		id: `rec-${nextId}` as PlaudRecordingId,
+		id: `rec-${nextId}` as RecordingId,
 		title: `Recording ${nextId}`,
 		createdAt,
 		endsAt: new Date(createdAt.getTime() + durationSeconds * 1000),
@@ -109,7 +64,7 @@ function makeRecording(overrides: Partial<Recording> = {}): Recording {
 	};
 }
 
-function makeTranscript(id: PlaudRecordingId): Transcript {
+function makeTranscript(id: RecordingId): Transcript {
 	return {
 		id,
 		segments: [
@@ -124,7 +79,7 @@ function makeTranscript(id: PlaudRecordingId): Transcript {
 	};
 }
 
-function makeSummary(id: PlaudRecordingId): Summary {
+function makeSummary(id: RecordingId): Summary {
 	return { id, text: '- A point' };
 }
 
@@ -150,6 +105,7 @@ const SELECTION: ArtifactSelection = {
 };
 
 const OPTIONS: ImportModalOptions = {
+	errorPolicy: PLAUD_ERROR_POLICY,
 	outputFolder: 'Plaud',
 	onDuplicate: 'skip',
 };
@@ -219,15 +175,13 @@ function makeAttachmentStub(summaryLinked: readonly AttachmentAsset[] = []): {
 }
 
 function makeFetch(
-	artifactsById: Map<PlaudRecordingId, TranscriptAndSummary | (() => never)>,
+	artifactsById: Map<RecordingId, TranscriptAndSummary | (() => never)>,
 ): {
 	fetchArtifacts: ImportRunDeps['fetchArtifacts'];
-	calls: PlaudRecordingId[];
+	calls: RecordingId[];
 } {
-	const calls: PlaudRecordingId[] = [];
-	const fetchArtifacts = (
-		id: PlaudRecordingId,
-	): Promise<TranscriptAndSummary> =>
+	const calls: RecordingId[] = [];
+	const fetchArtifacts = (id: RecordingId): Promise<TranscriptAndSummary> =>
 		asyncResult(() => {
 			calls.push(id);
 			const entry = artifactsById.get(id);
@@ -910,7 +864,7 @@ describe('runImport', () => {
 		const vault = makeFakeVault();
 		const recA = makeRecording();
 		const recB = makeRecording();
-		const artifacts = new Map<PlaudRecordingId, TranscriptAndSummary>([
+		const artifacts = new Map<RecordingId, TranscriptAndSummary>([
 			[recA.id, makeArtifacts(recA)],
 			[recB.id, makeArtifacts(recB)],
 		]);
@@ -1175,7 +1129,7 @@ describe('runImport', () => {
 		const recB = makeRecording();
 		const recC = makeRecording();
 		const { fetchArtifacts, calls } = makeFetch(
-			new Map<PlaudRecordingId, TranscriptAndSummary | (() => never)>([
+			new Map<RecordingId, TranscriptAndSummary | (() => never)>([
 				[recA.id, makeArtifacts(recA)],
 				[
 					recB.id,
@@ -1227,7 +1181,7 @@ describe('runImport', () => {
 		const recA = makeRecording();
 		const recB = makeRecording();
 		const { fetchArtifacts, calls } = makeFetch(
-			new Map<PlaudRecordingId, TranscriptAndSummary | (() => never)>([
+			new Map<RecordingId, TranscriptAndSummary | (() => never)>([
 				[
 					recA.id,
 					(): never => {
@@ -1266,7 +1220,7 @@ describe('runImport', () => {
 		const recA = makeRecording();
 		const recB = makeRecording();
 		const { fetchArtifacts } = makeFetch(
-			new Map<PlaudRecordingId, TranscriptAndSummary | (() => never)>([
+			new Map<RecordingId, TranscriptAndSummary | (() => never)>([
 				[recA.id, makeArtifacts(recA)],
 				[
 					recB.id,
@@ -1301,7 +1255,7 @@ describe('runImport', () => {
 		const recB = makeRecording();
 		const recC = makeRecording();
 		const { fetchArtifacts, calls } = makeFetch(
-			new Map<PlaudRecordingId, TranscriptAndSummary | (() => never)>([
+			new Map<RecordingId, TranscriptAndSummary | (() => never)>([
 				[recA.id, makeArtifacts(recA)],
 				[
 					recB.id,
@@ -1346,7 +1300,7 @@ describe('runImport audio artifact', () => {
 			new Map([[recording.id, makeArtifacts(recording)]]),
 		);
 		const { pipeline, audioCalls } = makeAttachmentStub();
-		const audioFetches: PlaudRecordingId[] = [];
+		const audioFetches: RecordingId[] = [];
 
 		const outcome = await runImport({
 			recordings: [recording],

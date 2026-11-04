@@ -46,8 +46,6 @@ import {
 	TEMPLATE_PREVIEW_DATE,
 	TEMPLATE_PREVIEW_TITLE,
 	substitutePlaudPlaceholders,
-	type FileLike,
-	type FolderLike,
 	type TranscriptChapterGroup,
 	type VaultLike,
 } from '../note-writer';
@@ -55,17 +53,18 @@ import { MANAGED_BLOCK_END, MANAGED_BLOCK_START } from '../managed-block';
 import type {
 	Chapter,
 	ConsumerNote,
-	PlaudRecordingId,
+	RecordingId,
 	Recording,
 	Summary,
 	Transcript,
 	TranscriptSegment,
-} from '../plaud-client';
+} from '../recording-model';
 // The plugin gets moment from Obsidian (mapped to the jest mock, which re-exports
 // the real moment). Reaching it the same way here shares that one singleton, so a
 // test can flip the global locale and observe the formatter's pinned English.
 import { moment } from 'obsidian';
 import { asyncResult } from './helpers/async-result';
+import { makeFakeVault, type FakeVault } from './helpers/fake-vault';
 import { at } from './helpers/checked';
 
 // Fixtures ------------------------------------------------------------------
@@ -74,7 +73,7 @@ function makeRecording(overrides: Partial<Recording> = {}): Recording {
 	const createdAt = overrides.createdAt ?? new Date(2026, 3, 14, 9, 30); // 2026-04-14 09:30 local
 	const durationSeconds = overrides.durationSeconds ?? 600;
 	return {
-		id: 'abc123' as PlaudRecordingId,
+		id: 'abc123' as RecordingId,
 		title: 'Morning standup',
 		createdAt,
 		endsAt: new Date(createdAt.getTime() + durationSeconds * 1000),
@@ -92,7 +91,7 @@ function makeRecording(overrides: Partial<Recording> = {}): Recording {
 
 function makeTranscript(overrides: Partial<Transcript> = {}): Transcript {
 	return {
-		id: 'abc123' as PlaudRecordingId,
+		id: 'abc123' as RecordingId,
 		segments: [
 			{
 				startSeconds: 0,
@@ -114,7 +113,7 @@ function makeTranscript(overrides: Partial<Transcript> = {}): Transcript {
 
 function makeSummary(overrides: Partial<Summary> = {}): Summary {
 	return {
-		id: 'abc123' as PlaudRecordingId,
+		id: 'abc123' as RecordingId,
 		text: '- Mary wants to revisit pricing\n- Charles to draft three options',
 		...overrides,
 	};
@@ -2388,7 +2387,7 @@ describe('formatMarkdown', () => {
 	it('builds the Open in Plaud link from formatPlaudWebUrl for the recording ID', () => {
 		const md = formatMarkdown(
 			makeRecording({
-				id: '4cba85e559d7f7c9058bf71c23d86d2d' as PlaudRecordingId,
+				id: '4cba85e559d7f7c9058bf71c23d86d2d' as RecordingId,
 			}),
 			makeTranscript(),
 			makeSummary(),
@@ -2400,7 +2399,7 @@ describe('formatMarkdown', () => {
 
 	it('threads a v4 webBaseUrl into the frontmatter and the link', () => {
 		const md = formatMarkdown(
-			makeRecording({ id: 'of_abc123' as PlaudRecordingId }),
+			makeRecording({ id: 'of_abc123' as RecordingId }),
 			makeTranscript(),
 			makeSummary(),
 			undefined,
@@ -2504,7 +2503,7 @@ describe('formatMarkdown', () => {
 
 	it('renders summary sections as H3 when present', () => {
 		const summary: Summary = {
-			id: 'abc123' as PlaudRecordingId,
+			id: 'abc123' as RecordingId,
 			text: 'ignored when sections present',
 			sections: [
 				{ heading: 'Key takeaways', body: '- First\n- Second' },
@@ -2554,65 +2553,6 @@ describe('formatMarkdown', () => {
 });
 
 // NoteWriter class ---------------------------------------------------------
-
-type FakeVault = VaultLike & {
-	files: Map<string, string>;
-	folders: Set<string>;
-	createdPaths: string[];
-	overwrittenPaths: string[];
-	createFolderCalls: string[];
-};
-
-function makeFakeVault(): FakeVault {
-	const files = new Map<string, string>();
-	const folders = new Set<string>();
-	const createdPaths: string[] = [];
-	const overwrittenPaths: string[] = [];
-	const createFolderCalls: string[] = [];
-
-	const vault: FakeVault = {
-		files,
-		folders,
-		createdPaths,
-		overwrittenPaths,
-		createFolderCalls,
-		getFileByPath(path: string): FileLike | null {
-			return files.has(path) ? { path } : null;
-		},
-		getFolderByPath(path: string): FolderLike | null {
-			return folders.has(path) ? { path } : null;
-		},
-		createFolder(path: string): Promise<FolderLike> {
-			return asyncResult(() => {
-				createFolderCalls.push(path);
-				folders.add(path);
-				return { path };
-			});
-		},
-		create(path: string, data: string): Promise<FileLike> {
-			return asyncResult(() => {
-				files.set(path, data);
-				createdPaths.push(path);
-				return { path };
-			});
-		},
-		read(file: FileLike): Promise<string> {
-			return asyncResult(() => {
-				return files.get(file.path) ?? '';
-			});
-		},
-		process(file: FileLike, fn: (data: string) => string): Promise<string> {
-			return asyncResult(() => {
-				const current = files.get(file.path) ?? '';
-				const next = fn(current);
-				files.set(file.path, next);
-				overwrittenPaths.push(file.path);
-				return next;
-			});
-		},
-	};
-	return vault;
-}
 
 // renameRecordingNote ------------------------------------------------------
 
@@ -3286,7 +3226,7 @@ describe('NoteWriter', () => {
 
 			// Recording B: different id, identical title and date.
 			const outcome = await writer.writeNote(
-				makeRecording({ id: 'bbb222' as PlaudRecordingId }),
+				makeRecording({ id: 'bbb222' as RecordingId }),
 				makeTranscript(),
 				makeSummary(),
 			);
@@ -3310,7 +3250,7 @@ describe('NoteWriter', () => {
 			});
 
 			const outcome = await writer.writeNote(
-				makeRecording({ id: 'bbb222' as PlaudRecordingId }),
+				makeRecording({ id: 'bbb222' as RecordingId }),
 				makeTranscript(),
 				makeSummary(),
 			);
@@ -3331,7 +3271,7 @@ describe('NoteWriter', () => {
 			});
 
 			const outcome = await writer.writeNote(
-				makeRecording({ id: 'ccc333' as PlaudRecordingId }),
+				makeRecording({ id: 'ccc333' as RecordingId }),
 				makeTranscript(),
 				makeSummary(),
 			);
@@ -3351,7 +3291,7 @@ describe('NoteWriter', () => {
 
 			// Same recording, re-imported via the v4 portal as of_<id>.
 			const outcome = await writer.writeNote(
-				makeRecording({ id: 'of_abc123' as PlaudRecordingId }),
+				makeRecording({ id: 'of_abc123' as RecordingId }),
 				makeTranscript(),
 				makeSummary(),
 			);
@@ -4626,7 +4566,7 @@ describe('groupTranscriptByChapters', () => {
 		};
 	}
 	function tx(segments: readonly TranscriptSegment[]): Transcript {
-		return { id: 'abc' as PlaudRecordingId, segments, rawText: '' };
+		return { id: 'abc' as RecordingId, segments, rawText: '' };
 	}
 
 	it('returns [] when transcript is null', () => {
@@ -4840,7 +4780,7 @@ describe('formatTranscriptSection', () => {
 			},
 		];
 		const out = formatTranscriptSection(
-			{ id: 'abc' as PlaudRecordingId, segments: segs, rawText: '' },
+			{ id: 'abc' as RecordingId, segments: segs, rawText: '' },
 			groups,
 			4,
 		);
@@ -4870,7 +4810,7 @@ describe('formatTranscriptSection', () => {
 			},
 		];
 		const out = formatTranscriptSection(
-			{ id: 'abc' as PlaudRecordingId, segments: segs, rawText: '' },
+			{ id: 'abc' as RecordingId, segments: segs, rawText: '' },
 			groups,
 			2,
 		);
@@ -4890,7 +4830,7 @@ describe('formatTranscriptSection', () => {
 			},
 		];
 		const out = formatTranscriptSection(
-			{ id: 'abc' as PlaudRecordingId, segments: segs, rawText: '' },
+			{ id: 'abc' as RecordingId, segments: segs, rawText: '' },
 			groups,
 			6,
 		);
@@ -4910,7 +4850,7 @@ describe('formatTranscriptSection', () => {
 			},
 		];
 		const out = formatTranscriptSection(
-			{ id: 'abc' as PlaudRecordingId, segments: segs, rawText: '' },
+			{ id: 'abc' as RecordingId, segments: segs, rawText: '' },
 			groups,
 			4,
 		);
@@ -4934,7 +4874,7 @@ describe('formatTranscriptSection', () => {
 			},
 		];
 		const out = formatTranscriptSection(
-			{ id: 'abc' as PlaudRecordingId, segments: segs, rawText: '' },
+			{ id: 'abc' as RecordingId, segments: segs, rawText: '' },
 			groups,
 			4,
 		);
@@ -4954,7 +4894,7 @@ describe('formatTranscriptSection', () => {
 			},
 		];
 		const out = formatTranscriptSection(
-			{ id: 'abc' as PlaudRecordingId, segments: segs, rawText: '' },
+			{ id: 'abc' as RecordingId, segments: segs, rawText: '' },
 			groups,
 			4,
 		);
@@ -5454,7 +5394,7 @@ describe('formatPlaceholderMarkdown', () => {
 	it('carries the recording id, link, marker, and reason', () => {
 		const md = formatPlaceholderMarkdown(
 			makeRecording({
-				id: 'rec-9' as PlaudRecordingId,
+				id: 'rec-9' as RecordingId,
 				title: 'Strategy sync',
 			}),
 			'Plaud reported: status=-12 msg=start trans task error',
