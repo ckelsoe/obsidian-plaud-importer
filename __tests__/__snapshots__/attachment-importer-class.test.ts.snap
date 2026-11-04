@@ -49,7 +49,6 @@ User text below.
     {
       "headerNames": [
         "Accept",
-        "Authorization",
       ],
       "url": "https://cdn.example.com/meta.json",
     },
@@ -62,7 +61,6 @@ User text below.
     {
       "headerNames": [
         "Accept",
-        "Authorization",
       ],
       "url": "https://cdn.example.com/two",
     },
@@ -131,7 +129,6 @@ User text below.
     {
       "headerNames": [
         "Accept",
-        "Authorization",
       ],
       "url": "https://cdn.example.com/a/photo.png",
     },
@@ -144,28 +141,24 @@ User text below.
     {
       "headerNames": [
         "Accept",
-        "Authorization",
       ],
       "url": "https://cdn.example.com/b/copy.png",
     },
     {
       "headerNames": [
         "Accept",
-        "Authorization",
       ],
       "url": "https://cdn.example.com/missing.png",
     },
     {
       "headerNames": [
         "Accept",
-        "Authorization",
       ],
       "url": "https://cdn.example.com/boom.png",
     },
     {
       "headerNames": [
         "Accept",
-        "Authorization",
       ],
       "url": "https://cdn.example.com/second.jpeg",
     },
@@ -275,14 +268,12 @@ User text below.
     {
       "headerNames": [
         "Accept",
-        "Authorization",
       ],
       "url": "https://cdn.example.com/mm.html",
     },
     {
       "headerNames": [
         "Accept",
-        "Authorization",
       ],
       "url": "https://cdn.example.com/card-wrapper",
     },
@@ -303,49 +294,42 @@ User text below.
     {
       "headerNames": [
         "Accept",
-        "Authorization",
       ],
       "url": "https://cdn.example.com/p-1x.webp",
     },
     {
       "headerNames": [
         "Accept",
-        "Authorization",
       ],
       "url": "https://cdn.example.com/p-2x.webp",
     },
     {
       "headerNames": [
         "Accept",
-        "Authorization",
       ],
       "url": "https://cdn.example.com/bg.jpg",
     },
     {
       "headerNames": [
         "Accept",
-        "Authorization",
       ],
       "url": "https://cdn.example.com/card-a.txt",
     },
     {
       "headerNames": [
         "Accept",
-        "Authorization",
       ],
       "url": "https://cdn.example.com/card-b.txt",
     },
     {
       "headerNames": [
         "Accept",
-        "Authorization",
       ],
       "url": "https://cdn.example.com/wrapper2",
     },
     {
       "headerNames": [
         "Accept",
-        "Authorization",
       ],
       "url": "https://cdn.example.com/x/diagram.png",
     },
@@ -394,7 +378,6 @@ User text below.
     {
       "headerNames": [
         "Accept",
-        "Authorization",
       ],
       "url": "https://cdn.example.com/a.png",
     },

@@ -366,7 +366,7 @@ describe('AttachmentImporter.importAttachmentsForNote: early exits', () => {
 		expect(vault.folders.has('Plaud/Other-assets')).toBe(false);
 	});
 
-	it('creates the assets folder even when the selection skips every attachment, and leaves the note alone', async () => {
+	it('creates no assets folder when the selection skips every attachment, and leaves the note alone', async () => {
 		const requests = installNetwork({});
 		const { vault, importer } = setup();
 		const before = vault.text(NOTE);
@@ -392,9 +392,8 @@ describe('AttachmentImporter.importAttachmentsForNote: early exits', () => {
 			REC,
 		);
 		expect(requests).toEqual([]);
-		// characterization: current behavior, possibly a bug: an empty
-		// `-assets` folder is created even though nothing will be imported.
-		expect(vault.folders.has(FOLDER)).toBe(true);
+		// Nothing will be imported, so no empty `-assets` folder is created.
+		expect(vault.folders.has(FOLDER)).toBe(false);
 		expect(vault.processed).toEqual([]);
 		expect(vault.text(NOTE)).toBe(before);
 	});
@@ -514,16 +513,12 @@ describe('AttachmentImporter.importAttachmentsForNote: generic attachments', () 
 			),
 		);
 
-		// The bearer is sent to every non-S3 host, presigned S3 gets none.
+		// The bearer goes only to Plaud's own hosts: a third-party host and a
+		// presigned S3 URL both get none.
 		const authByUrl = Object.fromEntries(
 			requests.map((r) => [r.url, r.headers.Authorization ?? null]),
 		);
-		// characterization: current behavior, possibly a bug: the Plaud bearer
-		// token is sent to any absolute non-AWS host (cdn.example.com here),
-		// not only to Plaud's own hosts.
-		expect(authByUrl['https://cdn.example.com/a/photo.png']).toBe(
-			`Bearer ${TOKEN}`,
-		);
+		expect(authByUrl['https://cdn.example.com/a/photo.png']).toBeNull();
 		expect(
 			authByUrl[
 				'https://bucket.s3.amazonaws.com/doc.pdf?X-Amz-Signature=sig'
@@ -551,7 +546,7 @@ describe('AttachmentImporter.importAttachmentsForNote: generic attachments', () 
 		expect(vault.files.has(`${FOLDER}/image1.png`)).toBe(true);
 	});
 
-	it('writes a zero-byte file for an empty 200 response', async () => {
+	it('does not save or embed an empty 200 response', async () => {
 		installNetwork({
 			'https://cdn.example.com/empty.png': {
 				contentType: 'image/png',
@@ -566,14 +561,11 @@ describe('AttachmentImporter.importAttachmentsForNote: generic attachments', () 
 			false,
 			REC,
 		);
-		// characterization: current behavior, possibly a bug: the primary path
-		// has no zero-length check (audio does), so an empty body is saved
-		// and embedded as an image.
-		expect(vault.bytes(`${FOLDER}/${P}-image1.png`).byteLength).toBe(0);
-		expect(vault.text(NOTE)).toContain(`![[${FOLDER}/${P}-image1.png]]`);
+		expect(vault.files.has(`${FOLDER}/${P}-image1.png`)).toBe(false);
+		expect(vault.text(NOTE)).not.toContain(`${P}-image1.png`);
 	});
 
-	it('persists an HTML body as a .html file when only the asset mimeType says HTML', async () => {
+	it('treats a body as an attachment page when only the asset mimeType says HTML', async () => {
 		installNetwork({
 			'https://cdn.example.com/page': { body: '<html>card</html>' },
 		});
@@ -591,15 +583,13 @@ describe('AttachmentImporter.importAttachmentsForNote: generic attachments', () 
 			false,
 			REC,
 		);
-		// characterization: current behavior, possibly a bug: the "never
-		// persist raw HTML wrappers" branch keys only on the RESPONSE
-		// content-type, so a wrapper with no response header is saved as a
-		// generic file.
-		expect(vault.text(NOTE)).toContain(`- [[${FOLDER}/${P}-file1.html]]`);
-		expect(vault.files.has(`${FOLDER}/${P}-file1.html`)).toBe(true);
+		// The response has no content type, so Plaud's mimeType decides: it is
+		// an attachment page, which is never saved as a raw .html file.
+		expect(vault.files.has(`${FOLDER}/${P}-file1.html`)).toBe(false);
+		expect(vault.text(NOTE)).not.toContain('.html');
 	});
 
-	it('silently drops a generic HTML wrapper with no image links (no file, no warning, note untouched)', async () => {
+	it('warns when a generic HTML wrapper has no image links (no file, note untouched)', async () => {
 		const requests = installNetwork({
 			'https://cdn.example.com/a.html': {
 				contentType: 'text/html; charset=utf-8',
@@ -622,9 +612,8 @@ describe('AttachmentImporter.importAttachmentsForNote: generic attachments', () 
 		expect(requests.map((r) => r.url)).toEqual([
 			'https://cdn.example.com/a.html',
 		]);
-		// characterization: current behavior, possibly a bug: the wrapper
-		// counts as "imported" though nothing was saved, so no warning fires.
-		expect(warnSpy).not.toHaveBeenCalled();
+		// Nothing is saved from the wrapper, so the user gets a warning.
+		expect(warnSpy).toHaveBeenCalledTimes(1);
 		expect(vault.paths()).toEqual([NOTE]);
 		expect(vault.text(NOTE)).toBe(before);
 	});
@@ -994,7 +983,7 @@ describe('AttachmentImporter.importAttachmentsForNote: JSON picture_link envelop
 		expect(snapshotState(vault, requests)).toMatchSnapshot();
 	});
 
-	it('treats an unparseable JSON envelope as imported: nothing saved, no warning', async () => {
+	it('warns when an unparseable JSON envelope yields nothing', async () => {
 		installNetwork({
 			'https://cdn.example.com/bad.json': {
 				contentType: 'application/json',
@@ -1009,10 +998,8 @@ describe('AttachmentImporter.importAttachmentsForNote: JSON picture_link envelop
 			false,
 			REC,
 		);
-		// characterization: current behavior, possibly a bug: a JSON parse
-		// failure is only debug-logged; the asset counts as imported, so the
-		// user gets no warning.
-		expect(warnSpy).not.toHaveBeenCalled();
+		// Nothing is saved from the envelope, so the user gets a warning.
+		expect(warnSpy).toHaveBeenCalledTimes(1);
 		expect(vault.paths()).toEqual([NOTE]);
 		expect(vault.processed).toEqual([]);
 	});
@@ -1088,7 +1075,7 @@ describe('AttachmentImporter.importAttachmentsForNote: Plaud marks', () => {
 		expect(vault.processed).toEqual([]);
 	});
 
-	it('saves a non-image mark as a generic-numbered file that nothing references', async () => {
+	it('saves a non-image mark and lists it under other attachments', async () => {
 		installNetwork({
 			[MARK1]: { contentType: 'application/pdf', body: '%PDF' },
 		});
@@ -1101,12 +1088,10 @@ describe('AttachmentImporter.importAttachmentsForNote: Plaud marks', () => {
 			false,
 			REC,
 		);
-		// characterization: current behavior, possibly a bug: a non-image
-		// mark is written to disk (named from the generic file counter) but
-		// is neither embedded nor listed, leaving an orphan file.
+		// The note links the file, so nothing in the assets folder is orphaned.
 		expect(vault.files.has(`${FOLDER}/${P}-file1.pdf`)).toBe(true);
-		expect(vault.processed).toEqual([]);
-		expect(vault.text(NOTE)).toBe(before);
+		expect(vault.text(NOTE)).not.toBe(before);
+		expect(vault.text(NOTE)).toContain(`- [[${FOLDER}/${P}-file1.pdf]]`);
 	});
 });
 
@@ -1191,7 +1176,7 @@ describe('AttachmentImporter.importAttachmentsForNote: replaceExisting', () => {
 		expect(vault.text(NOTE)).toContain(`![[${FOLDER}/${P}-image1-2.png]]`);
 	});
 
-	it('replacing an existing managed section also strips everything after it, including the transcript', async () => {
+	it('replacing an existing managed section keeps the Audio and Transcript sections after it', async () => {
 		installNetwork({ [IMG]: { contentType: 'image/png', body: png(1) } });
 		const { vault, importer } = setup({
 			noteText: note(
@@ -1223,26 +1208,17 @@ describe('AttachmentImporter.importAttachmentsForNote: replaceExisting', () => {
 			false,
 			REC,
 		);
-		// characterization: current behavior, possibly a bug: the strip regex
-		// in stripManagedAttachmentsSection runs to end of input, so the Audio
-		// and Transcript sections after an existing attachments section are
-		// deleted and the new section is appended at the end.
-		expect(vault.text(NOTE)).toBe(
-			note(
-				[
-					'# Meeting',
-					'',
-					'## Images and Attachments',
-					'',
-					'_Imported from Plaud file-detail assets at import time._',
-					'',
-					'### Other attachments',
-					'',
-					'#### Image 1',
-					`![[${FOLDER}/${P}-image1.png]]`,
-				].join('\n'),
-			),
+		const text = vault.text(NOTE);
+		expect(text).not.toContain('old.png');
+		expect(text.match(/## Images and Attachments/g)).toHaveLength(1);
+		expect(text).toContain(`![[${FOLDER}/${P}-image1.png]]`);
+		expect(text).toContain('## Audio');
+		expect(text).toContain('![[a.ogg]]');
+		// The new section lands before the transcript, which is kept intact.
+		expect(text.indexOf('## Images and Attachments')).toBeLessThan(
+			text.indexOf('## Transcript'),
 		);
+		expect(text).toContain('## Transcript\n\nhello');
 	});
 });
 
@@ -1453,18 +1429,37 @@ describe('AttachmentImporter.importAudioForNote', () => {
 		expect(vault.text(NOTE)).toBe(before);
 	});
 
-	it('requests an empty audio URL as-is, with the bearer attached', async () => {
-		const requests = installNetwork({ '': new Error('Invalid URL') });
-		const { importer } = setup();
+	it('skips an empty or unparseable audio URL without any request', async () => {
+		const requests = installNetwork({});
+		const { vault, importer } = setup();
+		const before = vault.text(NOTE);
 		expect(await importer.importAudioForNote(NOTE, '', REC)).toBeNull();
-		// characterization: current behavior, possibly a bug: there is no
-		// guard for a missing URL; an unparseable URL makes
-		// shouldSendAuthHeader return true, so the bearer is attached.
-		expect(requests).toEqual([
-			{
-				url: '',
-				headers: { Accept: '*/*', Authorization: `Bearer ${TOKEN}` },
-			},
+		expect(
+			await importer.importAudioForNote(NOTE, 'not a url', REC),
+		).toBeNull();
+		expect(requests).toEqual([]);
+		expect(vault.text(NOTE)).toBe(before);
+	});
+
+	it('sends the bearer to a Plaud host but not to another host or over http', async () => {
+		const plaud = 'https://api.plaud.ai/audio/x.ogg';
+		const other = 'https://cdn.example.com/x.ogg';
+		const insecure = 'http://api.plaud.ai/audio/x.ogg';
+		const requests = installNetwork({
+			[plaud]: { contentType: 'audio/ogg', body: OGG },
+			[other]: { contentType: 'audio/ogg', body: OGG },
+			[insecure]: { contentType: 'audio/ogg', body: OGG },
+		});
+		const { importer } = setup();
+		await importer.importAudioForNote(NOTE, plaud, REC);
+		await importer.importAudioForNote(NOTE, other, REC);
+		await importer.importAudioForNote(NOTE, insecure, REC);
+		expect(
+			requests.map((r) => [r.url, r.headers.Authorization ?? null]),
+		).toEqual([
+			[plaud, `Bearer ${TOKEN}`],
+			[other, null],
+			[insecure, null],
 		]);
 	});
 });

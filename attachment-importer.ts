@@ -13,6 +13,7 @@ import { NoopDebugLogger, type DebugLogger } from './debug-logger';
 import type { ArtifactSelection } from './import-core';
 import { PLAUD_MARK_DATA_TYPE } from './import-core';
 import { trimTrailingChars } from './text-trim';
+import { isTrustedPlaudUrl } from './plaud-hosts';
 
 // Plaud host bases used to resolve relative asset paths into absolute
 // download candidates. The API host can vary by region (EU accounts get
@@ -22,6 +23,16 @@ import { trimTrailingChars } from './text-trim';
 // no known regional variants, so it stays a constant.
 const DEFAULT_PLAUD_API_BASE = 'https://api.plaud.ai';
 const PLAUD_WEB_BASE = 'https://web.plaud.ai';
+
+/** True for an absolute http(s) URL; false for empty or unparseable input. */
+function isHttpUrl(url: string): boolean {
+	try {
+		const { protocol } = new URL(url);
+		return protocol === 'https:' || protocol === 'http:';
+	} catch {
+		return false;
+	}
+}
 
 type AttachmentKind = 'generic' | 'mindmap' | 'card' | 'mark';
 type RenderedAsset = {
@@ -103,7 +114,17 @@ export class AttachmentImporter {
 		}
 		const folderPath = notePath.replace(/\.md$/i, '-assets');
 		const folder = this.app.vault.getFolderByPath(folderPath);
+		const anySelected = attachments.some((asset) =>
+			this.shouldIncludeAttachmentKind(
+				this.classifyAttachmentKind(asset),
+				selection,
+			),
+		);
 		if (folder === null) {
+			// Nothing will be downloaded, so do not leave an empty folder.
+			if (!anySelected) {
+				return;
+			}
 			await this.app.vault.createFolder(folderPath);
 			this.logAttachmentDebug('created attachment folder', {
 				folderPath,
@@ -257,8 +278,16 @@ export class AttachmentImporter {
 							byteLength: bytes.byteLength,
 						},
 					);
+					// An attachment page: the server says HTML, or it sends no
+					// content type and Plaud's own metadata says HTML.
 					if (
-						(contentType ?? '').toLowerCase().includes('text/html')
+						(contentType ?? '')
+							.toLowerCase()
+							.includes('text/html') ||
+						(contentType === null &&
+							(asset.mimeType ?? '')
+								.toLowerCase()
+								.includes('text/html'))
 					) {
 						this.logAttachmentDebug(
 							'parsing html attachment for image references',
@@ -267,6 +296,7 @@ export class AttachmentImporter {
 								bodyPreview: this.makeBodyPreview(bodyText),
 							},
 						);
+						let savedFromWrapper = 0;
 						const imageLinks =
 							this.extractImageLinksFromHtml(bodyText);
 						const htmlKind = this.classifyHtmlArtifactKind(
@@ -311,10 +341,12 @@ export class AttachmentImporter {
 									);
 								if (nested !== null) {
 									pushRenderedAsset(nestedKind, nested, true);
+									savedFromWrapper += 1;
 								}
 							}
 						}
 						if (imageLinks.length === 0 && htmlKind === 'mindmap') {
+							savedFromWrapper += 1;
 							const fp = this.computeAttachmentFingerprint(bytes);
 							const existingPath = payloadToPath.get(fp);
 							if (existingPath !== undefined) {
@@ -346,6 +378,12 @@ export class AttachmentImporter {
 							}
 						}
 						// Never persist raw HTML wrappers as attachment files.
+						if (savedFromWrapper === 0) {
+							console.warn(
+								`Plaud importer: no image could be saved from an attachment page for ${notePath}`,
+								asset,
+							);
+						}
 						imported = true;
 						break;
 					}
@@ -360,6 +398,7 @@ export class AttachmentImporter {
 								bodyPreview: this.makeBodyPreview(bodyText),
 							},
 						);
+						let savedFromEnvelope = 0;
 						const extraction =
 							this.extractPictureLinksFromJson(bodyText);
 						this.logAttachmentDebug(
@@ -405,6 +444,7 @@ export class AttachmentImporter {
 										},
 									);
 									pushRenderedAsset(nestedKind, nested, true);
+									savedFromEnvelope += 1;
 								} else {
 									this.logAttachmentDebug(
 										'nested picture asset download failed',
@@ -414,6 +454,12 @@ export class AttachmentImporter {
 									);
 								}
 							}
+						}
+						if (savedFromEnvelope === 0) {
+							console.warn(
+								`Plaud importer: no image could be saved from an attachment envelope for ${notePath}`,
+								asset,
+							);
 						}
 						imported = true;
 						break;
@@ -428,22 +474,14 @@ export class AttachmentImporter {
 								existingPath,
 							},
 						);
-						if (kind === 'mark') {
-							// Marks are rendered in note-writer's `## Screenshots`
-							// section; repoint that inline embed to the local copy but
-							// never add a managed "Images and Attachments" entry.
-							if (this.isImageExtension(ext)) {
-								summaryEmbedRewrites.set(
-									asset.url,
-									existingPath,
-								);
-							}
-						} else if (this.isImageExtension(ext)) {
-							summaryEmbedRewrites.set(asset.url, existingPath);
-							pushRenderedAsset(kind, existingPath, true);
-						} else {
-							pushRenderedAsset(kind, existingPath, false);
-						}
+						this.recordSavedAsset(
+							asset.url,
+							existingPath,
+							kind,
+							this.isImageExtension(ext),
+							summaryEmbedRewrites,
+							pushRenderedAsset,
+						);
 						imported = true;
 						break;
 					}
@@ -464,19 +502,14 @@ export class AttachmentImporter {
 						attachmentPath,
 						byteLength: bytes.byteLength,
 					});
-					if (kind === 'mark') {
-						// Marks are rendered in note-writer's `## Screenshots`
-						// section; repoint that inline embed to the local copy but
-						// never add a managed "Images and Attachments" entry.
-						if (this.isImageExtension(ext)) {
-							summaryEmbedRewrites.set(asset.url, attachmentPath);
-						}
-					} else if (this.isImageExtension(ext)) {
-						summaryEmbedRewrites.set(asset.url, attachmentPath);
-						pushRenderedAsset(kind, attachmentPath, true);
-					} else {
-						pushRenderedAsset(kind, attachmentPath, false);
-					}
+					this.recordSavedAsset(
+						asset.url,
+						attachmentPath,
+						kind,
+						this.isImageExtension(ext),
+						summaryEmbedRewrites,
+						pushRenderedAsset,
+					);
 					imported = true;
 					break;
 				} catch (err) {
@@ -711,6 +744,16 @@ export class AttachmentImporter {
 			);
 			return null;
 		}
+		if (!isHttpUrl(audioUrl)) {
+			this.logAttachmentDebug(
+				'audio import aborted: no usable audio URL',
+				{
+					notePath,
+					url: this.sanitizeUrlForDebug(audioUrl),
+				},
+			);
+			return null;
+		}
 		const folderPath = notePath.replace(/\.md$/i, '-assets');
 		// Best-effort contract: createFolder can throw. Keep the throw inside the
 		// method so a real failure returns null instead of escaping. But an
@@ -798,7 +841,7 @@ export class AttachmentImporter {
 			});
 			return null;
 		}
-		if (bytes === null || bytes.byteLength === 0) {
+		if (bytes === null) {
 			this.logAttachmentDebug('audio download produced no bytes', {
 				notePath,
 			});
@@ -854,18 +897,51 @@ export class AttachmentImporter {
 		);
 	}
 
+	/**
+	 * Route one saved (or reused) primary attachment into the note. An image
+	 * repoints the summary's inline embed of `sourceUrl` to the local copy. A
+	 * mark image is already shown in note-writer's `## Screenshots` section, so
+	 * it gets no managed "Images and Attachments" entry; every other saved
+	 * file, including a mark that is not an image, is listed there so nothing
+	 * in the assets folder is left unlinked.
+	 */
+	private recordSavedAsset(
+		sourceUrl: string,
+		path: string,
+		kind: AttachmentKind,
+		isImage: boolean,
+		summaryEmbedRewrites: Map<string, string>,
+		pushRenderedAsset: (
+			kind: AttachmentKind,
+			path: string,
+			isImage: boolean,
+		) => void,
+	): void {
+		if (isImage) {
+			summaryEmbedRewrites.set(sourceUrl, path);
+		}
+		if (!(kind === 'mark' && isImage)) {
+			pushRenderedAsset(kind, path, isImage);
+		}
+	}
+
+	/**
+	 * The response body as bytes, or null when there is none. A zero-length
+	 * body counts as none: every caller skips null, so an empty 200 response is
+	 * never saved and embedded as a 0-byte file.
+	 */
 	private responseToArrayBuffer(
 		response: RequestUrlResponse,
 	): ArrayBuffer | null {
 		const candidate = (response as unknown as { arrayBuffer?: unknown })
 			.arrayBuffer;
+		let bytes: ArrayBuffer | null = null;
 		if (candidate instanceof ArrayBuffer) {
-			return candidate;
+			bytes = candidate;
+		} else if (typeof response.text === 'string') {
+			bytes = new TextEncoder().encode(response.text).buffer;
 		}
-		if (typeof response.text === 'string') {
-			return new TextEncoder().encode(response.text).buffer;
-		}
-		return null;
+		return bytes !== null && bytes.byteLength > 0 ? bytes : null;
 	}
 
 	private isImageExtension(ext: string): boolean {
@@ -1270,20 +1346,17 @@ export class AttachmentImporter {
 	}
 
 	private shouldSendAuthHeader(url: string): boolean {
-		try {
-			const parsed = new URL(url);
-			// Presigned S3 URLs include their own signature. Sending bearer auth can
-			// invalidate the request and produce 400 signature errors.
-			if (parsed.searchParams.has('X-Amz-Signature')) {
-				return false;
-			}
-			if (parsed.hostname.endsWith('.amazonaws.com')) {
-				return false;
-			}
-			return true;
-		} catch {
-			return true;
+		// The bearer token is the user's full Plaud session, so it goes only to
+		// Plaud's own HTTPS hosts. Download URLs come from summary markdown and
+		// from links scraped out of HTML and JSON, so any other host (a CDN, a
+		// link inside a summary) must never see it, and neither may a URL that
+		// does not parse.
+		if (!isTrustedPlaudUrl(url)) {
+			return false;
 		}
+		// Presigned URLs carry their own signature; bearer auth on top can
+		// invalidate the request and produce 400 signature errors.
+		return !new URL(url).searchParams.has('X-Amz-Signature');
 	}
 
 	private inferPictureExtension(
@@ -1487,8 +1560,14 @@ export class AttachmentImporter {
 	}
 
 	private stripManagedAttachmentsSection(content: string): string {
+		// Ends where the section does: at the next `#`/`##` heading (Audio, the
+		// summary sections), a `---` rule, the Transcript heading or callout at
+		// any level, or the end of the note. `###` and deeper headings stay
+		// inside, because older versions grouped the links under them. This
+		// used to run to the end of the note and delete the Audio and
+		// Transcript sections after it.
 		return content.replace(
-			/\n## (?:Attachments|Images and Attachments)[^\S\n]*\n\s*_Imported from Plaud file-detail assets at import time\._[\s\S]*$/m,
+			/\n## (?:Attachments|Images and Attachments)[^\S\n]*\n\s*_Imported from Plaud file-detail assets at import time\._[\s\S]*?(?=\n(?:#{1,2} |-{3,}[^\S\n]*(?:\n|(?![\s\S]))|#{1,6} Transcript|> \[!note\]- Transcript)|(?![\s\S]))/,
 			'',
 		);
 	}

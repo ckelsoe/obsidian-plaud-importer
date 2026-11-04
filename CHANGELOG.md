@@ -4,6 +4,22 @@
 
 All notable changes to Plaud Importer will be documented in this file.
 
+## [Unreleased]
+
+### Security
+
+- **Your Plaud token is now sent only to Plaud.** When downloading attachments and audio, the plugin attached your Plaud sign-in token to every download that was not on Amazon S3, including links to other websites found in a summary or inside an attachment page. It now sends the token only over HTTPS to Plaud's own hosts (`plaud.ai`, `theplaud.com`), and never for a link it cannot read. Downloads from other hosts still work; they just no longer carry your token.
+
+### Fixed
+
+- **An empty download is no longer saved as a 0-byte attachment.** A server reply with no content was written to the assets folder and embedded in the note as a broken image. It is now skipped like any other failed download.
+- **Re-adding the attachments section keeps the sections after it.** Replacing an existing "Images and Attachments" section deleted everything below it in the imported part of the note, including the Audio and Transcript sections. It now replaces only that section. Normal imports were not affected, because an import rewrites the note before adding attachments.
+- **A missing audio link is skipped instead of requested.** An empty or unreadable audio address is no longer sent as a request.
+- **An attachment that yields no file now warns.** An attachment page with no images in it, or a metadata file that cannot be read, was counted as imported without a word. It now logs a warning, like other failed attachments.
+- **No empty assets folder when nothing is selected.** An import whose artifact selection skipped every attachment still created an empty `-assets` folder.
+- **Attachment pages are recognized from Plaud's own metadata.** When the server did not say what kind of file it sent but Plaud's details said it was a web page, the page was saved as a raw `.html` attachment. It is now handled like any other attachment page: its images are saved and the page itself is not. A mind map page with no images in it is still kept as a page, as before.
+- **A screenshot that is not an image is now linked.** A Plaud screenshot that came back as another kind of file (a PDF, for example) was saved to the assets folder with nothing in the note pointing to it. It is now listed under Other attachments.
+
 ## [0.46.3] - 2026-10-24
 
 ### Fixed
