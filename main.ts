@@ -15,6 +15,7 @@ import {
 import { PlaudV4Client } from './plaud-client-v4';
 import { createSequentialPageFetcher } from './list-paging';
 import { ImportModal, classifyError } from './import-modal';
+import { PLAUD_ERROR_POLICY } from './plaud-errors';
 import { BufferedDebugLogger } from './debug-logger';
 import { clearPlaudLoginSession, openPlaudLogin } from './plaud-login';
 import {
@@ -1161,6 +1162,7 @@ export default class PlaudImporterPlugin extends Plugin {
 	 */
 	private buildImportRuntimeOptions(): ImportModalOptions {
 		return {
+			errorPolicy: PLAUD_ERROR_POLICY,
 			outputFolder: this.settings.outputFolder,
 			subfolderTemplate: this.settings.subfolderTemplate,
 			noteNameTemplate: this.settings.noteNameTemplate,

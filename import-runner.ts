@@ -36,7 +36,6 @@ import {
 import {
 	classifyError,
 	categoryAllowsReauth,
-	isPlaudUnprocessedError,
 	PLAUD_MARK_DATA_TYPE,
 	type ImportResult,
 	type ArtifactSelection,
@@ -477,7 +476,10 @@ export async function runImport(
 					// those to the outer handler that stops the batch and
 					// offers inline re-auth.
 					if (
-						categoryAllowsReauth(classifyError(audioErr).category)
+						categoryAllowsReauth(
+							classifyError(audioErr, options.errorPolicy)
+								.category,
+						)
 					) {
 						throw audioErr;
 					}
@@ -527,7 +529,7 @@ export async function runImport(
 				`Plaud importer: import failed for recording ${recording.id} "${recording.title}"`,
 				err,
 			);
-			const classification = classifyError(err);
+			const classification = classifyError(err, options.errorPolicy);
 
 			// A rejected token mid-batch (an expired or revoked session) is
 			// a batch-level terminal condition, not a per-recording failure:
@@ -553,7 +555,7 @@ export async function runImport(
 			// falls through to the normal failure path below.
 			if (
 				options.writePlaceholderForUnprocessed !== false &&
-				isPlaudUnprocessedError(err)
+				options.errorPolicy.isUnprocessed(err)
 			) {
 				try {
 					// Pass Plaud's own concise error line as the stub's reason

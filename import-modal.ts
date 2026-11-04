@@ -21,9 +21,7 @@ import {
 } from './vault-index';
 import { AttachmentImporter } from './attachment-importer';
 import {
-	classifyError,
 	categoryAllowsReauth,
-	isPlaudUnprocessedError,
 	formatDate,
 	formatDuration,
 	tallyImportResults,
@@ -44,6 +42,10 @@ import {
 	type ArtifactSelection,
 	type DuplicateDecisionChoice,
 } from './import-core';
+import {
+	classifyPlaudError as classifyError,
+	isPlaudUnprocessedError,
+} from './plaud-errors';
 
 // The pure helpers and shared types now live in import-core.ts (no `obsidian`
 // dependency, which breaks the former import-modal <-> attachment-importer

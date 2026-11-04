@@ -11,6 +11,7 @@ import {
 } from '../note-writer';
 import { PlaudApiError, PlaudAuthError } from '../plaud-client-re';
 import type { ArtifactSelection, ImportModalOptions } from '../import-core';
+import { PLAUD_ERROR_POLICY } from '../plaud-errors';
 import type { TranscriptAndSummary } from '../plaud-client';
 import type {
 	AttachmentAsset,
@@ -104,6 +105,7 @@ const SELECTION: ArtifactSelection = {
 };
 
 const OPTIONS: ImportModalOptions = {
+	errorPolicy: PLAUD_ERROR_POLICY,
 	outputFolder: 'Plaud',
 	onDuplicate: 'skip',
 };
