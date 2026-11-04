@@ -12,6 +12,7 @@ import {
 import { PlaudApiError, PlaudAuthError } from '../plaud-client-re';
 import type { ArtifactSelection, ImportModalOptions } from '../import-core';
 import { PLAUD_ERROR_POLICY } from '../plaud-errors';
+import { PLAUD_PROFILE } from '../plaud-profile';
 import type { TranscriptAndSummary } from '../plaud-client';
 import type {
 	AttachmentAsset,
@@ -39,6 +40,7 @@ function makeWriter(
 	options: Partial<ConstructorParameters<typeof NoteWriter>[1]> = {},
 ): NoteWriter {
 	return new NoteWriter(vault, {
+		profile: PLAUD_PROFILE,
 		outputFolder: 'Plaud',
 		onDuplicate: 'skip',
 		...options,
@@ -106,6 +108,7 @@ const SELECTION: ArtifactSelection = {
 
 const OPTIONS: ImportModalOptions = {
 	errorPolicy: PLAUD_ERROR_POLICY,
+	profile: PLAUD_PROFILE,
 	outputFolder: 'Plaud',
 	onDuplicate: 'skip',
 };

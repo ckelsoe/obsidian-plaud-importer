@@ -1,19 +1,26 @@
-import { EditorSelection, EditorState } from '@codemirror/state';
+import { Compartment, EditorSelection, EditorState } from '@codemirror/state';
 import { EditorView, type DecorationSet } from '@codemirror/view';
 import { editorLivePreviewField } from 'obsidian';
 import {
 	hideManagedMarkers,
 	managedMarkerDecorations,
 } from '../managed-marker-view';
-import { isManagedMarkerLine, wrapManagedBody } from '../managed-block';
+import {
+	isManagedMarkerLine,
+	managedMarkers,
+	wrapManagedBody,
+} from '../managed-block';
+import { PLAUD_PROFILE } from '../plaud-profile';
 
-const DOC = `---\nplaud-id: abc\n---\nmine above\n\n${wrapManagedBody('# Title\n\nbody')}\n\nmine below\n`;
+const MARKERS = managedMarkers(PLAUD_PROFILE);
+
+const DOC = `---\nplaud-id: abc\n---\nmine above\n\n${wrapManagedBody(MARKERS, '# Title\n\nbody')}\n\nmine below\n`;
 
 function stateWith(doc: string, cursor = 0): EditorState {
 	return EditorState.create({
 		doc,
 		selection: EditorSelection.cursor(cursor),
-		extensions: [editorLivePreviewField, hideManagedMarkers],
+		extensions: [editorLivePreviewField, hideManagedMarkers(PLAUD_PROFILE)],
 	});
 }
 
@@ -34,7 +41,7 @@ describe('isManagedMarkerLine', () => {
 		['<!-- plaud:managed:middle -->', false],
 		['', false],
 	])('%j is a marker line: %s', (line, expected) => {
-		expect(isManagedMarkerLine(line)).toBe(expected);
+		expect(isManagedMarkerLine(MARKERS, line)).toBe(expected);
 	});
 });
 
@@ -152,5 +159,26 @@ describe('marker tracking across edits', () => {
 				hiddenTexts(fresh, managedMarkerDecorations(fresh, true)),
 			);
 		}
+	});
+});
+
+describe('hideManagedMarkers reconfiguration', () => {
+	it('rescans for the new service markers when the profile changes', () => {
+		const comu = { ...PLAUD_PROFILE, keyPrefix: 'comu' };
+		const compartment = new Compartment();
+		const doc = `${wrapManagedBody(MARKERS, 'a')}\n${wrapManagedBody(managedMarkers(comu), 'b')}\n`;
+		const state = EditorState.create({
+			doc,
+			extensions: [
+				editorLivePreviewField,
+				compartment.of(hideManagedMarkers(PLAUD_PROFILE)),
+			],
+		});
+		const next = state.update({
+			effects: compartment.reconfigure(hideManagedMarkers(comu)),
+		}).state;
+		expect(hiddenTexts(next, managedMarkerDecorations(next, true))).toEqual(
+			['<!-- comu:managed:start -->', '<!-- comu:managed:end -->'],
+		);
 	});
 });

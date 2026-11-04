@@ -1,11 +1,17 @@
 import type { RecordingId, Recording } from '../recording-model';
 import type { ImportedIndex, ImportedRecord } from '../vault-index';
+import { PLAUD_PROFILE } from '../plaud-profile';
 import { runAutoSyncTick, type AutoSyncTickDeps } from '../auto-sync-runner';
 import { asyncResult } from './helpers/async-result';
 import { at } from './helpers/checked';
 
 function emptyIndex(): ImportedIndex {
-	return { byId: new Map(), byInstant: new Map(), byDay: new Map() };
+	return {
+		byId: new Map(),
+		byInstant: new Map(),
+		byDay: new Map(),
+		canonicalId: PLAUD_PROFILE.canonicalId,
+	};
 }
 
 function rec(id: string, versionMs: number): Recording {
@@ -32,7 +38,12 @@ function idx(
 			{ path: `Plaud/${id}.md`, versionMs: v, plaudId: id },
 		]),
 	);
-	return { byId, byInstant: new Map(), byDay: new Map() };
+	return {
+		byId,
+		byInstant: new Map(),
+		byDay: new Map(),
+		canonicalId: PLAUD_PROFILE.canonicalId,
+	};
 }
 
 function deps(

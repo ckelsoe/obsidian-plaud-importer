@@ -10,6 +10,7 @@
  */
 
 import {
+	Facet,
 	StateField,
 	type EditorState,
 	type Extension,
@@ -18,7 +19,23 @@ import {
 } from '@codemirror/state';
 import { Decoration, EditorView, type DecorationSet } from '@codemirror/view';
 import { editorLivePreviewField } from 'obsidian';
-import { isManagedMarkerLine } from './managed-block';
+import {
+	isManagedMarkerLine,
+	managedMarkers,
+	type ManagedMarkers,
+} from './managed-block';
+import type { ServiceProfile } from './service-profile';
+
+// The service whose markers are hidden, so the field below can stay a single
+// module-level definition. Set by hideManagedMarkers.
+const markersFacet = Facet.define<ManagedMarkers, ManagedMarkers | undefined>({
+	combine: (values) => values[0],
+});
+
+function isMarker(state: EditorState, text: string): boolean {
+	const markers = state.facet(markersFacet);
+	return markers !== undefined && isManagedMarkerLine(markers, text);
+}
 
 interface LineSpan {
 	readonly from: number;
@@ -32,15 +49,22 @@ interface LineSpan {
  */
 const markerLinesField = StateField.define<readonly LineSpan[]>({
 	create: (state) => findMarkerLines(state),
-	update: (spans, tr) =>
-		tr.docChanged ? updateMarkerLines(spans, tr) : spans,
+	update: (spans, tr) => {
+		// A different service's markers make every cached span suspect.
+		if (
+			tr.startState.facet(markersFacet) !== tr.state.facet(markersFacet)
+		) {
+			return findMarkerLines(tr.state);
+		}
+		return tr.docChanged ? updateMarkerLines(spans, tr) : spans;
+	},
 });
 
 function findMarkerLines(state: EditorState): LineSpan[] {
 	const spans: LineSpan[] = [];
 	let from = 0;
 	for (const text of state.doc.iterLines()) {
-		if (isManagedMarkerLine(text)) {
+		if (isMarker(state, text)) {
 			spans.push({ from, to: from + text.length });
 		}
 		from += text.length + 1;
@@ -68,7 +92,7 @@ function updateMarkerLines(
 			const line = doc.line(n);
 			// A kept span is never stale here: if this line was a marker the
 			// edit touched, its span was dropped above.
-			if (isManagedMarkerLine(line.text)) {
+			if (isMarker(tr.state, line.text)) {
 				byStart.set(line.from, { from: line.from, to: line.to });
 			}
 		}
@@ -102,11 +126,12 @@ export function managedMarkerDecorations(
 }
 
 /**
- * The editor extension. Block replacements cannot come from a view plugin, so
- * the decorations are a facet value recomputed when the marker lines, the
- * selection, or the Live Preview toggle change.
+ * The editor extension for one service's markers. Block replacements cannot
+ * come from a view plugin, so the decorations are a facet value recomputed
+ * when the marker lines, the selection, or the Live Preview toggle change.
  */
-export const hideManagedMarkers: Extension = [
+export const hideManagedMarkers = (profile: ServiceProfile): Extension => [
+	markersFacet.of(managedMarkers(profile)),
 	markerLinesField,
 	EditorView.decorations.compute(
 		[markerLinesField, 'selection', editorLivePreviewField],

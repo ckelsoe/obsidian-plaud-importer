@@ -11,7 +11,7 @@
 //   byDay      calendar day + duration -> note. The only key a date-only older
 //              note offers. Used to dedup, never to heal.
 //
-// Canonical id (see canonicalPlaudId): the v4 portal keeps every v3 recording's
+// Canonical id (see profile.canonicalId): the v4 portal keeps every v3 recording's
 // id and exposes it prefixed, so a v4 recording born in v3 has file_id
 // `of_<v3id>` and resolves in the v4 API by that exact string. An old note may
 // store the bare v3 id (`<v3id>`) or the prefixed form (`of_<v3id>`); both name
@@ -30,6 +30,7 @@
 
 import type { App, TFile } from 'obsidian';
 import type { RecordingId } from './recording-model';
+import type { ServiceProfile } from './service-profile';
 import {
 	stableKeysFromFrontmatter,
 	stableKeysFromRecording,
@@ -60,22 +61,12 @@ export interface ImportedIndex {
 	readonly byId: Map<RecordingId, ImportedRecord>;
 	readonly byInstant: Map<string, ImportedRecord | null>;
 	readonly byDay: Map<string, ImportedRecord | null>;
+	/** The id normalization `byId` is keyed by; apply it before a lookup. */
+	readonly canonicalId: (id: string) => string;
 }
 
 /** How `findImportedNote` matched, most confident first. */
 export type ImportMatch = 'id' | 'instant' | 'day';
-
-/**
- * Collapse a recording id to the form shared by every portal that ever issued
- * it. The v4 portal preserves each v3 recording's id and exposes it as
- * `of_<v3id>`, so a note that stored the bare v3 id (`<v3id>`) and the current
- * v4 recording (`of_<v3id>`) are the same meeting. Stripping the single leading
- * `of_` makes them equal. v4-native ids (`f_...`, `f_s_...`) carry no v3 id and
- * are returned unchanged. Pure and total.
- */
-export function canonicalPlaudId(id: string): string {
-	return id.startsWith('of_') ? id.slice(3) : id;
-}
 
 /** The recording fields the finder needs (a subset of `Recording`). */
 export interface RecordingIdentity {
@@ -84,11 +75,12 @@ export interface RecordingIdentity {
 	readonly durationSeconds: number;
 }
 
-function newIndex(): ImportedIndex {
+function newIndex(profile: ServiceProfile): ImportedIndex {
 	return {
 		byId: new Map<RecordingId, ImportedRecord>(),
 		byInstant: new Map<string, ImportedRecord | null>(),
 		byDay: new Map<string, ImportedRecord | null>(),
+		canonicalId: profile.canonicalId,
 	};
 }
 
@@ -111,10 +103,12 @@ function addFallback(
 }
 
 function recordFromFrontmatter(
+	profile: ServiceProfile,
 	file: TFile,
 	rawFm: Record<string, unknown>,
 ): { id: string; record: ImportedRecord } | null {
-	const id = pickFrontmatterString(rawFm['plaud-id']);
+	const p = profile.keyPrefix;
+	const id = pickFrontmatterString(rawFm[`${p}-id`]);
 	if (id === undefined) return null;
 	return {
 		id,
@@ -122,24 +116,25 @@ function recordFromFrontmatter(
 			path: file.path,
 			plaudId: id,
 			summaryVersion: pickFrontmatterString(
-				rawFm['plaud-summary-version'],
+				rawFm[`${p}-summary-version`],
 			),
-			summaryId: pickFrontmatterString(rawFm['plaud-summary-id']),
-			versionMs: pickFrontmatterNumber(rawFm['plaud-version-ms']),
+			summaryId: pickFrontmatterString(rawFm[`${p}-summary-id`]),
+			versionMs: pickFrontmatterNumber(rawFm[`${p}-version-ms`]),
 		},
 	};
 }
 
 function indexNote(
+	profile: ServiceProfile,
 	index: ImportedIndex,
 	file: TFile,
 	rawFm: Record<string, unknown>,
 ): void {
-	const parsed = recordFromFrontmatter(file, rawFm);
+	const parsed = recordFromFrontmatter(profile, file, rawFm);
 	if (parsed === null) return;
 	// Key by the canonical id so a note storing the bare v3 id and a note storing
 	// the `of_`-prefixed v4 id land on the same key and both match their recording.
-	index.byId.set(canonicalPlaudId(parsed.id) as RecordingId, parsed.record);
+	index.byId.set(index.canonicalId(parsed.id) as RecordingId, parsed.record);
 	const keys = stableKeysFromFrontmatter(rawFm);
 	addFallback(index.byInstant, keys.instant, parsed.record);
 	addFallback(index.byDay, keys.day, parsed.record);
@@ -151,17 +146,18 @@ function indexNote(
  * skipped. Returns an empty index when the cache has not warmed yet.
  */
 export function buildImportedIndex(
+	profile: ServiceProfile,
 	app: App,
 	outputFolder: string,
 ): ImportedIndex {
 	const normalized = normalizeFolder(outputFolder);
-	const index = newIndex();
+	const index = newIndex(profile);
 	for (const file of app.vault.getMarkdownFiles()) {
 		if (!fileIsUnder(file, normalized)) continue;
 		const rawFm: unknown =
 			app.metadataCache.getFileCache(file)?.frontmatter;
 		if (!isRecord(rawFm)) continue;
-		indexNote(index, file, rawFm);
+		indexNote(profile, index, file, rawFm);
 	}
 	return index;
 }
@@ -176,18 +172,19 @@ export type OutputFolderIndexState =
 	| { readonly isCold: false; readonly index: ImportedIndex };
 
 export function buildImportedIndexWithColdCheck(
+	profile: ServiceProfile,
 	app: App,
 	outputFolder: string,
 ): OutputFolderIndexState {
 	const normalized = normalizeFolder(outputFolder);
-	const index = newIndex();
+	const index = newIndex(profile);
 	for (const file of app.vault.getMarkdownFiles()) {
 		if (!fileIsUnder(file, normalized)) continue;
 		const cache = app.metadataCache.getFileCache(file);
 		if (cache === null) return { isCold: true };
 		const rawFm: unknown = cache.frontmatter;
 		if (!isRecord(rawFm)) continue;
-		indexNote(index, file, rawFm);
+		indexNote(profile, index, file, rawFm);
 	}
 	return { isCold: false, index };
 }
@@ -212,7 +209,7 @@ export function findImportedNote(
 	// a single recording with no batch context.
 	ambiguousKeys: ReadonlySet<string> = NO_AMBIGUOUS_KEYS,
 ): { readonly record: ImportedRecord; readonly matchedBy: ImportMatch } | null {
-	const byId = index.byId.get(canonicalPlaudId(recording.id) as RecordingId);
+	const byId = index.byId.get(index.canonicalId(recording.id) as RecordingId);
 	if (byId !== undefined) {
 		return { record: byId, matchedBy: 'id' };
 	}

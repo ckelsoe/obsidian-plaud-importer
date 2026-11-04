@@ -27,6 +27,7 @@ import { NoteWriter, type NoteWriterOptions } from '../note-writer';
 import { PlaudApiError } from '../plaud-client-re';
 import type { ArtifactSelection, ImportModalOptions } from '../import-core';
 import { PLAUD_ERROR_POLICY } from '../plaud-errors';
+import { PLAUD_PROFILE } from '../plaud-profile';
 import type { PlaudFolder, TranscriptAndSummary } from '../plaud-client';
 import type {
 	AttachmentAsset,
@@ -226,6 +227,7 @@ async function run(scenario: Scenario): Promise<Record<string, unknown>> {
 		onDuplicate: 'overwrite',
 		...scenario.options,
 		errorPolicy: PLAUD_ERROR_POLICY,
+		profile: PLAUD_PROFILE,
 	};
 	const writer = new NoteWriter(vault, options satisfies NoteWriterOptions);
 	const deps: ImportRunDeps = {

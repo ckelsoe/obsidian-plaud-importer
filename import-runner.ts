@@ -349,11 +349,16 @@ export async function runImport(
 			// built list (even when empty) so a restrictive tag mode
 			// cannot leak the raw Plaud tags into the frontmatter.
 			// formatFrontmatter omits empty tags:/keywords: keys.
-			const tagResult = buildNoteTags(folderTags, aiKeywords, {
-				tagMode: options.tagMode ?? 'plaud',
-				customTags: options.customTags ?? '',
-				aiKeywordsAsProperty: options.aiKeywordsAsProperty ?? true,
-			});
+			const tagResult = buildNoteTags(
+				options.profile,
+				folderTags,
+				aiKeywords,
+				{
+					tagMode: options.tagMode ?? 'plaud',
+					customTags: options.customTags ?? '',
+					aiKeywordsAsProperty: options.aiKeywordsAsProperty ?? true,
+				},
+			);
 			const enrichedRecording = { ...recording, tags: tagResult.tags };
 			const formatOptions: FormatMarkdownOptions = {
 				includeTranscript: selection.includeTranscript,

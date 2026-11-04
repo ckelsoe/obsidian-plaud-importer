@@ -1,0 +1,121 @@
+/**
+ * The service-neutral modules take every stored name from a ServiceProfile. A
+ * fake second service proves no Plaud name leaks into its notes and that its
+ * markers and keys are the only ones it recognizes.
+ */
+import type { App } from 'obsidian';
+import { locateManagedBlock, managedMarkers } from '../managed-block';
+import {
+	NoteWriter,
+	buildNoteTags,
+	transcriptFileMarker,
+} from '../note-writer';
+import { PLAUD_PROFILE } from '../plaud-profile';
+import type {
+	Chapter,
+	RecordingId,
+	Recording,
+	Transcript,
+} from '../recording-model';
+import type { ServiceProfile } from '../service-profile';
+import { buildImportedIndex } from '../vault-index';
+import { makeFakeVault } from './helpers/fake-vault';
+
+const COMU: ServiceProfile = {
+	keyPrefix: 'comu',
+	pluginId: 'comu-importer',
+	canonicalId: (id) => id.toLowerCase(),
+};
+
+const RECORDING: Recording = {
+	id: 'abc123' as RecordingId,
+	title: 'Standup',
+	createdAt: new Date(2026, 3, 14, 9, 30),
+	endsAt: new Date(2026, 3, 14, 9, 40),
+	durationSeconds: 600,
+	captureOffsetMinutes: null,
+	transcriptAvailable: true,
+	summaryAvailable: true,
+	isTrashed: false,
+	versionMs: 42,
+};
+
+const TRANSCRIPT: Transcript = {
+	id: RECORDING.id,
+	segments: [{ startSeconds: 0, endSeconds: 5, speaker: 'A', text: 'Hi.' }],
+	rawText: 'Hi.',
+};
+const CHAPTERS: readonly Chapter[] = [{ title: 'Intro', startSeconds: 0 }];
+
+describe('a non-Plaud service profile', () => {
+	it('writes its own keys, source and markers, and re-imports inside them', async () => {
+		const vault = makeFakeVault();
+		const writer = new NoteWriter(vault, {
+			profile: COMU,
+			outputFolder: 'Comu',
+			onDuplicate: 'overwrite',
+		});
+		const first = await writer.writeNote(
+			RECORDING,
+			TRANSCRIPT,
+			{ id: RECORDING.id, text: 'Summary', summaryId: 's1' },
+			CHAPTERS,
+		);
+		const path = first.path;
+		const written = vault.files.get(path) ?? '';
+		expect(written).toMatch(/^comu-id: abc123$/m);
+		expect(written).toMatch(/^comu-version-ms: 42$/m);
+		expect(written).toMatch(/^comu-summary-id: s1$/m);
+		expect(written).toMatch(/^source: comu$/m);
+		expect(written).toContain('<!-- comu:managed:start -->');
+		expect(written).toContain('<!-- comu:managed:end -->');
+		expect(written).toContain('^comu-chapters');
+		expect(written).toContain('[[#^comu-chapters|Back to Chapters]]');
+		expect(written).not.toMatch(/^plaud-/m);
+		expect(written).not.toContain('plaud:managed');
+
+		// The user's text below the comu block survives a re-import.
+		vault.files.set(path, `${written}\nmine\n`);
+		await writer.writeNote(RECORDING, TRANSCRIPT, {
+			id: RECORDING.id,
+			text: 'New',
+		});
+		expect(vault.files.get(path)).toMatch(
+			/New[\s\S]*comu:managed:end[\s\S]*mine/,
+		);
+	});
+
+	it('finds its own markers and ignores another service’s', () => {
+		const comu = managedMarkers(COMU);
+		const plaud = managedMarkers(PLAUD_PROFILE);
+		const note = `${comu.start}\n\nbody\n\n${comu.end}\n`;
+		expect(locateManagedBlock(comu, note).kind).toBe('ok');
+		expect(locateManagedBlock(plaud, note).kind).toBe('none');
+	});
+
+	it('names its transcript-file marker and AI-keyword tags', () => {
+		expect(transcriptFileMarker(COMU)).toBe(
+			'%% comu-importer: managed transcript %%',
+		);
+		const { tags } = buildNoteTags(COMU, [], ['AI Agent'], {
+			tagMode: 'all',
+			customTags: '',
+			aiKeywordsAsProperty: false,
+		});
+		expect(tags).toEqual(['comu/ai-agent']);
+	});
+
+	it('indexes notes by its own id key and canonical id', () => {
+		const app = {
+			vault: { getMarkdownFiles: () => [{ path: 'Comu/a.md' }] },
+			metadataCache: {
+				getFileCache: () => ({
+					frontmatter: { 'comu-id': 'ABC123', 'plaud-id': 'other' },
+				}),
+			},
+		} as unknown as App;
+		const index = buildImportedIndex(COMU, app, 'Comu');
+		expect([...index.byId.keys()]).toEqual(['abc123']);
+		expect(index.byId.get('abc123' as RecordingId)?.plaudId).toBe('ABC123');
+	});
+});

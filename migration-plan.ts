@@ -6,7 +6,7 @@
 //
 // A note is healed in one of two ways:
 //   - via 'id' (exact): the note matches the recording by CANONICAL id but stored
-//     the bare/old form of that id (see canonicalPlaudId). The rewrite is an
+//     the bare/old form of that id (see ImportedIndex.canonicalId). The rewrite is an
 //     identity, not a guess, so it needs no guard. This is the common case: the
 //     v4 portal keeps every v3 id as `of_<v3id>`, and an old note stored `<v3id>`.
 //   - via 'start-time'/'date' (fuzzy): the note's id does not resolve at all, so

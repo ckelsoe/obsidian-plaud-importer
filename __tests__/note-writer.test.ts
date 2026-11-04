@@ -31,7 +31,7 @@ import {
 	formatTranscriptFileMarkdown,
 	isTranscriptPlacement,
 	transcriptFilePathFor,
-	TRANSCRIPT_FILE_MARKER,
+	transcriptFileMarker,
 	groupTranscriptByChapters,
 	isValidNoteNameTemplate,
 	isValidReplacementChar,
@@ -49,7 +49,8 @@ import {
 	type TranscriptChapterGroup,
 	type VaultLike,
 } from '../note-writer';
-import { MANAGED_BLOCK_END, MANAGED_BLOCK_START } from '../managed-block';
+import { managedMarkers } from '../managed-block';
+import { PLAUD_PROFILE } from '../plaud-profile';
 import type {
 	Chapter,
 	ConsumerNote,
@@ -66,6 +67,9 @@ import { moment } from 'obsidian';
 import { asyncResult } from './helpers/async-result';
 import { makeFakeVault, type FakeVault } from './helpers/fake-vault';
 import { at } from './helpers/checked';
+
+const { start: MANAGED_BLOCK_START, end: MANAGED_BLOCK_END } =
+	managedMarkers(PLAUD_PROFILE);
 
 // Fixtures ------------------------------------------------------------------
 
@@ -1283,7 +1287,10 @@ describe('formatPlaudWebUrl', () => {
 
 describe('formatFrontmatter', () => {
 	it('includes all required fields in the documented order', () => {
-		const fm = formatFrontmatter(makeRecording(), ['Charles', 'Mary']);
+		const fm = formatFrontmatter(PLAUD_PROFILE, makeRecording(), [
+			'Charles',
+			'Mary',
+		]);
 		const lines = fm.split('\n');
 		expect(lines[0]).toBe('---');
 		expect(lines).toContain('plaud-id: abc123');
@@ -1302,7 +1309,7 @@ describe('formatFrontmatter', () => {
 	});
 
 	it('places plaud-url directly after plaud-id', () => {
-		const fm = formatFrontmatter(makeRecording(), []);
+		const fm = formatFrontmatter(PLAUD_PROFILE, makeRecording(), []);
 		const lines = fm.split('\n');
 		const idIdx = lines.findIndex((l) => l.startsWith('plaud-id:'));
 		const urlIdx = lines.findIndex((l) => l.startsWith('plaud-url:'));
@@ -1313,6 +1320,7 @@ describe('formatFrontmatter', () => {
 	it('includes a human-readable duration field alongside duration-seconds', () => {
 		// 5400s → 90m → 1h 30m (crosses hour boundary)
 		const fm = formatFrontmatter(
+			PLAUD_PROFILE,
 			makeRecording({ durationSeconds: 5400 }),
 			[],
 		);
@@ -1322,6 +1330,7 @@ describe('formatFrontmatter', () => {
 
 	it('formats very short durations as seconds in the duration field', () => {
 		const fm = formatFrontmatter(
+			PLAUD_PROFILE,
 			makeRecording({ durationSeconds: 42 }),
 			[],
 		);
@@ -1331,6 +1340,7 @@ describe('formatFrontmatter', () => {
 
 	it('formats whole-hour durations without a trailing 0m', () => {
 		const fm = formatFrontmatter(
+			PLAUD_PROFILE,
 			makeRecording({ durationSeconds: 7200 }),
 			[],
 		);
@@ -1338,17 +1348,22 @@ describe('formatFrontmatter', () => {
 	});
 
 	it('omits the speakers line when speakers is empty', () => {
-		const fm = formatFrontmatter(makeRecording(), []);
+		const fm = formatFrontmatter(PLAUD_PROFILE, makeRecording(), []);
 		expect(fm).not.toMatch(/speakers:/);
 	});
 
 	it('omits the tags line when recording.tags is absent', () => {
-		const fm = formatFrontmatter(makeRecording({ tags: undefined }), []);
+		const fm = formatFrontmatter(
+			PLAUD_PROFILE,
+			makeRecording({ tags: undefined }),
+			[],
+		);
 		expect(fm).not.toMatch(/tags:/);
 	});
 
 	it('emits plaud-version-ms as a raw number when versionMs is present (auto-sync cursor)', () => {
 		const fm = formatFrontmatter(
+			PLAUD_PROFILE,
 			makeRecording({ versionMs: 1782918853105 }),
 			[],
 		);
@@ -1357,6 +1372,7 @@ describe('formatFrontmatter', () => {
 
 	it('omits plaud-version-ms when versionMs is absent', () => {
 		const fm = formatFrontmatter(
+			PLAUD_PROFILE,
 			makeRecording({ versionMs: undefined }),
 			[],
 		);
@@ -1365,6 +1381,7 @@ describe('formatFrontmatter', () => {
 
 	it('includes tags when recording.tags has values', () => {
 		const fm = formatFrontmatter(
+			PLAUD_PROFILE,
 			makeRecording({ tags: ['meeting', 'q2'] }),
 			[],
 		);
@@ -1372,7 +1389,7 @@ describe('formatFrontmatter', () => {
 	});
 
 	it('quotes YAML scalars with special characters', () => {
-		const fm = formatFrontmatter(makeRecording(), [
+		const fm = formatFrontmatter(PLAUD_PROFILE, makeRecording(), [
 			'Ana: Chen',
 			'Bo "B" Li',
 		]);
@@ -1380,14 +1397,17 @@ describe('formatFrontmatter', () => {
 	});
 
 	it('omits the keywords line when keywords is absent or empty', () => {
-		expect(formatFrontmatter(makeRecording(), [])).not.toMatch(/keywords:/);
-		expect(formatFrontmatter(makeRecording(), [], null, [])).not.toMatch(
-			/keywords:/,
-		);
+		expect(
+			formatFrontmatter(PLAUD_PROFILE, makeRecording(), []),
+		).not.toMatch(/keywords:/);
+		expect(
+			formatFrontmatter(PLAUD_PROFILE, makeRecording(), [], null, []),
+		).not.toMatch(/keywords:/);
 	});
 
 	it('emits the keywords line after tags when keywords has values', () => {
 		const fm = formatFrontmatter(
+			PLAUD_PROFILE,
 			makeRecording({ tags: ['meeting'] }),
 			[],
 			null,
@@ -1398,7 +1418,7 @@ describe('formatFrontmatter', () => {
 	});
 
 	it('quotes keyword values with special characters', () => {
-		const fm = formatFrontmatter(makeRecording(), [], null, [
+		const fm = formatFrontmatter(PLAUD_PROFILE, makeRecording(), [], null, [
 			'Q2: Review',
 			'true',
 		]);
@@ -1411,6 +1431,7 @@ describe('formatFrontmatter', () => {
 
 	it('emits a single folder name as a plaud-folder array', () => {
 		const fm = formatFrontmatter(
+			PLAUD_PROFILE,
 			makeRecording({ tags: ['work'] }),
 			[],
 			null,
@@ -1421,29 +1442,41 @@ describe('formatFrontmatter', () => {
 	});
 
 	it('emits multiple folder names, quoting ones with special characters', () => {
-		const fm = formatFrontmatter(makeRecording(), [], null, undefined, [
-			'Daily Journal',
-			'B&B',
-		]);
+		const fm = formatFrontmatter(
+			PLAUD_PROFILE,
+			makeRecording(),
+			[],
+			null,
+			undefined,
+			['Daily Journal', 'B&B'],
+		);
 		expect(fm).toContain('plaud-folder: [Daily Journal, "B&B"]');
 	});
 
 	it('omits plaud-folder when folders is absent or empty', () => {
-		expect(formatFrontmatter(makeRecording(), [])).not.toMatch(
-			/plaud-folder:/,
-		);
 		expect(
-			formatFrontmatter(makeRecording(), [], null, undefined, []),
+			formatFrontmatter(PLAUD_PROFILE, makeRecording(), []),
+		).not.toMatch(/plaud-folder:/);
+		expect(
+			formatFrontmatter(
+				PLAUD_PROFILE,
+				makeRecording(),
+				[],
+				null,
+				undefined,
+				[],
+			),
 		).not.toMatch(/plaud-folder:/);
 	});
 
 	// datetime property (issue #32). The recording is 2026-04-14 09:30 local.
 	it('omits the datetime line when the template is absent or empty', () => {
-		expect(formatFrontmatter(makeRecording(), [])).not.toMatch(
-			/^datetime:/m,
-		);
+		expect(
+			formatFrontmatter(PLAUD_PROFILE, makeRecording(), []),
+		).not.toMatch(/^datetime:/m);
 		expect(
 			formatFrontmatter(
+				PLAUD_PROFILE,
 				makeRecording(),
 				[],
 				null,
@@ -1454,6 +1487,7 @@ describe('formatFrontmatter', () => {
 		).not.toMatch(/^datetime:/m);
 		expect(
 			formatFrontmatter(
+				PLAUD_PROFILE,
 				makeRecording(),
 				[],
 				null,
@@ -1466,6 +1500,7 @@ describe('formatFrontmatter', () => {
 
 	it('emits a 24-hour datetime, quoted for the colon', () => {
 		const fm = formatFrontmatter(
+			PLAUD_PROFILE,
 			makeRecording(),
 			[],
 			null,
@@ -1478,6 +1513,7 @@ describe('formatFrontmatter', () => {
 
 	it('emits a 12-hour datetime with AM/PM', () => {
 		const fm = formatFrontmatter(
+			PLAUD_PROFILE,
 			makeRecording(),
 			[],
 			null,
@@ -1490,6 +1526,7 @@ describe('formatFrontmatter', () => {
 
 	it('emits an ISO datetime carrying the local UTC offset', () => {
 		const fm = formatFrontmatter(
+			PLAUD_PROFILE,
 			makeRecording(),
 			[],
 			null,
@@ -1505,6 +1542,7 @@ describe('formatFrontmatter', () => {
 
 	it('keeps date as YYYY-MM-DD, then start-time, end-time, then datetime', () => {
 		const fm = formatFrontmatter(
+			PLAUD_PROFILE,
 			makeRecording(),
 			[],
 			null,
@@ -1522,6 +1560,7 @@ describe('formatFrontmatter', () => {
 
 	it('clamps negative/infinite durations in the duration-seconds line', () => {
 		const fm = formatFrontmatter(
+			PLAUD_PROFILE,
 			makeRecording({ durationSeconds: -10 }),
 			[],
 		);
@@ -1530,6 +1569,7 @@ describe('formatFrontmatter', () => {
 
 	it('floors fractional durations', () => {
 		const fm = formatFrontmatter(
+			PLAUD_PROFILE,
 			makeRecording({ durationSeconds: 600.9 }),
 			[],
 		);
@@ -1537,7 +1577,7 @@ describe('formatFrontmatter', () => {
 	});
 
 	it('always includes source: plaud for Dataview discovery', () => {
-		const fm = formatFrontmatter(makeRecording(), []);
+		const fm = formatFrontmatter(PLAUD_PROFILE, makeRecording(), []);
 		expect(fm).toContain('source: plaud');
 	});
 
@@ -1546,7 +1586,7 @@ describe('formatFrontmatter', () => {
 	// extras produce no output, so older recordings stay clean.
 
 	it('omits all plaud-* extras lines when summary is undefined', () => {
-		const fm = formatFrontmatter(makeRecording(), []);
+		const fm = formatFrontmatter(PLAUD_PROFILE, makeRecording(), []);
 		expect(fm).not.toMatch(/plaud-headline:/);
 		expect(fm).not.toMatch(/plaud-category:/);
 		expect(fm).not.toMatch(/plaud-language:/);
@@ -1558,13 +1598,19 @@ describe('formatFrontmatter', () => {
 	});
 
 	it('omits all plaud-* extras lines when summary has only id+text', () => {
-		const fm = formatFrontmatter(makeRecording(), [], makeSummary());
+		const fm = formatFrontmatter(
+			PLAUD_PROFILE,
+			makeRecording(),
+			[],
+			makeSummary(),
+		);
 		expect(fm).not.toMatch(/plaud-headline:/);
 		expect(fm).not.toMatch(/plaud-template:/);
 	});
 
 	it('emits exactly the extras lines for fields present on Summary', () => {
 		const fm = formatFrontmatter(
+			PLAUD_PROFILE,
 			makeRecording(),
 			[],
 			makeSummary({
@@ -1597,6 +1643,7 @@ describe('formatFrontmatter', () => {
 
 	it('omits plaud-category when it duplicates plaud-template (issue #61)', () => {
 		const fm = formatFrontmatter(
+			PLAUD_PROFILE,
 			makeRecording(),
 			[],
 			makeSummary({
@@ -1612,6 +1659,7 @@ describe('formatFrontmatter', () => {
 
 	it('keeps plaud-category when it differs from plaud-template', () => {
 		const fm = formatFrontmatter(
+			PLAUD_PROFILE,
 			makeRecording(),
 			[],
 			makeSummary({
@@ -1625,6 +1673,7 @@ describe('formatFrontmatter', () => {
 
 	it('emits plaud-industry from the industry field, separate from category', () => {
 		const fm = formatFrontmatter(
+			PLAUD_PROFILE,
 			makeRecording(),
 			[],
 			makeSummary({
@@ -1641,6 +1690,7 @@ describe('formatFrontmatter', () => {
 
 	it('emits partial extras and omits the rest', () => {
 		const fm = formatFrontmatter(
+			PLAUD_PROFILE,
 			makeRecording(),
 			[],
 			makeSummary({ template: 'lecture', language: 'en' }),
@@ -1888,6 +1938,7 @@ describe('formatFrontmatter custom rows', () => {
 
 	it('appends a custom property after the built-in fields', () => {
 		const fm = formatFrontmatter(
+			PLAUD_PROFILE,
 			makeRecording(),
 			[],
 			null,
@@ -1902,6 +1953,7 @@ describe('formatFrontmatter custom rows', () => {
 
 	it('renders {{device}} in a custom row from the device-name map', () => {
 		const fm = formatFrontmatter(
+			PLAUD_PROFILE,
 			makeRecording({ source: { kind: 'device', serial: 'NP' } }),
 			[],
 			null,
@@ -1919,6 +1971,7 @@ describe('formatFrontmatter custom rows', () => {
 
 	it('writes an empty value as YAML null', () => {
 		const fm = formatFrontmatter(
+			PLAUD_PROFILE,
 			makeRecording(),
 			[],
 			null,
@@ -1932,6 +1985,7 @@ describe('formatFrontmatter custom rows', () => {
 
 	it('expands tokens in a custom value', () => {
 		const fm = formatFrontmatter(
+			PLAUD_PROFILE,
 			makeRecording(),
 			[],
 			null,
@@ -1945,6 +1999,7 @@ describe('formatFrontmatter custom rows', () => {
 
 	it('expands a content token, and writes null when the summary is absent', () => {
 		const withSummary = formatFrontmatter(
+			PLAUD_PROFILE,
 			makeRecording(),
 			[],
 			makeSummary({ category: 'Lecture' }),
@@ -1955,6 +2010,7 @@ describe('formatFrontmatter custom rows', () => {
 		);
 		expect(withSummary).toMatch(/^type: Lecture$/m);
 		const noSummary = formatFrontmatter(
+			PLAUD_PROFILE,
 			makeRecording(),
 			[],
 			null,
@@ -1968,6 +2024,7 @@ describe('formatFrontmatter custom rows', () => {
 
 	it('keeps the existing value when preserve is on and the key already exists', () => {
 		const fm = formatFrontmatter(
+			PLAUD_PROFILE,
 			makeRecording(),
 			[],
 			null,
@@ -1983,6 +2040,7 @@ describe('formatFrontmatter custom rows', () => {
 
 	it('regenerates when preserve is on but the key is not in the existing note', () => {
 		const fm = formatFrontmatter(
+			PLAUD_PROFILE,
 			makeRecording(),
 			[],
 			null,
@@ -1997,6 +2055,7 @@ describe('formatFrontmatter custom rows', () => {
 
 	it('refreshes an existing value when preserve is off', () => {
 		const fm = formatFrontmatter(
+			PLAUD_PROFILE,
 			makeRecording(),
 			[],
 			null,
@@ -2011,6 +2070,7 @@ describe('formatFrontmatter custom rows', () => {
 
 	it('never lets a custom row override the locked plaud-id', () => {
 		const fm = formatFrontmatter(
+			PLAUD_PROFILE,
 			makeRecording(),
 			[],
 			null,
@@ -2025,6 +2085,7 @@ describe('formatFrontmatter custom rows', () => {
 
 	it('ignores a custom row whose name matches a plugin field', () => {
 		const fm = formatFrontmatter(
+			PLAUD_PROFILE,
 			makeRecording(),
 			[],
 			null,
@@ -2039,6 +2100,7 @@ describe('formatFrontmatter custom rows', () => {
 
 	it('preserves a value for an unquoted key with spaces', () => {
 		const fm = formatFrontmatter(
+			PLAUD_PROFILE,
 			makeRecording(),
 			[],
 			null,
@@ -2053,6 +2115,7 @@ describe('formatFrontmatter custom rows', () => {
 
 	it('preserves a value for a quoted key that contains a colon', () => {
 		const fm = formatFrontmatter(
+			PLAUD_PROFILE,
 			makeRecording(),
 			[],
 			null,
@@ -2067,6 +2130,7 @@ describe('formatFrontmatter custom rows', () => {
 
 	it('quotes a custom key that would otherwise break the YAML', () => {
 		const fm = formatFrontmatter(
+			PLAUD_PROFILE,
 			makeRecording(),
 			[],
 			null,
@@ -2080,6 +2144,7 @@ describe('formatFrontmatter custom rows', () => {
 
 	it('round-trips a preserved block scalar value', () => {
 		const fm = formatFrontmatter(
+			PLAUD_PROFILE,
 			makeRecording(),
 			[],
 			null,
@@ -2093,8 +2158,11 @@ describe('formatFrontmatter custom rows', () => {
 	});
 
 	it('produces identical output to no custom rows when the list is empty', () => {
-		const base = formatFrontmatter(makeRecording(), ['Charles']);
+		const base = formatFrontmatter(PLAUD_PROFILE, makeRecording(), [
+			'Charles',
+		]);
 		const withEmpty = formatFrontmatter(
+			PLAUD_PROFILE,
 			makeRecording(),
 			['Charles'],
 			null,
@@ -2118,6 +2186,7 @@ describe('formatFrontmatter preserve-unknown passthrough', () => {
 		customRows?: readonly CustomFrontmatterRow[],
 	): string =>
 		formatFrontmatter(
+			PLAUD_PROFILE,
 			makeRecording(),
 			[],
 			null,
@@ -2189,7 +2258,7 @@ describe('formatFrontmatter preserve-unknown passthrough', () => {
 
 describe('renderCustomFrontmatterPreview', () => {
 	it('renders each row against the preview context', () => {
-		const lines = renderCustomFrontmatterPreview([
+		const lines = renderCustomFrontmatterPreview(PLAUD_PROFILE, [
 			{ key: 'status', value: 'unprocessed', preserve: true },
 			{ key: 'quarter', value: 'Q{{Q}}-{{YYYY}}', preserve: false },
 		]);
@@ -2199,7 +2268,7 @@ describe('renderCustomFrontmatterPreview', () => {
 	});
 
 	it('skips a blank key and the locked plaud-id, and nulls an empty value', () => {
-		const lines = renderCustomFrontmatterPreview([
+		const lines = renderCustomFrontmatterPreview(PLAUD_PROFILE, [
 			{ key: '', value: 'x', preserve: true },
 			{ key: 'plaud-id', value: 'nope', preserve: false },
 			{ key: 'project', value: '', preserve: true },
@@ -2217,6 +2286,7 @@ describe('renderCustomFrontmatterPreview', () => {
 describe('formatMarkdown', () => {
 	it('produces frontmatter, H1, open-in-plaud link, summary, and transcript callout in order', () => {
 		const md = formatMarkdown(
+			PLAUD_PROFILE,
 			makeRecording(),
 			makeTranscript(),
 			makeSummary(),
@@ -2236,6 +2306,7 @@ describe('formatMarkdown', () => {
 
 	it('puts the Open in Plaud link on its own line directly after the H1 (blank line separator)', () => {
 		const md = formatMarkdown(
+			PLAUD_PROFILE,
 			makeRecording(),
 			makeTranscript(),
 			makeSummary(),
@@ -2251,6 +2322,7 @@ describe('formatMarkdown', () => {
 
 	it('appends an AI Suggestions section after Summary when present', () => {
 		const md = formatMarkdown(
+			PLAUD_PROFILE,
 			makeRecording(),
 			makeTranscript(),
 			makeSummary({
@@ -2267,6 +2339,7 @@ describe('formatMarkdown', () => {
 
 	it('omits the AI Suggestions section when summary lacks aiSuggestion', () => {
 		const md = formatMarkdown(
+			PLAUD_PROFILE,
 			makeRecording(),
 			makeTranscript(),
 			makeSummary(),
@@ -2276,6 +2349,7 @@ describe('formatMarkdown', () => {
 
 	it('renders a Screenshots section with timestamps and image embeds when marks are present', () => {
 		const md = formatMarkdown(
+			PLAUD_PROFILE,
 			makeRecording(),
 			makeTranscript(),
 			makeSummary(),
@@ -2315,6 +2389,7 @@ describe('formatMarkdown', () => {
 
 	it('omits the Screenshots section when there are no marks', () => {
 		const md = formatMarkdown(
+			PLAUD_PROFILE,
 			makeRecording(),
 			makeTranscript(),
 			makeSummary(),
@@ -2324,6 +2399,7 @@ describe('formatMarkdown', () => {
 
 	it('writes plaud-location and no plaud-folder for a system-bucket recording', () => {
 		const md = formatMarkdown(
+			PLAUD_PROFILE,
 			makeRecording(),
 			makeTranscript(),
 			makeSummary(),
@@ -2336,6 +2412,7 @@ describe('formatMarkdown', () => {
 
 	it('writes plaud-folder and no plaud-location for a real folder', () => {
 		const md = formatMarkdown(
+			PLAUD_PROFILE,
 			makeRecording(),
 			makeTranscript(),
 			makeSummary(),
@@ -2348,6 +2425,7 @@ describe('formatMarkdown', () => {
 
 	it('renders each additional summary as its own section after the primary', () => {
 		const md = formatMarkdown(
+			PLAUD_PROFILE,
 			makeRecording(),
 			makeTranscript(),
 			makeSummary(),
@@ -2369,6 +2447,7 @@ describe('formatMarkdown', () => {
 
 	it('omits additional summaries when the summary artifact is excluded', () => {
 		const md = formatMarkdown(
+			PLAUD_PROFILE,
 			makeRecording(),
 			makeTranscript(),
 			makeSummary(),
@@ -2386,6 +2465,7 @@ describe('formatMarkdown', () => {
 
 	it('builds the Open in Plaud link from formatPlaudWebUrl for the recording ID', () => {
 		const md = formatMarkdown(
+			PLAUD_PROFILE,
 			makeRecording({
 				id: '4cba85e559d7f7c9058bf71c23d86d2d' as RecordingId,
 			}),
@@ -2399,6 +2479,7 @@ describe('formatMarkdown', () => {
 
 	it('threads a v4 webBaseUrl into the frontmatter and the link', () => {
 		const md = formatMarkdown(
+			PLAUD_PROFILE,
 			makeRecording({ id: 'of_abc123' as RecordingId }),
 			makeTranscript(),
 			makeSummary(),
@@ -2415,6 +2496,7 @@ describe('formatMarkdown', () => {
 
 	it('replaces a title date with the recording date in the H1', () => {
 		const md = formatMarkdown(
+			PLAUD_PROFILE,
 			makeRecording({ title: '04-13 Client kickoff' }),
 			makeTranscript(),
 			makeSummary(),
@@ -2426,6 +2508,7 @@ describe('formatMarkdown', () => {
 
 	it('prepends the recording date to a dateless title in the H1', () => {
 		const md = formatMarkdown(
+			PLAUD_PROFILE,
 			makeRecording({ title: 'Quarterly review' }),
 			makeTranscript(),
 			makeSummary(),
@@ -2437,6 +2520,7 @@ describe('formatMarkdown', () => {
 
 	it('renders transcript segments as one callout line each with [MM:SS] markers', () => {
 		const md = formatMarkdown(
+			PLAUD_PROFILE,
 			makeRecording(),
 			makeTranscript(),
 			makeSummary(),
@@ -2457,6 +2541,7 @@ describe('formatMarkdown', () => {
 			],
 		});
 		const md = formatMarkdown(
+			PLAUD_PROFILE,
 			makeRecording(),
 			longTranscript,
 			makeSummary(),
@@ -2470,7 +2555,12 @@ describe('formatMarkdown', () => {
 				{ startSeconds: 0, endSeconds: 5, text: 'anonymous line' },
 			],
 		});
-		const md = formatMarkdown(makeRecording(), t, makeSummary());
+		const md = formatMarkdown(
+			PLAUD_PROFILE,
+			makeRecording(),
+			t,
+			makeSummary(),
+		);
 		expect(md).toContain('> **[00:00]** Unknown: anonymous line');
 	});
 
@@ -2485,18 +2575,33 @@ describe('formatMarkdown', () => {
 				},
 			],
 		});
-		const md = formatMarkdown(makeRecording(), t, makeSummary());
+		const md = formatMarkdown(
+			PLAUD_PROFILE,
+			makeRecording(),
+			t,
+			makeSummary(),
+		);
 		expect(md).toContain('> **[00:00]** Charles: one two three');
 	});
 
 	it('handles a null transcript with a placeholder callout', () => {
-		const md = formatMarkdown(makeRecording(), null, makeSummary());
+		const md = formatMarkdown(
+			PLAUD_PROFILE,
+			makeRecording(),
+			null,
+			makeSummary(),
+		);
 		expect(md).toContain('> [!note]- Transcript');
 		expect(md).toContain('> _No transcript available._');
 	});
 
 	it('handles a null summary with a placeholder', () => {
-		const md = formatMarkdown(makeRecording(), makeTranscript(), null);
+		const md = formatMarkdown(
+			PLAUD_PROFILE,
+			makeRecording(),
+			makeTranscript(),
+			null,
+		);
 		expect(md).toContain('## Summary');
 		expect(md).toContain('_No summary available._');
 	});
@@ -2510,7 +2615,12 @@ describe('formatMarkdown', () => {
 				{ heading: 'Action items', body: 'Charles to draft.' },
 			],
 		};
-		const md = formatMarkdown(makeRecording(), makeTranscript(), summary);
+		const md = formatMarkdown(
+			PLAUD_PROFILE,
+			makeRecording(),
+			makeTranscript(),
+			summary,
+		);
 		expect(md).toContain('### Key takeaways');
 		expect(md).toContain('- First');
 		expect(md).toContain('### Action items');
@@ -2519,6 +2629,7 @@ describe('formatMarkdown', () => {
 
 	it('uses summary.text when sections is absent', () => {
 		const md = formatMarkdown(
+			PLAUD_PROFILE,
 			makeRecording(),
 			makeTranscript(),
 			makeSummary(),
@@ -2531,7 +2642,12 @@ describe('formatMarkdown', () => {
 		const summary = makeSummary({
 			text: '# Strategic Realignment\n\nFirst normal paragraph.\n\nSecond paragraph.',
 		});
-		const md = formatMarkdown(makeRecording(), makeTranscript(), summary);
+		const md = formatMarkdown(
+			PLAUD_PROFILE,
+			makeRecording(),
+			makeTranscript(),
+			summary,
+		);
 		expect(md).toContain('## Summary\n\nFirst normal paragraph.');
 		expect(md).not.toContain('## Summary\n\n# Strategic Realignment');
 	});
@@ -2540,14 +2656,24 @@ describe('formatMarkdown', () => {
 		const summary = makeSummary({
 			text: 'First paragraph.\n------------\n## Next section',
 		});
-		const md = formatMarkdown(makeRecording(), makeTranscript(), summary);
+		const md = formatMarkdown(
+			PLAUD_PROFILE,
+			makeRecording(),
+			makeTranscript(),
+			summary,
+		);
 		expect(md).toContain('First paragraph.\n***\n## Next section');
 		expect(md).not.toContain('First paragraph.\n------------');
 	});
 
 	it('handles an empty transcript segments array with a placeholder', () => {
 		const t = makeTranscript({ segments: [] });
-		const md = formatMarkdown(makeRecording(), t, makeSummary());
+		const md = formatMarkdown(
+			PLAUD_PROFILE,
+			makeRecording(),
+			t,
+			makeSummary(),
+		);
 		expect(md).toContain('> _No transcript available._');
 	});
 });
@@ -2590,6 +2716,7 @@ describe('renameRecordingNote', () => {
 		const { rename, calls } = makeFakeRename(vault);
 
 		const result = await renameRecordingNote(
+			PLAUD_PROFILE,
 			vault,
 			rename,
 			'Plaud/note.md',
@@ -2610,6 +2737,7 @@ describe('renameRecordingNote', () => {
 		const { rename, calls } = makeFakeRename(vault);
 
 		const result = await renameRecordingNote(
+			PLAUD_PROFILE,
 			vault,
 			rename,
 			'Plaud/old.md',
@@ -2632,6 +2760,7 @@ describe('renameRecordingNote', () => {
 		const { rename, calls } = makeFakeRename(vault);
 
 		const result = await renameRecordingNote(
+			PLAUD_PROFILE,
 			vault,
 			rename,
 			'Plaud/old.md',
@@ -2650,6 +2779,7 @@ describe('renameRecordingNote', () => {
 		const { rename, calls } = makeFakeRename(vault);
 
 		const result = await renameRecordingNote(
+			PLAUD_PROFILE,
 			vault,
 			rename,
 			'Plaud/old.md',
@@ -2669,7 +2799,13 @@ describe('renameRecordingNote', () => {
 		const { rename, calls } = makeFakeRename(vault);
 
 		await expect(
-			renameRecordingNote(vault, rename, 'Plaud/old.md', 'Plaud/new.md'),
+			renameRecordingNote(
+				PLAUD_PROFILE,
+				vault,
+				rename,
+				'Plaud/old.md',
+				'Plaud/new.md',
+			),
 		).rejects.toThrow(/belongs to recording zzz999/);
 		// Nothing moved.
 		expect(calls).toEqual([]);
@@ -2694,7 +2830,13 @@ describe('renameRecordingNote', () => {
 			});
 
 		await expect(
-			renameRecordingNote(vault, rename, 'Plaud/old.md', 'Plaud/new.md'),
+			renameRecordingNote(
+				PLAUD_PROFILE,
+				vault,
+				rename,
+				'Plaud/old.md',
+				'Plaud/new.md',
+			),
 		).rejects.toThrow('note rename boom');
 
 		// Folder moved, note rename threw, folder rolled back to the old name.
@@ -2715,7 +2857,13 @@ describe('renameRecordingNote', () => {
 		const { rename, calls } = makeFakeRename(vault);
 
 		await expect(
-			renameRecordingNote(vault, rename, 'Plaud/old.md', 'Plaud/new.md'),
+			renameRecordingNote(
+				PLAUD_PROFILE,
+				vault,
+				rename,
+				'Plaud/old.md',
+				'Plaud/new.md',
+			),
 		).rejects.toThrow(/attachments folder/);
 		expect(calls).toEqual([]);
 	});
@@ -2729,7 +2877,13 @@ describe('renameRecordingNote', () => {
 		const { rename, calls } = makeFakeRename(vault);
 
 		await expect(
-			renameRecordingNote(vault, rename, 'Plaud/old.md', 'Plaud/new.md'),
+			renameRecordingNote(
+				PLAUD_PROFILE,
+				vault,
+				rename,
+				'Plaud/old.md',
+				'Plaud/new.md',
+			),
 		).rejects.toThrow(/already exists there/);
 		expect(calls).toEqual([]);
 	});
@@ -2745,6 +2899,7 @@ describe('NoteWriter', () => {
 		expect(
 			() =>
 				new NoteWriter(vault, {
+					profile: PLAUD_PROFILE,
 					outputFolder: 'Plaud',
 					onDuplicate: 'prompt',
 				}),
@@ -2754,6 +2909,7 @@ describe('NoteWriter', () => {
 	it('creates the output folder if it does not exist', async () => {
 		const vault = makeFakeVault();
 		const writer = new NoteWriter(vault, {
+			profile: PLAUD_PROFILE,
 			outputFolder: 'Plaud',
 			onDuplicate: 'skip',
 		});
@@ -2771,6 +2927,7 @@ describe('NoteWriter', () => {
 		const vault = makeFakeVault();
 		vault.folders.add('Plaud');
 		const writer = new NoteWriter(vault, {
+			profile: PLAUD_PROFILE,
 			outputFolder: 'Plaud',
 			onDuplicate: 'skip',
 		});
@@ -2788,6 +2945,7 @@ describe('NoteWriter', () => {
 	it('writes to <outputFolder>/<sanitized-title>.md', async () => {
 		const vault = makeFakeVault();
 		const writer = new NoteWriter(vault, {
+			profile: PLAUD_PROFILE,
 			outputFolder: 'Plaud',
 			onDuplicate: 'skip',
 		});
@@ -2810,6 +2968,7 @@ describe('NoteWriter', () => {
 	it('files the note by the capture-zone date (subfolder and filename)', async () => {
 		const vault = makeFakeVault();
 		const writer = new NoteWriter(vault, {
+			profile: PLAUD_PROFILE,
 			outputFolder: 'Plaud',
 			subfolderTemplate: '{{YYYY}}/{{MM}}/{{DD}}',
 			onDuplicate: 'skip',
@@ -2834,6 +2993,7 @@ describe('NoteWriter', () => {
 	it('puts the recording date in the filename so files sort chronologically', async () => {
 		const vault = makeFakeVault();
 		const writer = new NoteWriter(vault, {
+			profile: PLAUD_PROFILE,
 			outputFolder: 'Plaud',
 			onDuplicate: 'skip',
 		});
@@ -2851,6 +3011,7 @@ describe('NoteWriter', () => {
 	it('keeps the filename and H1 in sync when the date is applied', async () => {
 		const vault = makeFakeVault();
 		const writer = new NoteWriter(vault, {
+			profile: PLAUD_PROFILE,
 			outputFolder: 'Plaud',
 			onDuplicate: 'skip',
 		});
@@ -2870,6 +3031,7 @@ describe('NoteWriter', () => {
 	it('renames the note (filename and H1) with a US-order note-name template', async () => {
 		const vault = makeFakeVault();
 		const writer = new NoteWriter(vault, {
+			profile: PLAUD_PROFILE,
 			outputFolder: 'Plaud',
 			onDuplicate: 'skip',
 			noteNameTemplate: '{{MM}}-{{DD}}-{{YYYY}} {{title}}',
@@ -2892,6 +3054,7 @@ describe('NoteWriter', () => {
 	it('places the date at the end when the note-name template does', async () => {
 		const vault = makeFakeVault();
 		const writer = new NoteWriter(vault, {
+			profile: PLAUD_PROFILE,
 			outputFolder: 'Plaud',
 			onDuplicate: 'skip',
 			noteNameTemplate: '{{title}} {{MMM}} {{D}}, {{YYYY}}',
@@ -2913,6 +3076,7 @@ describe('NoteWriter', () => {
 	it('ignores a per-call template override so the filename and H1 stay in sync', async () => {
 		const vault = makeFakeVault();
 		const writer = new NoteWriter(vault, {
+			profile: PLAUD_PROFILE,
 			outputFolder: 'Plaud',
 			onDuplicate: 'skip',
 			noteNameTemplate: '{{YYYY}}-{{MM}}-{{DD}} {{title}}',
@@ -2938,6 +3102,7 @@ describe('NoteWriter', () => {
 	it('writes at vault root when outputFolder is empty', async () => {
 		const vault = makeFakeVault();
 		const writer = new NoteWriter(vault, {
+			profile: PLAUD_PROFILE,
 			outputFolder: '',
 			onDuplicate: 'skip',
 		});
@@ -2955,6 +3120,7 @@ describe('NoteWriter', () => {
 	it('normalizes a folder path with leading/trailing slashes', async () => {
 		const vault = makeFakeVault();
 		const writer = new NoteWriter(vault, {
+			profile: PLAUD_PROFILE,
 			outputFolder: '/Plaud/',
 			onDuplicate: 'skip',
 		});
@@ -2973,6 +3139,7 @@ describe('NoteWriter', () => {
 		// path never matched what Obsidian's createFolder normalized it to.
 		const vault = makeFakeVault();
 		const writer = new NoteWriter(vault, {
+			profile: PLAUD_PROFILE,
 			outputFolder: '\\Inbox',
 			onDuplicate: 'skip',
 		});
@@ -2999,6 +3166,7 @@ describe('NoteWriter', () => {
 				throw new Error(`Folder already exists.`);
 			});
 		const writer = new NoteWriter(vault, {
+			profile: PLAUD_PROFILE,
 			outputFolder: 'Inbox',
 			onDuplicate: 'skip',
 		});
@@ -3020,6 +3188,7 @@ describe('NoteWriter', () => {
 		expect(
 			() =>
 				new NoteWriter(vault, {
+					profile: PLAUD_PROFILE,
 					outputFolder: 'Plaud/../escape',
 					onDuplicate: 'skip',
 				}),
@@ -3033,6 +3202,7 @@ describe('NoteWriter', () => {
 			'existing content',
 		);
 		const writer = new NoteWriter(vault, {
+			profile: PLAUD_PROFILE,
 			outputFolder: 'Plaud',
 			onDuplicate: 'skip',
 		});
@@ -3058,6 +3228,7 @@ describe('NoteWriter', () => {
 			'existing content',
 		);
 		const writer = new NoteWriter(vault, {
+			profile: PLAUD_PROFILE,
 			outputFolder: 'Plaud',
 			onDuplicate: 'overwrite',
 		});
@@ -3093,6 +3264,7 @@ describe('NoteWriter', () => {
 				targetPath: string;
 			}> = [];
 			const writer = new NoteWriter(vault, {
+				profile: PLAUD_PROFILE,
 				outputFolder: 'Plaud',
 				onDuplicate: 'prompt',
 				promptOnDuplicate: (ctx) =>
@@ -3129,6 +3301,7 @@ describe('NoteWriter', () => {
 				'---\nplaud-id: abc123\n---\noriginal',
 			);
 			const writer = new NoteWriter(vault, {
+				profile: PLAUD_PROFILE,
 				outputFolder: 'Plaud',
 				onDuplicate: 'prompt',
 				promptOnDuplicate: () => Promise.resolve('skip'),
@@ -3154,6 +3327,7 @@ describe('NoteWriter', () => {
 				'---\nplaud-id: abc123\n---\n',
 			);
 			const writer = new NoteWriter(vault, {
+				profile: PLAUD_PROFILE,
 				outputFolder: 'Plaud',
 				onDuplicate: 'prompt',
 				promptOnDuplicate: () => Promise.resolve('cancel'),
@@ -3175,6 +3349,7 @@ describe('NoteWriter', () => {
 				Promise.resolve('overwrite' as const),
 			);
 			const writer = new NoteWriter(vault, {
+				profile: PLAUD_PROFILE,
 				outputFolder: 'Plaud',
 				onDuplicate: 'prompt',
 				promptOnDuplicate: promptSpy,
@@ -3194,6 +3369,7 @@ describe('NoteWriter', () => {
 	it('returns the created status when the file is new', async () => {
 		const vault = makeFakeVault();
 		const writer = new NoteWriter(vault, {
+			profile: PLAUD_PROFILE,
 			outputFolder: 'Plaud',
 			onDuplicate: 'skip',
 		});
@@ -3220,6 +3396,7 @@ describe('NoteWriter', () => {
 			// Recording A already imported at the base path.
 			vault.files.set(BASE, '---\nplaud-id: aaa111\n---\n# base\n');
 			const writer = new NoteWriter(vault, {
+				profile: PLAUD_PROFILE,
 				outputFolder: 'Plaud',
 				onDuplicate: 'skip',
 			});
@@ -3245,6 +3422,7 @@ describe('NoteWriter', () => {
 			vault.files.set(BASE, '---\nplaud-id: aaa111\n---\n# base\n');
 			vault.files.set(SECOND, '---\nplaud-id: bbb222\n---\n# suffixed\n');
 			const writer = new NoteWriter(vault, {
+				profile: PLAUD_PROFILE,
 				outputFolder: 'Plaud',
 				onDuplicate: 'overwrite',
 			});
@@ -3266,6 +3444,7 @@ describe('NoteWriter', () => {
 			vault.files.set(BASE, '---\nplaud-id: aaa111\n---\n');
 			vault.files.set(SECOND, '---\nplaud-id: bbb222\n---\n');
 			const writer = new NoteWriter(vault, {
+				profile: PLAUD_PROFILE,
 				outputFolder: 'Plaud',
 				onDuplicate: 'skip',
 			});
@@ -3285,6 +3464,7 @@ describe('NoteWriter', () => {
 			// v3-era note stored the bare id.
 			vault.files.set(BASE, '---\nplaud-id: abc123\n---\n# v3 note\n');
 			const writer = new NoteWriter(vault, {
+				profile: PLAUD_PROFILE,
 				outputFolder: 'Plaud',
 				onDuplicate: 'overwrite',
 			});
@@ -3307,6 +3487,7 @@ describe('NoteWriter', () => {
 		it('omitted template keeps the flat output-folder path', async () => {
 			const vault = makeFakeVault();
 			const writer = new NoteWriter(vault, {
+				profile: PLAUD_PROFILE,
 				outputFolder: 'Plaud',
 				onDuplicate: 'skip',
 			});
@@ -3325,6 +3506,7 @@ describe('NoteWriter', () => {
 		it('resolves {{YYYY-MM}} from the recording date and nests the note under it', async () => {
 			const vault = makeFakeVault();
 			const writer = new NoteWriter(vault, {
+				profile: PLAUD_PROFILE,
 				outputFolder: 'Plaud',
 				subfolderTemplate: '{{YYYY-MM}}',
 				onDuplicate: 'skip',
@@ -3349,6 +3531,7 @@ describe('NoteWriter', () => {
 		it('applies the subfolder to an empty output folder', async () => {
 			const vault = makeFakeVault();
 			const writer = new NoteWriter(vault, {
+				profile: PLAUD_PROFILE,
 				outputFolder: '',
 				subfolderTemplate: '{{YYYY}}/{{MM}}',
 				onDuplicate: 'skip',
@@ -3379,6 +3562,7 @@ describe('NoteWriter', () => {
 		it('skips instead of writing a second copy when the recording exists in another subfolder', async () => {
 			const vault = vaultWithPriorNote();
 			const writer = new NoteWriter(vault, {
+				profile: PLAUD_PROFILE,
 				outputFolder: 'Plaud',
 				subfolderTemplate: '{{YYYY-MM}}',
 				onDuplicate: 'skip',
@@ -3403,6 +3587,7 @@ describe('NoteWriter', () => {
 		it('overwrites the existing note in place rather than creating a duplicate', async () => {
 			const vault = vaultWithPriorNote();
 			const writer = new NoteWriter(vault, {
+				profile: PLAUD_PROFILE,
 				outputFolder: 'Plaud',
 				subfolderTemplate: '{{YYYY-MM}}',
 				onDuplicate: 'overwrite',
@@ -3425,6 +3610,7 @@ describe('NoteWriter', () => {
 		it('creates a new note at the resolved subfolder when the lookup finds nothing', async () => {
 			const vault = makeFakeVault();
 			const writer = new NoteWriter(vault, {
+				profile: PLAUD_PROFILE,
 				outputFolder: 'Plaud',
 				subfolderTemplate: '{{YYYY-MM}}',
 				onDuplicate: 'skip',
@@ -3446,6 +3632,7 @@ describe('NoteWriter', () => {
 		it('falls through to create when the lookup returns a stale path with no file', async () => {
 			const vault = makeFakeVault();
 			const writer = new NoteWriter(vault, {
+				profile: PLAUD_PROFILE,
 				outputFolder: 'Plaud',
 				subfolderTemplate: '{{YYYY-MM}}',
 				onDuplicate: 'skip',
@@ -3480,6 +3667,7 @@ describe('NoteWriter', () => {
 			vault.folders.add('Plaud');
 			const migrateCalls: Array<[string, string]> = [];
 			const writer = new NoteWriter(vault, {
+				profile: PLAUD_PROFILE,
 				outputFolder: 'Plaud',
 				onDuplicate: 'overwrite',
 				existingPathForPlaudId: (id) => (id === 'abc123' ? OLD : null),
@@ -3517,6 +3705,7 @@ describe('NoteWriter', () => {
 			vault.folders.add('Plaud');
 			const migrateCalls: Array<[string, string]> = [];
 			const writer = new NoteWriter(vault, {
+				profile: PLAUD_PROFILE,
 				outputFolder: 'Plaud',
 				onDuplicate: 'overwrite',
 				migrateExistingNote: (oldPath, newPath) =>
@@ -3541,6 +3730,7 @@ describe('NoteWriter', () => {
 			vault.files.set(OLD, content);
 			vault.folders.add('Plaud');
 			const writer = new NoteWriter(vault, {
+				profile: PLAUD_PROFILE,
 				outputFolder: 'Plaud',
 				onDuplicate: 'overwrite',
 				existingPathForPlaudId: (id) => (id === 'abc123' ? OLD : null),
@@ -3565,6 +3755,7 @@ describe('NoteWriter', () => {
 			vault.files.set(OLD, content);
 			vault.folders.add('Plaud');
 			const writer = new NoteWriter(vault, {
+				profile: PLAUD_PROFILE,
 				outputFolder: 'Plaud',
 				onDuplicate: 'overwrite',
 				existingPathForPlaudId: (id) => (id === 'abc123' ? OLD : null),
@@ -3594,6 +3785,7 @@ describe('NoteWriter', () => {
 			vault.folders.add('Plaud');
 			const migrateCalls: Array<[string, string]> = [];
 			const writer = new NoteWriter(vault, {
+				profile: PLAUD_PROFILE,
 				outputFolder: 'Plaud',
 				onDuplicate: 'skip',
 				existingPathForPlaudId: (id) => (id === 'abc123' ? OLD : null),
@@ -3623,6 +3815,7 @@ describe('NoteWriter', () => {
 			const unfiledPath = 'Plaud/_unfiled/2026-04-14 Morning standup.md';
 			const filedPath = 'Plaud/Meetings/2026-04-14 Morning standup.md';
 			const writer = new NoteWriter(vault, {
+				profile: PLAUD_PROFILE,
 				outputFolder: 'Plaud',
 				subfolderTemplate: '{{plaud-folder}}',
 				onDuplicate: 'overwrite',
@@ -3672,6 +3865,7 @@ describe('NoteWriter', () => {
 			const vault = makeFakeVault();
 			vault.folders.add('Plaud');
 			const writer = new NoteWriter(vault, {
+				profile: PLAUD_PROFILE,
 				outputFolder: 'Plaud',
 				subfolderTemplate: '{{plaud-folder}}',
 				onDuplicate: 'skip',
@@ -3697,6 +3891,7 @@ describe('NoteWriter', () => {
 	it('writes the full markdown body including frontmatter, title, summary, and callout', async () => {
 		const vault = makeFakeVault();
 		const writer = new NoteWriter(vault, {
+			profile: PLAUD_PROFILE,
 			outputFolder: 'Plaud',
 			onDuplicate: 'skip',
 		});
@@ -3722,6 +3917,7 @@ describe('NoteWriter', () => {
 		it('creates each missing ancestor folder in turn', async () => {
 			const vault = makeFakeVault();
 			const writer = new NoteWriter(vault, {
+				profile: PLAUD_PROFILE,
 				outputFolder: 'Plaud/Archive/2026',
 				onDuplicate: 'skip',
 			});
@@ -3747,6 +3943,7 @@ describe('NoteWriter', () => {
 			vault.folders.add('Plaud');
 			vault.folders.add('Plaud/Archive');
 			const writer = new NoteWriter(vault, {
+				profile: PLAUD_PROFILE,
 				outputFolder: 'Plaud/Archive/2026',
 				onDuplicate: 'skip',
 			});
@@ -3770,6 +3967,7 @@ describe('NoteWriter', () => {
 				'---\nplaud-id: DIFFERENT_RECORDING\ndate: 2026-04-01\nduration-seconds: 100\nsource: plaud\n---\n\n# Old recording\n',
 			);
 			const writer = new NoteWriter(vault, {
+				profile: PLAUD_PROFILE,
 				outputFolder: 'Plaud',
 				onDuplicate: 'overwrite',
 			});
@@ -3797,6 +3995,7 @@ describe('NoteWriter', () => {
 				'---\nplaud-id: OLD_ID_42\n---\n\n# Old\n',
 			);
 			const writer = new NoteWriter(vault, {
+				profile: PLAUD_PROFILE,
 				outputFolder: 'Plaud',
 				onDuplicate: 'skip',
 			});
@@ -3823,6 +4022,7 @@ describe('NoteWriter', () => {
 				'---\nplaud-id: abc123\n---\n\n# Old version\n',
 			);
 			const writer = new NoteWriter(vault, {
+				profile: PLAUD_PROFILE,
 				outputFolder: 'Plaud',
 				onDuplicate: 'overwrite',
 			});
@@ -3846,6 +4046,7 @@ describe('NoteWriter', () => {
 				'---\nplaud-id: abc123\n---\n\n# Old\n',
 			);
 			const writer = new NoteWriter(vault, {
+				profile: PLAUD_PROFILE,
 				outputFolder: 'Plaud',
 				onDuplicate: 'skip',
 			});
@@ -3869,6 +4070,7 @@ describe('NoteWriter', () => {
 				'Just some text, no frontmatter.',
 			);
 			const writer = new NoteWriter(vault, {
+				profile: PLAUD_PROFILE,
 				outputFolder: 'Plaud',
 				onDuplicate: 'overwrite',
 			});
@@ -3887,6 +4089,7 @@ describe('NoteWriter', () => {
 		it('throws when transcriptAvailable is true but transcript is null', async () => {
 			const vault = makeFakeVault();
 			const writer = new NoteWriter(vault, {
+				profile: PLAUD_PROFILE,
 				outputFolder: 'Plaud',
 				onDuplicate: 'skip',
 			});
@@ -3906,6 +4109,7 @@ describe('NoteWriter', () => {
 			// with a "_No summary available._" placeholder rather than failing.
 			const vault = makeFakeVault();
 			const writer = new NoteWriter(vault, {
+				profile: PLAUD_PROFILE,
 				outputFolder: 'Plaud',
 				onDuplicate: 'skip',
 			});
@@ -3929,6 +4133,7 @@ describe('NoteWriter', () => {
 		it('throws when an advertised summary is null and no transcript is available either', async () => {
 			const vault = makeFakeVault();
 			const writer = new NoteWriter(vault, {
+				profile: PLAUD_PROFILE,
 				outputFolder: 'Plaud',
 				onDuplicate: 'skip',
 			});
@@ -3948,6 +4153,7 @@ describe('NoteWriter', () => {
 		it('accepts null transcript when transcriptAvailable is false', async () => {
 			const vault = makeFakeVault();
 			const writer = new NoteWriter(vault, {
+				profile: PLAUD_PROFILE,
 				outputFolder: 'Plaud',
 				onDuplicate: 'skip',
 			});
@@ -3975,6 +4181,7 @@ describe('NoteWriter', () => {
 			expect(
 				() =>
 					new NoteWriter(vault, {
+						profile: PLAUD_PROFILE,
 						outputFolder: 'Plaud',
 						onDuplicate: 'wipe-the-vault' as never,
 					}),
@@ -3986,6 +4193,7 @@ describe('NoteWriter', () => {
 			expect(
 				() =>
 					new NoteWriter(vault, {
+						profile: PLAUD_PROFILE,
 						outputFolder: '../escape-the-vault',
 						onDuplicate: 'skip',
 					}),
@@ -4001,6 +4209,7 @@ describe('NoteWriter', () => {
 					throw new Error('EACCES permission denied');
 				});
 			const writer = new NoteWriter(vault, {
+				profile: PLAUD_PROFILE,
 				outputFolder: 'Plaud',
 				onDuplicate: 'skip',
 			});
@@ -4028,6 +4237,7 @@ describe('NoteWriter', () => {
 					throw new Error('disk full');
 				});
 			const writer = new NoteWriter(vault, {
+				profile: PLAUD_PROFILE,
 				outputFolder: 'Plaud',
 				onDuplicate: 'overwrite',
 			});
@@ -4049,6 +4259,7 @@ describe('NoteWriter', () => {
 					throw new Error('read blew up');
 				});
 			const writer = new NoteWriter(vault, {
+				profile: PLAUD_PROFILE,
 				outputFolder: 'Plaud',
 				onDuplicate: 'skip',
 			});
@@ -4071,6 +4282,7 @@ describe('formatFrontmatter YAML hardening', () => {
 		// Plaud IDs are typically hex, but defend against the pathological
 		// case where an ID coincidentally matches a YAML reserved word.
 		const fm = formatFrontmatter(
+			PLAUD_PROFILE,
 			makeRecording({ id: 'null' as never }),
 			[],
 		);
@@ -4101,12 +4313,13 @@ describe('formatFrontmatter YAML hardening', () => {
 		'NULL',
 		'~',
 	])('quotes reserved YAML token %s when it appears in speakers', (token) => {
-		const fm = formatFrontmatter(makeRecording(), [token]);
+		const fm = formatFrontmatter(PLAUD_PROFILE, makeRecording(), [token]);
 		expect(fm).toMatch(new RegExp(`speakers: \\["${token}"\\]`));
 	});
 
 	it('quotes numeric-looking plaud-ids (prevents parse as number)', () => {
 		const fm = formatFrontmatter(
+			PLAUD_PROFILE,
 			makeRecording({ id: '12345' as never }),
 			[],
 		);
@@ -4115,6 +4328,7 @@ describe('formatFrontmatter YAML hardening', () => {
 
 	it('quotes date-looking plaud-ids', () => {
 		const fm = formatFrontmatter(
+			PLAUD_PROFILE,
 			makeRecording({ id: '2026-04-14' as never }),
 			[],
 		);
@@ -4122,14 +4336,16 @@ describe('formatFrontmatter YAML hardening', () => {
 	});
 
 	it('escapes newlines inside quoted values', () => {
-		const fm = formatFrontmatter(makeRecording(), ['multi\nline name']);
+		const fm = formatFrontmatter(PLAUD_PROFILE, makeRecording(), [
+			'multi\nline name',
+		]);
 		expect(fm).toContain('"multi\\nline name"');
 		// Must not contain a raw newline inside the quoted value.
 		expect(fm).not.toMatch(/"multi\n/);
 	});
 
 	it('escapes tabs and carriage returns inside quoted values', () => {
-		const fm = formatFrontmatter(makeRecording(), [
+		const fm = formatFrontmatter(PLAUD_PROFILE, makeRecording(), [
 			'tabs\there',
 			'cr\rhere',
 		]);
@@ -4138,25 +4354,32 @@ describe('formatFrontmatter YAML hardening', () => {
 	});
 
 	it('escapes backslashes before double quotes', () => {
-		const fm = formatFrontmatter(makeRecording(), ['path\\with\\slash']);
+		const fm = formatFrontmatter(PLAUD_PROFILE, makeRecording(), [
+			'path\\with\\slash',
+		]);
 		expect(fm).toContain('"path\\\\with\\\\slash"');
 	});
 
 	it('does not quote a normal letter-initial alphanumeric value', () => {
-		const fm = formatFrontmatter(makeRecording({ id: 'abc123' as never }), [
-			'Charles',
-		]);
+		const fm = formatFrontmatter(
+			PLAUD_PROFILE,
+			makeRecording({ id: 'abc123' as never }),
+			['Charles'],
+		);
 		expect(fm).toContain('plaud-id: abc123');
 		expect(fm).toContain('speakers: [Charles]');
 	});
 
 	it('quotes values that start with a digit (could parse as number)', () => {
-		const fm = formatFrontmatter(makeRecording(), ['42Answer']);
+		const fm = formatFrontmatter(PLAUD_PROFILE, makeRecording(), [
+			'42Answer',
+		]);
 		expect(fm).toContain('"42Answer"');
 	});
 
 	it('emits duration-seconds: 0 when durationSeconds is NaN', () => {
 		const fm = formatFrontmatter(
+			PLAUD_PROFILE,
 			makeRecording({ durationSeconds: Number.NaN }),
 			[],
 		);
@@ -4166,6 +4389,7 @@ describe('formatFrontmatter YAML hardening', () => {
 
 	it('emits duration-seconds: 0 when durationSeconds is Infinity', () => {
 		const fm = formatFrontmatter(
+			PLAUD_PROFILE,
 			makeRecording({ durationSeconds: Number.POSITIVE_INFINITY }),
 			[],
 		);
@@ -4179,48 +4403,65 @@ describe('formatFrontmatter YAML hardening', () => {
 describe('extractPlaudIdFromFrontmatter', () => {
 	it('extracts an unquoted plaud-id', () => {
 		const content = '---\nplaud-id: abc123\ndate: 2026-04-14\n---\n\n# foo';
-		expect(extractPlaudIdFromFrontmatter(content)).toBe('abc123');
+		expect(extractPlaudIdFromFrontmatter(PLAUD_PROFILE, content)).toBe(
+			'abc123',
+		);
 	});
 
 	it('extracts a double-quoted plaud-id and unescapes it', () => {
 		const content = '---\nplaud-id: "abc\\"123"\n---\n\n';
-		expect(extractPlaudIdFromFrontmatter(content)).toBe('abc"123');
+		expect(extractPlaudIdFromFrontmatter(PLAUD_PROFILE, content)).toBe(
+			'abc"123',
+		);
 	});
 
 	it('extracts a single-quoted plaud-id', () => {
 		const content = "---\nplaud-id: 'abc123'\n---\n\n";
-		expect(extractPlaudIdFromFrontmatter(content)).toBe('abc123');
+		expect(extractPlaudIdFromFrontmatter(PLAUD_PROFILE, content)).toBe(
+			'abc123',
+		);
 	});
 
 	it('returns null when there is no frontmatter', () => {
 		expect(
-			extractPlaudIdFromFrontmatter('# just a title\n\nbody'),
+			extractPlaudIdFromFrontmatter(
+				PLAUD_PROFILE,
+				'# just a title\n\nbody',
+			),
 		).toBeNull();
 	});
 
 	it('returns null when frontmatter has no plaud-id key', () => {
 		const content = '---\ndate: 2026-04-14\n---\n\nbody';
-		expect(extractPlaudIdFromFrontmatter(content)).toBeNull();
+		expect(
+			extractPlaudIdFromFrontmatter(PLAUD_PROFILE, content),
+		).toBeNull();
 	});
 
 	it('returns null when plaud-id is empty after quote stripping', () => {
 		const content = '---\nplaud-id: ""\n---\n\n';
-		expect(extractPlaudIdFromFrontmatter(content)).toBeNull();
+		expect(
+			extractPlaudIdFromFrontmatter(PLAUD_PROFILE, content),
+		).toBeNull();
 	});
 
 	it('handles CRLF line endings', () => {
 		const content = '---\r\nplaud-id: abc123\r\n---\r\n\r\nbody';
-		expect(extractPlaudIdFromFrontmatter(content)).toBe('abc123');
+		expect(extractPlaudIdFromFrontmatter(PLAUD_PROFILE, content)).toBe(
+			'abc123',
+		);
 	});
 
 	it('returns null for an empty plaud-id instead of reading the next line', () => {
 		expect(
 			extractPlaudIdFromFrontmatter(
+				PLAUD_PROFILE,
 				'---\nplaud-id:\ndate: 2026-04-14\n---\n\nbody',
 			),
 		).toBeNull();
 		expect(
 			extractPlaudIdFromFrontmatter(
+				PLAUD_PROFILE,
 				'---\r\nplaud-id:   \r\ndate: 2026-04-14\r\n---\r\n',
 			),
 		).toBeNull();
@@ -4230,10 +4471,11 @@ describe('extractPlaudIdFromFrontmatter', () => {
 		// The frontmatter writer quotes reserved words and numeric IDs;
 		// the extractor must round-trip them.
 		const fm = formatFrontmatter(
+			PLAUD_PROFILE,
 			makeRecording({ id: 'null' as never }),
 			[],
 		);
-		expect(extractPlaudIdFromFrontmatter(fm)).toBe('null');
+		expect(extractPlaudIdFromFrontmatter(PLAUD_PROFILE, fm)).toBe('null');
 	});
 });
 
@@ -4243,20 +4485,26 @@ describe('extractPlaudIdFromFrontmatter', () => {
 
 describe('mergeTagSources', () => {
 	it('returns an empty list when both inputs are empty or undefined', () => {
-		expect(mergeTagSources(undefined, undefined)).toEqual([]);
-		expect(mergeTagSources([], [])).toEqual([]);
-		expect(mergeTagSources(undefined, [])).toEqual([]);
+		expect(mergeTagSources(PLAUD_PROFILE, undefined, undefined)).toEqual(
+			[],
+		);
+		expect(mergeTagSources(PLAUD_PROFILE, [], [])).toEqual([]);
+		expect(mergeTagSources(PLAUD_PROFILE, undefined, [])).toEqual([]);
 	});
 
 	it('lowercases base tags and preserves their insertion order', () => {
 		expect(
-			mergeTagSources(['Work', 'Meeting', 'Planning'], undefined),
+			mergeTagSources(
+				PLAUD_PROFILE,
+				['Work', 'Meeting', 'Planning'],
+				undefined,
+			),
 		).toEqual(['work', 'meeting', 'planning']);
 	});
 
 	it('slugifies AI keywords with plaud/ prefix, lowercase, and dashes', () => {
 		expect(
-			mergeTagSources(undefined, [
+			mergeTagSources(PLAUD_PROFILE, undefined, [
 				'AI Agent',
 				'Customer Data',
 				'AWS Environment',
@@ -4269,37 +4517,48 @@ describe('mergeTagSources', () => {
 	});
 
 	it('collapses multiple whitespace runs into a single dash', () => {
-		expect(mergeTagSources(undefined, ['Hello    World'])).toEqual([
-			'plaud/hello-world',
-		]);
+		expect(
+			mergeTagSources(PLAUD_PROFILE, undefined, ['Hello    World']),
+		).toEqual(['plaud/hello-world']);
 	});
 
 	it('strips leading and trailing whitespace (and the dashes they would produce)', () => {
-		expect(mergeTagSources(undefined, ['  Leading', 'Trailing  '])).toEqual(
-			['plaud/leading', 'plaud/trailing'],
-		);
+		expect(
+			mergeTagSources(PLAUD_PROFILE, undefined, [
+				'  Leading',
+				'Trailing  ',
+			]),
+		).toEqual(['plaud/leading', 'plaud/trailing']);
 	});
 
 	it('drops empty and whitespace-only entries on both sides', () => {
 		expect(
-			mergeTagSources(['', '   ', 'Keep'], ['', '   ', 'Keep Me']),
+			mergeTagSources(
+				PLAUD_PROFILE,
+				['', '   ', 'Keep'],
+				['', '   ', 'Keep Me'],
+			),
 		).toEqual(['keep', 'plaud/keep-me']);
 	});
 
 	it('deduplicates base tags case-insensitively, first occurrence wins', () => {
-		expect(mergeTagSources(['Work', 'work', 'WORK'], undefined)).toEqual([
-			'work',
-		]);
+		expect(
+			mergeTagSources(PLAUD_PROFILE, ['Work', 'work', 'WORK'], undefined),
+		).toEqual(['work']);
 	});
 
 	it('deduplicates AI keywords case-insensitively after slugification', () => {
 		expect(
-			mergeTagSources(undefined, ['AI Agent', 'ai agent', 'AI AGENT']),
+			mergeTagSources(PLAUD_PROFILE, undefined, [
+				'AI Agent',
+				'ai agent',
+				'AI AGENT',
+			]),
 		).toEqual(['plaud/ai-agent']);
 	});
 
 	it('appends AI tags after base tags regardless of input order', () => {
-		const result = mergeTagSources(['manual'], ['AI Topic']);
+		const result = mergeTagSources(PLAUD_PROFILE, ['manual'], ['AI Topic']);
 		expect(result).toEqual(['manual', 'plaud/ai-topic']);
 	});
 
@@ -4307,20 +4566,31 @@ describe('mergeTagSources', () => {
 		// A plain `ai-agent` base tag and the AI-derived `plaud/ai-agent`
 		// are distinct strings — the namespace is the whole point of
 		// prefixing. Both should survive the merge.
-		const result = mergeTagSources(['ai-agent'], ['AI Agent']);
+		const result = mergeTagSources(
+			PLAUD_PROFILE,
+			['ai-agent'],
+			['AI Agent'],
+		);
 		expect(result).toEqual(['ai-agent', 'plaud/ai-agent']);
 	});
 
 	it('collapses two AI entries that slugify to the same form', () => {
 		// "AI Agent" and "ai   agent" both slugify to plaud/ai-agent.
-		const result = mergeTagSources(undefined, ['AI Agent', 'ai   agent']);
+		const result = mergeTagSources(PLAUD_PROFILE, undefined, [
+			'AI Agent',
+			'ai   agent',
+		]);
 		expect(result).toEqual(['plaud/ai-agent']);
 	});
 
 	it('preserves a base tag whose lowercased form equals a would-be AI prefix match', () => {
 		// If a curated tag happens to already be `plaud/ai-agent`, the AI
 		// merge must dedup against it and not re-emit a duplicate.
-		const result = mergeTagSources(['plaud/ai-agent'], ['AI Agent']);
+		const result = mergeTagSources(
+			PLAUD_PROFILE,
+			['plaud/ai-agent'],
+			['AI Agent'],
+		);
 		expect(result).toEqual(['plaud/ai-agent']);
 	});
 
@@ -4329,6 +4599,7 @@ describe('mergeTagSources', () => {
 		// Plaud's format drifts to include non-strings we should drop them
 		// instead of crashing the note writer.
 		const result = mergeTagSources(
+			PLAUD_PROFILE,
 			['real', 42 as unknown as string],
 			['valid', null as unknown as string],
 		);
@@ -4339,6 +4610,7 @@ describe('mergeTagSources', () => {
 		// Base list is empty (filetag_id_list was empty in Charles's test
 		// data) and the 9 AI keywords land as the only tags on the note.
 		const result = mergeTagSources(
+			PLAUD_PROFILE,
 			[],
 			[
 				'AI Agent',
@@ -4387,6 +4659,7 @@ describe('buildNoteTags', () => {
 	describe('tag modes', () => {
 		it("mode 'none' emits no tags at all, even custom ones", () => {
 			const result = buildNoteTags(
+				PLAUD_PROFILE,
 				BASE,
 				AI,
 				opts({ tagMode: 'none', customTags: 'pinned' }),
@@ -4396,6 +4669,7 @@ describe('buildNoteTags', () => {
 
 		it("mode 'custom' emits only the custom tags", () => {
 			const result = buildNoteTags(
+				PLAUD_PROFILE,
 				BASE,
 				AI,
 				opts({ tagMode: 'custom', customTags: 'plaud-meeting' }),
@@ -4405,6 +4679,7 @@ describe('buildNoteTags', () => {
 
 		it("mode 'plaud' emits base tags plus custom tags, no AI keywords", () => {
 			const result = buildNoteTags(
+				PLAUD_PROFILE,
 				BASE,
 				AI,
 				opts({ tagMode: 'plaud', customTags: 'plaud-meeting' }),
@@ -4414,6 +4689,7 @@ describe('buildNoteTags', () => {
 
 		it("mode 'all' emits base, custom, then slugified AI tags in that order", () => {
 			const result = buildNoteTags(
+				PLAUD_PROFILE,
 				BASE,
 				AI,
 				opts({ tagMode: 'all', customTags: 'plaud-meeting' }),
@@ -4428,14 +4704,22 @@ describe('buildNoteTags', () => {
 		});
 
 		it("mode 'all' with empty custom tags matches the legacy mergeTagSources output", () => {
-			const result = buildNoteTags(BASE, AI, opts({ tagMode: 'all' }));
-			expect(result.tags).toEqual(mergeTagSources(BASE, AI));
+			const result = buildNoteTags(
+				PLAUD_PROFILE,
+				BASE,
+				AI,
+				opts({ tagMode: 'all' }),
+			);
+			expect(result.tags).toEqual(
+				mergeTagSources(PLAUD_PROFILE, BASE, AI),
+			);
 		});
 	});
 
 	describe('custom tag parsing', () => {
 		it('splits on commas, trims, lowercases, drops empties, and dedups', () => {
 			const result = buildNoteTags(
+				PLAUD_PROFILE,
 				undefined,
 				undefined,
 				opts({
@@ -4448,6 +4732,7 @@ describe('buildNoteTags', () => {
 
 		it('an empty custom tags string contributes nothing', () => {
 			const result = buildNoteTags(
+				PLAUD_PROFILE,
 				BASE,
 				undefined,
 				opts({ tagMode: 'plaud', customTags: '' }),
@@ -4457,6 +4742,7 @@ describe('buildNoteTags', () => {
 
 		it('custom tags dedup case-insensitively against base tags', () => {
 			const result = buildNoteTags(
+				PLAUD_PROFILE,
 				['Work'],
 				undefined,
 				opts({
@@ -4471,6 +4757,7 @@ describe('buildNoteTags', () => {
 	describe('keywords property output', () => {
 		it('returns trimmed original-cased keywords when the mode excludes AI and the toggle is on', () => {
 			const result = buildNoteTags(
+				PLAUD_PROFILE,
 				BASE,
 				['  AI Agent ', 'Customer Data'],
 				opts({ tagMode: 'plaud' }),
@@ -4480,6 +4767,7 @@ describe('buildNoteTags', () => {
 
 		it('dedups keywords case-insensitively, first occurrence wins', () => {
 			const result = buildNoteTags(
+				PLAUD_PROFILE,
 				undefined,
 				['AI Agent', 'ai agent'],
 				opts({ tagMode: 'none' }),
@@ -4489,6 +4777,7 @@ describe('buildNoteTags', () => {
 
 		it('drops empty and non-string keyword entries', () => {
 			const result = buildNoteTags(
+				PLAUD_PROFILE,
 				undefined,
 				['', '   ', 42 as unknown as string, 'Real'],
 				opts(),
@@ -4498,6 +4787,7 @@ describe('buildNoteTags', () => {
 
 		it('is empty when the toggle is off', () => {
 			const result = buildNoteTags(
+				PLAUD_PROFILE,
 				BASE,
 				AI,
 				opts({ aiKeywordsAsProperty: false }),
@@ -4506,12 +4796,22 @@ describe('buildNoteTags', () => {
 		});
 
 		it("is empty in mode 'all' because the keywords already live in tags:", () => {
-			const result = buildNoteTags(BASE, AI, opts({ tagMode: 'all' }));
+			const result = buildNoteTags(
+				PLAUD_PROFILE,
+				BASE,
+				AI,
+				opts({ tagMode: 'all' }),
+			);
 			expect(result.keywords).toEqual([]);
 		});
 
 		it("is populated in mode 'none' — the mode governs tags:, the toggle governs the property", () => {
-			const result = buildNoteTags(BASE, AI, opts({ tagMode: 'none' }));
+			const result = buildNoteTags(
+				PLAUD_PROFILE,
+				BASE,
+				AI,
+				opts({ tagMode: 'none' }),
+			);
 			expect(result.tags).toEqual([]);
 			expect(result.keywords).toEqual(['AI Agent', 'Customer Data']);
 		});
@@ -4523,6 +4823,7 @@ describe('buildNoteTags', () => {
 		// is OFF by default (see DEFAULT_SETTINGS); this exercises the opt-in
 		// path where the 9 AI keywords move from tags: to keywords:.
 		const result = buildNoteTags(
+			PLAUD_PROFILE,
 			[],
 			[
 				'AI Agent',
@@ -4688,7 +4989,7 @@ describe('formatChapterIndexSection', () => {
 	}
 
 	it('returns empty string for empty groups', () => {
-		expect(formatChapterIndexSection([])).toBe('');
+		expect(formatChapterIndexSection(PLAUD_PROFILE, [])).toBe('');
 	});
 
 	it('renders each chapter row as a bullet wiki link and attaches the ^plaud-chapters block id', () => {
@@ -4697,7 +4998,7 @@ describe('formatChapterIndexSection', () => {
 			makeGroup({ title: 'Main', startSeconds: 125 }, 't-ch-1'),
 			makeGroup({ title: 'Conclusion', startSeconds: 600 }, 't-ch-2'),
 		];
-		expect(formatChapterIndexSection(groups)).toBe(
+		expect(formatChapterIndexSection(PLAUD_PROFILE, groups)).toBe(
 			[
 				'##### Chapters',
 				'',
@@ -4715,7 +5016,7 @@ describe('formatChapterIndexSection', () => {
 			makeGroup({ title: 'Linked', startSeconds: 0 }, 't-ch-0'),
 			makeGroup({ title: 'Empty', startSeconds: 300 }, null, 0),
 		];
-		const out = formatChapterIndexSection(groups);
+		const out = formatChapterIndexSection(PLAUD_PROFILE, groups);
 		expect(out).toContain('- [[#00:00 Linked|**[00:00]** Linked]]');
 		expect(out).toContain('- **[05:00]** Empty');
 		expect(out).not.toContain('#null');
@@ -4728,7 +5029,7 @@ describe('formatChapterIndexSection', () => {
 				't-ch-0',
 			),
 		];
-		const out = formatChapterIndexSection(groups);
+		const out = formatChapterIndexSection(PLAUD_PROFILE, groups);
 		expect(out).toContain(
 			'- [[#00:00 Main - topic -x- -id|**[00:00]** Main | topic [x] #id]]',
 		);
@@ -4738,7 +5039,7 @@ describe('formatChapterIndexSection', () => {
 		const groups = [
 			makeGroup({ title: 'Late', startSeconds: 3700 }, 't-ch-0'),
 		];
-		expect(formatChapterIndexSection(groups)).toContain(
+		expect(formatChapterIndexSection(PLAUD_PROFILE, groups)).toContain(
 			'**[1:01:40]** Late',
 		);
 	});
@@ -4751,14 +5052,14 @@ describe('formatChapterIndexSection', () => {
 describe('formatTranscriptSection', () => {
 	it('falls back to the single flat transcript callout when groups is empty', () => {
 		const transcript = makeTranscript();
-		const out = formatTranscriptSection(transcript, [], 4);
+		const out = formatTranscriptSection(PLAUD_PROFILE, transcript, [], 4);
 		expect(out).toContain('> [!note]- Transcript');
 		expect(out).toContain('> **[00:00]** Charles: Thanks for making time.');
 		expect(out).not.toMatch(/> ### /);
 	});
 
 	it('renders a placeholder callout when transcript is null', () => {
-		const out = formatTranscriptSection(null, [], 4);
+		const out = formatTranscriptSection(PLAUD_PROFILE, null, [], 4);
 		expect(out).toBe('> [!note]- Transcript\n> _No transcript available._');
 	});
 
@@ -4780,6 +5081,7 @@ describe('formatTranscriptSection', () => {
 			},
 		];
 		const out = formatTranscriptSection(
+			PLAUD_PROFILE,
 			{ id: 'abc' as RecordingId, segments: segs, rawText: '' },
 			groups,
 			4,
@@ -4810,6 +5112,7 @@ describe('formatTranscriptSection', () => {
 			},
 		];
 		const out = formatTranscriptSection(
+			PLAUD_PROFILE,
 			{ id: 'abc' as RecordingId, segments: segs, rawText: '' },
 			groups,
 			2,
@@ -4830,6 +5133,7 @@ describe('formatTranscriptSection', () => {
 			},
 		];
 		const out = formatTranscriptSection(
+			PLAUD_PROFILE,
 			{ id: 'abc' as RecordingId, segments: segs, rawText: '' },
 			groups,
 			6,
@@ -4850,6 +5154,7 @@ describe('formatTranscriptSection', () => {
 			},
 		];
 		const out = formatTranscriptSection(
+			PLAUD_PROFILE,
 			{ id: 'abc' as RecordingId, segments: segs, rawText: '' },
 			groups,
 			4,
@@ -4874,6 +5179,7 @@ describe('formatTranscriptSection', () => {
 			},
 		];
 		const out = formatTranscriptSection(
+			PLAUD_PROFILE,
 			{ id: 'abc' as RecordingId, segments: segs, rawText: '' },
 			groups,
 			4,
@@ -4894,6 +5200,7 @@ describe('formatTranscriptSection', () => {
 			},
 		];
 		const out = formatTranscriptSection(
+			PLAUD_PROFILE,
 			{ id: 'abc' as RecordingId, segments: segs, rawText: '' },
 			groups,
 			4,
@@ -5028,7 +5335,7 @@ describe('formatMarkdown — placeholder substitution end-to-end', () => {
 		const summary = makeSummary({
 			text: '> Date & Time:  $[audio_start_time]\n> Location: [Insert Location]',
 		});
-		const md = formatMarkdown(rec, transcript, summary);
+		const md = formatMarkdown(PLAUD_PROFILE, rec, transcript, summary);
 		expect(md).toContain('Date & Time:  2026-05-13 14:04:22');
 		expect(md).not.toContain('$[audio_start_time]');
 	});
@@ -5040,7 +5347,12 @@ describe('formatMarkdown — placeholder substitution end-to-end', () => {
 		const summary = makeSummary({
 			aiSuggestion: 'Follow up on items from $[audio_start_time].',
 		});
-		const md = formatMarkdown(rec, makeTranscript(), summary);
+		const md = formatMarkdown(
+			PLAUD_PROFILE,
+			rec,
+			makeTranscript(),
+			summary,
+		);
 		expect(md).toContain('Follow up on items from 2026-05-13 14:04:22.');
 	});
 });
@@ -5078,7 +5390,13 @@ describe('formatMarkdown with chapters', () => {
 			{ title: 'Opening', startSeconds: 0 },
 			{ title: 'Close', startSeconds: 60 },
 		];
-		const md = formatMarkdown(recording, transcript, summary, chapters);
+		const md = formatMarkdown(
+			PLAUD_PROFILE,
+			recording,
+			transcript,
+			summary,
+			chapters,
+		);
 
 		// Inline chapter index under Transcript.
 		expect(md).toContain('##### Chapters');
@@ -5125,9 +5443,16 @@ describe('formatMarkdown with chapters', () => {
 		const chapters: readonly Chapter[] = [
 			{ title: 'Opening', startSeconds: 0 },
 		];
-		const md = formatMarkdown(recording, transcript, summary, chapters, {
-			transcriptHeaderLevel: 2,
-		});
+		const md = formatMarkdown(
+			PLAUD_PROFILE,
+			recording,
+			transcript,
+			summary,
+			chapters,
+			{
+				transcriptHeaderLevel: 2,
+			},
+		);
 		expect(md).toContain('## Transcript');
 		expect(md).toContain('### 00:00 Opening');
 		expect(md).not.toContain('#### Transcript');
@@ -5140,9 +5465,16 @@ describe('formatMarkdown with chapters', () => {
 		const chapters: readonly Chapter[] = [
 			{ title: 'Opening', startSeconds: 0 },
 		];
-		const md = formatMarkdown(recording, transcript, summary, chapters, {
-			includeTranscript: false,
-		});
+		const md = formatMarkdown(
+			PLAUD_PROFILE,
+			recording,
+			transcript,
+			summary,
+			chapters,
+			{
+				includeTranscript: false,
+			},
+		);
 		// No transcript wrap or body.
 		expect(md).not.toContain('#### Transcript');
 		expect(md).not.toContain('##### 00:00 Opening');
@@ -5154,7 +5486,12 @@ describe('formatMarkdown with chapters', () => {
 		const transcript = makeTranscript();
 		const summary: Summary = { id: recording.id, text: 'Body' };
 
-		const md = formatMarkdown(recording, transcript, summary);
+		const md = formatMarkdown(
+			PLAUD_PROFILE,
+			recording,
+			transcript,
+			summary,
+		);
 
 		expect(md).not.toContain('##### Chapters');
 		expect(md).toContain('> [!note]- Transcript');
@@ -5168,7 +5505,13 @@ describe('formatMarkdown with chapters', () => {
 		const transcript = makeTranscript();
 		const summary: Summary = { id: recording.id, text: 'Body' };
 
-		const md = formatMarkdown(recording, transcript, summary, []);
+		const md = formatMarkdown(
+			PLAUD_PROFILE,
+			recording,
+			transcript,
+			summary,
+			[],
+		);
 
 		expect(md).not.toContain('##### Chapters');
 		expect(md).toContain('> [!note]- Transcript');
@@ -5269,6 +5612,7 @@ describe('NoteWriter.writeNote foldInfo', () => {
 	it('surfaces transcriptHeadingLine and totalLines when chapters are present', async () => {
 		const { vault } = makeVault();
 		const writer = new NoteWriter(vault, {
+			profile: PLAUD_PROFILE,
 			outputFolder: '',
 			onDuplicate: 'skip',
 		});
@@ -5297,6 +5641,7 @@ describe('NoteWriter.writeNote foldInfo', () => {
 	it('omits foldInfo when chapters are absent', async () => {
 		const { vault } = makeVault();
 		const writer = new NoteWriter(vault, {
+			profile: PLAUD_PROFILE,
 			outputFolder: '',
 			onDuplicate: 'skip',
 		});
@@ -5312,6 +5657,7 @@ describe('NoteWriter.writeNote foldInfo', () => {
 	it('omits foldInfo when chapters are present but includeTranscript is false', async () => {
 		const { vault } = makeVault();
 		const writer = new NoteWriter(vault, {
+			profile: PLAUD_PROFILE,
 			outputFolder: '',
 			onDuplicate: 'skip',
 			includeTranscript: false,
@@ -5332,6 +5678,7 @@ describe('NoteWriter.writeNote foldInfo', () => {
 	it('uses the configured transcriptHeaderLevel to find the fold target', async () => {
 		const { vault } = makeVault();
 		const writer = new NoteWriter(vault, {
+			profile: PLAUD_PROFILE,
 			outputFolder: '',
 			onDuplicate: 'skip',
 			transcriptHeaderLevel: 2,
@@ -5357,34 +5704,48 @@ describe('extractPlaudPlaceholderFlag', () => {
 	it('returns true when the frontmatter carries plaud-placeholder: true', () => {
 		const content =
 			'---\nplaud-id: abc\nplaud-placeholder: true\n---\n\n# Note';
-		expect(extractPlaudPlaceholderFlag(content)).toBe(true);
+		expect(extractPlaudPlaceholderFlag(PLAUD_PROFILE, content)).toBe(true);
 	});
 
 	it('accepts quoted and yes forms case-insensitively', () => {
 		expect(
-			extractPlaudPlaceholderFlag('---\nplaud-placeholder: "true"\n---'),
+			extractPlaudPlaceholderFlag(
+				PLAUD_PROFILE,
+				'---\nplaud-placeholder: "true"\n---',
+			),
 		).toBe(true);
 		expect(
-			extractPlaudPlaceholderFlag('---\nplaud-placeholder: YES\n---'),
+			extractPlaudPlaceholderFlag(
+				PLAUD_PROFILE,
+				'---\nplaud-placeholder: YES\n---',
+			),
 		).toBe(true);
 	});
 
 	it('returns false for an empty marker even when the next line reads true', () => {
 		expect(
-			extractPlaudPlaceholderFlag('---\nplaud-placeholder:\ntrue\n---'),
+			extractPlaudPlaceholderFlag(
+				PLAUD_PROFILE,
+				'---\nplaud-placeholder:\ntrue\n---',
+			),
 		).toBe(false);
 	});
 
 	it('returns false for a real note with no marker', () => {
 		const content = '---\nplaud-id: abc\nsource: plaud\n---\n\n# Note';
-		expect(extractPlaudPlaceholderFlag(content)).toBe(false);
+		expect(extractPlaudPlaceholderFlag(PLAUD_PROFILE, content)).toBe(false);
 	});
 
 	it('returns false when the marker is explicitly false or absent frontmatter', () => {
 		expect(
-			extractPlaudPlaceholderFlag('---\nplaud-placeholder: false\n---'),
+			extractPlaudPlaceholderFlag(
+				PLAUD_PROFILE,
+				'---\nplaud-placeholder: false\n---',
+			),
 		).toBe(false);
-		expect(extractPlaudPlaceholderFlag('no frontmatter here')).toBe(false);
+		expect(
+			extractPlaudPlaceholderFlag(PLAUD_PROFILE, 'no frontmatter here'),
+		).toBe(false);
 	});
 });
 
@@ -5393,6 +5754,7 @@ describe('extractPlaudPlaceholderFlag', () => {
 describe('formatPlaceholderMarkdown', () => {
 	it('carries the recording id, link, marker, and reason', () => {
 		const md = formatPlaceholderMarkdown(
+			PLAUD_PROFILE,
 			makeRecording({
 				id: 'rec-9' as RecordingId,
 				title: 'Strategy sync',
@@ -5409,16 +5771,18 @@ describe('formatPlaceholderMarkdown', () => {
 
 	it('is recognized as a placeholder by extractPlaudPlaceholderFlag', () => {
 		const md = formatPlaceholderMarkdown(
+			PLAUD_PROFILE,
 			makeRecording(),
 			'because reasons',
 		);
-		expect(extractPlaudPlaceholderFlag(md)).toBe(true);
+		expect(extractPlaudPlaceholderFlag(PLAUD_PROFILE, md)).toBe(true);
 		// And it still carries a parseable plaud-id for collision/dedup checks.
-		expect(extractPlaudIdFromFrontmatter(md)).toBe('abc123');
+		expect(extractPlaudIdFromFrontmatter(PLAUD_PROFILE, md)).toBe('abc123');
 	});
 
 	it('flattens newlines in the reason so the callout stays well-formed', () => {
 		const md = formatPlaceholderMarkdown(
+			PLAUD_PROFILE,
 			makeRecording(),
 			'line one\nline two',
 		);
@@ -5430,10 +5794,11 @@ describe('formatPlaceholderMarkdown', () => {
 	// so it must emit datetime under the same conditions to stay in sync.
 	it('omits the datetime line when no datetime template is given', () => {
 		expect(
-			formatPlaceholderMarkdown(makeRecording(), 'reason'),
+			formatPlaceholderMarkdown(PLAUD_PROFILE, makeRecording(), 'reason'),
 		).not.toMatch(/^datetime:/m);
 		expect(
 			formatPlaceholderMarkdown(
+				PLAUD_PROFILE,
 				makeRecording(),
 				'reason',
 				DEFAULT_NOTE_NAME_TEMPLATE,
@@ -5444,6 +5809,7 @@ describe('formatPlaceholderMarkdown', () => {
 
 	it('emits the datetime line, quoted, when a datetime template is given', () => {
 		const md = formatPlaceholderMarkdown(
+			PLAUD_PROFILE,
 			makeRecording(),
 			'reason',
 			DEFAULT_NOTE_NAME_TEMPLATE,
@@ -5464,6 +5830,7 @@ describe('NoteWriter.writePlaceholderNote', () => {
 	it('creates a placeholder note when none exists', async () => {
 		const vault = makeFakeVault();
 		const writer = new NoteWriter(vault, {
+			profile: PLAUD_PROFILE,
 			outputFolder: 'Plaud',
 			onDuplicate: 'skip',
 		});
@@ -5477,12 +5844,13 @@ describe('NoteWriter.writePlaceholderNote', () => {
 		expect(outcome.path).toBe('Plaud/2026-04-14 Morning standup.md');
 		const body =
 			vault.files.get('Plaud/2026-04-14 Morning standup.md') ?? '';
-		expect(extractPlaudPlaceholderFlag(body)).toBe(true);
+		expect(extractPlaudPlaceholderFlag(PLAUD_PROFILE, body)).toBe(true);
 	});
 
 	it('refreshes an existing placeholder rather than duplicating it', async () => {
 		const vault = makeFakeVault();
 		const writer = new NoteWriter(vault, {
+			profile: PLAUD_PROFILE,
 			outputFolder: 'Plaud',
 			onDuplicate: 'skip',
 		});
@@ -5503,6 +5871,7 @@ describe('NoteWriter.writePlaceholderNote', () => {
 	it('keeps an existing real note and never downgrades it to a stub', async () => {
 		const vault = makeFakeVault();
 		const writer = new NoteWriter(vault, {
+			profile: PLAUD_PROFILE,
 			outputFolder: 'Plaud',
 			onDuplicate: 'skip',
 		});
@@ -5525,6 +5894,7 @@ describe('NoteWriter.writePlaceholderNote', () => {
 		);
 		expect(
 			extractPlaudPlaceholderFlag(
+				PLAUD_PROFILE,
 				vault.files.get('Plaud/2026-04-14 Morning standup.md') ?? '',
 			),
 		).toBe(false);
@@ -5533,6 +5903,7 @@ describe('NoteWriter.writePlaceholderNote', () => {
 	it('writes the placeholder to a disambiguated path when a DIFFERENT recording occupies the base path', async () => {
 		const vault = makeFakeVault();
 		const writer = new NoteWriter(vault, {
+			profile: PLAUD_PROFILE,
 			outputFolder: 'Plaud',
 			onDuplicate: 'skip',
 		});
@@ -5561,6 +5932,7 @@ describe('NoteWriter.writeNote superseding a placeholder', () => {
 	it('overwrites a placeholder with real content even under the skip policy', async () => {
 		const vault = makeFakeVault();
 		const writer = new NoteWriter(vault, {
+			profile: PLAUD_PROFILE,
 			outputFolder: 'Plaud',
 			onDuplicate: 'skip',
 		});
@@ -5577,7 +5949,7 @@ describe('NoteWriter.writeNote superseding a placeholder', () => {
 		expect(outcome.status).toBe('overwritten');
 		const body =
 			vault.files.get('Plaud/2026-04-14 Morning standup.md') ?? '';
-		expect(extractPlaudPlaceholderFlag(body)).toBe(false);
+		expect(extractPlaudPlaceholderFlag(PLAUD_PROFILE, body)).toBe(false);
 		expect(body).toContain('## Summary');
 	});
 
@@ -5585,6 +5957,7 @@ describe('NoteWriter.writeNote superseding a placeholder', () => {
 		const vault = makeFakeVault();
 		const promptOnDuplicate = jest.fn();
 		const writer = new NoteWriter(vault, {
+			profile: PLAUD_PROFILE,
 			outputFolder: 'Plaud',
 			onDuplicate: 'prompt',
 			promptOnDuplicate,
@@ -5615,6 +5988,7 @@ describe('formatMarkdown consumer_note template outputs', () => {
 
 	it('renders a Template outputs block with one subsection per output', () => {
 		const md = formatMarkdown(
+			PLAUD_PROFILE,
 			makeRecording(),
 			makeTranscript(),
 			makeSummary(),
@@ -5634,6 +6008,7 @@ describe('formatMarkdown consumer_note template outputs', () => {
 
 	it('renders no block when there are no template outputs', () => {
 		const md = formatMarkdown(
+			PLAUD_PROFILE,
 			makeRecording(),
 			makeTranscript(),
 			makeSummary(),
@@ -5643,6 +6018,7 @@ describe('formatMarkdown consumer_note template outputs', () => {
 
 	it('renders no block when consumerNotes is an empty array', () => {
 		const md = formatMarkdown(
+			PLAUD_PROFILE,
 			makeRecording(),
 			makeTranscript(),
 			makeSummary(),
@@ -5654,6 +6030,7 @@ describe('formatMarkdown consumer_note template outputs', () => {
 
 	it('places the block after the Summary and before the transcript', () => {
 		const md = formatMarkdown(
+			PLAUD_PROFILE,
 			makeRecording(),
 			makeTranscript(),
 			makeSummary(),
@@ -5669,6 +6046,7 @@ describe('formatMarkdown consumer_note template outputs', () => {
 
 	it('does not de-duplicate a transcript-style tab against the pipeline transcript', () => {
 		const md = formatMarkdown(
+			PLAUD_PROFILE,
 			makeRecording(),
 			makeTranscript(),
 			makeSummary(),
@@ -5691,6 +6069,7 @@ describe('formatMarkdown consumer_note template outputs', () => {
 
 	it('falls back to a generic title when a tab name is blank', () => {
 		const md = formatMarkdown(
+			PLAUD_PROFILE,
 			makeRecording(),
 			makeTranscript(),
 			makeSummary(),
@@ -5702,6 +6081,7 @@ describe('formatMarkdown consumer_note template outputs', () => {
 
 	it('demotes a top-level body heading so it nests under its tab title', () => {
 		const md = formatMarkdown(
+			PLAUD_PROFILE,
 			makeRecording(),
 			makeTranscript(),
 			makeSummary(),
@@ -5722,6 +6102,7 @@ describe('formatMarkdown consumer_note template outputs', () => {
 	it('leaves a # inside a fenced code block untouched while demoting real headings', () => {
 		const body = '## Real heading\n\n```\n# not a heading\n```';
 		const md = formatMarkdown(
+			PLAUD_PROFILE,
 			makeRecording(),
 			makeTranscript(),
 			makeSummary(),
@@ -5735,6 +6116,7 @@ describe('formatMarkdown consumer_note template outputs', () => {
 
 	it('leaves a body whose headings are already H4 or deeper unchanged', () => {
 		const md = formatMarkdown(
+			PLAUD_PROFILE,
 			makeRecording(),
 			makeTranscript(),
 			makeSummary(),
@@ -5750,6 +6132,7 @@ describe('formatMarkdown consumer_note template outputs', () => {
 
 	it('neutralizes a dash separator in a body so it is not read as a setext heading', () => {
 		const md = formatMarkdown(
+			PLAUD_PROFILE,
 			makeRecording(),
 			makeTranscript(),
 			makeSummary(),
@@ -5774,6 +6157,7 @@ describe('formatMarkdown consumer_note template outputs', () => {
 	it('preserves a dash line inside a fenced code block (does not rewrite it to ***)', () => {
 		const body = 'Config example:\n\n```yaml\n---\nname: x\n---\n```';
 		const md = formatMarkdown(
+			PLAUD_PROFILE,
 			makeRecording(),
 			makeTranscript(),
 			makeSummary(),
@@ -5791,6 +6175,7 @@ describe('formatMarkdown consumer_note template outputs', () => {
 		// heading stays code (untouched) while the real `## Real` heading demotes.
 		const body = '~~~text\n```\n## Inside\n~~~\n\n## Real';
 		const md = formatMarkdown(
+			PLAUD_PROFILE,
 			makeRecording(),
 			makeTranscript(),
 			makeSummary(),
@@ -5870,7 +6255,7 @@ describe('frontmatter times in the capture zone', () => {
 	});
 
 	it('emits start-time and end-time as ISO 8601 with the capture offset', () => {
-		const fm = formatFrontmatter(capturedRecording, []);
+		const fm = formatFrontmatter(PLAUD_PROFILE, capturedRecording, []);
 		expect(fm).toContain('start-time: "2026-08-07T14:52:11-04:00"');
 		expect(fm).toContain('end-time: "2026-08-07T15:32:11-04:00"');
 	});
@@ -5883,7 +6268,7 @@ describe('frontmatter times in the capture zone', () => {
 			endsAt: new Date('2026-08-08T02:30:00Z'),
 			captureOffsetMinutes: -240,
 		});
-		const fm = formatFrontmatter(rec, []);
+		const fm = formatFrontmatter(PLAUD_PROFILE, rec, []);
 		expect(fm).toContain('date: 2026-08-07');
 		expect(fm).toContain('start-time: "2026-08-07T22:00:00-04:00"');
 	});
@@ -5894,13 +6279,14 @@ describe('frontmatter times in the capture zone', () => {
 			endsAt: new Date('2026-08-07T09:30:00Z'),
 			captureOffsetMinutes: 330, // +05:30
 		});
-		const fm = formatFrontmatter(rec, []);
+		const fm = formatFrontmatter(PLAUD_PROFILE, rec, []);
 		expect(fm).toContain('start-time: "2026-08-07T14:30:00+05:30"');
 		expect(fm).toContain('end-time: "2026-08-07T15:00:00+05:30"');
 	});
 
 	it('renders datetime in the capture zone too', () => {
 		const fm = formatFrontmatter(
+			PLAUD_PROFILE,
 			capturedRecording,
 			[],
 			null,
@@ -5921,6 +6307,7 @@ describe('frontmatter times in the capture zone', () => {
 			captureOffsetMinutes: null,
 		});
 		const fm = formatFrontmatter(
+			PLAUD_PROFILE,
 			rec,
 			[],
 			null,
@@ -6019,7 +6406,7 @@ describe('transcript placement', () => {
 		it('is the flat callout when there are no chapters', () => {
 			const transcript = makeTranscript();
 			expect(formatTranscriptCallout(transcript, [])).toBe(
-				formatTranscriptSection(transcript, [], 4),
+				formatTranscriptSection(PLAUD_PROFILE, transcript, [], 4),
 			);
 		});
 
@@ -6035,6 +6422,7 @@ describe('transcript placement', () => {
 
 		it('renders the callout layout in place of the heading', () => {
 			const md = formatMarkdown(
+				PLAUD_PROFILE,
 				makeRecording(),
 				makeTranscript(),
 				makeSummary(),
@@ -6048,6 +6436,7 @@ describe('transcript placement', () => {
 
 		it('embeds the transcript file under a heading for file-embed', () => {
 			const md = formatMarkdown(
+				PLAUD_PROFILE,
 				makeRecording(),
 				makeTranscript(),
 				makeSummary(),
@@ -6063,6 +6452,7 @@ describe('transcript placement', () => {
 
 		it('links to the transcript file for file-link', () => {
 			const md = formatMarkdown(
+				PLAUD_PROFILE,
 				makeRecording(),
 				makeTranscript(),
 				makeSummary(),
@@ -6081,6 +6471,7 @@ describe('transcript placement', () => {
 
 		it('falls back to the heading layout without a note path', () => {
 			const withFile = formatMarkdown(
+				PLAUD_PROFILE,
 				makeRecording(),
 				makeTranscript(),
 				makeSummary(),
@@ -6088,6 +6479,7 @@ describe('transcript placement', () => {
 				{ transcriptPlacement: 'file-embed' },
 			);
 			const heading = formatMarkdown(
+				PLAUD_PROFILE,
 				makeRecording(),
 				makeTranscript(),
 				makeSummary(),
@@ -6098,6 +6490,7 @@ describe('transcript placement', () => {
 
 		it('keeps an empty transcript in the note rather than an empty file', () => {
 			const md = formatMarkdown(
+				PLAUD_PROFILE,
 				makeRecording(),
 				makeTranscript({ segments: [] }),
 				makeSummary(),
@@ -6110,6 +6503,7 @@ describe('transcript placement', () => {
 
 		it('keeps the transcript in the note when the path has # or ^', () => {
 			const heading = formatMarkdown(
+				PLAUD_PROFILE,
 				makeRecording(),
 				makeTranscript(),
 				makeSummary(),
@@ -6117,6 +6511,7 @@ describe('transcript placement', () => {
 			);
 			for (const path of ['Plaud/Roadmap #1.md', 'Plaud/Q^3.md']) {
 				const md = formatMarkdown(
+					PLAUD_PROFILE,
 					makeRecording(),
 					makeTranscript(),
 					makeSummary(),
@@ -6129,6 +6524,7 @@ describe('transcript placement', () => {
 
 		it('treats an unknown placement as the heading layout', () => {
 			const md = formatMarkdown(
+				PLAUD_PROFILE,
 				makeRecording(),
 				makeTranscript(),
 				makeSummary(),
@@ -6145,13 +6541,16 @@ describe('transcript placement', () => {
 		it('links back to the note and uses real chapter headings', () => {
 			const transcript = makeTranscript();
 			const out = formatTranscriptFileMarkdown(
+				PLAUD_PROFILE,
 				transcript,
 				groupTranscriptByChapters(transcript, chapters),
 				'Plaud/2026-04-14 Morning standup.md',
 			);
 			// The ownership marker comes first, then the H1.
 			expect(
-				out.startsWith(`${TRANSCRIPT_FILE_MARKER}\n\n# Transcript\n`),
+				out.startsWith(
+					`${transcriptFileMarker(PLAUD_PROFILE)}\n\n# Transcript\n`,
+				),
 			).toBe(true);
 			expect(out).toContain(
 				'[[Plaud/2026-04-14 Morning standup|2026-04-14 Morning standup]]',
@@ -6165,6 +6564,7 @@ describe('transcript placement', () => {
 
 		it('writes plain lines when there are no chapters', () => {
 			const out = formatTranscriptFileMarkdown(
+				PLAUD_PROFILE,
 				makeTranscript(),
 				[],
 				'Morning standup.md',
@@ -6189,6 +6589,7 @@ describe('transcript placement', () => {
 		it('writes the transcript file next to the note for file-embed', async () => {
 			const vault = makeFakeVault();
 			const writer = new NoteWriter(vault, {
+				profile: PLAUD_PROFILE,
 				outputFolder: 'Plaud',
 				onDuplicate: 'overwrite',
 				transcriptPlacement: 'file-embed',
@@ -6216,6 +6617,7 @@ describe('transcript placement', () => {
 		it('rewrites the transcript file on re-import', async () => {
 			const vault = makeFakeVault();
 			const writer = new NoteWriter(vault, {
+				profile: PLAUD_PROFILE,
 				outputFolder: 'Plaud',
 				onDuplicate: 'overwrite',
 				transcriptPlacement: 'file-link',
@@ -6250,12 +6652,14 @@ describe('transcript placement', () => {
 		it('does not touch the transcript file when the note is skipped', async () => {
 			const vault = makeFakeVault();
 			await new NoteWriter(vault, {
+				profile: PLAUD_PROFILE,
 				outputFolder: 'Plaud',
 				onDuplicate: 'overwrite',
 				transcriptPlacement: 'file-embed',
 			}).writeNote(makeRecording(), makeTranscript(), makeSummary());
 			const before = vault.files.get(TRANSCRIPT);
 			const outcome = await new NoteWriter(vault, {
+				profile: PLAUD_PROFILE,
 				outputFolder: 'Plaud',
 				onDuplicate: 'skip',
 				transcriptPlacement: 'file-embed',
@@ -6272,6 +6676,7 @@ describe('transcript placement', () => {
 			for (const placement of ['heading', 'callout'] as const) {
 				const vault = makeFakeVault();
 				await new NoteWriter(vault, {
+					profile: PLAUD_PROFILE,
 					outputFolder: 'Plaud',
 					onDuplicate: 'overwrite',
 					transcriptPlacement: placement,
@@ -6283,6 +6688,7 @@ describe('transcript placement', () => {
 		it('writes no transcript file when the transcript is excluded or empty', async () => {
 			const excluded = makeFakeVault();
 			await new NoteWriter(excluded, {
+				profile: PLAUD_PROFILE,
 				outputFolder: 'Plaud',
 				onDuplicate: 'overwrite',
 				transcriptPlacement: 'file-embed',
@@ -6292,6 +6698,7 @@ describe('transcript placement', () => {
 
 			const empty = makeFakeVault();
 			await new NoteWriter(empty, {
+				profile: PLAUD_PROFILE,
 				outputFolder: 'Plaud',
 				onDuplicate: 'overwrite',
 				transcriptPlacement: 'file-embed',
@@ -6310,6 +6717,7 @@ describe('transcript placement', () => {
 			vault.files.set(OLD, '---\nplaud-id: abc123\n---\n# old\n');
 			vault.folders.add('Plaud');
 			const writer = new NoteWriter(vault, {
+				profile: PLAUD_PROFILE,
 				outputFolder: 'Plaud',
 				onDuplicate: 'overwrite',
 				transcriptPlacement: 'file-link',
@@ -6347,6 +6755,7 @@ describe('transcript placement', () => {
 		it('trashes a leftover transcript file when the layout moves back into the note', async () => {
 			const vault = makeFakeVault();
 			await new NoteWriter(vault, {
+				profile: PLAUD_PROFILE,
 				outputFolder: 'Plaud',
 				onDuplicate: 'overwrite',
 				transcriptPlacement: 'file-embed',
@@ -6355,6 +6764,7 @@ describe('transcript placement', () => {
 
 			const trashed: string[] = [];
 			const outcome = await new NoteWriter(vault, {
+				profile: PLAUD_PROFILE,
 				outputFolder: 'Plaud',
 				onDuplicate: 'overwrite',
 				transcriptPlacement: 'callout',
@@ -6373,12 +6783,14 @@ describe('transcript placement', () => {
 		it('trashes a leftover transcript file when the transcript is excluded', async () => {
 			const vault = makeFakeVault();
 			await new NoteWriter(vault, {
+				profile: PLAUD_PROFILE,
 				outputFolder: 'Plaud',
 				onDuplicate: 'overwrite',
 				transcriptPlacement: 'file-link',
 			}).writeNote(makeRecording(), makeTranscript(), makeSummary());
 			const trashed: string[] = [];
 			await new NoteWriter(vault, {
+				profile: PLAUD_PROFILE,
 				outputFolder: 'Plaud',
 				onDuplicate: 'overwrite',
 				transcriptPlacement: 'file-link',
@@ -6399,12 +6811,14 @@ describe('transcript placement', () => {
 					trashed.push(path);
 				});
 			await new NoteWriter(vault, {
+				profile: PLAUD_PROFILE,
 				outputFolder: 'Plaud',
 				onDuplicate: 'overwrite',
 				transcriptPlacement: 'heading',
 				trashFile,
 			}).writeNote(makeRecording(), makeTranscript(), makeSummary());
 			await new NoteWriter(vault, {
+				profile: PLAUD_PROFILE,
 				outputFolder: 'Plaud',
 				onDuplicate: 'overwrite',
 				transcriptPlacement: 'file-embed',
@@ -6420,6 +6834,7 @@ describe('transcript placement', () => {
 			vault.folders.add('Plaud/2026-04-14 Morning standup-assets');
 			vault.files.set(TRANSCRIPT, 'My own notes.');
 			const writer = new NoteWriter(vault, {
+				profile: PLAUD_PROFILE,
 				outputFolder: 'Plaud',
 				onDuplicate: 'overwrite',
 				transcriptPlacement: 'file-embed',
@@ -6440,6 +6855,7 @@ describe('transcript placement', () => {
 		it('still reports the write when trashing the stale file fails', async () => {
 			const vault = makeFakeVault();
 			await new NoteWriter(vault, {
+				profile: PLAUD_PROFILE,
 				outputFolder: 'Plaud',
 				onDuplicate: 'overwrite',
 				transcriptPlacement: 'file-embed',
@@ -6449,6 +6865,7 @@ describe('transcript placement', () => {
 				.mockImplementation(() => {});
 			try {
 				const outcome = await new NoteWriter(vault, {
+					profile: PLAUD_PROFILE,
 					outputFolder: 'Plaud',
 					onDuplicate: 'overwrite',
 					transcriptPlacement: 'heading',
@@ -6469,6 +6886,7 @@ describe('transcript placement', () => {
 			vault.files.set(TRANSCRIPT, 'My own notes.');
 			const trashed: string[] = [];
 			await new NoteWriter(vault, {
+				profile: PLAUD_PROFILE,
 				outputFolder: 'Plaud',
 				onDuplicate: 'overwrite',
 				transcriptPlacement: 'callout',
@@ -6483,6 +6901,7 @@ describe('transcript placement', () => {
 		it('writes the transcript file before the note', async () => {
 			const vault = makeFakeVault();
 			await new NoteWriter(vault, {
+				profile: PLAUD_PROFILE,
 				outputFolder: 'Plaud',
 				onDuplicate: 'overwrite',
 				transcriptPlacement: 'file-link',
@@ -6493,6 +6912,7 @@ describe('transcript placement', () => {
 		it('reports no fold target for the callout layout, even with chapters', async () => {
 			const vault = makeFakeVault();
 			const outcome = await new NoteWriter(vault, {
+				profile: PLAUD_PROFILE,
 				outputFolder: 'Plaud',
 				onDuplicate: 'skip',
 				transcriptPlacement: 'callout',
@@ -6508,6 +6928,7 @@ describe('transcript placement', () => {
 		it('folds the heading above an embedded transcript file', async () => {
 			const vault = makeFakeVault();
 			const outcome = await new NoteWriter(vault, {
+				profile: PLAUD_PROFILE,
 				outputFolder: 'Plaud',
 				onDuplicate: 'skip',
 				transcriptPlacement: 'file-embed',
@@ -6554,6 +6975,7 @@ describe('# and ^ in note names', () => {
 	it('writes a #-titled recording under a linkable name, with its transcript file', async () => {
 		const vault = makeFakeVault();
 		const outcome = await new NoteWriter(vault, {
+			profile: PLAUD_PROFILE,
 			outputFolder: 'Plaud',
 			onDuplicate: 'overwrite',
 			transcriptPlacement: 'file-link',
@@ -6581,6 +7003,7 @@ describe('# and ^ in note names', () => {
 		vault.files.set(OLD, '---\nplaud-id: abc123\n---\n# old\n');
 		const migrateCalls: Array<[string, string]> = [];
 		const outcome = await new NoteWriter(vault, {
+			profile: PLAUD_PROFILE,
 			outputFolder: 'Plaud',
 			onDuplicate: 'overwrite',
 			existingPathForPlaudId: (id) => (id === 'abc123' ? OLD : null),
@@ -6612,6 +7035,7 @@ describe('managed body block (#59)', () => {
 
 	function overwriter(vault: FakeVault): NoteWriter {
 		return new NoteWriter(vault, {
+			profile: PLAUD_PROFILE,
 			outputFolder: 'Plaud',
 			onDuplicate: 'overwrite',
 		});
@@ -6619,6 +7043,7 @@ describe('managed body block (#59)', () => {
 
 	function rendered(summaryText: string): string {
 		return formatMarkdown(
+			PLAUD_PROFILE,
 			makeRecording(),
 			makeTranscript(),
 			makeSummary({ text: summaryText }),
@@ -6710,6 +7135,7 @@ describe('managed body block (#59)', () => {
 	it('reports the fold line of the note as written, below the user text', async () => {
 		const vault = makeFakeVault();
 		const old = formatMarkdown(
+			PLAUD_PROFILE,
 			makeRecording(),
 			makeTranscript(),
 			makeSummary(),
@@ -6743,6 +7169,7 @@ describe('managed body block (#59)', () => {
 
 	it('finds the fold heading inside the block, not a matching heading the user wrote above it', () => {
 		const md = formatMarkdown(
+			PLAUD_PROFILE,
 			makeRecording(),
 			makeTranscript(),
 			makeSummary(),
@@ -6750,7 +7177,7 @@ describe('managed body block (#59)', () => {
 		);
 		const markerAt = md.indexOf(MANAGED_BLOCK_START);
 		const withUserHeading = `${md.slice(0, markerAt)}#### Transcript\n\nmy notes\n\n${md.slice(markerAt)}`;
-		const line = findTranscriptFoldLine(withUserHeading, 4);
+		const line = findTranscriptFoldLine(PLAUD_PROFILE, withUserHeading, 4);
 		expect(line).toBe((findTranscriptHeadingLine(md, 4) ?? -10) + 4);
 		expect(withUserHeading.split('\n')[line ?? -1]).toBe('#### Transcript');
 		expect(line).not.toBe(withUserHeading.indexOf('#### Transcript'));
@@ -6758,13 +7185,18 @@ describe('managed body block (#59)', () => {
 
 	it('does not fold when the user has text below the block, which the fold would hide', () => {
 		const md = formatMarkdown(
+			PLAUD_PROFILE,
 			makeRecording(),
 			makeTranscript(),
 			makeSummary(),
 			CHAPTERS,
 		);
-		expect(findTranscriptFoldLine(md, 4)).not.toBeNull();
-		expect(findTranscriptFoldLine(`${md}\nmy notes\n`, 4)).toBeNull();
-		expect(findTranscriptFoldLine(`${md}\n\n`, 4)).not.toBeNull();
+		expect(findTranscriptFoldLine(PLAUD_PROFILE, md, 4)).not.toBeNull();
+		expect(
+			findTranscriptFoldLine(PLAUD_PROFILE, `${md}\nmy notes\n`, 4),
+		).toBeNull();
+		expect(
+			findTranscriptFoldLine(PLAUD_PROFILE, `${md}\n\n`, 4),
+		).not.toBeNull();
 	});
 });

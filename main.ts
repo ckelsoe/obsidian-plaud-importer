@@ -16,6 +16,7 @@ import { PlaudV4Client } from './plaud-client-v4';
 import { createSequentialPageFetcher } from './list-paging';
 import { ImportModal, classifyError } from './import-modal';
 import { PLAUD_ERROR_POLICY } from './plaud-errors';
+import { PLAUD_PROFILE } from './plaud-profile';
 import { BufferedDebugLogger } from './debug-logger';
 import { clearPlaudLoginSession, openPlaudLogin } from './plaud-login';
 import {
@@ -56,7 +57,6 @@ import {
 import {
 	buildImportedIndex,
 	buildImportedIndexWithColdCheck,
-	canonicalPlaudId,
 	outputFolderCacheIsCold,
 	type ImportedIndex,
 } from './vault-index';
@@ -484,7 +484,7 @@ export default class PlaudImporterPlugin extends Plugin {
 
 		// Live Preview shows the managed-block marker comments (#59); hide them
 		// there the way reading view does.
-		this.registerEditorExtension(hideManagedMarkers);
+		this.registerEditorExtension(hideManagedMarkers(PLAUD_PROFILE));
 
 		// Receive tokens handed back from the user's external browser (the
 		// browser sign-in flow) via obsidian://plaud-importer-token?tokens=…
@@ -1163,6 +1163,7 @@ export default class PlaudImporterPlugin extends Plugin {
 	private buildImportRuntimeOptions(): ImportModalOptions {
 		return {
 			errorPolicy: PLAUD_ERROR_POLICY,
+			profile: PLAUD_PROFILE,
 			outputFolder: this.settings.outputFolder,
 			subfolderTemplate: this.settings.subfolderTemplate,
 			noteNameTemplate: this.settings.noteNameTemplate,
@@ -1257,6 +1258,7 @@ export default class PlaudImporterPlugin extends Plugin {
 		this.selfRenameDepth += 1;
 		try {
 			await renameRecordingNote(
+				PLAUD_PROFILE,
 				this.app.vault,
 				renameFile,
 				oldNotePath,
@@ -1736,6 +1738,7 @@ export default class PlaudImporterPlugin extends Plugin {
 		// cold/partial metadataCache cannot diverge between the two.
 		const attachments = new AttachmentImporter({
 			app: this.app,
+			profile: options.profile,
 			getAuthToken: options.getAuthToken,
 			getApiBaseUrl: options.getApiBaseUrl,
 			debugLogger: this.debugLogger,
@@ -1762,8 +1765,8 @@ export default class PlaudImporterPlugin extends Plugin {
 				// stripped), so a v4 `of_<id>` recording matches its v3-imported
 				// note. Matches findImportedNote and the byId keying.
 				existingPathForPlaudId: (id) =>
-					index.byId.get(canonicalPlaudId(id) as RecordingId)?.path ??
-					null,
+					index.byId.get(index.canonicalId(id) as RecordingId)
+						?.path ?? null,
 			});
 		const runBatch = async (
 			recordings: readonly Recording[],
@@ -1847,6 +1850,7 @@ export default class PlaudImporterPlugin extends Plugin {
 			// incomplete and every existing note look new, so skip; a later tick
 			// with a warm cache proceeds.
 			const indexState = buildImportedIndexWithColdCheck(
+				PLAUD_PROFILE,
 				this.app,
 				this.settings.outputFolder,
 			);
@@ -2419,11 +2423,11 @@ export default class PlaudImporterPlugin extends Plugin {
 				}
 				for (const r of recs) {
 					// Key by canonical id: index.byId (queried below) is keyed by
-					// canonicalPlaudId, so a v4 `of_<id>` recording must be stored
+					// PLAUD_PROFILE.canonicalId, so a v4 `of_<id>` recording must be stored
 					// under the bare id or migrated notes never match.
 					if (r.versionMs !== undefined)
 						versionById.set(
-							canonicalPlaudId(r.id) as RecordingId,
+							PLAUD_PROFILE.canonicalId(r.id) as RecordingId,
 							r.versionMs,
 						);
 				}
@@ -2439,6 +2443,7 @@ export default class PlaudImporterPlugin extends Plugin {
 			}
 
 			const index = buildImportedIndex(
+				PLAUD_PROFILE,
 				this.app,
 				this.settings.outputFolder,
 			);
@@ -2541,7 +2546,11 @@ export default class PlaudImporterPlugin extends Plugin {
 			if (recs.length < PAGE_SIZE) break;
 			skip += recs.length;
 		}
-		const index = buildImportedIndex(this.app, this.settings.outputFolder);
+		const index = buildImportedIndex(
+			PLAUD_PROFILE,
+			this.app,
+			this.settings.outputFolder,
+		);
 		const versionById = new Map<string, number>();
 		for (const r of recordings) {
 			if (r.versionMs !== undefined) versionById.set(r.id, r.versionMs);

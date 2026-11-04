@@ -24,6 +24,7 @@ import {
 import { describeTokenLifetime, readTokenLifetime } from './plaud-token';
 import { deviceModelLabel } from './plaud-client';
 import { isTrustedPlaudUrl } from './plaud-hosts';
+import { PLAUD_PROFILE } from './plaud-profile';
 import {
 	DEFAULT_NOTE_NAME_TEMPLATE,
 	isValidNoteNameTemplate,
@@ -1717,7 +1718,7 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 		let lastFocusedValue: HTMLInputElement | null = null;
 
 		const updatePreview = (): void => {
-			const lines = renderCustomFrontmatterPreview(rows);
+			const lines = renderCustomFrontmatterPreview(PLAUD_PROFILE, rows);
 			previewEl.setText(
 				lines.length > 0
 					? `Preview:\n${lines.join('\n')}`
