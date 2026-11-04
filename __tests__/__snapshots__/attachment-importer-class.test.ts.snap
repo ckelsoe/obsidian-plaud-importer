@@ -1,0 +1,454 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`AttachmentImporter.importAttachmentsForNote: JSON picture_link envelopes downloads every distinct picture_link and never saves the JSON 1`] = `
+{
+  "files": [
+    {
+      "byteLength": 6,
+      "head": "89504e47",
+      "path": "Plaud/Meeting-assets/rec12345-image1.png",
+    },
+    {
+      "byteLength": 6,
+      "head": "89504e47",
+      "path": "Plaud/Meeting-assets/rec12345-image2.webp",
+    },
+    {
+      "path": "Plaud/Meeting.md",
+      "text": "---
+plaud-id: x
+---
+<!-- plaud:managed:start -->
+
+# Meeting
+
+## Images and Attachments
+
+_Imported from Plaud file-detail assets at import time._
+
+### Other attachments
+
+#### Image 1
+![[Plaud/Meeting-assets/rec12345-image1.png]]
+
+#### Image 2
+![[Plaud/Meeting-assets/rec12345-image2.webp]]
+
+
+## Transcript
+
+hello
+
+<!-- plaud:managed:end -->
+
+User text below.
+",
+    },
+  ],
+  "requests": [
+    {
+      "headerNames": [
+        "Accept",
+        "Authorization",
+      ],
+      "url": "https://cdn.example.com/meta.json",
+    },
+    {
+      "headerNames": [
+        "Accept",
+      ],
+      "url": "https://bucket.s3.amazonaws.com/one.png?X-Amz-Signature=z",
+    },
+    {
+      "headerNames": [
+        "Accept",
+        "Authorization",
+      ],
+      "url": "https://cdn.example.com/two",
+    },
+  ],
+  "trashed": [],
+}
+`;
+
+exports[`AttachmentImporter.importAttachmentsForNote: generic attachments names, dedupes and renders generic images and files, continuing past failures 1`] = `
+{
+  "files": [
+    {
+      "byteLength": 13,
+      "head": "25504446",
+      "path": "Plaud/Meeting-assets/rec12345-file1.pdf",
+    },
+    {
+      "byteLength": 6,
+      "head": "89504e47",
+      "path": "Plaud/Meeting-assets/rec12345-image1.png",
+    },
+    {
+      "byteLength": 6,
+      "head": "89504e47",
+      "path": "Plaud/Meeting-assets/rec12345-image2.jpg",
+    },
+    {
+      "path": "Plaud/Meeting.md",
+      "text": "---
+plaud-id: x
+---
+<!-- plaud:managed:start -->
+
+# Meeting
+
+![[Plaud/Meeting-assets/rec12345-image1.png]]
+![other](https://elsewhere.example.com/x.png)
+
+## Images and Attachments
+
+_Imported from Plaud file-detail assets at import time._
+
+### Other attachments
+
+#### Image 1
+![[Plaud/Meeting-assets/rec12345-image1.png]]
+
+#### Image 2
+![[Plaud/Meeting-assets/rec12345-image2.jpg]]
+
+#### File 1
+- [[Plaud/Meeting-assets/rec12345-file1.pdf]]
+
+
+## Transcript
+
+hello
+
+<!-- plaud:managed:end -->
+
+User text below.
+",
+    },
+  ],
+  "requests": [
+    {
+      "headerNames": [
+        "Accept",
+        "Authorization",
+      ],
+      "url": "https://cdn.example.com/a/photo.png",
+    },
+    {
+      "headerNames": [
+        "Accept",
+      ],
+      "url": "https://bucket.s3.amazonaws.com/doc.pdf?X-Amz-Signature=sig",
+    },
+    {
+      "headerNames": [
+        "Accept",
+        "Authorization",
+      ],
+      "url": "https://cdn.example.com/b/copy.png",
+    },
+    {
+      "headerNames": [
+        "Accept",
+        "Authorization",
+      ],
+      "url": "https://cdn.example.com/missing.png",
+    },
+    {
+      "headerNames": [
+        "Accept",
+        "Authorization",
+      ],
+      "url": "https://cdn.example.com/boom.png",
+    },
+    {
+      "headerNames": [
+        "Accept",
+        "Authorization",
+      ],
+      "url": "https://cdn.example.com/second.jpeg",
+    },
+  ],
+  "trashed": [],
+}
+`;
+
+exports[`AttachmentImporter.importAttachmentsForNote: mindmap and card handles mindmap images, mindmap HTML, card HTML wrappers and card files 1`] = `
+{
+  "files": [
+    {
+      "byteLength": 11,
+      "head": "63617264",
+      "path": "Plaud/Meeting-assets/rec12345-card-file.txt",
+    },
+    {
+      "byteLength": 11,
+      "head": "63617264",
+      "path": "Plaud/Meeting-assets/rec12345-card-file2.txt",
+    },
+    {
+      "byteLength": 6,
+      "head": "89504e47",
+      "path": "Plaud/Meeting-assets/rec12345-card.png",
+    },
+    {
+      "byteLength": 6,
+      "head": "89504e47",
+      "path": "Plaud/Meeting-assets/rec12345-card2.webp",
+    },
+    {
+      "byteLength": 6,
+      "head": "89504e47",
+      "path": "Plaud/Meeting-assets/rec12345-card3.webp",
+    },
+    {
+      "byteLength": 41,
+      "head": "3c68746d",
+      "path": "Plaud/Meeting-assets/rec12345-mindmap.html",
+    },
+    {
+      "byteLength": 6,
+      "head": "89504e47",
+      "path": "Plaud/Meeting-assets/rec12345-mindmap.png",
+    },
+    {
+      "byteLength": 6,
+      "head": "89504e47",
+      "path": "Plaud/Meeting-assets/rec12345-mindmap2.png",
+    },
+    {
+      "path": "Plaud/Meeting.md",
+      "text": "---
+plaud-id: x
+---
+<!-- plaud:managed:start -->
+
+# Meeting
+
+## Images and Attachments
+
+_Imported from Plaud file-detail assets at import time._
+
+### Mindmap
+
+#### Mindmap image 1
+![[Plaud/Meeting-assets/rec12345-mindmap.png]]
+
+#### Mindmap image 2
+![[Plaud/Meeting-assets/rec12345-mindmap2.png]]
+
+#### Mindmap file 1
+- [[Plaud/Meeting-assets/rec12345-mindmap.html]]
+
+### Card
+
+![[Plaud/Meeting-assets/rec12345-card.png]]
+
+![[Plaud/Meeting-assets/rec12345-card2.webp]]
+
+![[Plaud/Meeting-assets/rec12345-card3.webp]]
+
+- [[Plaud/Meeting-assets/rec12345-card-file.txt]]
+
+- [[Plaud/Meeting-assets/rec12345-card-file2.txt]]
+
+
+## Transcript
+
+hello
+
+<!-- plaud:managed:end -->
+
+User text below.
+",
+    },
+  ],
+  "requests": [
+    {
+      "headerNames": [
+        "Accept",
+        "Authorization",
+      ],
+      "url": "https://api.plaud.ai/permanent/rec/mindmap.png",
+    },
+    {
+      "headerNames": [
+        "Accept",
+        "Authorization",
+      ],
+      "url": "https://cdn.example.com/mm.html",
+    },
+    {
+      "headerNames": [
+        "Accept",
+        "Authorization",
+      ],
+      "url": "https://cdn.example.com/card-wrapper",
+    },
+    {
+      "headerNames": [
+        "Accept",
+        "Authorization",
+      ],
+      "url": "https://api.plaud.ai/permanent/rec/poster.png",
+    },
+    {
+      "headerNames": [
+        "Accept",
+        "Authorization",
+      ],
+      "url": "https://web.plaud.ai/permanent/rec/poster.png",
+    },
+    {
+      "headerNames": [
+        "Accept",
+        "Authorization",
+      ],
+      "url": "https://cdn.example.com/p-1x.webp",
+    },
+    {
+      "headerNames": [
+        "Accept",
+        "Authorization",
+      ],
+      "url": "https://cdn.example.com/p-2x.webp",
+    },
+    {
+      "headerNames": [
+        "Accept",
+        "Authorization",
+      ],
+      "url": "https://cdn.example.com/bg.jpg",
+    },
+    {
+      "headerNames": [
+        "Accept",
+        "Authorization",
+      ],
+      "url": "https://cdn.example.com/card-a.txt",
+    },
+    {
+      "headerNames": [
+        "Accept",
+        "Authorization",
+      ],
+      "url": "https://cdn.example.com/card-b.txt",
+    },
+    {
+      "headerNames": [
+        "Accept",
+        "Authorization",
+      ],
+      "url": "https://cdn.example.com/wrapper2",
+    },
+    {
+      "headerNames": [
+        "Accept",
+        "Authorization",
+      ],
+      "url": "https://cdn.example.com/x/diagram.png",
+    },
+  ],
+  "trashed": [],
+}
+`;
+
+exports[`AttachmentImporter.importAttachmentsForNote: replaceExisting true: trashes everything except the top-level Transcript.md, then reuses the freed names 1`] = `
+{
+  "files": [
+    {
+      "path": "Plaud/Meeting-assets/Transcript.md",
+      "text": "transcript file",
+    },
+    {
+      "byteLength": 6,
+      "head": "89504e47",
+      "path": "Plaud/Meeting-assets/rec12345-image1.png",
+    },
+    {
+      "path": "Plaud/Meeting.md",
+      "text": "---
+plaud-id: x
+---
+<!-- plaud:managed:start -->
+
+# Meeting
+
+## Images and Attachments
+
+_Imported from Plaud file-detail assets at import time._
+
+### Other attachments
+
+#### Image 1
+![[Plaud/Meeting-assets/rec12345-image1.png]]
+
+<!-- plaud:managed:end -->
+
+User text below.
+",
+    },
+  ],
+  "requests": [
+    {
+      "headerNames": [
+        "Accept",
+        "Authorization",
+      ],
+      "url": "https://cdn.example.com/a.png",
+    },
+  ],
+  "trashed": [
+    "Plaud/Meeting-assets/rec12345-image1.png",
+    "Plaud/Meeting-assets/sub/x.png",
+    "Plaud/Meeting-assets/sub/Transcript.md",
+    "Plaud/Meeting-assets/sub",
+  ],
+}
+`;
+
+exports[`AttachmentImporter.importAudioForNote downloads, writes the file, inserts the section before the transcript, and returns the byte count 1`] = `
+{
+  "files": [
+    {
+      "byteLength": 7,
+      "head": "4f676753",
+      "path": "Plaud/Meeting-assets/rec12345-audio.ogg",
+    },
+    {
+      "path": "Plaud/Meeting.md",
+      "text": "---
+plaud-id: x
+---
+<!-- plaud:managed:start -->
+
+# Meeting
+
+## Audio
+
+_Original recording audio downloaded from Plaud at import time._
+
+![[Plaud/Meeting-assets/rec12345-audio.ogg]]
+
+## Transcript
+
+hello
+
+<!-- plaud:managed:end -->
+
+User text below.
+",
+    },
+  ],
+  "requests": [
+    {
+      "headerNames": [
+        "Accept",
+      ],
+      "url": "https://bucket.s3.amazonaws.com/a.ogg?X-Amz-Signature=q",
+    },
+  ],
+  "trashed": [],
+}
+`;
