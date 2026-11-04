@@ -1047,7 +1047,10 @@ export class ImportModal extends Modal {
 
 		const copyButton = buttonRow.createEl('button', { text: 'Copy error' });
 		copyButton.addEventListener('click', () => {
-			const payload = formatErrorForClipboard(classification);
+			const payload = formatErrorForClipboard(
+				this.noteWriterOptions.profile,
+				classification,
+			);
 			void copyToClipboard(payload);
 		});
 
@@ -2508,7 +2511,7 @@ export class ImportModal extends Modal {
 			// duplicate prompt dismissed) both surface the same partial Notice.
 			const total = priorResults.length + recordings.length;
 			new Notice(
-				`${formatImportNotice(tallyImportResults(combined))} (cancelled at ${combined.length}/${total})`,
+				`${formatImportNotice(this.noteWriterOptions.profile, tallyImportResults(combined))} (cancelled at ${combined.length}/${total})`,
 			);
 			if (outcome.stop === 'cancelled') {
 				// issue #12: on the initial selection screen the loop left the
@@ -2903,7 +2906,7 @@ export class ImportModal extends Modal {
 		// Fire the Notice FIRST so a DOM-render failure cannot eat the
 		// batch result. The modal body render below can throw; the
 		// top-level toast is the last-line-of-defense feedback.
-		new Notice(formatImportNotice(tally));
+		new Notice(formatImportNotice(this.noteWriterOptions.profile, tally));
 
 		const { contentEl } = this;
 		contentEl.empty();

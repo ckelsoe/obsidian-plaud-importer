@@ -99,6 +99,25 @@ export type RecordingSource =
 	| { readonly kind: 'device'; readonly serial: string }
 	| { readonly kind: 'app' };
 
+/** A screenshot the user captured at a point in the recording. */
+export interface RecordingMark {
+	/**
+	 * Offset of the mark from the recording's start, in seconds. The wire value
+	 * is milliseconds; the parser converts it to seconds to match
+	 * `TranscriptSegment.startSeconds`. Used only to label the image with its
+	 * position in the recording, so a missing or implausible value is clamped to
+	 * 0 rather than dropping the screenshot.
+	 */
+	readonly offsetSeconds: number;
+	/**
+	 * Pre-signed image URL for the screenshot, resolved from the entry's
+	 * `picture_link` content id via `relation_content_mapping`. It carries its
+	 * own signature, so download it WITHOUT the service's bearer (like every other
+	 * pre-signed content URL). Short-lived: download at import time.
+	 */
+	readonly url: string;
+}
+
 export interface Recording {
 	readonly id: RecordingId;
 	readonly title: string;

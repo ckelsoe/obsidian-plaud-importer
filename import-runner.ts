@@ -244,7 +244,7 @@ export async function runImport(
 		) {
 			emitImportDebug(
 				options,
-				'skipped recording with no content in Plaud',
+				`skipped recording with no content in ${options.profile.serviceName}`,
 				{
 					recordingId: recording.id,
 					recordingTitle: recording.title,
@@ -531,7 +531,7 @@ export async function runImport(
 			// logError(errorIds.IMPORT_RECORDING_FAILED, ...) telemetry
 			// call once the plugin has telemetry infrastructure.
 			console.error(
-				`Plaud importer: import failed for recording ${recording.id} "${recording.title}"`,
+				`${options.profile.serviceName} importer: import failed for recording ${recording.id} "${recording.title}"`,
 				err,
 			);
 			const classification = classifyError(err, options.errorPolicy);
@@ -606,7 +606,7 @@ export async function runImport(
 					// different recording, etc.). Fall through and report the
 					// original Plaud failure so the user still sees something.
 					console.error(
-						`Plaud importer: placeholder write failed for recording ${recording.id}`,
+						`${options.profile.serviceName} importer: placeholder write failed for recording ${recording.id}`,
 						placeholderErr,
 					);
 				}

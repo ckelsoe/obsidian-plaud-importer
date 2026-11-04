@@ -25,6 +25,13 @@ const COMU: ServiceProfile = {
 	keyPrefix: 'comu',
 	pluginId: 'comu-importer',
 	canonicalId: (id) => id.toLowerCase(),
+	serviceName: 'Comu',
+	pluginName: 'Comu Importer',
+	recordingUrl: (id, base = 'https://comu.example') => `${base}/r/${id}`,
+	placeholderCallout: [
+		'> [!warning] Not imported: Comu has nothing yet',
+		'>',
+	],
 };
 
 const RECORDING: Recording = {
@@ -117,5 +124,42 @@ describe('a non-Plaud service profile', () => {
 		const index = buildImportedIndex(COMU, app, 'Comu');
 		expect([...index.byId.keys()]).toEqual(['abc123']);
 		expect(index.byId.get('abc123' as RecordingId)?.plaudId).toBe('ABC123');
+	});
+
+	it('writes no Plaud branding into a note or a placeholder', async () => {
+		const vault = makeFakeVault();
+		const writer = new NoteWriter(vault, {
+			profile: COMU,
+			outputFolder: 'Comu',
+			onDuplicate: 'overwrite',
+		});
+		const note = await writer.writeNote(
+			RECORDING,
+			TRANSCRIPT,
+			{ id: RECORDING.id, text: 'Summary', summaryId: 's1' },
+			CHAPTERS,
+		);
+		const placeholder = await writer.writePlaceholderNote(
+			{ ...RECORDING, id: 'zzz999' as RecordingId, title: 'Empty' },
+			'no speech',
+		);
+		const written = vault.files.get(note.path) ?? '';
+		const stub = vault.files.get(placeholder.path) ?? '';
+		expect(written).toContain(
+			'[Open in Comu →](https://comu.example/r/abc123)',
+		);
+		expect(written).toMatch(
+			/^comu-url: "https:\/\/comu\.example\/r\/abc123"$/m,
+		);
+		expect(stub).toContain(
+			'[Open in Comu →](https://comu.example/r/zzz999)',
+		);
+		expect(stub).toContain(
+			'> [!warning] Not imported: Comu has nothing yet',
+		);
+		expect(stub).toContain('> Comu reported: no speech');
+		for (const text of [written, stub]) {
+			expect(text).not.toMatch(/plaud/i);
+		}
 	});
 });

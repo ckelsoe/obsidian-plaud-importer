@@ -13,6 +13,7 @@ import {
 	PlaudAuthError,
 	PlaudParseError,
 } from './plaud-client-re';
+import { PLAUD_PROFILE } from './plaud-profile';
 
 const NOT_CONFIGURED_MESSAGE =
 	'No Plaud token configured. Open Settings → Community Plugins → Plaud Importer to paste your token, then run this command again.';
@@ -137,7 +138,7 @@ export function isPlaudUnprocessedError(err: unknown): boolean {
 }
 
 export const PLAUD_ERROR_POLICY: ServiceErrorPolicy = {
-	pluginName: 'Plaud Importer',
+	pluginName: PLAUD_PROFILE.pluginName,
 	classify: classifyPlaudServiceError,
 	isUnprocessed: isPlaudUnprocessedError,
 };

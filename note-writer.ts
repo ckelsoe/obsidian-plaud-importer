@@ -30,17 +30,16 @@
 // class satisfies VaultLike structurally).
 
 import { moment } from 'obsidian';
-import type { PlaudMark } from './plaud-client';
 import type {
 	AdditionalSummary,
 	Chapter,
 	ConsumerNote,
 	Recording,
+	RecordingMark,
 	Summary,
 	Transcript,
 	TranscriptSegment,
 } from './recording-model';
-import { recordingSourceLabel } from './plaud-client';
 import type { ServiceProfile } from './service-profile';
 import { trimChars, trimTrailingChars } from './text-trim';
 import {
@@ -175,7 +174,7 @@ export interface NoteWriterOptions {
 	readonly outputFolder: string;
 	/**
 	 * Origin of the web portal for `plaud-url` permalinks (v3 prod vs v4 new
-	 * portal). Omitted defaults to the prod portal. See `formatPlaudWebUrl`.
+	 * portal). Omitted uses the service's default portal. See `ServiceProfile.recordingUrl`.
 	 */
 	readonly webBaseUrl?: string;
 	/**
@@ -507,89 +506,13 @@ export function formatTimestamp(seconds: number): string {
 	return `${pad(m)}:${pad(s)}`;
 }
 
-/** Prod (v3) web portal, the default when no environment base is supplied. */
-export const PLAUD_WEB_URL_V3 = 'https://web.plaud.ai';
-
-/**
- * Build the public web-app URL for a Plaud recording. This is the link a user
- * clicks to open the recording in Plaud's browser UI. The `/file/{id}` path
- * shape is the same on every portal, so only the origin differs: a v3 (prod)
- * account links to `https://web.plaud.ai`, a v4 (new portal) account to its own
- * sign-in portal (`https://web.plaud.ai` by default). The caller passes the environment's
- * base via `webBase`; it defaults to the prod portal so an unthreaded caller
- * stays correct for v3. Confirmed from a live Plaud session on 2026-04-14.
- *
- * The ID is passed through `encodeURIComponent` for defense-in-depth,
- * matching the same treatment `plaud-client-re.ts` applies to the ID
- * when building the `/ai/transsumm/{id}` API URL. Real Plaud IDs are
- * 32-char hex strings that need no encoding, but a future ID format
- * change (slashes, dots, etc.) would silently produce broken URLs
- * without this guard.
- */
-export function formatPlaudWebUrl(
-	recordingId: string,
-	webBase: string = PLAUD_WEB_URL_V3,
-): string {
-	const base = trimTrailingChars(webBase, '/');
-	return `${base}/file/${encodeURIComponent(recordingId)}`;
-}
-
-/**
- * Substitute Plaud's template placeholders inside a markdown body. Plaud's
- * summary templates contain tokens like `$[audio_start_time]` that the
- * Plaud web UI replaces with concrete values on the client before
- * rendering. Their API returns the RAW template body, so without this
- * substitution our notes would show literal `$[audio_start_time]` text
- * where a date should be.
- *
- * Known placeholders (filled in from the recording / transcript we
- * already have on hand):
- *   $[audio_start_time]  → "YYYY-MM-DD HH:MM:SS" in the capture zone
- *   $[audio_title]       → recording.title
- *   $[audio_duration]    → human-readable duration
- *   $[speakers]          → comma-separated speaker list
- *
- * Unknown placeholders are left untouched so user notes are never
- * silently mangled by a regex on a token we don't have data for. New
- * tokens Plaud adds in future templates show through verbatim and a
- * follow-up can wire them in once we know what they should resolve to.
- *
- * `offsetMinutes` is the recording's effective capture-zone offset, threaded so
- * $[audio_start_time] matches the note's own date/time. It defaults to the
- * importing device's zone for callers that omit it.
- */
-export function substitutePlaudPlaceholders(
-	markdown: string,
-	recording: Recording,
-	transcript: Transcript | null,
-	offsetMinutes: number = machineOffsetMinutes(recording.createdAt),
-): string {
-	if (markdown.length === 0) return markdown;
-	return markdown.replace(/\$\[([a-z0-9_]+)\]/g, (match, key: string) => {
-		switch (key) {
-			case 'audio_start_time':
-				return formatLocalDateTime(recording.createdAt, offsetMinutes);
-			case 'audio_title':
-				return recording.title;
-			case 'audio_duration':
-				return formatDurationHoursMinutes(recording.durationSeconds);
-			case 'speakers': {
-				const speakers = extractSpeakers(transcript);
-				return speakers.length > 0 ? speakers.join(', ') : match;
-			}
-			default:
-				return match;
-		}
-	});
-}
-
 /**
  * "YYYY-MM-DD HH:MM:SS" formatter in the recording's capture zone, matching the
  * wall-clock format Plaud's own UI uses (e.g. `2026-05-13 14:04:22`). Rendered
  * in the capture zone, not the importing device's, so it matches what the user
  * sees on web.plaud.ai regardless of which machine ran the import.
  */
-function formatLocalDateTime(
+export function formatLocalDateTime(
 	d: Date,
 	offsetMinutes: number = machineOffsetMinutes(d),
 ): string {
@@ -1586,6 +1509,7 @@ export interface CustomFrontmatterContext {
 
 /** Build the token context for one recording (folderName '' when unfiled). */
 export function customFrontmatterContext(
+	profile: ServiceProfile,
 	recording: Recording,
 	summary: Summary | null | undefined,
 	folderName: string,
@@ -1609,7 +1533,7 @@ export function customFrontmatterContext(
 		language: summary?.language ?? '',
 		template: summary?.template ?? '',
 		model: summary?.model ?? '',
-		device: recordingSourceLabel(recording.source, deviceNames),
+		device: profile.devices?.label(recording.source, deviceNames) ?? '',
 	};
 }
 
@@ -1682,7 +1606,7 @@ export const TEMPLATE_PREVIEW_CUSTOM_CONTEXT: CustomFrontmatterContext = {
 	language: 'en',
 	template: 'Meeting notes',
 	model: 'gpt-5',
-	device: 'Plaud Note',
+	device: '',
 };
 
 /**
@@ -1705,10 +1629,10 @@ export function renderCustomFrontmatterPreview(
 			continue;
 		}
 		seen.add(key);
-		const expanded = expandCustomFrontmatterValue(
-			row.value,
-			TEMPLATE_PREVIEW_CUSTOM_CONTEXT,
-		);
+		const expanded = expandCustomFrontmatterValue(row.value, {
+			...TEMPLATE_PREVIEW_CUSTOM_CONTEXT,
+			device: profile.devices?.sampleName ?? '',
+		});
 		const safeKey = yamlScalar(key);
 		lines.push(
 			expanded.length > 0
@@ -1732,7 +1656,7 @@ export function formatFrontmatter(
 	preserveUnknown = false,
 	fallbackTimezone = '',
 	deviceNames: ReadonlyMap<string, string> = new Map(),
-	webBaseUrl: string = PLAUD_WEB_URL_V3,
+	webBaseUrl?: string,
 	plaudLocation = '',
 ): string {
 	const duration = Number.isFinite(recording.durationSeconds)
@@ -1773,7 +1697,7 @@ export function formatFrontmatter(
 	// parsers.
 	entries.set(
 		`${p}-url`,
-		yamlScalar(formatPlaudWebUrl(recording.id, webBaseUrl)),
+		yamlScalar(profile.recordingUrl(recording.id, webBaseUrl)),
 	);
 	entries.set('date', formatDateYmd(recording.createdAt, offsetMinutes));
 	// Precise start/end instants in the recording's capture zone, ISO 8601 with
@@ -1891,6 +1815,7 @@ export function formatFrontmatter(
 	if (customRows && customRows.length > 0) {
 		const folderName = folders?.[0] ?? '';
 		const ctx = customFrontmatterContext(
+			profile,
 			recording,
 			summary,
 			folderName,
@@ -2740,7 +2665,7 @@ function formatMarkTimestamp(offsetSeconds: number): string {
  * the moment after the embed target is localized. Callers pass a non-empty list
  * only when the screenshots artifact is selected.
  */
-function formatMarksSection(marks: readonly PlaudMark[]): string {
+function formatMarksSection(marks: readonly RecordingMark[]): string {
 	const parts: string[] = ['## Screenshots', ''];
 	for (const mark of marks) {
 		const label = formatMarkTimestamp(mark.offsetSeconds);
@@ -2891,7 +2816,7 @@ export interface FormatMarkdownOptions {
 	 * Origin of the web portal for this account's `plaud-url` permalink and the
 	 * "Open in Plaud" link. A v3 (prod) account uses `https://web.plaud.ai`, a
 	 * v4 (new portal) account its sign-in portal (`https://web.plaud.ai` by default).
-	 * Omitted defaults to the prod portal. See `formatPlaudWebUrl`.
+	 * Omitted uses the service's default portal. See `ServiceProfile.recordingUrl`.
 	 */
 	readonly webBaseUrl?: string;
 	/**
@@ -2931,7 +2856,7 @@ export interface FormatMarkdownOptions {
 	 * when the screenshots artifact is selected; the attachment pipeline downloads
 	 * the images and repoints the inline embeds to the local `-assets` copies.
 	 */
-	readonly marks?: readonly PlaudMark[];
+	readonly marks?: readonly RecordingMark[];
 	/**
 	 * Summaries beyond the primary one, each rendered as its own `## <heading>`
 	 * section right after the main Summary block (e.g. "## Summary (beta)"). The
@@ -3047,8 +2972,6 @@ export function formatMarkdown(
 	const includeTranscript = options.includeTranscript ?? true;
 	const includeSummary = options.includeSummary ?? true;
 	const headerLevel: HeadingLevel = options.transcriptHeaderLevel ?? 4;
-	// Portal origin for this account's permalinks (v3 prod vs v4 new portal).
-	const webBase = options.webBaseUrl ?? PLAUD_WEB_URL_V3;
 	const offsetMinutes = effectiveCaptureOffsetMinutes(
 		recording,
 		options.fallbackTimezone ?? '',
@@ -3086,7 +3009,7 @@ export function formatMarkdown(
 			options.preserveUnknownFrontmatter,
 			options.fallbackTimezone ?? '',
 			options.deviceNames,
-			webBase,
+			options.webBaseUrl,
 			options.plaudLocation ?? '',
 		),
 		'',
@@ -3100,31 +3023,30 @@ export function formatMarkdown(
 		// the plaud-url frontmatter field on purpose: frontmatter is for
 		// Dataview / automation, this line is for the human reading the
 		// note. The raw URL goes unescaped inside the markdown link
-		// target — safe because formatPlaudWebUrl encodes the ID and the
+		// target — safe because recordingUrl encodes the ID and the
 		// host/path template contains no parentheses.
-		`[Open in Plaud →](${formatPlaudWebUrl(recording.id, webBase)})`,
+		`[Open in ${profile.serviceName} →](${profile.recordingUrl(recording.id, options.webBaseUrl)})`,
 		'',
 	];
+	const expandTokens = (text: string): string =>
+		profile.expandSummaryTokens?.(
+			text,
+			recording,
+			transcript,
+			offsetMinutes,
+		) ?? text;
 	if (includeSummary) {
 		const renderedSummary: Summary | null =
 			summary !== null
 				? {
 						...summary,
-						text: substitutePlaudPlaceholders(
-							summary.text,
-							recording,
-							transcript,
-							offsetMinutes,
-						),
+						text: expandTokens(summary.text),
 					}
 				: null;
 		parts.push('## Summary', '', formatSummaryBody(renderedSummary), '');
 		if (renderedSummary?.aiSuggestion) {
-			const renderedSuggestion = substitutePlaudPlaceholders(
+			const renderedSuggestion = expandTokens(
 				renderedSummary.aiSuggestion,
-				recording,
-				transcript,
-				offsetMinutes,
 			).trim();
 			parts.push('## AI Suggestions', '', renderedSuggestion, '');
 		}
@@ -3136,12 +3058,7 @@ export function formatMarkdown(
 		for (const extra of options.additionalSummaries ?? []) {
 			const body = formatSummaryBody({
 				id: recording.id,
-				text: substitutePlaudPlaceholders(
-					extra.text,
-					recording,
-					transcript,
-					offsetMinutes,
-				),
+				text: expandTokens(extra.text),
 			});
 			parts.push(`## ${extra.heading}`, '', body, '');
 		}
@@ -3179,9 +3096,9 @@ export function formatPlaceholderMarkdown(
 	template: string = DEFAULT_NOTE_NAME_TEMPLATE,
 	datetimeTemplate: string = '',
 	fallbackTimezone = '',
-	webBaseUrl: string = PLAUD_WEB_URL_V3,
+	webBaseUrl?: string,
 ): string {
-	const url = formatPlaudWebUrl(recording.id, webBaseUrl);
+	const url = profile.recordingUrl(recording.id, webBaseUrl);
 	const offsetMinutes = effectiveCaptureOffsetMinutes(
 		recording,
 		fallbackTimezone,
@@ -3230,21 +3147,13 @@ export function formatPlaceholderMarkdown(
 		'',
 		`# ${expandedTitle}`,
 		'',
-		`[Open in Plaud →](${url})`,
+		`[Open in ${profile.serviceName} →](${url})`,
 		'',
-		'> [!warning] Not imported: Plaud has no transcript or summary',
-		'> Plaud has no transcript or summary available for this recording. This is a',
-		'> Plaud-side condition, not a problem reading the data. A common cause is that',
-		'> the audio has no detectable speech (Plaud shows "No speech detected"). It can',
-		'> also mean the recording is still processing. Open it in Plaud to see the exact',
-		'> reason. If Plaud later has content for it, re-run the import and this',
-		'> placeholder is replaced automatically. If Plaud reports no speech, there is',
-		'> nothing to import.',
-		'>',
+		...profile.placeholderCallout,
 		`> Recording ID: \`${recording.id}\``,
 	];
 	if (flatReason.length > 0) {
-		lines.push('>', `> Plaud reported: ${flatReason}`);
+		lines.push('>', `> ${profile.serviceName} reported: ${flatReason}`);
 	}
 	lines.push('');
 	return lines.join('\n');
@@ -3428,7 +3337,7 @@ export class NoteWriter {
 	private readonly noteNameTemplate: string;
 	private readonly datetimeTemplate: string;
 	private readonly fallbackTimezone: string;
-	private readonly webBaseUrl: string;
+	private readonly webBaseUrl: string | undefined;
 	private readonly customFrontmatter: readonly CustomFrontmatterRow[];
 	private readonly preserveUnknownFrontmatter: boolean;
 	private readonly forbiddenCharReplacement: string;
@@ -3478,7 +3387,7 @@ export class NoteWriter {
 				: DEFAULT_NOTE_NAME_TEMPLATE;
 		this.datetimeTemplate = options.datetimeTemplate ?? '';
 		this.fallbackTimezone = options.fallbackTimezone ?? '';
-		this.webBaseUrl = options.webBaseUrl ?? PLAUD_WEB_URL_V3;
+		this.webBaseUrl = options.webBaseUrl;
 		this.customFrontmatter = options.customFrontmatter ?? [];
 		// Default true: a headless caller (or hand-edited data.json) that omits this
 		// gets the non-destructive behavior, matching DEFAULT_SETTINGS.
@@ -3672,7 +3581,7 @@ export class NoteWriter {
 				this.profile.canonicalId(recordingId)
 		) {
 			throw new NoteWriterError(
-				`Filename collision at ${notePath}: this note belongs to recording ${existingPlaudId}, not ${recordingId}. Rename one of the source recordings in Plaud or delete the existing note to re-import.`,
+				`Filename collision at ${notePath}: this note belongs to recording ${existingPlaudId}, not ${recordingId}. Rename one of the source recordings in ${this.profile.serviceName} or delete the existing note to re-import.`,
 			);
 		}
 		return existingContent;
@@ -4160,7 +4069,7 @@ export class NoteWriter {
 			}
 			if (!(await this.isManagedTranscriptFile(existing))) {
 				throw new NoteWriterError(
-					`${path} already exists and was not created by Plaud Importer, so it was left alone. Rename or move it, then import recording ${recording.id} again.`,
+					`${path} already exists and was not created by ${this.profile.pluginName}, so it was left alone. Rename or move it, then import recording ${recording.id} again.`,
 				);
 			}
 			await this.vault.process(existing, () => content);
@@ -4211,7 +4120,7 @@ export class NoteWriter {
 			// here would skip its attachments, audio, and badge refresh. A leftover
 			// transcript file is harmless and is retried on the next re-import.
 			console.warn(
-				`Plaud importer: could not remove the old transcript file ${path} for recording ${recording.id}`,
+				`${this.profile.serviceName} importer: could not remove the old transcript file ${path} for recording ${recording.id}`,
 				cause,
 			);
 		}

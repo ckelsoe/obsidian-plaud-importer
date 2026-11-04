@@ -16,7 +16,11 @@ import { PlaudV4Client } from './plaud-client-v4';
 import { createSequentialPageFetcher } from './list-paging';
 import { ImportModal, classifyError } from './import-modal';
 import { PLAUD_ERROR_POLICY } from './plaud-errors';
-import { PLAUD_PROFILE } from './plaud-profile';
+import {
+	formatPlaudWebUrl,
+	PLAUD_PROFILE,
+	PLAUD_WEB_URL_V3,
+} from './plaud-profile';
 import { BufferedDebugLogger } from './debug-logger';
 import { clearPlaudLoginSession, openPlaudLogin } from './plaud-login';
 import {
@@ -44,8 +48,6 @@ import {
 	isTranscriptPlacement,
 	sanitizeFilename,
 	zoneOffsetMinutes,
-	formatPlaudWebUrl,
-	PLAUD_WEB_URL_V3,
 	type RenameFileFn,
 } from './note-writer';
 import {

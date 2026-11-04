@@ -24,7 +24,6 @@ import {
 	formatMarkdown,
 	formatNoteName,
 	formatPlaceholderMarkdown,
-	formatPlaudWebUrl,
 	formatTimestamp,
 	formatTranscriptSection,
 	formatTranscriptCallout,
@@ -45,12 +44,15 @@ import {
 	sanitizeFilename,
 	TEMPLATE_PREVIEW_DATE,
 	TEMPLATE_PREVIEW_TITLE,
-	substitutePlaudPlaceholders,
 	type TranscriptChapterGroup,
 	type VaultLike,
 } from '../note-writer';
 import { managedMarkers } from '../managed-block';
-import { PLAUD_PROFILE } from '../plaud-profile';
+import {
+	formatPlaudWebUrl,
+	PLAUD_PROFILE,
+	substitutePlaudPlaceholders,
+} from '../plaud-profile';
 import type {
 	Chapter,
 	ConsumerNote,
@@ -1707,6 +1709,7 @@ describe('formatFrontmatter', () => {
 describe('customFrontmatterContext', () => {
 	it('maps recording and summary fields into the token context', () => {
 		const ctx = customFrontmatterContext(
+			PLAUD_PROFILE,
 			makeRecording({ durationSeconds: 1830 }),
 			makeSummary({
 				category: 'Meeting',
@@ -1724,7 +1727,12 @@ describe('customFrontmatterContext', () => {
 	});
 
 	it('uses empty strings for a missing summary or missing fields', () => {
-		const ctx = customFrontmatterContext(makeRecording(), null, '');
+		const ctx = customFrontmatterContext(
+			PLAUD_PROFILE,
+			makeRecording(),
+			null,
+			'',
+		);
 		expect(ctx.category).toBe('');
 		expect(ctx.headline).toBe('');
 		expect(ctx.language).toBe('');
@@ -1735,6 +1743,7 @@ describe('customFrontmatterContext', () => {
 	it('resolves the device token from the source and name map', () => {
 		const names = new Map([['NP', 'CK PLAUD NotePin']]);
 		const ctx = customFrontmatterContext(
+			PLAUD_PROFILE,
 			makeRecording({ source: { kind: 'device', serial: 'NP' } }),
 			null,
 			'',
@@ -1747,14 +1756,16 @@ describe('customFrontmatterContext', () => {
 	it('labels a non-device recording as App and no source as empty', () => {
 		expect(
 			customFrontmatterContext(
+				PLAUD_PROFILE,
 				makeRecording({ source: { kind: 'app' } }),
 				null,
 				'',
 			).device,
 		).toBe('App');
-		expect(customFrontmatterContext(makeRecording(), null, '').device).toBe(
-			'',
-		);
+		expect(
+			customFrontmatterContext(PLAUD_PROFILE, makeRecording(), null, '')
+				.device,
+		).toBe('');
 	});
 });
 
@@ -1785,6 +1796,7 @@ describe('recordingSourceLabel', () => {
 describe('expandCustomFrontmatterValue', () => {
 	// makeRecording is 2026-04-14 (Q2); the context carries a Meeting category.
 	const ctx: CustomFrontmatterContext = customFrontmatterContext(
+		PLAUD_PROFILE,
 		makeRecording({ durationSeconds: 1830 }),
 		makeSummary({ category: 'Meeting' }),
 		'Meetings',
@@ -1817,6 +1829,7 @@ describe('expandCustomFrontmatterValue', () => {
 
 	it('expands the device token from a device-name map', () => {
 		const deviceCtx = customFrontmatterContext(
+			PLAUD_PROFILE,
 			makeRecording({ source: { kind: 'device', serial: 'NP' } }),
 			null,
 			'',
@@ -1830,6 +1843,7 @@ describe('expandCustomFrontmatterValue', () => {
 			expandCustomFrontmatterValue(
 				'{{device}}',
 				customFrontmatterContext(
+					PLAUD_PROFILE,
 					makeRecording({ source: { kind: 'app' } }),
 					null,
 					'',
@@ -1851,7 +1865,12 @@ describe('expandCustomFrontmatterValue', () => {
 	});
 
 	it('expands an absent summary content token to empty', () => {
-		const noSummary = customFrontmatterContext(makeRecording(), null, '');
+		const noSummary = customFrontmatterContext(
+			PLAUD_PROFILE,
+			makeRecording(),
+			null,
+			'',
+		);
 		expect(expandCustomFrontmatterValue('{{category}}', noSummary)).toBe(
 			'',
 		);
@@ -1859,6 +1878,7 @@ describe('expandCustomFrontmatterValue', () => {
 
 	it('does not re-expand braces inside a substituted value', () => {
 		const braced = customFrontmatterContext(
+			PLAUD_PROFILE,
 			makeRecording(),
 			makeSummary({ category: 'Report {{YYYY}}' }),
 			'',
@@ -2359,12 +2379,10 @@ describe('formatMarkdown', () => {
 					{
 						offsetSeconds: 30,
 						url: 'https://s3.example/a.png?sig=1',
-						markType: 2,
 					},
 					{
 						offsetSeconds: 3725,
 						url: 'https://s3.example/b.png?sig=2',
-						markType: 2,
 					},
 				],
 			},

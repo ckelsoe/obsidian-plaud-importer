@@ -27,6 +27,7 @@ import {
 	type PlaceholderWriteOutcome,
 } from './note-writer';
 import type { DebugLogger } from './debug-logger';
+import type { ServiceProfile } from './service-profile';
 
 /**
  * Modal-level options passed to `ImportModal`. Extends
@@ -465,9 +466,12 @@ export function tallyImportResults(
  * The Notice is the only feedback the user sees outside the modal itself,
  * so it needs to report counts compactly.
  */
-export function formatImportNotice(tally: ImportTally): string {
+export function formatImportNotice(
+	profile: ServiceProfile,
+	tally: ImportTally,
+): string {
 	if (tally.total === 0) {
-		return 'Plaud importer: nothing to import.';
+		return `${profile.serviceName} importer: nothing to import.`;
 	}
 	const imported = tally.created + tally.overwritten;
 	const parts: string[] = [];
@@ -484,7 +488,7 @@ export function formatImportNotice(tally: ImportTally): string {
 	if (tally.failed > 0) {
 		parts.push(`${tally.failed} failed`);
 	}
-	return `Plaud importer: ${parts.join(', ')}.`;
+	return `${profile.serviceName} importer: ${parts.join(', ')}.`;
 }
 
 /**
@@ -494,10 +498,11 @@ export function formatImportNotice(tally: ImportTally): string {
  * the same format.
  */
 export function formatErrorForClipboard(
+	profile: ServiceProfile,
 	classification: ErrorClassification,
 ): string {
 	return [
-		'Plaud Importer error',
+		`${profile.pluginName} error`,
 		`Category: ${classification.category}`,
 		`Retryable: ${classification.canRetry}`,
 		'Message:',

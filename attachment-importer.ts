@@ -83,6 +83,7 @@ export interface AttachmentImporterOptions {
 export class AttachmentImporter {
 	private readonly app: App;
 	private readonly markers: ManagedMarkers;
+	private readonly logPrefix: string;
 	private readonly resolveAuthToken: () => string | null;
 	private readonly resolveApiBaseUrl: () => string;
 	private readonly debugLogger: DebugLogger;
@@ -90,6 +91,7 @@ export class AttachmentImporter {
 	constructor(options: AttachmentImporterOptions) {
 		this.app = options.app;
 		this.markers = managedMarkers(options.profile);
+		this.logPrefix = `${options.profile.serviceName} importer`;
 		this.resolveAuthToken = options.getAuthToken ?? (() => null);
 		this.resolveApiBaseUrl =
 			options.getApiBaseUrl ?? (() => DEFAULT_PLAUD_API_BASE);
@@ -389,7 +391,7 @@ export class AttachmentImporter {
 						// Never persist raw HTML wrappers as attachment files.
 						if (savedFromWrapper === 0) {
 							console.warn(
-								`Plaud importer: no image could be saved from an attachment page for ${notePath}`,
+								`${this.logPrefix}: no image could be saved from an attachment page for ${notePath}`,
 								asset,
 							);
 						}
@@ -466,7 +468,7 @@ export class AttachmentImporter {
 						}
 						if (savedFromEnvelope === 0) {
 							console.warn(
-								`Plaud importer: no image could be saved from an attachment envelope for ${notePath}`,
+								`${this.logPrefix}: no image could be saved from an attachment envelope for ${notePath}`,
 								asset,
 							);
 						}
@@ -537,7 +539,7 @@ export class AttachmentImporter {
 			}
 			if (!imported) {
 				console.warn(
-					`Plaud importer: failed to import attachment for ${notePath}`,
+					`${this.logPrefix}: failed to import attachment for ${notePath}`,
 					asset,
 				);
 			}
