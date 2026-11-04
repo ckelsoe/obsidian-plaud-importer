@@ -15,13 +15,12 @@
 // acyclic side of the former import-modal <-> attachment-importer cycle.
 // -----------------------------------------------------------------------------
 
+import type { PlaudFolder, TranscriptAndSummary } from './plaud-client';
 import type {
-	PlaudRecordingId,
-	PlaudFolder,
+	RecordingId,
 	Recording,
-	TranscriptAndSummary,
 	AttachmentAsset,
-} from './plaud-client';
+} from './recording-model';
 import {
 	NoteWriterCancelledError,
 	buildNoteTags,
@@ -108,9 +107,7 @@ export interface ImportRunDeps {
 	 * injects its warm `ensureArtifactsForRecording` so a prior "review
 	 * artifacts" preflight is not re-fetched.
 	 */
-	fetchArtifacts(
-		recordingId: PlaudRecordingId,
-	): Promise<TranscriptAndSummary>;
+	fetchArtifacts(recordingId: RecordingId): Promise<TranscriptAndSummary>;
 	/**
 	 * Resolves the account's flat folder/tag catalog, called ONCE per run to
 	 * turn each recording's `filetag_id_list` into folder names (issue #16).
@@ -125,7 +122,7 @@ export interface ImportRunDeps {
 	 * exposes none. Only invoked when `selection.includeAudio` is set, so a
 	 * caller that never imports audio (or a headless auto-sync) may omit it.
 	 */
-	fetchAudioUrl?(recordingId: PlaudRecordingId): Promise<string | null>;
+	fetchAudioUrl?(recordingId: RecordingId): Promise<string | null>;
 	/** Optional post-write transcript fold. Omitted by headless callers. */
 	applyFold?(path: string): Promise<void>;
 	readonly observer?: ImportRunObserver;

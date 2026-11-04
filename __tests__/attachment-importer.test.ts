@@ -7,7 +7,7 @@ import {
 	isLocalCardImage,
 	repairLegacyCardEmbeds,
 } from '../attachment-importer';
-import type { AttachmentAsset } from '../plaud-client';
+import type { AttachmentAsset } from '../recording-model';
 import { asyncResult } from './helpers/async-result';
 
 function asset(overrides: Partial<AttachmentAsset> = {}): AttachmentAsset {

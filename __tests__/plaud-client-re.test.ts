@@ -1182,7 +1182,7 @@ describe('listRecordings filter validation', () => {
 // getTranscriptAndSummary — POST /ai/transsumm/{id}
 // =============================================================================
 
-import type { PlaudRecordingId, Recording } from '../plaud-client';
+import type { RecordingId, Recording } from '../recording-model';
 import { asyncResult } from './helpers/async-result';
 import { at } from './helpers/checked';
 
@@ -1217,7 +1217,7 @@ function transsummEnvelope(
 	};
 }
 
-const ID = 'rec-abc-123' as PlaudRecordingId;
+const ID = 'rec-abc-123' as RecordingId;
 
 // Request shape -------------------------------------------------------------
 
@@ -1274,9 +1274,7 @@ describe('getTranscriptAndSummary request shape', () => {
 		);
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
-		await client.getTranscriptAndSummary(
-			'id with/slash' as PlaudRecordingId,
-		);
+		await client.getTranscriptAndSummary('id with/slash' as RecordingId);
 
 		expect(firstRequest()?.url).toBe(
 			'https://api.plaud.ai/ai/transsumm/id%20with%2Fslash',
@@ -1293,7 +1291,7 @@ describe('getTranscriptAndSummary request shape', () => {
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
 		await expect(
-			client.getTranscriptAndSummary('' as PlaudRecordingId),
+			client.getTranscriptAndSummary('' as RecordingId),
 		).rejects.toBeInstanceOf(PlaudApiError);
 		expect(called).toBe(false);
 	});
@@ -4393,7 +4391,7 @@ describe('getAudioTempUrl request shape', () => {
 		);
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
-		await client.getAudioTempUrl('id with/slash' as PlaudRecordingId);
+		await client.getAudioTempUrl('id with/slash' as RecordingId);
 
 		expect(lastRequest()?.url).toBe(
 			'https://api.plaud.ai/file/temp-url/id%20with%2Fslash',
@@ -4683,7 +4681,7 @@ describe('updateTitle', () => {
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
 		await client.updateTitle(
-			'abc123' as PlaudRecordingId,
+			'abc123' as RecordingId,
 			'2026-07-02 New name',
 		);
 
@@ -4699,7 +4697,7 @@ describe('updateTitle', () => {
 		const { fetcher, lastRequest } = captureFetcher(ok({ status: 0 }));
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
-		await client.updateTitle('a/b c' as PlaudRecordingId, 'Name');
+		await client.updateTitle('a/b c' as RecordingId, 'Name');
 
 		expect(lastRequest()?.url).toMatch(/\/file\/a%2Fb%20c$/);
 	});
@@ -4713,7 +4711,7 @@ describe('updateTitle', () => {
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
 		await expect(
-			client.updateTitle('abc123' as PlaudRecordingId, 'Name'),
+			client.updateTitle('abc123' as RecordingId, 'Name'),
 		).resolves.toBeUndefined();
 	});
 
@@ -4728,7 +4726,7 @@ describe('updateTitle', () => {
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
 		await expect(
-			client.updateTitle('abc123' as PlaudRecordingId, 'Name'),
+			client.updateTitle('abc123' as RecordingId, 'Name'),
 		).rejects.toBeInstanceOf(PlaudParseError);
 	});
 
@@ -4737,7 +4735,7 @@ describe('updateTitle', () => {
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
 		await expect(
-			client.updateTitle('abc123' as PlaudRecordingId, '   '),
+			client.updateTitle('abc123' as RecordingId, '   '),
 		).rejects.toBeInstanceOf(PlaudApiError);
 		expect(allRequests()).toHaveLength(0);
 	});
@@ -4746,7 +4744,7 @@ describe('updateTitle', () => {
 		const { fetcher, lastRequest } = captureFetcher(ok({ status: 0 }));
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
-		await client.updateTitle('abc123' as PlaudRecordingId, '  Name  ');
+		await client.updateTitle('abc123' as RecordingId, '  Name  ');
 
 		expect(JSON.parse(lastRequest()?.body ?? '{}')).toEqual({
 			filename: 'Name',
@@ -4758,7 +4756,7 @@ describe('updateTitle', () => {
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
 		await expect(
-			client.updateTitle('abc123' as PlaudRecordingId, 'Name'),
+			client.updateTitle('abc123' as RecordingId, 'Name'),
 		).rejects.toBeInstanceOf(PlaudAuthError);
 	});
 
@@ -4769,7 +4767,7 @@ describe('updateTitle', () => {
 		const client = new ReverseEngineeredPlaudClient(() => 'tok', fetcher);
 
 		await expect(
-			client.updateTitle('abc123' as PlaudRecordingId, 'Name'),
+			client.updateTitle('abc123' as RecordingId, 'Name'),
 		).rejects.toBeInstanceOf(PlaudApiError);
 	});
 });

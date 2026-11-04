@@ -11,14 +11,14 @@ import {
 } from '../note-writer';
 import { PlaudApiError, PlaudAuthError } from '../plaud-client-re';
 import type { ArtifactSelection, ImportModalOptions } from '../import-core';
+import type { TranscriptAndSummary } from '../plaud-client';
 import type {
 	AttachmentAsset,
-	PlaudRecordingId,
+	RecordingId,
 	Recording,
 	Summary,
 	Transcript,
-	TranscriptAndSummary,
-} from '../plaud-client';
+} from '../recording-model';
 import { asyncResult } from './helpers/async-result';
 import { makeFakeVault } from './helpers/fake-vault';
 import { at, defined } from './helpers/checked';
@@ -50,7 +50,7 @@ function makeRecording(overrides: Partial<Recording> = {}): Recording {
 	const createdAt = overrides.createdAt ?? new Date(2026, 5, 28, 9, 0);
 	const durationSeconds = overrides.durationSeconds ?? 600;
 	return {
-		id: `rec-${nextId}` as PlaudRecordingId,
+		id: `rec-${nextId}` as RecordingId,
 		title: `Recording ${nextId}`,
 		createdAt,
 		endsAt: new Date(createdAt.getTime() + durationSeconds * 1000),
@@ -63,7 +63,7 @@ function makeRecording(overrides: Partial<Recording> = {}): Recording {
 	};
 }
 
-function makeTranscript(id: PlaudRecordingId): Transcript {
+function makeTranscript(id: RecordingId): Transcript {
 	return {
 		id,
 		segments: [
@@ -78,7 +78,7 @@ function makeTranscript(id: PlaudRecordingId): Transcript {
 	};
 }
 
-function makeSummary(id: PlaudRecordingId): Summary {
+function makeSummary(id: RecordingId): Summary {
 	return { id, text: '- A point' };
 }
 
@@ -173,15 +173,13 @@ function makeAttachmentStub(summaryLinked: readonly AttachmentAsset[] = []): {
 }
 
 function makeFetch(
-	artifactsById: Map<PlaudRecordingId, TranscriptAndSummary | (() => never)>,
+	artifactsById: Map<RecordingId, TranscriptAndSummary | (() => never)>,
 ): {
 	fetchArtifacts: ImportRunDeps['fetchArtifacts'];
-	calls: PlaudRecordingId[];
+	calls: RecordingId[];
 } {
-	const calls: PlaudRecordingId[] = [];
-	const fetchArtifacts = (
-		id: PlaudRecordingId,
-	): Promise<TranscriptAndSummary> =>
+	const calls: RecordingId[] = [];
+	const fetchArtifacts = (id: RecordingId): Promise<TranscriptAndSummary> =>
 		asyncResult(() => {
 			calls.push(id);
 			const entry = artifactsById.get(id);
@@ -864,7 +862,7 @@ describe('runImport', () => {
 		const vault = makeFakeVault();
 		const recA = makeRecording();
 		const recB = makeRecording();
-		const artifacts = new Map<PlaudRecordingId, TranscriptAndSummary>([
+		const artifacts = new Map<RecordingId, TranscriptAndSummary>([
 			[recA.id, makeArtifacts(recA)],
 			[recB.id, makeArtifacts(recB)],
 		]);
@@ -1129,7 +1127,7 @@ describe('runImport', () => {
 		const recB = makeRecording();
 		const recC = makeRecording();
 		const { fetchArtifacts, calls } = makeFetch(
-			new Map<PlaudRecordingId, TranscriptAndSummary | (() => never)>([
+			new Map<RecordingId, TranscriptAndSummary | (() => never)>([
 				[recA.id, makeArtifacts(recA)],
 				[
 					recB.id,
@@ -1181,7 +1179,7 @@ describe('runImport', () => {
 		const recA = makeRecording();
 		const recB = makeRecording();
 		const { fetchArtifacts, calls } = makeFetch(
-			new Map<PlaudRecordingId, TranscriptAndSummary | (() => never)>([
+			new Map<RecordingId, TranscriptAndSummary | (() => never)>([
 				[
 					recA.id,
 					(): never => {
@@ -1220,7 +1218,7 @@ describe('runImport', () => {
 		const recA = makeRecording();
 		const recB = makeRecording();
 		const { fetchArtifacts } = makeFetch(
-			new Map<PlaudRecordingId, TranscriptAndSummary | (() => never)>([
+			new Map<RecordingId, TranscriptAndSummary | (() => never)>([
 				[recA.id, makeArtifacts(recA)],
 				[
 					recB.id,
@@ -1255,7 +1253,7 @@ describe('runImport', () => {
 		const recB = makeRecording();
 		const recC = makeRecording();
 		const { fetchArtifacts, calls } = makeFetch(
-			new Map<PlaudRecordingId, TranscriptAndSummary | (() => never)>([
+			new Map<RecordingId, TranscriptAndSummary | (() => never)>([
 				[recA.id, makeArtifacts(recA)],
 				[
 					recB.id,
@@ -1300,7 +1298,7 @@ describe('runImport audio artifact', () => {
 			new Map([[recording.id, makeArtifacts(recording)]]),
 		);
 		const { pipeline, audioCalls } = makeAttachmentStub();
-		const audioFetches: PlaudRecordingId[] = [];
+		const audioFetches: RecordingId[] = [];
 
 		const outcome = await runImport({
 			recordings: [recording],

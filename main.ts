@@ -70,12 +70,8 @@ import {
 	type ImportModalOptions,
 	type ImportViewStatePatch,
 } from './import-core';
-import type {
-	PlaudClient,
-	PlaudDevice,
-	PlaudRecordingId,
-	Recording,
-} from './plaud-client';
+import type { PlaudClient, PlaudDevice } from './plaud-client';
+import type { RecordingId, Recording } from './recording-model';
 import { runAutoSyncTick } from './auto-sync-runner';
 import {
 	coerceIntervalMinutes,
@@ -1197,11 +1193,11 @@ export default class PlaudImporterPlugin extends Plugin {
 			hideProcessedRecordings: this.settings.hideProcessedRecordings,
 			hideUpdatesRecordings: this.settings.hideUpdatesRecordings,
 			hideIgnoredRecordings: this.settings.hideIgnoredRecordings,
-			// data.json stores plain strings; PlaudRecordingId is a compile-time
+			// data.json stores plain strings; RecordingId is a compile-time
 			// brand over string. Re-tag each id at this boundary (a per-element
 			// cast is legal where an array cast is not).
 			ignoredRecordingIds: this.settings.ignoredRecordingIds.map(
-				(id) => id as PlaudRecordingId,
+				(id) => id as RecordingId,
 			),
 			// Recording-source filter (issue #110): the same filter auto-sync
 			// applies, so a blocked source is hidden from the manual import list
@@ -1558,7 +1554,7 @@ export default class PlaudImporterPlugin extends Plugin {
 			return;
 		}
 		try {
-			await client.updateTitle(plaudId as PlaudRecordingId, title);
+			await client.updateTitle(plaudId as RecordingId, title);
 			// The plugin can unload during the network await; do not run the
 			// follow-up re-list and frontmatter write against a torn-down state.
 			// The title was already updated in Plaud, so skipping the marker
@@ -1742,10 +1738,10 @@ export default class PlaudImporterPlugin extends Plugin {
 			getApiBaseUrl: options.getApiBaseUrl,
 			debugLogger: this.debugLogger,
 		});
-		const fetchArtifacts = (id: PlaudRecordingId) =>
+		const fetchArtifacts = (id: RecordingId) =>
 			client.getTranscriptAndSummary(id);
 		const fetchAudioUrl = selection.includeAudio
-			? (id: PlaudRecordingId) => client.getAudioTempUrl(id)
+			? (id: RecordingId) => client.getAudioTempUrl(id)
 			: undefined;
 		// policy is constrained to skip | overwrite (never 'prompt'): a background
 		// tick has no dialog, so 'Ask each time' would have nothing to answer it.
@@ -1764,8 +1760,8 @@ export default class PlaudImporterPlugin extends Plugin {
 				// stripped), so a v4 `of_<id>` recording matches its v3-imported
 				// note. Matches findImportedNote and the byId keying.
 				existingPathForPlaudId: (id) =>
-					index.byId.get(canonicalPlaudId(id) as PlaudRecordingId)
-						?.path ?? null,
+					index.byId.get(canonicalPlaudId(id) as RecordingId)?.path ??
+					null,
 			});
 		const runBatch = async (
 			recordings: readonly Recording[],
@@ -1869,7 +1865,7 @@ export default class PlaudImporterPlugin extends Plugin {
 				// takes effect on the next run. Per-element re-tag (branded id).
 				ignoredIds: new Set(
 					this.settings.ignoredRecordingIds.map(
-						(id) => id as PlaudRecordingId,
+						(id) => id as RecordingId,
 					),
 				),
 				// Honor the recording-source filter in the background. Rebuilt each
@@ -2407,7 +2403,7 @@ export default class PlaudImporterPlugin extends Plugin {
 		try {
 			// Build id -> version_ms from the full list (bounded page loop).
 			const MAX_BACKFILL_PAGES = 500;
-			const versionById = new Map<PlaudRecordingId, number>();
+			const versionById = new Map<RecordingId, number>();
 			const listPage = createSequentialPageFetcher(client, 'edit_time');
 			let skip = 0;
 			let reachedListEnd = false;
@@ -2425,7 +2421,7 @@ export default class PlaudImporterPlugin extends Plugin {
 					// under the bare id or migrated notes never match.
 					if (r.versionMs !== undefined)
 						versionById.set(
-							canonicalPlaudId(r.id) as PlaudRecordingId,
+							canonicalPlaudId(r.id) as RecordingId,
 							r.versionMs,
 						);
 				}

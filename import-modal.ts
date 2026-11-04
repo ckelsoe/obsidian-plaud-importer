@@ -1,10 +1,6 @@
 import { App, MarkdownView, Modal, Notice, setIcon, TFile } from 'obsidian';
-import type {
-	PlaudRecordingId,
-	PlaudClient,
-	Recording,
-	TranscriptAndSummary,
-} from './plaud-client';
+import type { PlaudClient, TranscriptAndSummary } from './plaud-client';
+import type { RecordingId, Recording } from './recording-model';
 import { recordingSourceLabel } from './plaud-client';
 import {
 	NoteWriter,
@@ -562,7 +558,7 @@ export class ImportModal extends Modal {
 	private hideProcessed: boolean;
 	private hideUpdates: boolean;
 	private hideIgnored: boolean;
-	private readonly ignoredIds: Set<PlaudRecordingId>;
+	private readonly ignoredIds: Set<RecordingId>;
 	// Serial -> device name map for the per-row source chip (issue #110 follow-up).
 	// Seeded from the host's remembered devices, then freshened once on open via
 	// refreshDeviceNames so the chip shows real names even before the user has
@@ -1421,7 +1417,7 @@ export class ImportModal extends Modal {
 	// so the row drops out when "Hide ignored" is on. Works on never-imported
 	// rows too: the ignore set is plugin state keyed by plaud-id, independent of
 	// whether a note exists.
-	private toggleIgnore(recId: PlaudRecordingId): void {
+	private toggleIgnore(recId: RecordingId): void {
 		if (this.ignoredIds.has(recId)) {
 			this.ignoredIds.delete(recId);
 		} else {
@@ -1541,7 +1537,7 @@ export class ImportModal extends Modal {
 	// Lucide ids so scripts/check-icons.mjs passes.
 	private decorateIgnoreButton(
 		button: HTMLElement,
-		recId: PlaudRecordingId,
+		recId: RecordingId,
 	): void {
 		const ignored = this.ignoredIds.has(recId);
 		setIcon(button, ignored ? 'eye' : 'eye-off');
@@ -1568,13 +1564,13 @@ export class ImportModal extends Modal {
 	// import. Cheaper than a full re-render for the common "user
 	// imports one recording then imports another" path. The existing
 	// row stays where it is; we just append a badge to its title row.
-	private updateRowBadge(recId: PlaudRecordingId): void {
+	private updateRowBadge(recId: RecordingId): void {
 		this.refreshImportedIndex();
 		if (this.listEl === null) return;
 		// byId is keyed by canonical id, so a v4 `of_<id>` recording must be
 		// looked up by its bare id or the badge never appears until a refresh.
 		const existing = this.importedIndex.byId.get(
-			canonicalPlaudId(recId) as PlaudRecordingId,
+			canonicalPlaudId(recId) as RecordingId,
 		);
 		if (existing === undefined) return;
 		// Find the row by its stamped recording id. Robust to trashed
@@ -1739,7 +1735,7 @@ export class ImportModal extends Modal {
 	}
 
 	private async ensureArtifactsForRecording(
-		recordingId: PlaudRecordingId,
+		recordingId: RecordingId,
 	): Promise<TranscriptAndSummary> {
 		const cached = this.artifactCache.get(recordingId);
 		if (cached !== undefined) {
@@ -2567,7 +2563,7 @@ export class ImportModal extends Modal {
 				// notes written earlier in this same run.
 				existingPathForPlaudId: (id) =>
 					this.importedIndex.byId.get(
-						canonicalPlaudId(id) as PlaudRecordingId,
+						canonicalPlaudId(id) as RecordingId,
 					)?.path ?? null,
 			});
 		} catch (err) {

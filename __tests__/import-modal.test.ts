@@ -17,7 +17,7 @@ import {
 	PlaudAuthError,
 	PlaudParseError,
 } from '../plaud-client-re';
-import type { PlaudRecordingId, Recording } from '../plaud-client';
+import type { RecordingId, Recording } from '../recording-model';
 import type { WriteOutcome } from '../note-writer';
 import { NoteWriterError } from '../note-writer';
 import { at } from './helpers/checked';
@@ -424,7 +424,7 @@ describe('filterVisibleRecordings', () => {
 
 function rec(id: string, title = `rec ${id}`, isTrashed = false): Recording {
 	return {
-		id: id as PlaudRecordingId,
+		id: id as RecordingId,
 		title,
 		createdAt: new Date(2026, 3, 14),
 		endsAt: new Date(2026, 3, 14, 0, 1),

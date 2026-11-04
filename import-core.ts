@@ -13,7 +13,7 @@
 // (main.ts, the test suite) keep resolving unchanged.
 // -----------------------------------------------------------------------------
 
-import type { PlaudRecordingId, Recording } from './plaud-client';
+import type { RecordingId, Recording } from './recording-model';
 import {
 	findImportedNote,
 	recordingAmbiguousKeys,
@@ -115,7 +115,7 @@ export interface ImportModalOptions extends NoteWriterOptions {
 	 * pulled by auto-sync. Snapshot at modal-open; the modal mutates its own copy
 	 * and persists changes via `onViewStateChange`.
 	 */
-	readonly ignoredRecordingIds?: readonly PlaudRecordingId[];
+	readonly ignoredRecordingIds?: readonly RecordingId[];
 	/**
 	 * Persist a change to the dialog's view state (the three filter toggles and
 	 * the ignore set) back to plugin settings. The modal calls this after every
@@ -772,7 +772,7 @@ interface ImportViewState {
 	readonly hideProcessedRecordings: boolean;
 	readonly hideUpdatesRecordings: boolean;
 	readonly hideIgnoredRecordings: boolean;
-	readonly ignoredRecordingIds: readonly PlaudRecordingId[];
+	readonly ignoredRecordingIds: readonly RecordingId[];
 }
 
 /** A partial view-state update carried by `onViewStateChange`. */
@@ -800,7 +800,7 @@ export interface ListViewFilter {
 	 */
 	readonly index: ImportedIndex;
 	/** Ignored recording ids. */
-	readonly ignoredIds: ReadonlySet<PlaudRecordingId>;
+	readonly ignoredIds: ReadonlySet<RecordingId>;
 	/**
 	 * Recording-source filter (issue #110). When present and enabled, recordings
 	 * from a blocked source are hidden from the dialog, matching the same filter

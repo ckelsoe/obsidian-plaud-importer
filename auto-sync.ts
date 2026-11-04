@@ -13,7 +13,7 @@
 // per tick, not O(vault).
 // -----------------------------------------------------------------------------
 
-import type { PlaudRecordingId, Recording } from './plaud-client';
+import type { RecordingId, Recording } from './recording-model';
 import {
 	findImportedNote,
 	recordingAmbiguousKeys,
@@ -64,13 +64,13 @@ export type AutoSyncClassification =
 	| 'ignored';
 
 /** Shared empty ignore set so callers that pass none avoid allocating one. */
-const NO_IGNORED_IDS: ReadonlySet<PlaudRecordingId> = new Set();
+const NO_IGNORED_IDS: ReadonlySet<RecordingId> = new Set();
 const NO_AMBIGUOUS_KEYS: ReadonlySet<string> = new Set<string>();
 
 export function classifyRecording(
 	recording: Recording,
 	index: ImportedIndex,
-	ignoredIds: ReadonlySet<PlaudRecordingId> = NO_IGNORED_IDS,
+	ignoredIds: ReadonlySet<RecordingId> = NO_IGNORED_IDS,
 	// Fuzzy keys shared by 2+ recordings in the tick (see recordingAmbiguousKeys):
 	// findImportedNote skips a fuzzy match on them so a new recording is not
 	// misclassified as already imported and never synced.
@@ -161,7 +161,7 @@ export interface SelectCandidatesResult {
 export function selectAutoSyncCandidates(
 	page: readonly Recording[],
 	index: ImportedIndex,
-	ignoredIds: ReadonlySet<PlaudRecordingId> = NO_IGNORED_IDS,
+	ignoredIds: ReadonlySet<RecordingId> = NO_IGNORED_IDS,
 	sourceFilter?: SourceFilter,
 ): SelectCandidatesResult {
 	// Never import trash. filterVisibleRecordings preserves order.

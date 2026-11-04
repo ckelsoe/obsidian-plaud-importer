@@ -1,4 +1,4 @@
-import type { PlaudRecordingId, Recording } from '../plaud-client';
+import type { RecordingId, Recording } from '../recording-model';
 import type { ImportedIndex, ImportedRecord } from '../vault-index';
 import {
 	classifyRecording,
@@ -15,7 +15,7 @@ function rec(
 	overrides: Partial<Omit<Recording, 'id'>> & { id: string },
 ): Recording {
 	return {
-		id: overrides.id as PlaudRecordingId,
+		id: overrides.id as RecordingId,
 		title: overrides.title ?? `title-${overrides.id}`,
 		createdAt: overrides.createdAt ?? new Date('2026-06-01T00:00:00Z'),
 		endsAt: overrides.endsAt ?? new Date('2026-06-01T00:01:00Z'),
@@ -36,7 +36,7 @@ function idx(
 	entries: ReadonlyArray<readonly [string, ImportedRecord]>,
 ): ImportedIndex {
 	return {
-		byId: new Map(entries.map(([id, r]) => [id as PlaudRecordingId, r])),
+		byId: new Map(entries.map(([id, r]) => [id as RecordingId, r])),
 		byInstant: new Map(),
 		byDay: new Map(),
 	};
@@ -107,7 +107,7 @@ describe('classifyRecording', () => {
 	});
 
 	it('classifies an ignored recording as ignored (ignore wins over new/changed)', () => {
-		const ignoredIds = new Set(['a' as PlaudRecordingId]);
+		const ignoredIds = new Set(['a' as RecordingId]);
 		// New but ignored.
 		expect(
 			classifyRecording(
@@ -128,7 +128,7 @@ describe('classifyRecording', () => {
 	});
 
 	it('does not classify a non-ignored recording as ignored', () => {
-		const ignoredIds = new Set(['other' as PlaudRecordingId]);
+		const ignoredIds = new Set(['other' as RecordingId]);
 		expect(
 			classifyRecording(
 				rec({ id: 'a', versionMs: 100 }),
@@ -283,7 +283,7 @@ describe('selectAutoSyncCandidates', () => {
 	});
 
 	it('skips an ignored recording and keeps scanning so a ready one below is caught', () => {
-		const ignoredIds = new Set(['ignored-top' as PlaudRecordingId]);
+		const ignoredIds = new Set(['ignored-top' as RecordingId]);
 		const page = [
 			rec({ id: 'ignored-top', versionMs: 900 }), // ignored -> skip, NOT a frontier
 			rec({ id: 'ready-below', versionMs: 800 }), // new -> candidate
@@ -298,10 +298,7 @@ describe('selectAutoSyncCandidates', () => {
 	});
 
 	it('a page of only ignored recordings is not a frontier (paging continues)', () => {
-		const ignoredIds = new Set([
-			'i1' as PlaudRecordingId,
-			'i2' as PlaudRecordingId,
-		]);
+		const ignoredIds = new Set(['i1' as RecordingId, 'i2' as RecordingId]);
 		const page = [
 			rec({ id: 'i1', versionMs: 900 }),
 			rec({ id: 'i2', versionMs: 800 }),

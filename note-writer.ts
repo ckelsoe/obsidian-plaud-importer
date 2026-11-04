@@ -30,16 +30,16 @@
 // class satisfies VaultLike structurally).
 
 import { moment } from 'obsidian';
+import type { PlaudMark } from './plaud-client';
 import type {
 	AdditionalSummary,
 	Chapter,
 	ConsumerNote,
-	PlaudMark,
 	Recording,
 	Summary,
 	Transcript,
 	TranscriptSegment,
-} from './plaud-client';
+} from './recording-model';
 import { recordingSourceLabel } from './plaud-client';
 import { canonicalPlaudId } from './vault-index';
 import { trimChars, trimTrailingChars } from './text-trim';

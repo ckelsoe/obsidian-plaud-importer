@@ -26,13 +26,12 @@ import {
 import { NoteWriter, type NoteWriterOptions } from '../note-writer';
 import { PlaudApiError } from '../plaud-client-re';
 import type { ArtifactSelection, ImportModalOptions } from '../import-core';
+import type { PlaudFolder, TranscriptAndSummary } from '../plaud-client';
 import type {
 	AttachmentAsset,
-	PlaudFolder,
-	PlaudRecordingId,
+	RecordingId,
 	Recording,
-	TranscriptAndSummary,
-} from '../plaud-client';
+} from '../recording-model';
 import { asyncResult } from './helpers/async-result';
 import { makeFakeVault } from './helpers/fake-vault';
 
@@ -86,7 +85,7 @@ const ALL: ArtifactSelection = {
 	includeAudio: true,
 };
 
-const id = (value: string): PlaudRecordingId => value as PlaudRecordingId;
+const id = (value: string): RecordingId => value as RecordingId;
 
 // 2026-04-14 14:30 UTC, captured at UTC-4 (10:30 local).
 const CREATED = new Date(Date.UTC(2026, 3, 14, 14, 30));
@@ -250,7 +249,7 @@ async function run(scenario: Scenario): Promise<Record<string, unknown>> {
 			: {}),
 		...(scenario.withAudio
 			? {
-					fetchAudioUrl: (recordingId: PlaudRecordingId) =>
+					fetchAudioUrl: (recordingId: RecordingId) =>
 						asyncResult(
 							() =>
 								`https://cdn.example/audio/${recordingId}.mp3`,

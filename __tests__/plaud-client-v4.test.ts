@@ -13,7 +13,7 @@ import {
 	type PlaudHttpResponse,
 	type PlaudTokenProvider,
 } from '../plaud-client-re';
-import type { PlaudRecordingId } from '../plaud-client';
+import type { RecordingId } from '../recording-model';
 import { asyncResult } from './helpers/async-result';
 import { at, defined } from './helpers/checked';
 
@@ -232,7 +232,7 @@ function makeClient(
 	});
 }
 
-const ID = 'f1' as PlaudRecordingId;
+const ID = 'f1' as RecordingId;
 
 // Listing -------------------------------------------------------------------
 
