@@ -915,7 +915,7 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 				new SecretComponent(this.app, el)
 					.setValue(this.plugin.settings.secretId)
 					.onChange(async (id) => {
-						this.plugin.settings.secretId = id;
+						this.plugin.settings.secretId = id ?? '';
 						// A manually linked secret has unknown provenance, so the
 						// recorded sign-in method no longer describes the active
 						// credential; clear it and let Reconnect fall back to the

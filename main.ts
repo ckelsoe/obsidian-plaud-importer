@@ -2804,6 +2804,11 @@ export default class PlaudImporterPlugin extends Plugin {
 		if (typeof this.settings.plaudDeviceId !== 'string') {
 			this.settings.plaudDeviceId = '';
 		}
+		// A cleared secret picker reports null; a data.json saved before that was
+		// handled can carry it, and secretId.length would then crash.
+		if (typeof this.settings.secretId !== 'string') {
+			this.settings.secretId = '';
+		}
 		// Same for the version fields: an unknown value reads as the default
 		// (auto, nothing detected), which falls back to the old inference.
 		if (!isPlaudVersionOverride(this.settings.plaudVersionOverride)) {
