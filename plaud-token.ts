@@ -17,7 +17,7 @@
 // rejects it with `-3900 "invalid auth header"`. So the guard validates the
 // decoded claims, never the key name.
 
-import { SHORT_LIFETIME_HOURS } from './session-expiry';
+import { SHORT_LIFETIME_HOURS } from 'obsidian-recording-importer-core';
 
 export { SHORT_LIFETIME_HOURS };
 

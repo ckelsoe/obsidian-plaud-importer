@@ -25,6 +25,9 @@
 	],
 	"author": "Charles Kelsoe (ckelsoe)",
 	"license": "MIT",
+	"dependencies": {
+		"obsidian-recording-importer-core": "github:ckelsoe/obsidian-recording-importer-core#main"
+	},
 	"devDependencies": {
 		"@codemirror/state": "^6.7.6",
 		"@codemirror/view": "^6.43.13",

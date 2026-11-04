@@ -28,6 +28,10 @@ All notable changes to Plaud Importer will be documented in this file.
 - **Attachment pages are recognized from Plaud's own metadata.** When the server did not say what kind of file it sent but Plaud's details said it was a web page, the page was saved as a raw `.html` attachment. It is now handled like any other attachment page: its images are saved and the page itself is not. A mind map page with no images in it is still kept as a page, as before.
 - **A screenshot that is not an image is now linked.** A Plaud screenshot that came back as another kind of file (a PDF, for example) was saved to the assets folder with nothing in the note pointing to it. It is now listed under Other attachments.
 
+### Changed
+
+- The shared note-writing, import and sync code now comes from a separate library shared with future importers. No change in behavior or note format.
+
 ## [0.46.3] - 2026-10-24
 
 ### Fixed

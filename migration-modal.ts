@@ -5,7 +5,10 @@
 // Built so a user can see what the migration is doing rather than trust a notice.
 
 import { App, Modal, Notice } from 'obsidian';
-import type { MigrationHeal, MigrationPlan } from './migration-plan';
+import type {
+	MigrationHeal,
+	MigrationPlan,
+} from 'obsidian-recording-importer-core';
 
 export interface MigrationModalDeps {
 	/** Fetch the current recordings and compute the plan against the vault. */

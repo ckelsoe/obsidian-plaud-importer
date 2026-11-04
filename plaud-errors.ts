@@ -7,7 +7,7 @@ import {
 	classifyError,
 	type ErrorClassification,
 	type ServiceErrorPolicy,
-} from './import-core';
+} from 'obsidian-recording-importer-core';
 import {
 	PlaudApiError,
 	PlaudAuthError,

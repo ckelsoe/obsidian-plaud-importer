@@ -15,7 +15,12 @@ import {
 	type PlaudHttpRequest,
 	type PlaudHttpResponse,
 } from '../plaud-client-re';
-import { BufferedDebugLogger, type DebugEvent } from '../debug-logger';
+import {
+	BufferedDebugLogger,
+	type DebugEvent,
+	type RecordingId,
+	type Recording,
+} from 'obsidian-recording-importer-core';
 
 // Helpers -------------------------------------------------------------------
 
@@ -1182,7 +1187,6 @@ describe('listRecordings filter validation', () => {
 // getTranscriptAndSummary — POST /ai/transsumm/{id}
 // =============================================================================
 
-import type { RecordingId, Recording } from '../recording-model';
 import { asyncResult } from './helpers/async-result';
 import { at } from './helpers/checked';
 

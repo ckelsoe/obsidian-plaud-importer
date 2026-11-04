@@ -14,9 +14,12 @@
 // catalog through the client and builds the resolver from these helpers.
 // -----------------------------------------------------------------------------
 
-import type { FolderResolver, ImportDebugLog } from './import-runner';
+import {
+	type FolderResolver,
+	type ImportDebugLog,
+	trimChars,
+} from 'obsidian-recording-importer-core';
 import type { PlaudFolder } from './plaud-client';
-import { trimChars } from './text-trim';
 
 /**
  * Index a folder catalog by id for O(1) name lookup. Built once per import run

@@ -1,26 +1,20 @@
 import { App, MarkdownView, Modal, Notice, setIcon, TFile } from 'obsidian';
 import type { PlaudClient, TranscriptAndSummary } from './plaud-client';
-import type { RecordingId, Recording } from './recording-model';
-import { recordingSourceLabel } from './plaud-client';
 import {
+	type RecordingId,
+	type Recording,
 	NoteWriter,
 	NoteWriterError,
 	type DuplicatePolicy,
 	type DuplicatePromptCallback,
 	findTranscriptFoldLine,
 	effectiveCaptureOffsetMinutes,
-} from './note-writer';
-import { runImport } from './import-runner';
-import { plaudFolderLoader } from './folder-catalog';
-import {
+	runImport,
 	buildImportedIndex,
 	findImportedNote,
 	recordingAmbiguousKeys,
 	type ImportedIndex,
 	type ImportedRecord,
-} from './vault-index';
-import { AttachmentImporter } from './attachment-importer';
-import {
 	categoryAllowsReauth,
 	formatDate,
 	formatDuration,
@@ -41,7 +35,10 @@ import {
 	type ImportTally,
 	type ArtifactSelection,
 	type DuplicateDecisionChoice,
-} from './import-core';
+} from 'obsidian-recording-importer-core';
+import { recordingSourceLabel } from './plaud-client';
+import { plaudFolderLoader } from './folder-catalog';
+import { AttachmentImporter } from './attachment-importer';
 import {
 	classifyPlaudError as classifyError,
 	isPlaudUnprocessedError,

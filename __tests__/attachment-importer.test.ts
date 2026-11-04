@@ -7,7 +7,7 @@ import {
 	isLocalCardImage,
 	repairLegacyCardEmbeds,
 } from '../attachment-importer';
-import type { AttachmentAsset } from '../recording-model';
+import type { AttachmentAsset } from 'obsidian-recording-importer-core';
 import { asyncResult } from './helpers/async-result';
 
 function asset(overrides: Partial<AttachmentAsset> = {}): AttachmentAsset {

@@ -25,7 +25,6 @@ import { describeTokenLifetime, readTokenLifetime } from './plaud-token';
 import { deviceModelLabel } from './plaud-client';
 import { isTrustedPlaudUrl } from './plaud-hosts';
 import { PLAUD_PROFILE } from './plaud-profile';
-import { folderToken } from './service-profile';
 import {
 	DEFAULT_NOTE_NAME_TEMPLATE,
 	isValidNoteNameTemplate,
@@ -41,8 +40,10 @@ import {
 	renderCustomFrontmatterPreview,
 	isTranscriptPlacement,
 	previewNoteFileName,
-} from './note-writer';
-import { coerceIntervalMinutes } from './auto-sync';
+	coerceIntervalMinutes,
+	type BufferedDebugLogger,
+	folderToken,
+} from 'obsidian-recording-importer-core';
 import { BrowserSignInModal } from './modals';
 import {
 	CAPTURED_SECRET_ID,
@@ -58,7 +59,6 @@ import {
 } from './settings-types';
 import type { SignInMethod } from './reconnect-routing';
 import { describeSignInMethod } from './reconnect-routing';
-import type { BufferedDebugLogger } from './debug-logger';
 import {
 	isPlaudVersionOverride,
 	plaudVersionLabel,

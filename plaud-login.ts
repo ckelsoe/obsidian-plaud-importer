@@ -33,7 +33,11 @@
 // probing them against the API, in the caller.
 
 import { App, Platform } from 'obsidian';
-import { NoopDebugLogger, type DebugLogger } from './debug-logger';
+import {
+	NoopDebugLogger,
+	type DebugLogger,
+	trimTrailingChars,
+} from 'obsidian-recording-importer-core';
 import { isTrustedPlaudHost, isTrustedPlaudUrl } from './plaud-hosts';
 import {
 	isLegacyPartition,
@@ -46,7 +50,6 @@ import {
 	MAX_COLLECTED_CANDIDATES,
 	MAX_COLLECTED_REFRESH,
 } from './token-candidates';
-import { trimTrailingChars } from './text-trim';
 
 // Load the same web client the data API expects. The token is platform-typed:
 // a token minted by app.plaud.ai is parsed in a different mode by /file/simple/web

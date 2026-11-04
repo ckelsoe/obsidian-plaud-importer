@@ -20,15 +20,16 @@ import type {
 	RecordingFilter,
 	TranscriptAndSummary,
 } from './plaud-client';
-import type {
-	AdditionalSummary,
-	RecordingId,
-	Recording,
-	RecordingPage,
-	Summary,
-	Transcript,
-} from './recording-model';
-import type { DebugLogger } from './debug-logger';
+import {
+	type AdditionalSummary,
+	type RecordingId,
+	type Recording,
+	type RecordingPage,
+	type Summary,
+	type Transcript,
+	type DebugLogger,
+	trimTrailingChars,
+} from 'obsidian-recording-importer-core';
 import { isTrustedPlaudHost } from './plaud-hosts';
 import {
 	PlaudApiError,
@@ -41,7 +42,6 @@ import {
 	type PlaudHttpResponse,
 	type PlaudTokenProvider,
 } from './plaud-client-re';
-import { trimTrailingChars } from './text-trim';
 
 const DEFAULT_PAGE_SIZE = 300;
 const DEFAULT_SCOPE_TYPE = 'workspace';

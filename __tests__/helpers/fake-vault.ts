@@ -1,4 +1,8 @@
-import type { FileLike, FolderLike, VaultLike } from '../../note-writer';
+import type {
+	FileLike,
+	FolderLike,
+	VaultLike,
+} from 'obsidian-recording-importer-core';
 import { asyncResult } from './async-result';
 
 /**

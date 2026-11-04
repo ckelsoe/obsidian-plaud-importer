@@ -34,19 +34,19 @@ import {
 	runImport,
 	type AttachmentPipeline,
 	type ImportRunDeps,
-} from '../import-runner';
-import { NoteWriter, type NoteWriterOptions } from '../note-writer';
+	NoteWriter,
+	type NoteWriterOptions,
+	type ArtifactSelection,
+	type ImportModalOptions,
+	type AttachmentAsset,
+	type RecordingId,
+	type Recording,
+} from 'obsidian-recording-importer-core';
 import { PlaudApiError } from '../plaud-client-re';
-import type { ArtifactSelection, ImportModalOptions } from '../import-core';
 import { PLAUD_ERROR_POLICY } from '../plaud-errors';
 import { PLAUD_PROFILE } from '../plaud-profile';
 import { plaudFolderLoader } from '../folder-catalog';
 import type { PlaudFolder, TranscriptAndSummary } from '../plaud-client';
-import type {
-	AttachmentAsset,
-	RecordingId,
-	Recording,
-} from '../recording-model';
 import { asyncResult } from './helpers/async-result';
 import { makeFakeVault, type FakeVault } from './helpers/fake-vault';
 

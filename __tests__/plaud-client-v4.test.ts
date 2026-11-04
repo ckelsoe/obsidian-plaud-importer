@@ -13,7 +13,7 @@ import {
 	type PlaudHttpResponse,
 	type PlaudTokenProvider,
 } from '../plaud-client-re';
-import type { RecordingId } from '../recording-model';
+import type { RecordingId } from 'obsidian-recording-importer-core';
 import { asyncResult } from './helpers/async-result';
 import { at, defined } from './helpers/checked';
 

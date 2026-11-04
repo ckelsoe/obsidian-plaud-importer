@@ -15,19 +15,19 @@ import type {
 	RecordingFilter,
 	TranscriptAndSummary,
 } from './plaud-client';
-import type {
-	AttachmentAsset,
-	Chapter,
-	ConsumerNote,
-	RecordingId,
-	Recording,
-	RecordingSource,
-	Summary,
-	Transcript,
-	TranscriptSegment,
-} from './recording-model';
-import type { DebugLogger } from './debug-logger';
-import { trimTrailingChars } from './text-trim';
+import {
+	type AttachmentAsset,
+	type Chapter,
+	type ConsumerNote,
+	type RecordingId,
+	type Recording,
+	type RecordingSource,
+	type Summary,
+	type Transcript,
+	type TranscriptSegment,
+	type DebugLogger,
+	trimTrailingChars,
+} from 'obsidian-recording-importer-core';
 
 /**
  * Abstract HTTP call shape the client depends on. main.ts adapts Obsidian's

@@ -62,6 +62,11 @@ const context = await esbuild.context({
 		js: banner,
 	},
 	entryPoints: ["main.ts"],
+	// Apply this tsconfig to obsidian-recording-importer-core too. Its source sits
+	// in node_modules with no tsconfig of its own, and esbuild's default there
+	// (define-semantics class fields) would compile it differently from the
+	// plugin's files and from what tsc and jest check.
+	tsconfig: "tsconfig.json",
 	bundle: true,
 	external: [
 		"obsidian",

@@ -5,7 +5,7 @@ import {
 	spliceManagedBlock,
 	transformManagedBody,
 	wrapManagedBody,
-} from '../managed-block';
+} from 'obsidian-recording-importer-core';
 import { insertSectionBeforeTranscript } from '../attachment-importer';
 import { PLAUD_PROFILE } from '../plaud-profile';
 

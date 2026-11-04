@@ -6,17 +6,18 @@ import {
 	type RequestUrlResponse,
 	type TAbstractFile,
 } from 'obsidian';
-import type { AttachmentAsset } from './recording-model';
-import { TRANSCRIPT_FILE_NAME } from './note-writer';
 import {
+	type AttachmentAsset,
+	TRANSCRIPT_FILE_NAME,
 	managedMarkers,
 	transformManagedBody,
 	type ManagedMarkers,
-} from './managed-block';
-import type { ServiceProfile } from './service-profile';
-import { NoopDebugLogger, type DebugLogger } from './debug-logger';
-import type { ArtifactSelection } from './import-core';
-import { trimTrailingChars } from './text-trim';
+	type ServiceProfile,
+	NoopDebugLogger,
+	type DebugLogger,
+	type ArtifactSelection,
+	trimTrailingChars,
+} from 'obsidian-recording-importer-core';
 import { isTrustedPlaudUrl } from './plaud-hosts';
 
 // Plaud host bases used to resolve relative asset paths into absolute

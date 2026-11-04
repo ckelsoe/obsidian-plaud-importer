@@ -2,11 +2,12 @@ import {
 	extractSpeakers,
 	formatDurationHoursMinutes,
 	formatLocalDateTime,
-} from './note-writer';
+	type Recording,
+	type Transcript,
+	type ServiceProfile,
+	trimTrailingChars,
+} from 'obsidian-recording-importer-core';
 import { recordingSourceLabel } from './plaud-client';
-import type { Recording, Transcript } from './recording-model';
-import type { ServiceProfile } from './service-profile';
-import { trimTrailingChars } from './text-trim';
 
 /** Prod (v3) web portal, the default when no environment base is supplied. */
 export const PLAUD_WEB_URL_V3 = 'https://web.plaud.ai';

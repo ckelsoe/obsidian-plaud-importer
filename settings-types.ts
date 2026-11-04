@@ -8,13 +8,13 @@
  * plugin to get it: the plugin itself, the settings tab, and the capture
  * store's generic parameter.
  */
-import { DEFAULT_NOTE_NAME_TEMPLATE } from './note-writer';
-import { trimTrailingChars } from './text-trim';
-import type {
-	CustomFrontmatterRow,
-	TagMode,
-	TranscriptPlacement,
-} from './note-writer';
+import {
+	DEFAULT_NOTE_NAME_TEMPLATE,
+	trimTrailingChars,
+	type CustomFrontmatterRow,
+	type TagMode,
+	type TranscriptPlacement,
+} from 'obsidian-recording-importer-core';
 import type { SignInMethod } from './reconnect-routing';
 import type { PlaudVersion, PlaudVersionOverride } from './plaud-version';
 

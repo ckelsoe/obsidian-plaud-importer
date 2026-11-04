@@ -3,25 +3,22 @@ import {
 	type ImportRunDeps,
 	type ImportRunObserver,
 	type AttachmentPipeline,
-} from '../import-runner';
-import {
 	NoteWriter,
 	type VaultLike,
 	type DuplicatePromptDecision,
-} from '../note-writer';
+	type ArtifactSelection,
+	type ImportModalOptions,
+	type AttachmentAsset,
+	type RecordingId,
+	type Recording,
+	type Summary,
+	type Transcript,
+} from 'obsidian-recording-importer-core';
 import { PlaudApiError, PlaudAuthError } from '../plaud-client-re';
-import type { ArtifactSelection, ImportModalOptions } from '../import-core';
 import { PLAUD_ERROR_POLICY } from '../plaud-errors';
 import { PLAUD_PROFILE } from '../plaud-profile';
 import { plaudFolderLoader } from '../folder-catalog';
 import type { TranscriptAndSummary } from '../plaud-client';
-import type {
-	AttachmentAsset,
-	RecordingId,
-	Recording,
-	Summary,
-	Transcript,
-} from '../recording-model';
 import { asyncResult } from './helpers/async-result';
 import { makeFakeVault } from './helpers/fake-vault';
 import { at, defined } from './helpers/checked';

@@ -18,9 +18,12 @@ import {
 	PlaudAuthError,
 	PlaudParseError,
 } from '../plaud-client-re';
-import type { RecordingId, Recording } from '../recording-model';
-import type { WriteOutcome } from '../note-writer';
-import { NoteWriterError } from '../note-writer';
+import {
+	type RecordingId,
+	type Recording,
+	type WriteOutcome,
+	NoteWriterError,
+} from 'obsidian-recording-importer-core';
 import { at } from './helpers/checked';
 
 // classifyError --------------------------------------------------------------
