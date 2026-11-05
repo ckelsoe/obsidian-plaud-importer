@@ -13,7 +13,41 @@ import {
 	type PlaudHttpFetcher,
 } from './plaud-client-re';
 import { PlaudV4Client } from './plaud-client-v4';
-import { createSequentialPageFetcher } from './list-paging';
+import {
+	createSequentialPageFetcher,
+	BufferedDebugLogger,
+	NoteWriter,
+	migrateLegacyDateTemplate,
+	renameRecordingNote,
+	isValidReplacementChar,
+	isTranscriptPlacement,
+	sanitizeFilename,
+	zoneOffsetMinutes,
+	type RenameFileFn,
+	buildImportedIndex,
+	buildImportedIndexWithColdCheck,
+	outputFolderCacheIsCold,
+	type ImportedIndex,
+	planMigration,
+	type MigrationPlan,
+	runImport,
+	PAGE_SIZE,
+	buildSourceFilter,
+	categoryAllowsReauth,
+	type ArtifactSelection,
+	type ImportModalOptions,
+	type ImportViewStatePatch,
+	type RecordingId,
+	type Recording,
+	runAutoSyncTick,
+	coerceIntervalMinutes,
+	nextAutoSyncState,
+	tickOutcomeForCategory,
+	INITIAL_AUTO_SYNC_STATE,
+	type AutoSyncState,
+	trimTrailingChars,
+	hideManagedMarkers,
+} from 'obsidian-recording-importer-core';
 import { ImportModal, classifyError } from './import-modal';
 import { PLAUD_ERROR_POLICY } from './plaud-errors';
 import {
@@ -21,7 +55,6 @@ import {
 	PLAUD_PROFILE,
 	PLAUD_WEB_URL_V3,
 } from './plaud-profile';
-import { BufferedDebugLogger } from './debug-logger';
 import { clearPlaudLoginSession, openPlaudLogin } from './plaud-login';
 import {
 	describeTokenLifetime,
@@ -41,49 +74,14 @@ import {
 	buildSignInBookmarklet,
 } from './token-candidates';
 import {
-	NoteWriter,
-	migrateLegacyDateTemplate,
-	renameRecordingNote,
-	isValidReplacementChar,
-	isTranscriptPlacement,
-	sanitizeFilename,
-	zoneOffsetMinutes,
-	type RenameFileFn,
-} from './note-writer';
-import {
 	AttachmentImporter,
 	// DEPRECATED one-time #52 migration; remove with the repair command below.
 	isLocalCardImage,
 	repairLegacyCardEmbeds,
 } from './attachment-importer';
-import {
-	buildImportedIndex,
-	buildImportedIndexWithColdCheck,
-	outputFolderCacheIsCold,
-	type ImportedIndex,
-} from './vault-index';
-import { planMigration, type MigrationPlan } from './migration-plan';
 import { MigrationPreviewModal } from './migration-modal';
-import { runImport } from './import-runner';
 import { plaudFolderLoader } from './folder-catalog';
-import {
-	PAGE_SIZE,
-	buildSourceFilter,
-	categoryAllowsReauth,
-	type ArtifactSelection,
-	type ImportModalOptions,
-	type ImportViewStatePatch,
-} from './import-core';
 import type { PlaudClient, PlaudDevice } from './plaud-client';
-import type { RecordingId, Recording } from './recording-model';
-import { runAutoSyncTick } from './auto-sync-runner';
-import {
-	coerceIntervalMinutes,
-	nextAutoSyncState,
-	tickOutcomeForCategory,
-	INITIAL_AUTO_SYNC_STATE,
-	type AutoSyncState,
-} from './auto-sync';
 import {
 	preferWindowForReconnect,
 	ssoReconnectHint,
@@ -112,8 +110,6 @@ import {
 	ConfirmModal,
 	RenameRecordingModal,
 } from './modals';
-import { trimTrailingChars } from './text-trim';
-import { hideManagedMarkers } from './managed-marker-view';
 import {
 	isPlaudVersion,
 	isPlaudVersionOverride,

@@ -17,8 +17,10 @@ import {
 } from 'obsidian';
 import { AttachmentImporter } from '../attachment-importer';
 import { PLAUD_PROFILE } from '../plaud-profile';
-import type { ArtifactSelection } from '../import-core';
-import type { AttachmentAsset } from '../recording-model';
+import type {
+	ArtifactSelection,
+	AttachmentAsset,
+} from 'obsidian-recording-importer-core';
 import { asyncResult } from './helpers/async-result';
 import { at, defined } from './helpers/checked';
 

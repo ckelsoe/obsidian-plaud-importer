@@ -6,6 +6,10 @@ All notable changes to Plaud Importer will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- The shared note-writing, import and sync code now comes from a separate library shared with future importers. No change in behavior or note format.
+
 ## [0.46.5] - 2026-11-05
 
 ### Fixed

@@ -8,7 +8,7 @@ import {
 	MAX_TIMER_DELAY_MS,
 	MIN_TIMER_DELAY_MS,
 	WARN_LEAD_SHORT_MS,
-} from '../session-expiry';
+} from 'obsidian-recording-importer-core';
 
 function b64url(obj: unknown): string {
 	return Buffer.from(JSON.stringify(obj)).toString('base64url');

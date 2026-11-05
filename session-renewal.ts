@@ -21,7 +21,7 @@ import {
 	SHORT_LIFETIME_HOURS,
 } from './plaud-token';
 import { plaudPartition } from './plaud-partition';
-import { sessionExpiryDecision } from './session-expiry';
+import { sessionExpiryDecision } from 'obsidian-recording-importer-core';
 import { computeRefreshDelayMs, isRefreshDue } from './refresh-schedule';
 import {
 	buildPartitionPost,

@@ -9,7 +9,7 @@ import type {
 	Recording,
 	RecordingMark,
 	RecordingArtifacts,
-} from './recording-model';
+} from 'obsidian-recording-importer-core';
 
 /**
  * Plaud's artifact bundle: the neutral `RecordingArtifacts`, with marks typed

@@ -15,7 +15,10 @@
 // Deliberately free of Obsidian and Electron imports so the timing rules are
 // unit-testable without the plugin runtime.
 
-import { WARN_LEAD_SHORT_MS, clampTimerDelayMs } from './session-expiry';
+import {
+	WARN_LEAD_SHORT_MS,
+	clampTimerDelayMs,
+} from 'obsidian-recording-importer-core';
 import { decodeJwtPayload } from './plaud-token';
 
 /**

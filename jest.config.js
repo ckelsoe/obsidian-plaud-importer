@@ -19,6 +19,10 @@ module.exports = {
 	moduleNameMapper: {
 		'^obsidian$': '<rootDir>/__tests__/__mocks__/obsidian.ts',
 	},
+	// obsidian-recording-importer-core ships TypeScript source, so jest must
+	// transform it like the plugin's own files instead of skipping node_modules.
+	// The `obsidian` mapping above applies to its imports too.
+	transformIgnorePatterns: ['/node_modules/(?!obsidian-recording-importer-core/)'],
 	transform: {
 		'^.+\\.ts$': ['ts-jest', {
 			tsconfig: {
