@@ -8,12 +8,12 @@ import type { RecordingId } from '../recording-model';
 import {
 	buildImportedIndex,
 	buildImportedIndexWithColdCheck,
-	canonicalPlaudId,
 	findImportedNote,
 	outputFolderCacheIsCold,
 	recordingAmbiguousKeys,
 	type RecordingIdentity,
 } from '../vault-index';
+import { PLAUD_PROFILE } from '../plaud-profile';
 
 interface FakeFile {
 	readonly path: string;
@@ -60,7 +60,7 @@ describe('buildImportedIndex byId', () => {
 			['Plaud/note-a.md', { 'plaud-id': 'rec-a' }],
 			['Plaud/note-b.md', { 'plaud-id': 'rec-b' }],
 		]);
-		const index = buildImportedIndex(app, 'Plaud');
+		const index = buildImportedIndex(PLAUD_PROFILE, app, 'Plaud');
 		expect(index.byId.size).toBe(2);
 		expect(index.byId.get('rec-a' as RecordingId)?.path).toBe(
 			'Plaud/note-a.md',
@@ -75,7 +75,7 @@ describe('buildImportedIndex byId', () => {
 			['Plaud/inside.md', { 'plaud-id': 'rec-inside' }],
 			['Other/outside.md', { 'plaud-id': 'rec-outside' }],
 		]);
-		const index = buildImportedIndex(app, 'Plaud');
+		const index = buildImportedIndex(PLAUD_PROFILE, app, 'Plaud');
 		expect(index.byId.size).toBe(1);
 		expect(index.byId.has('rec-inside' as RecordingId)).toBe(true);
 		expect(index.byId.has('rec-outside' as RecordingId)).toBe(false);
@@ -85,7 +85,7 @@ describe('buildImportedIndex byId', () => {
 		const app = makeApp([
 			['Plaud/2026/q2/meeting.md', { 'plaud-id': 'rec-nested' }],
 		]);
-		const index = buildImportedIndex(app, 'Plaud');
+		const index = buildImportedIndex(PLAUD_PROFILE, app, 'Plaud');
 		expect(index.byId.get('rec-nested' as RecordingId)?.path).toBe(
 			'Plaud/2026/q2/meeting.md',
 		);
@@ -96,14 +96,20 @@ describe('buildImportedIndex byId', () => {
 			['top.md', { 'plaud-id': 'rec-top' }],
 			['nested/a.md', { 'plaud-id': 'rec-nested' }],
 		]);
-		expect(buildImportedIndex(app, '').byId.size).toBe(2);
+		expect(buildImportedIndex(PLAUD_PROFILE, app, '').byId.size).toBe(2);
 	});
 
 	it('strips leading/trailing slashes from outputFolder before matching', () => {
 		const app = makeApp([['Plaud/a.md', { 'plaud-id': 'rec-a' }]]);
-		expect(buildImportedIndex(app, '/Plaud').byId.size).toBe(1);
-		expect(buildImportedIndex(app, 'Plaud/').byId.size).toBe(1);
-		expect(buildImportedIndex(app, '/Plaud/').byId.size).toBe(1);
+		expect(buildImportedIndex(PLAUD_PROFILE, app, '/Plaud').byId.size).toBe(
+			1,
+		);
+		expect(buildImportedIndex(PLAUD_PROFILE, app, 'Plaud/').byId.size).toBe(
+			1,
+		);
+		expect(
+			buildImportedIndex(PLAUD_PROFILE, app, '/Plaud/').byId.size,
+		).toBe(1);
 	});
 
 	it('reads plaud-version-ms into versionMs; absent or malformed stays undefined', () => {
@@ -122,7 +128,7 @@ describe('buildImportedIndex byId', () => {
 				{ 'plaud-id': 'rec-bad', 'plaud-version-ms': 'not-a-number' },
 			],
 		]);
-		const index = buildImportedIndex(app, 'Plaud');
+		const index = buildImportedIndex(PLAUD_PROFILE, app, 'Plaud');
 		expect(index.byId.get('rec-num' as RecordingId)?.versionMs).toBe(
 			1782918853105,
 		);
@@ -139,8 +145,12 @@ describe('buildImportedIndex byId', () => {
 
 	it('normalizes Windows-style backslash outputFolder before matching', () => {
 		const app = makeApp([['Inbox/a.md', { 'plaud-id': 'rec-a' }]]);
-		expect(buildImportedIndex(app, '\\Inbox').byId.size).toBe(1);
-		expect(buildImportedIndex(app, '\\Inbox\\').byId.size).toBe(1);
+		expect(
+			buildImportedIndex(PLAUD_PROFILE, app, '\\Inbox').byId.size,
+		).toBe(1);
+		expect(
+			buildImportedIndex(PLAUD_PROFILE, app, '\\Inbox\\').byId.size,
+		).toBe(1);
 	});
 
 	it('does NOT match a folder by prefix that shares a name', () => {
@@ -148,7 +158,7 @@ describe('buildImportedIndex byId', () => {
 			['Plaud-archive/old.md', { 'plaud-id': 'rec-old' }],
 			['Plaud/new.md', { 'plaud-id': 'rec-new' }],
 		]);
-		const index = buildImportedIndex(app, 'Plaud');
+		const index = buildImportedIndex(PLAUD_PROFILE, app, 'Plaud');
 		expect(index.byId.size).toBe(1);
 		expect(index.byId.has('rec-new' as RecordingId)).toBe(true);
 	});
@@ -161,7 +171,7 @@ describe('buildImportedIndex byId', () => {
 			['Plaud/empty.md', { 'plaud-id': '' }],
 			['Plaud/with-id.md', { 'plaud-id': 'rec-ok' }],
 		]);
-		const index = buildImportedIndex(app, 'Plaud');
+		const index = buildImportedIndex(PLAUD_PROFILE, app, 'Plaud');
 		expect(index.byId.size).toBe(1);
 		expect(index.byId.has('rec-ok' as RecordingId)).toBe(true);
 	});
@@ -177,10 +187,10 @@ describe('buildImportedIndex byId', () => {
 				},
 			],
 		]);
-		const entry = buildImportedIndex(app, 'Plaud').byId.get(
+		const entry = buildImportedIndex(PLAUD_PROFILE, app, 'Plaud').byId.get(
 			'rec-rich' as RecordingId,
 		);
-		expect(entry?.plaudId).toBe('rec-rich');
+		expect(entry?.recordingId).toBe('rec-rich');
 		expect(entry?.summaryVersion).toBe('3');
 		expect(entry?.summaryId).toBe('sum-xyz');
 	});
@@ -190,7 +200,7 @@ describe('buildImportedIndex byId', () => {
 			['Plaud/first.md', { 'plaud-id': 'rec-dup' }],
 			['Plaud/second.md', { 'plaud-id': 'rec-dup' }],
 		]);
-		const index = buildImportedIndex(app, 'Plaud');
+		const index = buildImportedIndex(PLAUD_PROFILE, app, 'Plaud');
 		expect(index.byId.size).toBe(1);
 		expect(index.byId.get('rec-dup' as RecordingId)?.path).toBe(
 			'Plaud/second.md',
@@ -198,26 +208,26 @@ describe('buildImportedIndex byId', () => {
 	});
 });
 
-describe('canonicalPlaudId', () => {
+describe('PLAUD_PROFILE.canonicalId', () => {
 	it('strips a single leading of_ (the v3-id-in-v4 prefix)', () => {
-		expect(canonicalPlaudId('of_ab4db03305b77f8e67f345ab89b163ab')).toBe(
-			'ab4db03305b77f8e67f345ab89b163ab',
-		);
+		expect(
+			PLAUD_PROFILE.canonicalId('of_ab4db03305b77f8e67f345ab89b163ab'),
+		).toBe('ab4db03305b77f8e67f345ab89b163ab');
 	});
 
 	it('leaves a bare v3 id unchanged', () => {
-		expect(canonicalPlaudId('ab4db03305b77f8e67f345ab89b163ab')).toBe(
-			'ab4db03305b77f8e67f345ab89b163ab',
-		);
+		expect(
+			PLAUD_PROFILE.canonicalId('ab4db03305b77f8e67f345ab89b163ab'),
+		).toBe('ab4db03305b77f8e67f345ab89b163ab');
 	});
 
 	it('leaves v4-native f_ and f_s_ ids unchanged', () => {
-		expect(canonicalPlaudId('f_01a0588d059a745dbc44dd8719f71111')).toBe(
-			'f_01a0588d059a745dbc44dd8719f71111',
-		);
-		expect(canonicalPlaudId('f_s_01a001db08d87201955b23809f4ce1a1')).toBe(
-			'f_s_01a001db08d87201955b23809f4ce1a1',
-		);
+		expect(
+			PLAUD_PROFILE.canonicalId('f_01a0588d059a745dbc44dd8719f71111'),
+		).toBe('f_01a0588d059a745dbc44dd8719f71111');
+		expect(
+			PLAUD_PROFILE.canonicalId('f_s_01a001db08d87201955b23809f4ce1a1'),
+		).toBe('f_s_01a001db08d87201955b23809f4ce1a1');
 	});
 });
 
@@ -226,6 +236,7 @@ describe('findImportedNote by canonical id', () => {
 	// recording carries the same id with an of_ prefix. They are one meeting.
 	it('matches a bare-id note to its of_-prefixed v4 recording by id', () => {
 		const index = buildImportedIndex(
+			PLAUD_PROFILE,
 			makeApp([
 				[
 					'Plaud/bare.md',
@@ -245,11 +256,14 @@ describe('findImportedNote by canonical id', () => {
 		expect(match?.matchedBy).toBe('id');
 		expect(match?.record.path).toBe('Plaud/bare.md');
 		// The note still reports its stored (bare) id, so a migration can rewrite it.
-		expect(match?.record.plaudId).toBe('340aec0e020aaee63768f043b7841393');
+		expect(match?.record.recordingId).toBe(
+			'340aec0e020aaee63768f043b7841393',
+		);
 	});
 
 	it('matches an of_ note to its of_ recording by id (already current)', () => {
 		const index = buildImportedIndex(
+			PLAUD_PROFILE,
 			makeApp([
 				[
 					'Plaud/prefixed.md',
@@ -267,7 +281,7 @@ describe('findImportedNote by canonical id', () => {
 			),
 		);
 		expect(match?.matchedBy).toBe('id');
-		expect(match?.record.plaudId).toBe(
+		expect(match?.record.recordingId).toBe(
 			'of_ab4db03305b77f8e67f345ab89b163ab',
 		);
 	});
@@ -284,6 +298,7 @@ describe('buildImportedIndex fallback keys + findImportedNote', () => {
 
 	it('finds a recording by id first', () => {
 		const index = buildImportedIndex(
+			PLAUD_PROFILE,
 			makeApp([['Plaud/a.md', NOTE]]),
 			'Plaud',
 		);
@@ -297,6 +312,7 @@ describe('buildImportedIndex fallback keys + findImportedNote', () => {
 
 	it('finds a recording whose id CHANGED by the precise instant key', () => {
 		const index = buildImportedIndex(
+			PLAUD_PROFILE,
 			makeApp([['Plaud/a.md', NOTE]]),
 			'Plaud',
 		);
@@ -307,7 +323,7 @@ describe('buildImportedIndex fallback keys + findImportedNote', () => {
 		);
 		expect(match?.matchedBy).toBe('instant');
 		expect(match?.record.path).toBe('Plaud/a.md');
-		expect(match?.record.plaudId).toBe('old-v3-id');
+		expect(match?.record.recordingId).toBe('old-v3-id');
 	});
 
 	it('falls back to the day key for a date-only legacy note', () => {
@@ -317,6 +333,7 @@ describe('buildImportedIndex fallback keys + findImportedNote', () => {
 			'duration-seconds': 226,
 		};
 		const index = buildImportedIndex(
+			PLAUD_PROFILE,
 			makeApp([['Plaud/legacy.md', legacy]]),
 			'Plaud',
 		);
@@ -334,6 +351,7 @@ describe('buildImportedIndex fallback keys + findImportedNote', () => {
 	it('does NOT match on an ambiguous fallback key (two notes share it)', () => {
 		// Two different meetings that collapse to the same instant + duration.
 		const index = buildImportedIndex(
+			PLAUD_PROFILE,
 			makeApp([
 				['Plaud/one.md', NOTE],
 				[
@@ -357,6 +375,7 @@ describe('buildImportedIndex fallback keys + findImportedNote', () => {
 
 	it('returns null for a genuinely new recording', () => {
 		const index = buildImportedIndex(
+			PLAUD_PROFILE,
 			makeApp([['Plaud/a.md', NOTE]]),
 			'Plaud',
 		);
@@ -388,6 +407,7 @@ describe('recordingAmbiguousKeys + findImportedNote recording-side guard', () =>
 
 	it('does NOT fuzzy-match a new recording whose key another recording shares', () => {
 		const index = buildImportedIndex(
+			PLAUD_PROFILE,
 			makeApp([['Plaud/a.md', NOTE]]),
 			'Plaud',
 		);
@@ -406,6 +426,7 @@ describe('recordingAmbiguousKeys + findImportedNote recording-side guard', () =>
 
 	it('still matches by exact id even when the key is recording-ambiguous', () => {
 		const index = buildImportedIndex(
+			PLAUD_PROFILE,
 			makeApp([['Plaud/a.md', NOTE]]),
 			'Plaud',
 		);
@@ -450,7 +471,9 @@ describe('buildImportedIndexWithColdCheck', () => {
 			['Plaud/a.md', { 'plaud-id': 'rec-a' }],
 			['Plaud/cold.md', null],
 		]);
-		expect(buildImportedIndexWithColdCheck(app, 'Plaud').isCold).toBe(true);
+		expect(
+			buildImportedIndexWithColdCheck(PLAUD_PROFILE, app, 'Plaud').isCold,
+		).toBe(true);
 	});
 
 	it('is warm and returns the same byId map as buildImportedIndex', () => {
@@ -459,10 +482,14 @@ describe('buildImportedIndexWithColdCheck', () => {
 			['Plaud/sub/b.md', { 'plaud-id': 'rec-b' }],
 			['Other/outside.md', { 'plaud-id': 'rec-outside' }],
 		]);
-		const state = buildImportedIndexWithColdCheck(app, 'Plaud');
+		const state = buildImportedIndexWithColdCheck(
+			PLAUD_PROFILE,
+			app,
+			'Plaud',
+		);
 		expect(state.isCold).toBe(false);
 		if (state.isCold) return;
-		const reference = buildImportedIndex(app, 'Plaud');
+		const reference = buildImportedIndex(PLAUD_PROFILE, app, 'Plaud');
 		expect([...state.index.byId.entries()]).toEqual([
 			...reference.byId.entries(),
 		]);
@@ -473,7 +500,11 @@ describe('buildImportedIndexWithColdCheck', () => {
 	});
 
 	it('is warm with an empty index when the folder has no notes', () => {
-		const state = buildImportedIndexWithColdCheck(makeApp([]), 'Plaud');
+		const state = buildImportedIndexWithColdCheck(
+			PLAUD_PROFILE,
+			makeApp([]),
+			'Plaud',
+		);
 		expect(state.isCold).toBe(false);
 		if (state.isCold) return;
 		expect(state.index.byId.size).toBe(0);

@@ -13,11 +13,23 @@
  * The run goes through the real `runImport` loop and a real `NoteWriter` into an
  * in-memory vault. The attachment pipeline is a stub that records its calls,
  * because the real one needs the Obsidian app and network; its call log is part
- * of the snapshot so the asset routing is locked too.
+ * of the snapshot so the asset routing is locked too. One scenario instead runs
+ * the real `AttachmentImporter` over the same vault with `requestUrl` mocked,
+ * so the saved screenshot, image and audio paths and their embeds are locked.
  *
  * Every recording carries an explicit capture offset, so the output does not
  * depend on the machine's time zone.
  */
+import * as obsidian from 'obsidian';
+import {
+	TFile,
+	TFolder,
+	type App,
+	type RequestUrlParam,
+	type RequestUrlResponse,
+	type RequestUrlResponsePromise,
+} from 'obsidian';
+import { AttachmentImporter } from '../attachment-importer';
 import {
 	runImport,
 	type AttachmentPipeline,
@@ -27,6 +39,8 @@ import { NoteWriter, type NoteWriterOptions } from '../note-writer';
 import { PlaudApiError } from '../plaud-client-re';
 import type { ArtifactSelection, ImportModalOptions } from '../import-core';
 import { PLAUD_ERROR_POLICY } from '../plaud-errors';
+import { PLAUD_PROFILE } from '../plaud-profile';
+import { plaudFolderLoader } from '../folder-catalog';
 import type { PlaudFolder, TranscriptAndSummary } from '../plaud-client';
 import type {
 	AttachmentAsset,
@@ -34,7 +48,7 @@ import type {
 	Recording,
 } from '../recording-model';
 import { asyncResult } from './helpers/async-result';
-import { makeFakeVault } from './helpers/fake-vault';
+import { makeFakeVault, type FakeVault } from './helpers/fake-vault';
 
 /** Records every pipeline call; extraction delegates to simple pure rules. */
 function makePipeline(calls: unknown[]): AttachmentPipeline {
@@ -74,6 +88,67 @@ function makePipeline(calls: unknown[]): AttachmentPipeline {
 			});
 		},
 	};
+}
+
+/**
+ * The Obsidian `App` surface `AttachmentImporter` touches, over the same fake
+ * vault the `NoteWriter` writes to. Binaries are kept as path to byte length.
+ */
+function attachmentApp(vault: FakeVault, binaries: Map<string, number>): App {
+	const file = (path: string): TFile =>
+		Object.assign(new TFile(), {
+			path,
+			name: path.slice(path.lastIndexOf('/') + 1),
+		});
+	const appVault = {
+		getFileByPath: (path: string): TFile | null =>
+			vault.files.has(path) || binaries.has(path) ? file(path) : null,
+		getFolderByPath: (path: string): TFolder | null =>
+			vault.folders.has(path)
+				? Object.assign(new TFolder(), { path })
+				: null,
+		createFolder: (path: string) => vault.createFolder(path),
+		createBinary: (path: string, data: ArrayBuffer): Promise<TFile> =>
+			asyncResult(() => {
+				binaries.set(path, data.byteLength);
+				return file(path);
+			}),
+		process: (f: TFile, fn: (data: string) => string) =>
+			vault.process(f, fn),
+	};
+	return { vault: appVault } as unknown as App;
+}
+
+/** Mocks `requestUrl`: listed URLs return their bytes, anything else 404s. */
+function installNetwork(
+	routes: Readonly<Record<string, { type: string; size: number }>>,
+	requested: string[],
+): jest.SpyInstance {
+	return jest
+		.spyOn(obsidian, 'requestUrl')
+		.mockImplementation(
+			(param: RequestUrlParam | string): RequestUrlResponsePromise => {
+				const url = typeof param === 'string' ? param : param.url;
+				requested.push(url);
+				const route = routes[url];
+				const bytes = new Uint8Array(route?.size ?? 0).fill(7);
+				const response: RequestUrlResponse = {
+					status: route === undefined ? 404 : 200,
+					headers:
+						route === undefined
+							? {}
+							: { 'Content-Type': route.type },
+					arrayBuffer: bytes.buffer,
+					json: null,
+					text: '',
+				};
+				return Object.assign(Promise.resolve(response), {
+					arrayBuffer: Promise.resolve(response.arrayBuffer),
+					json: Promise.resolve(null),
+					text: Promise.resolve(''),
+				});
+			},
+		);
 }
 
 const ALL: ArtifactSelection = {
@@ -211,6 +286,10 @@ interface Scenario {
 	readonly seed?: Readonly<Record<string, string>>;
 	readonly withAudio?: boolean;
 	readonly withFolders?: boolean;
+	/** Run the real AttachmentImporter against these mocked downloads. */
+	readonly network?: Readonly<Record<string, { type: string; size: number }>>;
+	/** Overrides the default audio temp-url (with `withAudio`). */
+	readonly audioUrl?: (recordingId: RecordingId) => string;
 }
 
 async function run(scenario: Scenario): Promise<Record<string, unknown>> {
@@ -226,13 +305,25 @@ async function run(scenario: Scenario): Promise<Record<string, unknown>> {
 		onDuplicate: 'overwrite',
 		...scenario.options,
 		errorPolicy: PLAUD_ERROR_POLICY,
+		profile: PLAUD_PROFILE,
 	};
+	const binaries = new Map<string, number>();
+	const requested: string[] = [];
+	const spy = scenario.network
+		? installNetwork(scenario.network, requested)
+		: undefined;
 	const writer = new NoteWriter(vault, options satisfies NoteWriterOptions);
 	const deps: ImportRunDeps = {
 		recordings: scenario.recordings,
 		selection: { ...ALL, ...scenario.selection },
 		writer,
-		attachments: makePipeline(calls),
+		attachments: scenario.network
+			? new AttachmentImporter({
+					app: attachmentApp(vault, binaries),
+					profile: PLAUD_PROFILE,
+					getAuthToken: () => 'test-token',
+				})
+			: makePipeline(calls),
 		options,
 		fetchArtifacts: (recordingId) =>
 			asyncResult(() => {
@@ -247,19 +338,24 @@ async function run(scenario: Scenario): Promise<Record<string, unknown>> {
 				calls.push(['applyFold', path]);
 			}),
 		...(scenario.withFolders
-			? { fetchFolderCatalog: () => asyncResult(() => FOLDERS) }
+			? {
+					loadFolders: plaudFolderLoader(() =>
+						asyncResult(() => FOLDERS),
+					),
+				}
 			: {}),
 		...(scenario.withAudio
 			? {
 					fetchAudioUrl: (recordingId: RecordingId) =>
 						asyncResult(
 							() =>
+								scenario.audioUrl?.(recordingId) ??
 								`https://cdn.example/audio/${recordingId}.mp3`,
 						),
 				}
 			: {}),
 	};
-	const outcome = await runImport(deps);
+	const outcome = await runImport(deps).finally(() => spy?.mockRestore());
 	const files = Object.fromEntries(
 		[...vault.files.entries()].sort(([a], [b]) => a.localeCompare(b)),
 	);
@@ -269,6 +365,16 @@ async function run(scenario: Scenario): Promise<Record<string, unknown>> {
 		folders: [...vault.folders].sort(),
 		files,
 		pipeline: calls,
+		...(scenario.network
+			? {
+					binaries: Object.fromEntries(
+						[...binaries.entries()].sort(([a], [b]) =>
+							a.localeCompare(b),
+						),
+					),
+					requested,
+				}
+			: {}),
 	};
 }
 
@@ -426,6 +532,48 @@ const SCENARIOS: readonly Scenario[] = [
 			}),
 		],
 		artifacts: richArtifacts,
+	},
+	{
+		name: 'real attachment pipeline: screenshot, image asset and audio',
+		recordings: [recording()],
+		artifacts: (rec) => ({
+			...richArtifacts(rec),
+			summary: {
+				id: rec.id,
+				text: '## Key points\n\n- Pricing first',
+			},
+			attachments: [
+				{
+					dataType: 'image',
+					url: 'https://cdn.plaud.ai/assets/photo.jpg',
+				},
+			],
+			nestedAssetLinks: undefined,
+			marks: [
+				{
+					offsetSeconds: 42,
+					url: 'https://cdn.plaud.ai/marks/mark-42.jpg',
+					markType: 1,
+				},
+			],
+		}),
+		withAudio: true,
+		audioUrl: (recordingId) =>
+			`https://cdn.plaud.ai/audio/${recordingId}.ogg?X-Amz-Signature=abc`,
+		network: {
+			'https://cdn.plaud.ai/assets/photo.jpg': {
+				type: 'image/jpeg',
+				size: 11,
+			},
+			'https://cdn.plaud.ai/marks/mark-42.jpg': {
+				type: 'image/jpeg',
+				size: 22,
+			},
+			'https://cdn.plaud.ai/audio/a1b2c3d4.ogg?X-Amz-Signature=abc': {
+				type: 'audio/ogg',
+				size: 33,
+			},
+		},
 	},
 ];
 

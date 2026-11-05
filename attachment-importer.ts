@@ -8,10 +8,14 @@ import {
 } from 'obsidian';
 import type { AttachmentAsset } from './recording-model';
 import { TRANSCRIPT_FILE_NAME } from './note-writer';
-import { transformManagedBody } from './managed-block';
+import {
+	managedMarkers,
+	transformManagedBody,
+	type ManagedMarkers,
+} from './managed-block';
+import type { ServiceProfile } from './service-profile';
 import { NoopDebugLogger, type DebugLogger } from './debug-logger';
 import type { ArtifactSelection } from './import-core';
-import { PLAUD_MARK_DATA_TYPE } from './import-core';
 import { trimTrailingChars } from './text-trim';
 import { isTrustedPlaudUrl } from './plaud-hosts';
 
@@ -51,6 +55,8 @@ type AttachmentNamingCounters = {
 
 export interface AttachmentImporterOptions {
 	readonly app: App;
+	/** Names the managed-block markers the note rewrites stay inside. */
+	readonly profile: ServiceProfile;
 	/** Bearer-token provider for authenticated Plaud asset fetches. */
 	readonly getAuthToken?: () => string | null;
 	/**
@@ -75,12 +81,18 @@ export interface AttachmentImporterOptions {
  */
 export class AttachmentImporter {
 	private readonly app: App;
+	private readonly markers: ManagedMarkers;
+	private readonly logPrefix: string;
+	private readonly markDataType: string;
 	private readonly resolveAuthToken: () => string | null;
 	private readonly resolveApiBaseUrl: () => string;
 	private readonly debugLogger: DebugLogger;
 
 	constructor(options: AttachmentImporterOptions) {
 		this.app = options.app;
+		this.markers = managedMarkers(options.profile);
+		this.logPrefix = `${options.profile.serviceName} importer`;
+		this.markDataType = options.profile.markDataType;
 		this.resolveAuthToken = options.getAuthToken ?? (() => null);
 		this.resolveApiBaseUrl =
 			options.getApiBaseUrl ?? (() => DEFAULT_PLAUD_API_BASE);
@@ -380,7 +392,7 @@ export class AttachmentImporter {
 						// Never persist raw HTML wrappers as attachment files.
 						if (savedFromWrapper === 0) {
 							console.warn(
-								`Plaud importer: no image could be saved from an attachment page for ${notePath}`,
+								`${this.logPrefix}: no image could be saved from an attachment page for ${notePath}`,
 								asset,
 							);
 						}
@@ -457,7 +469,7 @@ export class AttachmentImporter {
 						}
 						if (savedFromEnvelope === 0) {
 							console.warn(
-								`Plaud importer: no image could be saved from an attachment envelope for ${notePath}`,
+								`${this.logPrefix}: no image could be saved from an attachment envelope for ${notePath}`,
 								asset,
 							);
 						}
@@ -528,7 +540,7 @@ export class AttachmentImporter {
 			}
 			if (!imported) {
 				console.warn(
-					`Plaud importer: failed to import attachment for ${notePath}`,
+					`${this.logPrefix}: failed to import attachment for ${notePath}`,
 					asset,
 				);
 			}
@@ -696,7 +708,7 @@ export class AttachmentImporter {
 		// Rewrite the managed block only (#59): the user's text outside it is
 		// never scanned, and a section appended "at the end" stays inside it.
 		await this.app.vault.process(noteFile, (note) =>
-			transformManagedBody(note, rewriteBody),
+			transformManagedBody(this.markers, note, rewriteBody),
 		);
 		this.logAttachmentDebug('attachments section appended to note', {
 			notePath,
@@ -873,7 +885,7 @@ export class AttachmentImporter {
 				return this.insertSectionBeforeTranscript(trimmed, section);
 			};
 			await this.app.vault.process(noteFile, (note) =>
-				transformManagedBody(note, rewriteBody),
+				transformManagedBody(this.markers, note, rewriteBody),
 			);
 		} catch (err) {
 			this.logAttachmentDebug('audio write failed', {
@@ -973,7 +985,7 @@ export class AttachmentImporter {
 		// Marks are tagged with an exact dataType by the import runner, so match it
 		// precisely rather than by substring (a pre-signed image URL must not be
 		// misread as a mark, and a mark must not be reclassified as mindmap/card).
-		if (dataType === PLAUD_MARK_DATA_TYPE) {
+		if (dataType === this.markDataType) {
 			return 'mark';
 		}
 		const haystack = `${dataType} ${name ?? ''} ${url}`.toLowerCase();

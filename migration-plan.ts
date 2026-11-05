@@ -6,7 +6,7 @@
 //
 // A note is healed in one of two ways:
 //   - via 'id' (exact): the note matches the recording by CANONICAL id but stored
-//     the bare/old form of that id (see canonicalPlaudId). The rewrite is an
+//     the bare/old form of that id (see ImportedIndex.canonicalId). The rewrite is an
 //     identity, not a guess, so it needs no guard. This is the common case: the
 //     v4 portal keeps every v3 id as `of_<v3id>`, and an old note stored `<v3id>`.
 //   - via 'start-time'/'date' (fuzzy): the note's id does not resolve at all, so
@@ -105,12 +105,12 @@ export function planMigration(
 
 	const pushHeal = (
 		recording: PlannableRecording,
-		record: { path: string; plaudId?: string },
+		record: { path: string; recordingId?: string },
 		via: MigrationHeal['via'],
 	): void => {
 		heals.push({
 			notePath: record.path,
-			fromId: record.plaudId ?? '(unknown)',
+			fromId: record.recordingId ?? '(unknown)',
 			toId: recording.id,
 			via,
 			recordingTitle: recording.title,
@@ -129,7 +129,7 @@ export function planMigration(
 			// Exact canonical-id match. Already the current id, or the note stored
 			// the bare/old form and we rewrite it to the current id. No guard: an
 			// exact identity can never point at the wrong meeting.
-			if (match.record.plaudId === recording.id) {
+			if (match.record.recordingId === recording.id) {
 				alreadyCurrent += 1;
 			} else {
 				pushHeal(recording, match.record, 'id');

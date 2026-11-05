@@ -11,9 +11,9 @@ import {
 	effectiveCaptureOffsetMinutes,
 } from './note-writer';
 import { runImport } from './import-runner';
+import { plaudFolderLoader } from './folder-catalog';
 import {
 	buildImportedIndex,
-	canonicalPlaudId,
 	findImportedNote,
 	recordingAmbiguousKeys,
 	type ImportedIndex,
@@ -544,11 +544,7 @@ export class ImportModal extends Modal {
 	// so the badge state stays accurate without re-scanning the vault on
 	// every render. Empty map when no notes match — never null so callers
 	// can `.has()` without guarding.
-	private importedIndex: ImportedIndex = {
-		byId: new Map(),
-		byInstant: new Map(),
-		byDay: new Map(),
-	};
+	private importedIndex: ImportedIndex;
 
 	// Dialog view state: the three filter-bar toggles and the ignore set.
 	// Snapshotted from the options at open, mutated locally when the user
@@ -575,6 +571,12 @@ export class ImportModal extends Modal {
 		super(app);
 		this.client = client;
 		this.noteWriterOptions = noteWriterOptions;
+		this.importedIndex = {
+			byId: new Map(),
+			byInstant: new Map(),
+			byDay: new Map(),
+			canonicalId: noteWriterOptions.profile.canonicalId,
+		};
 		this.showTrashed = noteWriterOptions.showTrashedRecordings === true;
 		// The two hide-prefs default ON when the host omits them (a fresh install
 		// or a pre-0.26.0 data.json), matching DEFAULT_SETTINGS.
@@ -587,6 +589,7 @@ export class ImportModal extends Modal {
 		this.deviceNames = noteWriterOptions.getDeviceNames?.() ?? new Map();
 		this.attachments = new AttachmentImporter({
 			app,
+			profile: noteWriterOptions.profile,
 			getAuthToken: noteWriterOptions.getAuthToken,
 			getApiBaseUrl: noteWriterOptions.getApiBaseUrl,
 			debugLogger: noteWriterOptions.debugLogger,
@@ -1045,7 +1048,10 @@ export class ImportModal extends Modal {
 
 		const copyButton = buttonRow.createEl('button', { text: 'Copy error' });
 		copyButton.addEventListener('click', () => {
-			const payload = formatErrorForClipboard(classification);
+			const payload = formatErrorForClipboard(
+				this.noteWriterOptions.profile,
+				classification,
+			);
 			void copyToClipboard(payload);
 		});
 
@@ -1557,6 +1563,7 @@ export class ImportModal extends Modal {
 	// the user to close and reopen the modal.
 	private refreshImportedIndex(): void {
 		this.importedIndex = buildImportedIndex(
+			this.noteWriterOptions.profile,
 			this.app,
 			this.noteWriterOptions.outputFolder,
 		);
@@ -1572,7 +1579,7 @@ export class ImportModal extends Modal {
 		// byId is keyed by canonical id, so a v4 `of_<id>` recording must be
 		// looked up by its bare id or the badge never appears until a refresh.
 		const existing = this.importedIndex.byId.get(
-			canonicalPlaudId(recId) as RecordingId,
+			this.importedIndex.canonicalId(recId) as RecordingId,
 		);
 		if (existing === undefined) return;
 		// Find the row by its stamped recording id. Robust to trashed
@@ -2464,7 +2471,9 @@ export class ImportModal extends Modal {
 			options: this.noteWriterOptions,
 			fetchArtifacts: (id) => this.ensureArtifactsForRecording(id),
 			fetchAudioUrl: (id) => this.client.getAudioTempUrl(id),
-			fetchFolderCatalog: () => this.client.getFolderCatalog(),
+			loadFolders: plaudFolderLoader(() =>
+				this.client.getFolderCatalog(),
+			),
 			applyFold: (filePath) => this.applyNoteFolds(filePath),
 			observer: {
 				onRecordingStart: (index, total) => {
@@ -2505,7 +2514,7 @@ export class ImportModal extends Modal {
 			// duplicate prompt dismissed) both surface the same partial Notice.
 			const total = priorResults.length + recordings.length;
 			new Notice(
-				`${formatImportNotice(tallyImportResults(combined))} (cancelled at ${combined.length}/${total})`,
+				`${formatImportNotice(this.noteWriterOptions.profile, tallyImportResults(combined))} (cancelled at ${combined.length}/${total})`,
 			);
 			if (outcome.stop === 'cancelled') {
 				// issue #12: on the initial selection screen the loop left the
@@ -2563,9 +2572,9 @@ export class ImportModal extends Modal {
 				// after the subfolder template changed) so it never writes a
 				// second copy. Backed by the vault index, read live so it reflects
 				// notes written earlier in this same run.
-				existingPathForPlaudId: (id) =>
+				existingPathForRecordingId: (id) =>
 					this.importedIndex.byId.get(
-						canonicalPlaudId(id) as RecordingId,
+						this.importedIndex.canonicalId(id) as RecordingId,
 					)?.path ?? null,
 			});
 		} catch (err) {
@@ -2836,6 +2845,7 @@ export class ImportModal extends Modal {
 			// stay expanded (folding their shallower H2 would subsume the
 			// deeper transcript heading).
 			const transcriptHeadingLine = findTranscriptFoldLine(
+				this.noteWriterOptions.profile,
 				body,
 				headerLevel,
 			);
@@ -2899,7 +2909,7 @@ export class ImportModal extends Modal {
 		// Fire the Notice FIRST so a DOM-render failure cannot eat the
 		// batch result. The modal body render below can throw; the
 		// top-level toast is the last-line-of-defense feedback.
-		new Notice(formatImportNotice(tally));
+		new Notice(formatImportNotice(this.noteWriterOptions.profile, tally));
 
 		const { contentEl } = this;
 		contentEl.empty();

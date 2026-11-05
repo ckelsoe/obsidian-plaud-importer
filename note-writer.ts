@@ -30,25 +30,28 @@
 // class satisfies VaultLike structurally).
 
 import { moment } from 'obsidian';
-import type { PlaudMark } from './plaud-client';
 import type {
 	AdditionalSummary,
 	Chapter,
 	ConsumerNote,
 	Recording,
+	RecordingMark,
 	Summary,
 	Transcript,
 	TranscriptSegment,
 } from './recording-model';
-import { recordingSourceLabel } from './plaud-client';
-import { canonicalPlaudId } from './vault-index';
+import {
+	folderToken,
+	type ServiceProfile,
+	type TemplateFolder,
+} from './service-profile';
 import { trimChars, trimTrailingChars } from './text-trim';
 import {
-	MANAGED_BLOCK_END,
-	MANAGED_BLOCK_START,
 	locateManagedBlock,
+	managedMarkers,
 	managedBodyRegion,
 	spliceManagedBlock,
+	type ManagedMarkers,
 } from './managed-block';
 
 // -----------------------------------------------------------------------------
@@ -165,14 +168,17 @@ export const TRANSCRIPT_FILE_NAME = 'Transcript.md';
  * never overwritten or trashed. Obsidian comment syntax, so reading view
  * hides it.
  */
-export const TRANSCRIPT_FILE_MARKER =
-	'%% plaud-importer: managed transcript %%';
+export function transcriptFileMarker(profile: ServiceProfile): string {
+	return `%% ${profile.pluginId}: managed transcript %%`;
+}
 
 export interface NoteWriterOptions {
+	/** The service whose stored names (keys, markers, tags) notes carry. */
+	readonly profile: ServiceProfile;
 	readonly outputFolder: string;
 	/**
 	 * Origin of the web portal for `plaud-url` permalinks (v3 prod vs v4 new
-	 * portal). Omitted defaults to the prod portal. See `formatPlaudWebUrl`.
+	 * portal). Omitted uses the service's default portal. See `ServiceProfile.recordingUrl`.
 	 */
 	readonly webBaseUrl?: string;
 	/**
@@ -236,7 +242,9 @@ export interface NoteWriterOptions {
 	 * Returns null when no prior note exists. When omitted, the writer falls
 	 * back to the path-scoped check only.
 	 */
-	readonly existingPathForPlaudId?: (plaudId: string) => string | null;
+	readonly existingPathForRecordingId?: (
+		recordingId: string,
+	) => string | null;
 	/**
 	 * Optional capability to migrate an existing note to its recomputed target
 	 * path (rename the note and its `<base>-assets` folder as a unit) before
@@ -504,89 +512,13 @@ export function formatTimestamp(seconds: number): string {
 	return `${pad(m)}:${pad(s)}`;
 }
 
-/** Prod (v3) web portal, the default when no environment base is supplied. */
-export const PLAUD_WEB_URL_V3 = 'https://web.plaud.ai';
-
-/**
- * Build the public web-app URL for a Plaud recording. This is the link a user
- * clicks to open the recording in Plaud's browser UI. The `/file/{id}` path
- * shape is the same on every portal, so only the origin differs: a v3 (prod)
- * account links to `https://web.plaud.ai`, a v4 (new portal) account to its own
- * sign-in portal (`https://web.plaud.ai` by default). The caller passes the environment's
- * base via `webBase`; it defaults to the prod portal so an unthreaded caller
- * stays correct for v3. Confirmed from a live Plaud session on 2026-04-14.
- *
- * The ID is passed through `encodeURIComponent` for defense-in-depth,
- * matching the same treatment `plaud-client-re.ts` applies to the ID
- * when building the `/ai/transsumm/{id}` API URL. Real Plaud IDs are
- * 32-char hex strings that need no encoding, but a future ID format
- * change (slashes, dots, etc.) would silently produce broken URLs
- * without this guard.
- */
-export function formatPlaudWebUrl(
-	recordingId: string,
-	webBase: string = PLAUD_WEB_URL_V3,
-): string {
-	const base = trimTrailingChars(webBase, '/');
-	return `${base}/file/${encodeURIComponent(recordingId)}`;
-}
-
-/**
- * Substitute Plaud's template placeholders inside a markdown body. Plaud's
- * summary templates contain tokens like `$[audio_start_time]` that the
- * Plaud web UI replaces with concrete values on the client before
- * rendering. Their API returns the RAW template body, so without this
- * substitution our notes would show literal `$[audio_start_time]` text
- * where a date should be.
- *
- * Known placeholders (filled in from the recording / transcript we
- * already have on hand):
- *   $[audio_start_time]  → "YYYY-MM-DD HH:MM:SS" in the capture zone
- *   $[audio_title]       → recording.title
- *   $[audio_duration]    → human-readable duration
- *   $[speakers]          → comma-separated speaker list
- *
- * Unknown placeholders are left untouched so user notes are never
- * silently mangled by a regex on a token we don't have data for. New
- * tokens Plaud adds in future templates show through verbatim and a
- * follow-up can wire them in once we know what they should resolve to.
- *
- * `offsetMinutes` is the recording's effective capture-zone offset, threaded so
- * $[audio_start_time] matches the note's own date/time. It defaults to the
- * importing device's zone for callers that omit it.
- */
-export function substitutePlaudPlaceholders(
-	markdown: string,
-	recording: Recording,
-	transcript: Transcript | null,
-	offsetMinutes: number = machineOffsetMinutes(recording.createdAt),
-): string {
-	if (markdown.length === 0) return markdown;
-	return markdown.replace(/\$\[([a-z0-9_]+)\]/g, (match, key: string) => {
-		switch (key) {
-			case 'audio_start_time':
-				return formatLocalDateTime(recording.createdAt, offsetMinutes);
-			case 'audio_title':
-				return recording.title;
-			case 'audio_duration':
-				return formatDurationHoursMinutes(recording.durationSeconds);
-			case 'speakers': {
-				const speakers = extractSpeakers(transcript);
-				return speakers.length > 0 ? speakers.join(', ') : match;
-			}
-			default:
-				return match;
-		}
-	});
-}
-
 /**
  * "YYYY-MM-DD HH:MM:SS" formatter in the recording's capture zone, matching the
  * wall-clock format Plaud's own UI uses (e.g. `2026-05-13 14:04:22`). Rendered
  * in the capture zone, not the importing device's, so it matches what the user
  * sees on web.plaud.ai regardless of which machine ran the import.
  */
-function formatLocalDateTime(
+export function formatLocalDateTime(
 	d: Date,
 	offsetMinutes: number = machineOffsetMinutes(d),
 ): string {
@@ -770,7 +702,7 @@ function expandDateTemplate(
 	date: Date,
 	offsetMinutes: number = machineOffsetMinutes(date),
 	title?: string,
-	folder?: string,
+	folder?: TemplateFolder,
 ): string {
 	// Render in the recording's capture zone (see captureMoment). Passing the
 	// effective offset here is what keeps the note name, its subfolder, and the
@@ -784,8 +716,8 @@ function expandDateTemplate(
 			if (title !== undefined && inner === 'title') {
 				return title;
 			}
-			if (folder !== undefined && inner === 'plaud-folder') {
-				return folder;
+			if (folder !== undefined && inner === folder.token) {
+				return folder.name;
 			}
 			return m.format(inner);
 		},
@@ -899,7 +831,7 @@ export function resolveSubfolder(
 	date: Date,
 	title?: string,
 	replacement: string = '-',
-	folder?: string,
+	folder?: TemplateFolder,
 	offsetMinutes: number = machineOffsetMinutes(date),
 ): string {
 	if (template.trim() === '') {
@@ -939,9 +871,12 @@ export function resolveSubfolder(
 	// alone -> _unfiled, {{plaud-folder}}/{{YYYY}} -> _unfiled/2026 — instead of
 	// dropping the empty segment and mixing unfiled recordings into the sibling
 	// levels. Mirrors the _undated bucket for a missing date.
-	let safeFolder: string | undefined;
+	let safeFolder: TemplateFolder | undefined;
 	if (folder !== undefined) {
-		safeFolder = sanitizeFilename(folder, replacement, '') || '_unfiled';
+		safeFolder = {
+			token: folder.token,
+			name: sanitizeFilename(folder.name, replacement, '') || '_unfiled',
+		};
 	}
 	const resolved = normalizeFolderPath(
 		expandDateTemplate(
@@ -1368,17 +1303,22 @@ function yamlArray(items: readonly string[]): string {
  * other processing — they should never end up in a YAML array.
  */
 export function mergeTagSources(
+	profile: ServiceProfile,
 	baseTags: readonly string[] | undefined,
 	aiKeywords: readonly string[] | undefined,
 ): readonly string[] {
-	return buildNoteTags(baseTags, aiKeywords, {
+	return buildNoteTags(profile, baseTags, aiKeywords, {
 		tagMode: 'all',
 		customTags: '',
 		aiKeywordsAsProperty: false,
 	}).tags;
 }
 
-/** Which tag sources land in the note's `tags:` frontmatter. */
+/**
+ * Which tag sources land in the note's `tags:` frontmatter. `'plaud'` means
+ * "the service's own tags" for every service: it is the value stored in users'
+ * settings, so it keeps its original spelling.
+ */
 export type TagMode = 'none' | 'custom' | 'plaud' | 'all';
 
 export interface TagBuildOptions {
@@ -1422,6 +1362,7 @@ export interface NoteTagResult {
  * stays searchable and Dataview-queryable.
  */
 export function buildNoteTags(
+	profile: ServiceProfile,
 	baseTags: readonly string[] | undefined,
 	aiKeywords: readonly string[] | undefined,
 	options: TagBuildOptions,
@@ -1465,7 +1406,7 @@ export function buildNoteTags(
 			if (slug.length === 0) {
 				continue;
 			}
-			const prefixed = `plaud/${slug}`;
+			const prefixed = `${profile.keyPrefix}/${slug}`;
 			if (seen.has(prefixed)) {
 				continue;
 			}
@@ -1518,34 +1459,37 @@ export interface CustomFrontmatterRow {
  * (`date`, `source`, ...) from being silently rewritten by a template. Keep in
  * sync with the keys formatFrontmatter emits.
  */
-const RESERVED_FRONTMATTER_KEYS: ReadonlySet<string> = new Set([
-	'plaud-id',
-	'plaud-url',
-	'date',
-	'datetime',
-	'duration-seconds',
-	'duration',
-	'speakers',
-	'tags',
-	'plaud-folder',
-	'plaud-location',
-	'keywords',
-	'source',
-	'plaud-version-ms',
-	'plaud-headline',
-	'plaud-category',
-	'plaud-industry',
-	'plaud-language',
-	'plaud-template',
-	'plaud-model',
-	'plaud-note-id',
-	'plaud-summary-id',
-	'plaud-summary-version',
-	// Marker on a placeholder stub (writePlaceholderNote). Reserved so the
-	// preserve-unknown passthrough (#58) never carries it onto real content when a
-	// later import supersedes the stub, and so a custom row cannot claim it.
-	'plaud-placeholder',
-]);
+function reservedFrontmatterKeys(profile: ServiceProfile): ReadonlySet<string> {
+	const p = profile.keyPrefix;
+	return new Set([
+		`${p}-id`,
+		`${p}-url`,
+		'date',
+		'datetime',
+		'duration-seconds',
+		'duration',
+		'speakers',
+		'tags',
+		`${p}-folder`,
+		`${p}-location`,
+		'keywords',
+		'source',
+		`${p}-version-ms`,
+		`${p}-headline`,
+		`${p}-category`,
+		`${p}-industry`,
+		`${p}-language`,
+		`${p}-template`,
+		`${p}-model`,
+		`${p}-note-id`,
+		`${p}-summary-id`,
+		`${p}-summary-version`,
+		// Marker on a placeholder stub (writePlaceholderNote). Reserved so the
+		// preserve-unknown passthrough (#58) never carries it onto real content when a
+		// later import supersedes the stub, and so a custom row cannot claim it.
+		`${p}-placeholder`,
+	]);
+}
 
 /**
  * Values a custom frontmatter token can resolve to, already flattened for one
@@ -1559,6 +1503,8 @@ export interface CustomFrontmatterContext {
 	/** Capture-zone offset (minutes) the date tokens render in. */
 	readonly offsetMinutes: number;
 	readonly title: string;
+	/** The profile's folder token (`folderToken`) that `folderName` fills. */
+	readonly folderToken: string;
 	readonly folderName: string;
 	readonly durationSeconds: number;
 	readonly category: string;
@@ -1578,6 +1524,7 @@ export interface CustomFrontmatterContext {
 
 /** Build the token context for one recording (folderName '' when unfiled). */
 export function customFrontmatterContext(
+	profile: ServiceProfile,
 	recording: Recording,
 	summary: Summary | null | undefined,
 	folderName: string,
@@ -1591,6 +1538,7 @@ export function customFrontmatterContext(
 			fallbackTimezone,
 		),
 		title: recording.title,
+		folderToken: folderToken(profile),
 		folderName,
 		durationSeconds: Number.isFinite(recording.durationSeconds)
 			? Math.max(0, Math.floor(recording.durationSeconds))
@@ -1601,7 +1549,7 @@ export function customFrontmatterContext(
 		language: summary?.language ?? '',
 		template: summary?.template ?? '',
 		model: summary?.model ?? '',
-		device: recordingSourceLabel(recording.source, deviceNames),
+		device: profile.devices?.label(recording.source, deviceNames) ?? '',
 	};
 }
 
@@ -1648,7 +1596,7 @@ export function expandCustomFrontmatterValue(
 		if (inner === 'title') {
 			return ctx.title;
 		}
-		if (inner === 'plaud-folder') {
+		if (inner === ctx.folderToken) {
 			return ctx.folderName;
 		}
 		return m.format(inner);
@@ -1660,7 +1608,10 @@ export function expandCustomFrontmatterValue(
  * date set plus the content tokens (`{{duration}}`, `{{category}}`, ...) resolve
  * to sample values as they type.
  */
-export const TEMPLATE_PREVIEW_CUSTOM_CONTEXT: CustomFrontmatterContext = {
+export const TEMPLATE_PREVIEW_CUSTOM_CONTEXT: Omit<
+	CustomFrontmatterContext,
+	'folderToken'
+> = {
 	date: TEMPLATE_PREVIEW_DATE,
 	// The preview has no real recording, so its date tokens render in the
 	// importing device's own zone, matching what the user sees on their machine.
@@ -1674,7 +1625,7 @@ export const TEMPLATE_PREVIEW_CUSTOM_CONTEXT: CustomFrontmatterContext = {
 	language: 'en',
 	template: 'Meeting notes',
 	model: 'gpt-5',
-	device: 'Plaud Note',
+	device: '',
 };
 
 /**
@@ -1683,22 +1634,25 @@ export const TEMPLATE_PREVIEW_CUSTOM_CONTEXT: CustomFrontmatterContext = {
  * not reflected here: it only affects re-import, not the generated value.
  */
 export function renderCustomFrontmatterPreview(
+	profile: ServiceProfile,
 	rows: readonly CustomFrontmatterRow[],
 ): string[] {
+	const reserved = reservedFrontmatterKeys(profile);
 	const lines: string[] = [];
 	const seen = new Set<string>();
 	for (const row of rows) {
 		const key = row.key.trim();
 		// Mirror formatFrontmatter: skip blanks, reserved plugin keys, and a
 		// repeat of a key already shown (first occurrence wins).
-		if (key === '' || RESERVED_FRONTMATTER_KEYS.has(key) || seen.has(key)) {
+		if (key === '' || reserved.has(key) || seen.has(key)) {
 			continue;
 		}
 		seen.add(key);
-		const expanded = expandCustomFrontmatterValue(
-			row.value,
-			TEMPLATE_PREVIEW_CUSTOM_CONTEXT,
-		);
+		const expanded = expandCustomFrontmatterValue(row.value, {
+			...TEMPLATE_PREVIEW_CUSTOM_CONTEXT,
+			folderToken: folderToken(profile),
+			device: profile.devices?.sampleName ?? '',
+		});
 		const safeKey = yamlScalar(key);
 		lines.push(
 			expanded.length > 0
@@ -1710,6 +1664,7 @@ export function renderCustomFrontmatterPreview(
 }
 
 export function formatFrontmatter(
+	profile: ServiceProfile,
 	recording: Recording,
 	speakers: readonly string[],
 	summary?: Summary | null,
@@ -1721,8 +1676,8 @@ export function formatFrontmatter(
 	preserveUnknown = false,
 	fallbackTimezone = '',
 	deviceNames: ReadonlyMap<string, string> = new Map(),
-	webBaseUrl: string = PLAUD_WEB_URL_V3,
-	plaudLocation = '',
+	webBaseUrl?: string,
+	location = '',
 ): string {
 	const duration = Number.isFinite(recording.durationSeconds)
 		? Math.max(0, Math.floor(recording.durationSeconds))
@@ -1751,16 +1706,18 @@ export function formatFrontmatter(
 	// re-import) without ever producing a duplicate key. Insertion order is the
 	// emit order; a `set` on an existing key updates its value in place.
 	const entries = new Map<string, string>();
+	const p = profile.keyPrefix;
+	const reserved = reservedFrontmatterKeys(profile);
 
-	entries.set('plaud-id', yamlScalar(recording.id));
+	entries.set(`${p}-id`, yamlScalar(recording.id));
 	// plaud-url is a clickable breadcrumb back to the Plaud web app.
 	// yamlScalar force-quotes it (colons and slashes aren't in the
 	// unquoted allowlist), which is what we want — YAML treats an
 	// unquoted `https://...` scalar as a mapping key + value on some
 	// parsers.
 	entries.set(
-		'plaud-url',
-		yamlScalar(formatPlaudWebUrl(recording.id, webBaseUrl)),
+		`${p}-url`,
+		yamlScalar(profile.recordingUrl(recording.id, webBaseUrl)),
 	);
 	entries.set('date', formatDateYmd(recording.createdAt, offsetMinutes));
 	// Precise start/end instants in the recording's capture zone, ISO 8601 with
@@ -1808,15 +1765,15 @@ export function formatFrontmatter(
 	// and Dataview, while tags: carries the slugified tag form. Emitted only for
 	// filed recordings; unfiled ones get no key.
 	if (folders && folders.length > 0) {
-		entries.set('plaud-folder', yamlArray(folders));
+		entries.set(`${p}-folder`, yamlArray(folders));
 	}
 	// A system-bucket recording (unfiled/import/conflict) records its Plaud
 	// location here instead of a `plaud-folder` + tag, so the built-in bucket is
 	// queryable (Dataview `WHERE plaud-location = "unfiled"`) without polluting the
 	// tag pane. Import sets this only for a nonzero system_folder_type, and only
 	// then is `folders` empty, so the two are mutually exclusive by construction.
-	if (plaudLocation.trim().length > 0) {
-		entries.set('plaud-location', yamlScalar(plaudLocation.trim()));
+	if (location.trim().length > 0) {
+		entries.set(`${p}-location`, yamlScalar(location.trim()));
 	}
 	// AI keywords demoted from tags by the tag-mode setting. A plain
 	// frontmatter property is searchable and Dataview-queryable but does
@@ -1824,14 +1781,14 @@ export function formatFrontmatter(
 	if (keywords && keywords.length > 0) {
 		entries.set('keywords', yamlArray(keywords));
 	}
-	entries.set('source', 'plaud');
+	entries.set('source', p);
 	// Auto-sync change cursor: the recording's edit version (unix ms). Stored so
 	// a later sync can compare the list's current version_ms against it and
 	// re-import only when Plaud actually changed the recording. Emitted as a raw
 	// number (no quoting) so metadataCache surfaces it as a number. Absent for
 	// recordings whose list payload omitted version_ms.
 	if (recording.versionMs !== undefined) {
-		entries.set('plaud-version-ms', String(recording.versionMs));
+		entries.set(`${p}-version-ms`, String(recording.versionMs));
 	}
 
 	// Optional Plaud summary extras. Each line is emitted only when the
@@ -1853,15 +1810,15 @@ export function formatFrontmatter(
 				? undefined
 				: summary.category;
 		const extras: ReadonlyArray<readonly [string, string | undefined]> = [
-			['plaud-headline', summary.headline],
-			['plaud-category', category],
-			['plaud-industry', summary.industry],
-			['plaud-language', summary.language],
-			['plaud-template', summary.template],
-			['plaud-model', summary.model],
-			['plaud-note-id', summary.noteId],
-			['plaud-summary-id', summary.summaryId],
-			['plaud-summary-version', summary.version],
+			[`${p}-headline`, summary.headline],
+			[`${p}-category`, category],
+			[`${p}-industry`, summary.industry],
+			[`${p}-language`, summary.language],
+			[`${p}-template`, summary.template],
+			[`${p}-model`, summary.model],
+			[`${p}-note-id`, summary.noteId],
+			[`${p}-summary-id`, summary.summaryId],
+			[`${p}-summary-version`, summary.version],
 		];
 		for (const [key, value] of extras) {
 			if (value !== undefined) {
@@ -1878,6 +1835,7 @@ export function formatFrontmatter(
 	if (customRows && customRows.length > 0) {
 		const folderName = folders?.[0] ?? '';
 		const ctx = customFrontmatterContext(
+			profile,
 			recording,
 			summary,
 			folderName,
@@ -1890,11 +1848,7 @@ export function formatFrontmatter(
 			// (RESERVED), or a key an earlier custom row already claimed (first
 			// wins). This keeps identity, the auto-sync cursor, and the built-in
 			// Dataview fields safe from being overridden by a template.
-			if (
-				key === '' ||
-				RESERVED_FRONTMATTER_KEYS.has(key) ||
-				entries.has(key)
-			) {
+			if (key === '' || reserved.has(key) || entries.has(key)) {
 				continue;
 			}
 			let serialized: string;
@@ -1919,7 +1873,7 @@ export function formatFrontmatter(
 	// (existingValues present); on first creation there is nothing to preserve.
 	if (preserveUnknown && existingValues) {
 		for (const [key, value] of existingValues) {
-			if (!RESERVED_FRONTMATTER_KEYS.has(key) && !entries.has(key)) {
+			if (!reserved.has(key) && !entries.has(key)) {
 				entries.set(key, value);
 			}
 		}
@@ -2045,12 +1999,15 @@ function frontmatterKeyValue(body: string, key: string): string | null {
  * Returns null if the content has no frontmatter, no plaud-id key, or the
  * frontmatter is malformed enough that we can't parse the id.
  */
-export function extractPlaudIdFromFrontmatter(content: string): string | null {
+export function extractRecordingIdFromFrontmatter(
+	profile: ServiceProfile,
+	content: string,
+): string | null {
 	const body = frontmatterBody(content);
 	if (body === null) {
 		return null;
 	}
-	const idValue = frontmatterKeyValue(body, 'plaud-id');
+	const idValue = frontmatterKeyValue(body, `${profile.keyPrefix}-id`);
 	if (idValue === null) {
 		return null;
 	}
@@ -2200,12 +2157,18 @@ export function extractFrontmatterValues(content: string): Map<string, string> {
  * Returns false for any note without frontmatter, without the key, or with the
  * key set to anything other than a truthy `true`/`yes` token.
  */
-export function extractPlaudPlaceholderFlag(content: string): boolean {
+export function extractPlaceholderFlag(
+	profile: ServiceProfile,
+	content: string,
+): boolean {
 	const body = frontmatterBody(content);
 	if (body === null) {
 		return false;
 	}
-	const markerValue = frontmatterKeyValue(body, 'plaud-placeholder');
+	const markerValue = frontmatterKeyValue(
+		body,
+		`${profile.keyPrefix}-placeholder`,
+	);
 	if (markerValue === null) {
 		return false;
 	}
@@ -2336,7 +2299,9 @@ export function groupTranscriptByChapters(
  * slug so it doesn't collide with user-curated block ids in the
  * same note.
  */
-const CHAPTERS_BLOCK_ID = 'plaud-chapters';
+function chaptersBlockId(profile: ServiceProfile): string {
+	return `${profile.keyPrefix}-chapters`;
+}
 
 /**
  * Sanitizes a chapter title for safe use inside a heading anchor.
@@ -2365,6 +2330,7 @@ function chapterHeadingText(chapter: Chapter): string {
  * `[[#^plaud-chapters|Back to Chapters]]`.
  */
 export function formatChapterIndexSection(
+	profile: ServiceProfile,
 	groups: readonly TranscriptChapterGroup[],
 	headerLevel: HeadingLevel = 4,
 ): string {
@@ -2395,7 +2361,7 @@ export function formatChapterIndexSection(
 	lines.push('');
 	// Block id on its own line directly after the chapter list so the
 	// section's "Back to Chapters" links have a stable target.
-	lines.push(`^${CHAPTERS_BLOCK_ID}`);
+	lines.push(`^${chaptersBlockId(profile)}`);
 	return lines.join('\n');
 }
 
@@ -2419,6 +2385,7 @@ export function formatChapterIndexSection(
  * no sub-heading and no body.
  */
 export function formatTranscriptSection(
+	profile: ServiceProfile,
 	transcript: Transcript | null,
 	groups: readonly TranscriptChapterGroup[],
 	headerLevel: HeadingLevel,
@@ -2432,7 +2399,11 @@ export function formatTranscriptSection(
 
 	const wrapPrefix = '#'.repeat(headerLevel);
 	const chapterPrefix = '#'.repeat(Math.min(headerLevel + 1, 6));
-	const chapterIndexSection = formatChapterIndexSection(groups, headerLevel);
+	const chapterIndexSection = formatChapterIndexSection(
+		profile,
+		groups,
+		headerLevel,
+	);
 	const lines: string[] = [`${wrapPrefix} Transcript`, ''];
 	if (chapterIndexSection.length > 0) {
 		lines.push(chapterIndexSection, '', '---', '');
@@ -2448,7 +2419,7 @@ export function formatTranscriptSection(
 		const headingText = chapterHeadingText(group.chapter);
 		lines.push(`${chapterPrefix} ${headingText}`);
 		lines.push('');
-		lines.push(`[[#^${CHAPTERS_BLOCK_ID}|Back to Chapters]]`);
+		lines.push(`[[#^${chaptersBlockId(profile)}|Back to Chapters]]`);
 		lines.push('');
 		for (const segment of group.segments) {
 			lines.push(formatTranscriptBodyLine(segment));
@@ -2520,18 +2491,19 @@ function vaultFileLink(path: string, display: string, embed: boolean): string {
  * of the main note (with `.md`).
  */
 export function formatTranscriptFileMarkdown(
+	profile: ServiceProfile,
 	transcript: Transcript,
 	groups: readonly TranscriptChapterGroup[],
 	notePath: string,
 ): string {
 	const noteBase = notePath.replace(/\.md$/i, '');
 	const noteName = noteBase.slice(noteBase.lastIndexOf('/') + 1);
-	const chaptered = formatTranscriptSection(transcript, groups, 1);
+	const chaptered = formatTranscriptSection(profile, transcript, groups, 1);
 	const body = chaptered.startsWith('# Transcript')
 		? chaptered.slice('# Transcript'.length).replace(/^\n+/, '')
 		: transcript.segments.map(formatTranscriptEntry).join('\n\n');
 	return [
-		TRANSCRIPT_FILE_MARKER,
+		transcriptFileMarker(profile),
 		'',
 		'# Transcript',
 		'',
@@ -2605,10 +2577,14 @@ export function findTranscriptHeadingLine(
  * collapsed transcript would hide that text too.
  */
 export function findTranscriptFoldLine(
+	profile: ServiceProfile,
 	content: string,
 	headerLevel: HeadingLevel,
 ): number | null {
-	const { body, lineOffset, textBelow } = managedBodyRegion(content);
+	const { body, lineOffset, textBelow } = managedBodyRegion(
+		managedMarkers(profile),
+		content,
+	);
 	if (textBelow) {
 		return null;
 	}
@@ -2622,6 +2598,7 @@ export function findTranscriptFoldLine(
  * when the write spliced it between the user's own text.
  */
 function foldInfoForWrittenNote(
+	profile: ServiceProfile,
 	written: string,
 	rendered: string,
 	renderedFoldInfo: WriteFoldInfo | undefined,
@@ -2631,6 +2608,7 @@ function foldInfoForWrittenNote(
 		return renderedFoldInfo;
 	}
 	const transcriptHeadingLine = findTranscriptFoldLine(
+		profile,
 		written,
 		options.transcriptHeaderLevel ?? 4,
 	);
@@ -2640,8 +2618,12 @@ function foldInfoForWrittenNote(
 }
 
 /** The error text for a re-import refused over ambiguous block markers. */
-function managedBlockRefusal(notePath: string, reason: string): string {
-	return `Did not update ${notePath}: its ${MANAGED_BLOCK_START} / ${MANAGED_BLOCK_END} markers are damaged (${reason}), so the plugin cannot tell its own text from yours. Restore one start and one end marker around the imported section, or delete both to let the next import rebuild the whole note.`;
+function managedBlockRefusal(
+	markers: ManagedMarkers,
+	notePath: string,
+	reason: string,
+): string {
+	return `Did not update ${notePath}: its ${markers.start} / ${markers.end} markers are damaged (${reason}), so the plugin cannot tell its own text from yours. Restore one start and one end marker around the imported section, or delete both to let the next import rebuild the whole note.`;
 }
 
 /**
@@ -2703,7 +2685,7 @@ function formatMarkTimestamp(offsetSeconds: number): string {
  * the moment after the embed target is localized. Callers pass a non-empty list
  * only when the screenshots artifact is selected.
  */
-function formatMarksSection(marks: readonly PlaudMark[]): string {
+function formatMarksSection(marks: readonly RecordingMark[]): string {
 	const parts: string[] = ['## Screenshots', ''];
 	for (const mark of marks) {
 		const label = formatMarkTimestamp(mark.offsetSeconds);
@@ -2854,7 +2836,7 @@ export interface FormatMarkdownOptions {
 	 * Origin of the web portal for this account's `plaud-url` permalink and the
 	 * "Open in Plaud" link. A v3 (prod) account uses `https://web.plaud.ai`, a
 	 * v4 (new portal) account its sign-in portal (`https://web.plaud.ai` by default).
-	 * Omitted defaults to the prod portal. See `formatPlaudWebUrl`.
+	 * Omitted uses the service's default portal. See `ServiceProfile.recordingUrl`.
 	 */
 	readonly webBaseUrl?: string;
 	/**
@@ -2879,7 +2861,7 @@ export interface FormatMarkdownOptions {
 	 * of `folders` for a system-bucket recording, so the two never both appear.
 	 * Empty or omitted emits no line. See `normalizePlaudLocation`.
 	 */
-	readonly plaudLocation?: string;
+	readonly location?: string;
 	/**
 	 * Extra Plaud AI template outputs (Key Points, Daily Journal, etc.) to
 	 * render in the note as a `## Template outputs` block. Empty or omitted
@@ -2894,7 +2876,7 @@ export interface FormatMarkdownOptions {
 	 * when the screenshots artifact is selected; the attachment pipeline downloads
 	 * the images and repoints the inline embeds to the local `-assets` copies.
 	 */
-	readonly marks?: readonly PlaudMark[];
+	readonly marks?: readonly RecordingMark[];
 	/**
 	 * Summaries beyond the primary one, each rendered as its own `## <heading>`
 	 * section right after the main Summary block (e.g. "## Summary (beta)"). The
@@ -2976,6 +2958,7 @@ function effectiveTranscriptPlacement(
 }
 
 function renderTranscriptSection(
+	profile: ServiceProfile,
 	transcript: Transcript | null,
 	groups: readonly TranscriptChapterGroup[],
 	headerLevel: HeadingLevel,
@@ -2995,10 +2978,11 @@ function renderTranscriptSection(
 			headerLevel,
 		);
 	}
-	return formatTranscriptSection(transcript, groups, headerLevel);
+	return formatTranscriptSection(profile, transcript, groups, headerLevel);
 }
 
 export function formatMarkdown(
+	profile: ServiceProfile,
 	recording: Recording,
 	transcript: Transcript | null,
 	summary: Summary | null,
@@ -3008,8 +2992,6 @@ export function formatMarkdown(
 	const includeTranscript = options.includeTranscript ?? true;
 	const includeSummary = options.includeSummary ?? true;
 	const headerLevel: HeadingLevel = options.transcriptHeaderLevel ?? 4;
-	// Portal origin for this account's permalinks (v3 prod vs v4 new portal).
-	const webBase = options.webBaseUrl ?? PLAUD_WEB_URL_V3;
 	const offsetMinutes = effectiveCaptureOffsetMinutes(
 		recording,
 		options.fallbackTimezone ?? '',
@@ -3024,10 +3006,18 @@ export function formatMarkdown(
 	);
 	const groups = groupTranscriptByChapters(transcript, chapters);
 	const transcriptSection = includeTranscript
-		? renderTranscriptSection(transcript, groups, headerLevel, options)
+		? renderTranscriptSection(
+				profile,
+				transcript,
+				groups,
+				headerLevel,
+				options,
+			)
 		: '';
+	const markers = managedMarkers(profile);
 	const parts: string[] = [
 		formatFrontmatter(
+			profile,
 			recording,
 			speakers,
 			summary,
@@ -3039,13 +3029,13 @@ export function formatMarkdown(
 			options.preserveUnknownFrontmatter,
 			options.fallbackTimezone ?? '',
 			options.deviceNames,
-			webBase,
-			options.plaudLocation ?? '',
+			options.webBaseUrl,
+			options.location ?? '',
 		),
 		'',
-		// Everything from here to MANAGED_BLOCK_END is plugin-owned. A re-import
+		// Everything from here to the end marker is plugin-owned. A re-import
 		// replaces only this block, so the user's text around it survives (#59).
-		MANAGED_BLOCK_START,
+		markers.start,
 		'',
 		`# ${expandedTitle}`,
 		'',
@@ -3053,31 +3043,30 @@ export function formatMarkdown(
 		// the plaud-url frontmatter field on purpose: frontmatter is for
 		// Dataview / automation, this line is for the human reading the
 		// note. The raw URL goes unescaped inside the markdown link
-		// target — safe because formatPlaudWebUrl encodes the ID and the
+		// target — safe because recordingUrl encodes the ID and the
 		// host/path template contains no parentheses.
-		`[Open in Plaud →](${formatPlaudWebUrl(recording.id, webBase)})`,
+		`[Open in ${profile.serviceName} →](${profile.recordingUrl(recording.id, options.webBaseUrl)})`,
 		'',
 	];
+	const expandTokens = (text: string): string =>
+		profile.expandSummaryTokens?.(
+			text,
+			recording,
+			transcript,
+			offsetMinutes,
+		) ?? text;
 	if (includeSummary) {
 		const renderedSummary: Summary | null =
 			summary !== null
 				? {
 						...summary,
-						text: substitutePlaudPlaceholders(
-							summary.text,
-							recording,
-							transcript,
-							offsetMinutes,
-						),
+						text: expandTokens(summary.text),
 					}
 				: null;
 		parts.push('## Summary', '', formatSummaryBody(renderedSummary), '');
 		if (renderedSummary?.aiSuggestion) {
-			const renderedSuggestion = substitutePlaudPlaceholders(
+			const renderedSuggestion = expandTokens(
 				renderedSummary.aiSuggestion,
-				recording,
-				transcript,
-				offsetMinutes,
 			).trim();
 			parts.push('## AI Suggestions', '', renderedSuggestion, '');
 		}
@@ -3089,12 +3078,7 @@ export function formatMarkdown(
 		for (const extra of options.additionalSummaries ?? []) {
 			const body = formatSummaryBody({
 				id: recording.id,
-				text: substitutePlaudPlaceholders(
-					extra.text,
-					recording,
-					transcript,
-					offsetMinutes,
-				),
+				text: expandTokens(extra.text),
 			});
 			parts.push(`## ${extra.heading}`, '', body, '');
 		}
@@ -3110,7 +3094,7 @@ export function formatMarkdown(
 	if (transcriptSection.length > 0) {
 		parts.push('---', '', transcriptSection, '');
 	}
-	parts.push(MANAGED_BLOCK_END, '');
+	parts.push(markers.end, '');
 	return parts.join('\n');
 }
 
@@ -3126,14 +3110,15 @@ export function formatMarkdown(
  * error message). Newlines are flattened so the callout stays well-formed.
  */
 export function formatPlaceholderMarkdown(
+	profile: ServiceProfile,
 	recording: Recording,
 	reason: string,
 	template: string = DEFAULT_NOTE_NAME_TEMPLATE,
 	datetimeTemplate: string = '',
 	fallbackTimezone = '',
-	webBaseUrl: string = PLAUD_WEB_URL_V3,
+	webBaseUrl?: string,
 ): string {
-	const url = formatPlaudWebUrl(recording.id, webBaseUrl);
+	const url = profile.recordingUrl(recording.id, webBaseUrl);
 	const offsetMinutes = effectiveCaptureOffsetMinutes(
 		recording,
 		fallbackTimezone,
@@ -3157,10 +3142,11 @@ export function formatPlaceholderMarkdown(
 	const flatReason = reason
 		.replace(/\s+/g, (run) => (run.includes('\n') ? ' ' : run))
 		.trim();
+	const p = profile.keyPrefix;
 	const lines: string[] = [
 		'---',
-		`plaud-id: ${yamlScalar(recording.id)}`,
-		`plaud-url: ${yamlScalar(url)}`,
+		`${p}-id: ${yamlScalar(recording.id)}`,
+		`${p}-url: ${yamlScalar(url)}`,
 		`date: ${formatDateYmd(recording.createdAt, offsetMinutes)}`,
 		// Same start/end fields as a real note so a Dataview query sees one shape
 		// across stubs and imported notes.
@@ -3173,29 +3159,21 @@ export function formatPlaceholderMarkdown(
 					`datetime: ${yamlScalar(formatDatetime(datetimeTemplate, recording.createdAt, offsetMinutes))}`,
 				]
 			: []),
-		'source: plaud',
+		`source: ${p}`,
 		// Marker that distinguishes this stub from a real note. extractPlaud-
 		// PlaceholderFlag keys on it so a later real import always replaces it.
-		'plaud-placeholder: true',
+		`${p}-placeholder: true`,
 		'---',
 		'',
 		`# ${expandedTitle}`,
 		'',
-		`[Open in Plaud →](${url})`,
+		`[Open in ${profile.serviceName} →](${url})`,
 		'',
-		'> [!warning] Not imported: Plaud has no transcript or summary',
-		'> Plaud has no transcript or summary available for this recording. This is a',
-		'> Plaud-side condition, not a problem reading the data. A common cause is that',
-		'> the audio has no detectable speech (Plaud shows "No speech detected"). It can',
-		'> also mean the recording is still processing. Open it in Plaud to see the exact',
-		'> reason. If Plaud later has content for it, re-run the import and this',
-		'> placeholder is replaced automatically. If Plaud reports no speech, there is',
-		'> nothing to import.',
-		'>',
+		...profile.placeholderCallout,
 		`> Recording ID: \`${recording.id}\``,
 	];
 	if (flatReason.length > 0) {
-		lines.push('>', `> Plaud reported: ${flatReason}`);
+		lines.push('>', `> ${profile.serviceName} reported: ${flatReason}`);
 	}
 	lines.push('');
 	return lines.join('\n');
@@ -3255,6 +3233,7 @@ export interface RenameRecordingNoteResult {
  * leaves the note and folder untouched.
  */
 export async function renameRecordingNote(
+	profile: ServiceProfile,
 	vault: VaultLike,
 	renameFile: RenameFileFn,
 	oldNotePath: string,
@@ -3273,8 +3252,8 @@ export async function renameRecordingNote(
 	// sharpens the message when both notes carry one.
 	if (occupant !== null && sourceNote !== null) {
 		const [occupantId, sourceId] = await Promise.all([
-			readPlaudId(vault, occupant),
-			readPlaudId(vault, sourceNote),
+			readPlaudId(profile, vault, occupant),
+			readPlaudId(profile, vault, sourceNote),
 		]);
 		const belongsToDifferentRecording =
 			occupantId !== null && sourceId !== null && occupantId !== sourceId;
@@ -3327,11 +3306,15 @@ export async function renameRecordingNote(
 }
 
 async function readPlaudId(
+	profile: ServiceProfile,
 	vault: VaultLike,
 	file: FileLike,
 ): Promise<string | null> {
 	try {
-		return extractPlaudIdFromFrontmatter(await vault.read(file));
+		return extractRecordingIdFromFrontmatter(
+			profile,
+			await vault.read(file),
+		);
 	} catch {
 		// A read failure must not mask the caller's intent with a spurious
 		// collision; treat an unreadable note as "no id" so the guard falls back
@@ -3367,6 +3350,8 @@ function disambiguateNotePath(basePath: string, suffix: number): string {
 
 export class NoteWriter {
 	private readonly vault: VaultLike;
+	private readonly profile: ServiceProfile;
+	private readonly markers: ManagedMarkers;
 	// outputFolder stored here is the NORMALIZED form — construction throws
 	// if the raw input had path-traversal segments, so this value is always
 	// safe to concatenate with a filename.
@@ -3375,12 +3360,12 @@ export class NoteWriter {
 	private readonly noteNameTemplate: string;
 	private readonly datetimeTemplate: string;
 	private readonly fallbackTimezone: string;
-	private readonly webBaseUrl: string;
+	private readonly webBaseUrl: string | undefined;
 	private readonly customFrontmatter: readonly CustomFrontmatterRow[];
 	private readonly preserveUnknownFrontmatter: boolean;
 	private readonly forbiddenCharReplacement: string;
-	private readonly existingPathForPlaudId?: (
-		plaudId: string,
+	private readonly existingPathForRecordingId?: (
+		recordingId: string,
 	) => string | null;
 	private readonly migrateExistingNote?: (
 		oldNotePath: string,
@@ -3410,6 +3395,8 @@ export class NoteWriter {
 			);
 		}
 		this.vault = vault;
+		this.profile = options.profile;
+		this.markers = managedMarkers(options.profile);
 		this.outputFolder = normalizeFolderPath(options.outputFolder);
 		this.subfolderTemplate = options.subfolderTemplate ?? '';
 		// Fall back to the default when the template is missing, empty, or invalid
@@ -3423,7 +3410,7 @@ export class NoteWriter {
 				: DEFAULT_NOTE_NAME_TEMPLATE;
 		this.datetimeTemplate = options.datetimeTemplate ?? '';
 		this.fallbackTimezone = options.fallbackTimezone ?? '';
-		this.webBaseUrl = options.webBaseUrl ?? PLAUD_WEB_URL_V3;
+		this.webBaseUrl = options.webBaseUrl;
 		this.customFrontmatter = options.customFrontmatter ?? [];
 		// Default true: a headless caller (or hand-edited data.json) that omits this
 		// gets the non-destructive behavior, matching DEFAULT_SETTINGS.
@@ -3437,7 +3424,7 @@ export class NoteWriter {
 		)
 			? (options.forbiddenCharReplacement as string)
 			: '-';
-		this.existingPathForPlaudId = options.existingPathForPlaudId;
+		this.existingPathForRecordingId = options.existingPathForRecordingId;
 		this.migrateExistingNote = options.migrateExistingNote;
 		this.trashFile = options.trashFile;
 		this.onDuplicate = options.onDuplicate;
@@ -3464,7 +3451,7 @@ export class NoteWriter {
 	 * names, which writeNote passes and the placeholder path (an error path that
 	 * has not resolved them) does not — so a {{plaud-folder}} template can file a
 	 * placeholder under _unfiled and the later real note under its folder. The
-	 * cross-folder dedup (existingPathForPlaudId + migrateExistingNote) reconciles
+	 * cross-folder dedup (existingPathForRecordingId + migrateExistingNote) reconciles
 	 * that by migrating the stub to the real path on the successful import.
 	 */
 	private async resolveTargetPath(
@@ -3476,9 +3463,9 @@ export class NoteWriter {
 		// buckets to _unfiled). Always pass a string so {{plaud-folder}} resolves
 		// instead of being handed to Moment as a format. The placeholder path passes
 		// no folders (they are not resolved on the error path); cross-folder dedup
-		// (existingPathForPlaudId) migrates such a stub to the real folder on the
+		// (existingPathForRecordingId) migrates such a stub to the real folder on the
 		// later successful import.
-		const folderName = folders && folders.length > 0 ? folders[0] : '';
+		const folderName = folders?.[0] ?? '';
 		// The note name and its subfolder must use the SAME capture-zone basis as
 		// the frontmatter date, or a recording near midnight could land in a
 		// subfolder for one day while its `date:` reads another.
@@ -3491,7 +3478,7 @@ export class NoteWriter {
 			recording.createdAt,
 			recording.title,
 			this.forbiddenCharReplacement,
-			folderName,
+			{ token: folderToken(this.profile), name: folderName },
 			offsetMinutes,
 		);
 		const destinationFolder = joinFolderPath(this.outputFolder, subfolder);
@@ -3529,7 +3516,7 @@ export class NoteWriter {
 		recording: Recording,
 		baseTargetPath: string,
 	): Promise<string> {
-		const wantCanonical = canonicalPlaudId(recording.id);
+		const wantCanonical = this.profile.canonicalId(recording.id);
 		for (let suffix = 1; suffix <= MAX_FILENAME_DISAMBIGUATION; suffix++) {
 			const candidate =
 				suffix === 1
@@ -3539,10 +3526,14 @@ export class NoteWriter {
 			if (file === null) {
 				return candidate;
 			}
-			const occupantId = await readPlaudId(this.vault, file);
+			const occupantId = await readPlaudId(
+				this.profile,
+				this.vault,
+				file,
+			);
 			if (
 				occupantId === null ||
-				canonicalPlaudId(occupantId) === wantCanonical
+				this.profile.canonicalId(occupantId) === wantCanonical
 			) {
 				return candidate;
 			}
@@ -3564,8 +3555,8 @@ export class NoteWriter {
 	): { existing: FileLike | null; notePath: string } {
 		let existing = this.vault.getFileByPath(targetPath);
 		let notePath = targetPath;
-		if (existing === null && this.existingPathForPlaudId) {
-			const priorPath = this.existingPathForPlaudId(recording.id);
+		if (existing === null && this.existingPathForRecordingId) {
+			const priorPath = this.existingPathForRecordingId(recording.id);
 			if (priorPath !== null && priorPath !== targetPath) {
 				const priorFile = this.vault.getFileByPath(priorPath);
 				if (priorFile !== null) {
@@ -3599,17 +3590,21 @@ export class NoteWriter {
 				}`,
 			);
 		}
-		const existingPlaudId = extractPlaudIdFromFrontmatter(existingContent);
+		const existingPlaudId = extractRecordingIdFromFrontmatter(
+			this.profile,
+			existingContent,
+		);
 		// Compare by canonical id so a v4 `of_<id>` recording is recognized as the
 		// owner of its v3-era note (stored under the bare id), not a collision.
 		// resolveWritePath already disambiguates a genuine cross-recording clash;
 		// this guard stays as defense-in-depth for the exhausted-budget fallback.
 		if (
 			existingPlaudId !== null &&
-			canonicalPlaudId(existingPlaudId) !== canonicalPlaudId(recordingId)
+			this.profile.canonicalId(existingPlaudId) !==
+				this.profile.canonicalId(recordingId)
 		) {
 			throw new NoteWriterError(
-				`Filename collision at ${notePath}: this note belongs to recording ${existingPlaudId}, not ${recordingId}. Rename one of the source recordings in Plaud or delete the existing note to re-import.`,
+				`Filename collision at ${notePath}: this note belongs to recording ${existingPlaudId}, not ${recordingId}. Rename one of the source recordings in ${this.profile.serviceName} or delete the existing note to re-import.`,
 			);
 		}
 		return existingContent;
@@ -3636,6 +3631,7 @@ export class NoteWriter {
 			baseTargetPath,
 		);
 		const markdown = formatPlaceholderMarkdown(
+			this.profile,
 			recording,
 			reason,
 			this.noteNameTemplate,
@@ -3664,7 +3660,7 @@ export class NoteWriter {
 			notePath,
 			recording.id,
 		);
-		if (!extractPlaudPlaceholderFlag(existingContent)) {
+		if (!extractPlaceholderFlag(this.profile, existingContent)) {
 			// A real note already exists for this recording, so keep it. The fetch
 			// failed this run, but a prior import succeeded, so the good content
 			// wins over a stub.
@@ -3696,6 +3692,7 @@ export class NoteWriter {
 		options: FormatMarkdownOptions,
 	): { markdown: string; foldInfo: WriteFoldInfo | undefined } {
 		const markdown = formatMarkdown(
+			this.profile,
 			recording,
 			transcript,
 			summary,
@@ -3866,8 +3863,10 @@ export class NoteWriter {
 		// This is what makes the placeholder self-healing: a later import that
 		// actually has the transcript/summary replaces the stub even under a
 		// 'skip' or 'prompt' policy that would otherwise leave it stranded.
-		const supersedingPlaceholder =
-			extractPlaudPlaceholderFlag(existingContent);
+		const supersedingPlaceholder = extractPlaceholderFlag(
+			this.profile,
+			existingContent,
+		);
 
 		if (!supersedingPlaceholder && this.onDuplicate === 'skip') {
 			return { status: 'skipped', path: notePath };
@@ -3906,10 +3905,14 @@ export class NoteWriter {
 		// (#59): its body cannot be split into plugin text and user text, so any
 		// write could destroy the user's edits. Checked before the migration so
 		// a refusal never leaves the note renamed.
-		const existingBlock = locateManagedBlock(existingContent);
+		const existingBlock = locateManagedBlock(this.markers, existingContent);
 		if (existingBlock.kind === 'malformed') {
 			throw new NoteWriterError(
-				managedBlockRefusal(notePath, existingBlock.reason),
+				managedBlockRefusal(
+					this.markers,
+					notePath,
+					existingBlock.reason,
+				),
 			);
 		}
 
@@ -3978,11 +3981,16 @@ export class NoteWriter {
 		let written = markdown;
 		try {
 			await this.vault.process(writeTarget, (current) => {
-				const spliced = spliceManagedBlock(current, markdown);
+				const spliced = spliceManagedBlock(
+					this.markers,
+					current,
+					markdown,
+				);
 				if (spliced === null) {
-					const block = locateManagedBlock(current);
+					const block = locateManagedBlock(this.markers, current);
 					throw new NoteWriterError(
 						managedBlockRefusal(
+							this.markers,
 							writePath,
 							block.kind === 'malformed'
 								? block.reason
@@ -4011,6 +4019,7 @@ export class NoteWriter {
 		// The user's text above the block shifts the transcript heading, so
 		// report the fold line of the note as written, not as rendered.
 		const writtenFoldInfo = foldInfoForWrittenNote(
+			this.profile,
 			written,
 			markdown,
 			foldInfo,
@@ -4039,12 +4048,12 @@ export class NoteWriter {
 
 	/**
 	 * Read the file at the transcript path and report whether this plugin
-	 * wrote it (it carries TRANSCRIPT_FILE_MARKER). A same-named file the user
+	 * wrote it (it carries the transcriptFileMarker). A same-named file the user
 	 * made is never overwritten or trashed.
 	 */
 	private async isManagedTranscriptFile(file: FileLike): Promise<boolean> {
 		const content = await this.vault.read(file);
-		return content.includes(TRANSCRIPT_FILE_MARKER);
+		return content.includes(transcriptFileMarker(this.profile));
 	}
 
 	/**
@@ -4069,6 +4078,7 @@ export class NoteWriter {
 		}
 		const path = transcriptFilePathFor(notePath);
 		const content = formatTranscriptFileMarkdown(
+			this.profile,
 			transcript,
 			groupTranscriptByChapters(transcript, chapters),
 			notePath,
@@ -4082,7 +4092,7 @@ export class NoteWriter {
 			}
 			if (!(await this.isManagedTranscriptFile(existing))) {
 				throw new NoteWriterError(
-					`${path} already exists and was not created by Plaud Importer, so it was left alone. Rename or move it, then import recording ${recording.id} again.`,
+					`${path} already exists and was not created by ${this.profile.pluginName}, so it was left alone. Rename or move it, then import recording ${recording.id} again.`,
 				);
 			}
 			await this.vault.process(existing, () => content);
@@ -4133,7 +4143,7 @@ export class NoteWriter {
 			// here would skip its attachments, audio, and badge refresh. A leftover
 			// transcript file is harmless and is retried on the next re-import.
 			console.warn(
-				`Plaud importer: could not remove the old transcript file ${path} for recording ${recording.id}`,
+				`${this.profile.serviceName} importer: could not remove the old transcript file ${path} for recording ${recording.id}`,
 				cause,
 			);
 		}

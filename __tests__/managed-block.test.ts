@@ -1,30 +1,33 @@
 import {
-	MANAGED_BLOCK_END,
-	MANAGED_BLOCK_START,
 	locateManagedBlock,
+	managedMarkers,
 	managedBodyRegion,
 	spliceManagedBlock,
 	transformManagedBody,
 	wrapManagedBody,
 } from '../managed-block';
 import { insertSectionBeforeTranscript } from '../attachment-importer';
+import { PLAUD_PROFILE } from '../plaud-profile';
+
+const MARKERS = managedMarkers(PLAUD_PROFILE);
+const { start: MANAGED_BLOCK_START, end: MANAGED_BLOCK_END } = MARKERS;
 
 const FM = '---\nplaud-id: abc\n---\n';
 
 function note(above: string, body: string, below: string): string {
-	return `${FM}${above}${wrapManagedBody(body)}${below}`;
+	return `${FM}${above}${wrapManagedBody(MARKERS, body)}${below}`;
 }
 
 describe('locateManagedBlock', () => {
 	it('reports none when the note has no markers', () => {
-		expect(locateManagedBlock(`${FM}\n# Title\n`)).toEqual({
+		expect(locateManagedBlock(MARKERS, `${FM}\n# Title\n`)).toEqual({
 			kind: 'none',
 		});
 	});
 
 	it('splits a well-formed note into before, inner, and after', () => {
 		const content = note('\nmine above\n\n', '# Title', '\nmine below\n');
-		const located = locateManagedBlock(content);
+		const located = locateManagedBlock(MARKERS, content);
 		expect(located).toEqual({
 			kind: 'ok',
 			before: `${FM}\nmine above\n\n`,
@@ -35,7 +38,7 @@ describe('locateManagedBlock', () => {
 
 	it('ignores a marker that is not alone on its line', () => {
 		const content = `${FM}See \`${MANAGED_BLOCK_START}\` in the docs.\n`;
-		expect(locateManagedBlock(content)).toEqual({ kind: 'none' });
+		expect(locateManagedBlock(MARKERS, content)).toEqual({ kind: 'none' });
 	});
 
 	it.each([
@@ -54,16 +57,20 @@ describe('locateManagedBlock', () => {
 			`${FM}${MANAGED_BLOCK_END}\n# T\n${MANAGED_BLOCK_START}\n`,
 		],
 	])('reports malformed for %s', (_label, content) => {
-		expect(locateManagedBlock(content).kind).toBe('malformed');
+		expect(locateManagedBlock(MARKERS, content).kind).toBe('malformed');
 	});
 });
 
 describe('spliceManagedBlock', () => {
-	const rendered = `---\nplaud-id: abc\nplaud-version-ms: 2\n---\n\n${wrapManagedBody('# Title\n\n## Summary\n\nnew summary')}\n`;
+	const rendered = `---\nplaud-id: abc\nplaud-version-ms: 2\n---\n\n${wrapManagedBody(MARKERS, '# Title\n\n## Summary\n\nnew summary')}\n`;
 
 	it('returns the rendered note unchanged for a legacy note without markers', () => {
 		expect(
-			spliceManagedBlock(`${FM}\n# Title\n\nold body\n`, rendered),
+			spliceManagedBlock(
+				MARKERS,
+				`${FM}\n# Title\n\nold body\n`,
+				rendered,
+			),
 		).toBe(rendered);
 	});
 
@@ -73,32 +80,34 @@ describe('spliceManagedBlock', () => {
 			'# Title\n\n## Summary\n\nold summary',
 			'\n\n## Decisions\n\nShip it.\n',
 		);
-		const out = spliceManagedBlock(existing, rendered);
+		const out = spliceManagedBlock(MARKERS, existing, rendered);
 		expect(out).toBe(
-			`---\nplaud-id: abc\nplaud-version-ms: 2\n---\n\n## My notes\n\n- [ ] follow up\n\n${wrapManagedBody('# Title\n\n## Summary\n\nnew summary')}\n\n## Decisions\n\nShip it.\n`,
+			`---\nplaud-id: abc\nplaud-version-ms: 2\n---\n\n## My notes\n\n- [ ] follow up\n\n${wrapManagedBody(MARKERS, '# Title\n\n## Summary\n\nnew summary')}\n\n## Decisions\n\nShip it.\n`,
 		);
 	});
 
 	it('keeps user text when the note has no frontmatter left', () => {
-		const existing = `intro\n\n${wrapManagedBody('# Title')}\n`;
-		const out = spliceManagedBlock(existing, rendered);
+		const existing = `intro\n\n${wrapManagedBody(MARKERS, '# Title')}\n`;
+		const out = spliceManagedBlock(MARKERS, existing, rendered);
 		expect(out).toBe(
-			`---\nplaud-id: abc\nplaud-version-ms: 2\n---\nintro\n\n${wrapManagedBody('# Title\n\n## Summary\n\nnew summary')}\n`,
+			`---\nplaud-id: abc\nplaud-version-ms: 2\n---\nintro\n\n${wrapManagedBody(MARKERS, '# Title\n\n## Summary\n\nnew summary')}\n`,
 		);
 	});
 
 	it('is a no-op when the note on disk already matches the rendered note', () => {
-		expect(spliceManagedBlock(rendered, rendered)).toBe(rendered);
+		expect(spliceManagedBlock(MARKERS, rendered, rendered)).toBe(rendered);
 	});
 
 	it('returns null for malformed markers', () => {
 		const existing = `${FM}${MANAGED_BLOCK_START}\n# Title\nmine\n`;
-		expect(spliceManagedBlock(existing, rendered)).toBeNull();
+		expect(spliceManagedBlock(MARKERS, existing, rendered)).toBeNull();
 	});
 
 	it('returns null rather than rebuilding when the rendered note has no block', () => {
 		const existing = note('', '# Title', '\nmine\n');
-		expect(spliceManagedBlock(existing, `${FM}\n# Title\n`)).toBeNull();
+		expect(
+			spliceManagedBlock(MARKERS, existing, `${FM}\n# Title\n`),
+		).toBeNull();
 	});
 });
 
@@ -111,7 +120,7 @@ describe('transformManagedBody', () => {
 			'# Title\n\n## Summary\n\ns',
 			'\n\nmine below\n',
 		);
-		const out = transformManagedBody(content, (body) =>
+		const out = transformManagedBody(MARKERS, content, (body) =>
 			insertSectionBeforeTranscript(body.trimEnd(), section),
 		);
 		expect(out).toBe(
@@ -129,7 +138,7 @@ describe('transformManagedBody', () => {
 			'# Title\n\n---\n\n#### Transcript\n\nlines',
 			'\n\n#### Transcript\n\nmy own transcript notes\n',
 		);
-		const out = transformManagedBody(content, (body) =>
+		const out = transformManagedBody(MARKERS, content, (body) =>
 			insertSectionBeforeTranscript(body.trimEnd(), section),
 		);
 		expect(out).toBe(
@@ -142,7 +151,11 @@ describe('transformManagedBody', () => {
 	});
 
 	it('rewrites the whole note when there is no block', () => {
-		const out = transformManagedBody('# Title', (body) => `${body}!`);
+		const out = transformManagedBody(
+			MARKERS,
+			'# Title',
+			(body) => `${body}!`,
+		);
 		expect(out).toBe('# Title!');
 	});
 });
@@ -150,21 +163,23 @@ describe('transformManagedBody', () => {
 describe('transformManagedBody with damaged markers', () => {
 	it('leaves the note unchanged instead of rewriting the whole note', () => {
 		const content = `${FM}${MANAGED_BLOCK_START}\n\n# Title\n\nmine\n`;
-		expect(transformManagedBody(content, () => 'rewritten')).toBe(content);
+		expect(transformManagedBody(MARKERS, content, () => 'rewritten')).toBe(
+			content,
+		);
 	});
 });
 
 describe('managedBodyRegion', () => {
 	it('reports the block text and the line it starts on', () => {
 		const content = note('\nmine\n\n', '# Title', '\n');
-		const { body, lineOffset } = managedBodyRegion(content);
+		const { body, lineOffset } = managedBodyRegion(MARKERS, content);
 		expect(body).toBe('\n# Title\n\n');
 		const lines = content.split('\n');
 		expect(lines[lineOffset + 1]).toBe('# Title');
 	});
 
 	it('is the whole note without a block', () => {
-		expect(managedBodyRegion('a\nb')).toEqual({
+		expect(managedBodyRegion(MARKERS, 'a\nb')).toEqual({
 			body: 'a\nb',
 			lineOffset: 0,
 			textBelow: false,

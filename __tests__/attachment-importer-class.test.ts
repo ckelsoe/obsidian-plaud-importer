@@ -16,6 +16,7 @@ import {
 	type TAbstractFile,
 } from 'obsidian';
 import { AttachmentImporter } from '../attachment-importer';
+import { PLAUD_PROFILE } from '../plaud-profile';
 import type { ArtifactSelection } from '../import-core';
 import type { AttachmentAsset } from '../recording-model';
 import { asyncResult } from './helpers/async-result';
@@ -295,6 +296,7 @@ function setup(
 	const apiBase = opts.apiBase;
 	const importer = new AttachmentImporter({
 		app: vault.app(),
+		profile: PLAUD_PROFILE,
 		getAuthToken: () => token,
 		...(apiBase === undefined ? {} : { getApiBaseUrl: () => apiBase }),
 	});
@@ -666,7 +668,10 @@ describe('AttachmentImporter.importAttachmentsForNote: relative paths and auth',
 		const requests = installNetwork({});
 		const vault = new MemoryVault();
 		vault.addText(NOTE, note('# M'));
-		const importer = new AttachmentImporter({ app: vault.app() });
+		const importer = new AttachmentImporter({
+			app: vault.app(),
+			profile: PLAUD_PROFILE,
+		});
 		await importer.importAttachmentsForNote(
 			NOTE,
 			[{ dataType: 'other', url: 'permanent/a.png' }],
@@ -1469,7 +1474,10 @@ describe('AttachmentImporter.importAudioForNote', () => {
 // ---------------------------------------------------------------------------
 
 describe('AttachmentImporter summary-link helpers', () => {
-	const importer = new AttachmentImporter({ app: new MemoryVault().app() });
+	const importer = new AttachmentImporter({
+		app: new MemoryVault().app(),
+		profile: PLAUD_PROFILE,
+	});
 
 	it('extracts markdown, HTML-attribute and bare links, deduped and classified', () => {
 		const md = [

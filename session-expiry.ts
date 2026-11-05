@@ -1,6 +1,6 @@
 // Pure scheduling logic for the pre-expiry session warning (issue #78,
 // 0.34.0). Decides WHEN to warn that the stored Plaud session is about to
-// expire, and when to next re-evaluate, from a measured TokenLifetime. No
+// expire, and when to next re-evaluate, from a measured SessionLifetime. No
 // Obsidian or Electron import, so it stays unit-testable like
 // reconnect-routing.ts.
 //
@@ -16,7 +16,21 @@
 //   restart inside the warn window does not re-nag.
 // - Nothing here gates an API call; expiry state only drives a notice.
 
-import { SHORT_LIFETIME_HOURS, type TokenLifetime } from './plaud-token';
+/** The facts about a stored credential's lifetime this module reads. */
+export interface SessionLifetime {
+	/** Expiry, epoch ms. */
+	readonly expMs: number;
+	/** Issued lifetime in hours, or null when unknown. */
+	readonly lifetimeHours: number | null;
+}
+
+/**
+ * Advisory threshold, in hours: a measured issued lifetime at or below this is
+ * "short". The 24h tokens issue #78 reported fall under it; every long-lived
+ * token observed so far (~137 to ~300 days) is far above it. Advisory only:
+ * lifetime informs status text and a capture-time heads-up, never a gate.
+ */
+export const SHORT_LIFETIME_HOURS = 72;
 
 /** Warn lead for short or unknown issued lifetimes: 2 hours. */
 export const WARN_LEAD_SHORT_MS = 2 * 60 * 60 * 1000;
@@ -64,12 +78,12 @@ export function clampTimerDelayMs(delayMs: number): number {
  * The single decision point: given the clock, the measured lifetime of the
  * stored credential, and the expMs the user was last warned about (0 = never),
  * says whether to warn now, stay quiet, or re-check later. remainingMs is
- * derived from expMs and nowMs here, NOT taken from the TokenLifetime, whose
+ * derived from expMs and nowMs here, NOT taken from the measured lifetime, whose
  * own remainingMs is relative to the clock at measurement time.
  */
 export function sessionExpiryDecision(
 	nowMs: number,
-	life: TokenLifetime | null,
+	life: SessionLifetime | null,
 	warnedForExpMs: number,
 ): SessionExpiryDecision {
 	if (life === null) {

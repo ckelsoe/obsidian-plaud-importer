@@ -998,6 +998,152 @@ My notes below the import.
 }
 `;
 
+exports[`golden output (stored format must not change) real attachment pipeline: screenshot, image asset and audio 1`] = `
+{
+  "binaries": {
+    "Plaud/2026-04-14 Quarterly planning-assets/a1b2c3d4-audio.ogg": 33,
+    "Plaud/2026-04-14 Quarterly planning-assets/a1b2c3d4-image1.jpg": 11,
+    "Plaud/2026-04-14 Quarterly planning-assets/a1b2c3d4-screenshot.jpg": 22,
+  },
+  "files": {
+    "Plaud/2026-04-14 Quarterly planning.md": "---
+plaud-id: a1b2c3d4
+plaud-url: "https://web.plaud.ai/file/a1b2c3d4"
+date: 2026-04-14
+start-time: "2026-04-14T10:30:00-04:00"
+end-time: "2026-04-14T11:32:05-04:00"
+duration-seconds: 3725
+duration: "1h 2m"
+speakers: [Charles, Mary]
+keywords: [pricing, Roadmap Review, q2]
+source: plaud
+---
+
+<!-- plaud:managed:start -->
+
+# 2026-04-14 Quarterly planning
+
+[Open in Plaud →](https://web.plaud.ai/file/a1b2c3d4)
+
+## Summary
+
+- Pricing first
+
+## Key Points
+
+- Pricing
+- Timeline
+
+## Daily Journal
+
+A productive planning day.
+
+## Template outputs
+
+### My note
+
+Remember the **budget** cap.
+
+## Screenshots
+
+**0:42**
+
+![[Plaud/2026-04-14 Quarterly planning-assets/a1b2c3d4-screenshot.jpg]]
+
+---
+
+## Images and Attachments
+
+_Imported from Plaud file-detail assets at import time._
+
+### Other attachments
+
+#### Image 1
+![[Plaud/2026-04-14 Quarterly planning-assets/a1b2c3d4-image1.jpg]]
+
+## Audio
+
+_Original recording audio downloaded from Plaud at import time._
+
+![[Plaud/2026-04-14 Quarterly planning-assets/a1b2c3d4-audio.ogg]]
+
+#### Transcript
+
+##### Chapters
+
+- [[#00:00 Roadmap|**[00:00]** Roadmap]]
+- [[#01:35 Pricing -1 / options|**[01:35]** Pricing #1 / options]]
+- [[#10:10 Wrap-up|**[10:10]** Wrap-up]]
+
+^plaud-chapters
+
+---
+
+##### 00:00 Roadmap
+
+[[#^plaud-chapters|Back to Chapters]]
+
+**[00:00]** Charles: Let us start with the roadmap.
+**[00:12]** Mary: Pricing comes first.
+
+##### 01:35 Pricing -1 / options
+
+[[#^plaud-chapters|Back to Chapters]]
+
+**[01:35]** Charles: Agreed. Three options by Friday.
+
+##### 10:10 Wrap-up
+
+[[#^plaud-chapters|Back to Chapters]]
+
+**[10:10]** Unknown: Unattributed closing remarks.
+
+<!-- plaud:managed:end -->
+",
+  },
+  "folders": [
+    "Plaud",
+    "Plaud/2026-04-14 Quarterly planning-assets",
+  ],
+  "pipeline": [
+    [
+      "applyFold",
+      "Plaud/2026-04-14 Quarterly planning.md",
+    ],
+  ],
+  "requested": [
+    "https://cdn.plaud.ai/marks/mark-42.jpg",
+    "https://cdn.plaud.ai/assets/photo.jpg",
+    "https://cdn.plaud.ai/audio/a1b2c3d4.ogg?X-Amz-Signature=abc",
+  ],
+  "results": [
+    {
+      "kind": "written",
+      "recording": {
+        "captureOffsetMinutes": -240,
+        "createdAt": 2026-04-14T14:30:00.000Z,
+        "durationSeconds": 3725,
+        "endsAt": 2026-04-14T15:32:05.000Z,
+        "id": "a1b2c3d4",
+        "isTrashed": false,
+        "summaryAvailable": true,
+        "title": "Quarterly planning",
+        "transcriptAvailable": true,
+      },
+      "writeOutcome": {
+        "foldInfo": {
+          "totalLines": 79,
+          "transcriptHeadingLine": 46,
+        },
+        "path": "Plaud/2026-04-14 Quarterly planning.md",
+        "status": "created",
+      },
+    },
+  ],
+  "stop": "completed",
+}
+`;
+
 exports[`golden output (stored format must not change) rich recording, default options, heading layout 1`] = `
 {
   "files": {

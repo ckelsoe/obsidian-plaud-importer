@@ -1,5 +1,6 @@
 import type { RecordingId, Recording } from '../recording-model';
 import type { ImportedIndex, ImportedRecord } from '../vault-index';
+import { PLAUD_PROFILE } from '../plaud-profile';
 import {
 	buildSourceFilter,
 	filterListView,
@@ -36,6 +37,7 @@ function idx(
 		byId: new Map(entries.map(([id, r]) => [id as RecordingId, r])),
 		byInstant: new Map(),
 		byDay: new Map(),
+		canonicalId: PLAUD_PROFILE.canonicalId,
 	};
 }
 

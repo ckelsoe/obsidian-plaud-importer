@@ -1,3 +1,4 @@
+import { PLAUD_PROFILE } from '../plaud-profile';
 import {
 	classifyError,
 	categoryAllowsReauth,
@@ -635,7 +636,9 @@ describe('formatImportNotice', () => {
 			written('a', 'created'),
 			written('b', 'overwritten'),
 		]);
-		expect(formatImportNotice(tally)).toBe('Plaud importer: 2 imported.');
+		expect(formatImportNotice(PLAUD_PROFILE, tally)).toBe(
+			'Plaud importer: 2 imported.',
+		);
 	});
 
 	it('includes a skipped count when any were skipped', () => {
@@ -644,7 +647,7 @@ describe('formatImportNotice', () => {
 			written('b', 'skipped'),
 			written('c', 'skipped'),
 		]);
-		expect(formatImportNotice(tally)).toBe(
+		expect(formatImportNotice(PLAUD_PROFILE, tally)).toBe(
 			'Plaud importer: 1 imported, 2 skipped.',
 		);
 	});
@@ -654,7 +657,7 @@ describe('formatImportNotice', () => {
 			written('a', 'created'),
 			failed('b', 'oops'),
 		]);
-		expect(formatImportNotice(tally)).toBe(
+		expect(formatImportNotice(PLAUD_PROFILE, tally)).toBe(
 			'Plaud importer: 1 imported, 1 failed.',
 		);
 	});
@@ -666,7 +669,7 @@ describe('formatImportNotice', () => {
 			written('c', 'skipped'),
 			failed('d', 'x'),
 		]);
-		expect(formatImportNotice(tally)).toBe(
+		expect(formatImportNotice(PLAUD_PROFILE, tally)).toBe(
 			'Plaud importer: 2 imported, 1 skipped, 1 failed.',
 		);
 	});
@@ -678,7 +681,7 @@ describe('formatImportNotice', () => {
 			noContent('c'),
 			failed('d', 'x'),
 		]);
-		expect(formatImportNotice(tally)).toBe(
+		expect(formatImportNotice(PLAUD_PROFILE, tally)).toBe(
 			'Plaud importer: 1 imported, 1 skipped, 1 no content, 1 failed.',
 		);
 	});
@@ -691,13 +694,13 @@ describe('formatImportNotice', () => {
 			placeholder('d'),
 			failed('e', 'x'),
 		]);
-		expect(formatImportNotice(tally)).toBe(
+		expect(formatImportNotice(PLAUD_PROFILE, tally)).toBe(
 			'Plaud importer: 1 imported, 1 skipped, 1 no content, 1 placeholder, 1 failed.',
 		);
 	});
 
 	it('returns a distinct message for an empty tally', () => {
-		expect(formatImportNotice(tallyImportResults([]))).toBe(
+		expect(formatImportNotice(PLAUD_PROFILE, tallyImportResults([]))).toBe(
 			'Plaud importer: nothing to import.',
 		);
 	});
@@ -712,14 +715,18 @@ describe('formatImportNotice', () => {
 			written('b', 'overwritten'),
 			written('c', 'created'),
 		]);
-		expect(formatImportNotice(tally)).toContain('3 imported');
+		expect(formatImportNotice(PLAUD_PROFILE, tally)).toContain(
+			'3 imported',
+		);
 	});
 
 	it('pluralizes by count but not with irregular grammar', () => {
 		// The helper is terse by design — it says "1 imported" not
 		// "1 recording imported" so pluralization isn't required.
 		const tally = tallyImportResults([written('a', 'created')]);
-		expect(formatImportNotice(tally)).toBe('Plaud importer: 1 imported.');
+		expect(formatImportNotice(PLAUD_PROFILE, tally)).toBe(
+			'Plaud importer: 1 imported.',
+		);
 	});
 });
 

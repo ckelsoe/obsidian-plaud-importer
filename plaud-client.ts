@@ -4,101 +4,35 @@
 
 import type {
 	RecordingId,
-	AdditionalSummary,
-	ConsumerNote,
-	Chapter,
-	AttachmentAsset,
 	RecordingPage,
 	RecordingSource,
 	Recording,
-	Transcript,
-	Summary,
+	RecordingMark,
+	RecordingArtifacts,
 } from './recording-model';
 
 /**
- * Bundle of derived artifacts for a single recording. Plaud returns the
+ * Plaud's artifact bundle: the neutral `RecordingArtifacts`, with marks typed
+ * as `PlaudMark` so the clients keep Plaud's `mark_type`. Plaud returns the
  * transcript and summary together in a single POST /ai/transsumm/{id}
- * response, so fetching them with one method matches the wire protocol and
- * avoids the temptation to call the same endpoint twice.
+ * response, hence the name.
  *
- * Either field may be null independently: a recording can have a
- * transcript without an AI summary (or vice versa) depending on Plaud's
- * processing status.
+ * Where the optional fields come from:
+ * - `nestedAssetLinks`: the transsumm response's `download_link_map`.
+ * - `aiKeywords`: `/file/detail/{id}` → `data.extra_data.aiContentHeader.keywords`.
+ * - `chapters`: the `outline` entry of the detail's `content_list`, a pre-signed
+ *   S3 body parsed by `parseOutlineBody`, which logs an unrecognized body at
+ *   debug level so the parser can be widened.
+ * - `attachments`: detail `content_list` entries with an unknown data type and
+ *   a `data_link` URL; transcript and summary entries are excluded.
+ * - `consumerNotes`: `content_list` entries of `data_type: consumer_note`, each
+ *   a pre-signed `text/plain` Markdown body.
+ * - `marks`: the v4 detail's `MARK_MEMO` object (none from the v3 client).
+ * - `additionalSummaries`: v4 summaries other than the classic `SUMMARY`, such
+ *   as `SUMMARY_BETA` (none from the v3 client).
  */
-export interface TranscriptAndSummary {
-	readonly transcript: Transcript | null;
-	readonly summary: Summary | null;
-	/**
-	 * Optional map of relative Plaud asset paths to pre-signed download URLs
-	 * returned by `/ai/transsumm/{id}` (for example `download_link_map`).
-	 * Used by attachment import to resolve `picture_link` entries to real image
-	 * bytes instead of HTML wrapper pages.
-	 */
-	readonly nestedAssetLinks?: Readonly<Record<string, string>>;
-	/**
-	 * AI-generated keyword tags from Plaud, when the client can reach a
-	 * source that provides them. Populated by the RE client from
-	 * `/file/detail/{id}` → `data.extra_data.aiContentHeader.keywords`,
-	 * left undefined when the field is absent (older recordings, or when
-	 * the detail fetch failed silently). Consumers should route these
-	 * through `buildNoteTags` in note-writer.ts so the tag-mode setting,
-	 * namespacing, and dedup rules stay in one place.
-	 */
-	readonly aiKeywords?: readonly string[];
-	/**
-	 * Ordered list of AI-generated chapter markers for the recording.
-	 * Populated by the RE client from the `outline` entry inside
-	 * `/file/detail/{id}`'s `content_list`, which points at a pre-signed
-	 * S3 URL whose body is the chapter list. Left undefined when the
-	 * outline is absent (older recordings) or the S3 fetch/parse failed.
-	 *
-	 * The exact wire shape of the S3 body is still being pinned down — the
-	 * RE client's `parseOutlineBody` handles the shapes seen so far and
-	 * logs the raw body at debug level when it can't recognize it, so
-	 * Charles can inspect and we can widen the parser in a follow-up.
-	 */
-	readonly chapters?: readonly Chapter[];
-	/**
-	 * Downloadable asset references discovered from `/file/detail/{id}`.
-	 * These are typically pre-signed URLs (short-lived) for supplemental
-	 * artifacts such as screenshots or other generated media.
-	 *
-	 * The RE client treats this as best-effort discovery: unknown data types
-	 * with a `data_link` URL are surfaced, while known transcript/summary
-	 * pipeline entries stay excluded. Import-time consumers should download
-	 * these immediately and persist them into the vault, because pre-signed
-	 * links expire quickly.
-	 */
-	readonly attachments?: readonly AttachmentAsset[];
-	/**
-	 * Additional AI template outputs the user generated in Plaud (Key Points,
-	 * Daily Journal, Meeting Summary, etc.). Each is a `content_list` entry of
-	 * `data_type: consumer_note` whose pre-signed S3 link serves a `text/plain`
-	 * Markdown body. The RE client fetches each body during the detail pass and
-	 * surfaces it here so note-writer can fold it into the note as a section
-	 * rather than the import pipeline saving it as an unreadable `.bin`
-	 * attachment. Left undefined when the recording has none.
-	 */
-	readonly consumerNotes?: readonly ConsumerNote[];
-	/**
-	 * Screenshots ("marks") the user captured during the recording, each a
-	 * pre-signed image URL plus its offset into the recording. Populated by the
-	 * v4 client from the file-detail's `MARK_MEMO` object; left undefined when the
-	 * recording has no marks or the source does not provide them (the v3 client).
-	 * Note-writer renders these as a Screenshots section and the attachment
-	 * pipeline downloads them into the note's `-assets` folder.
-	 */
+export interface TranscriptAndSummary extends RecordingArtifacts {
 	readonly marks?: readonly PlaudMark[];
-	/**
-	 * Summaries BEYOND the primary one in `summary`. A v4 recording can carry more
-	 * than one summary object (e.g. the classic `SUMMARY` plus a `SUMMARY_BETA`),
-	 * and when the user selects the Summary artifact ALL of them are imported, not
-	 * just the first. The primary (`SUMMARY`, or the first summary when there is no
-	 * classic one) stays in `summary`; every other summary lands here with its own
-	 * section `heading` (e.g. "Summary (beta)"). Left undefined when the recording
-	 * has only one summary or the source provides no extras (the v3 client).
-	 */
-	readonly additionalSummaries?: readonly AdditionalSummary[];
 }
 
 /**
@@ -110,22 +44,7 @@ export interface TranscriptAndSummary {
  * Shape verified live (read-only) 2026-09-18: every entry carried a resolvable
  * `picture_link` and `mark_type` 2 (photo). The v3 client does not produce these.
  */
-export interface PlaudMark {
-	/**
-	 * Offset of the mark from the recording's start, in seconds. The wire value
-	 * is milliseconds; the parser converts it to seconds to match
-	 * `TranscriptSegment.startSeconds`. Used only to label the image with its
-	 * position in the recording, so a missing or implausible value is clamped to
-	 * 0 rather than dropping the screenshot.
-	 */
-	readonly offsetSeconds: number;
-	/**
-	 * Pre-signed image URL for the screenshot, resolved from the entry's
-	 * `picture_link` content id via `relation_content_mapping`. It carries its
-	 * own signature, so download it WITHOUT the Plaud bearer (like every other
-	 * pre-signed content URL). Short-lived: download at import time.
-	 */
-	readonly url: string;
+export interface PlaudMark extends RecordingMark {
 	/**
 	 * Plaud's `mark_type` discriminator (2 = photo/screenshot on every recording
 	 * observed live). Kept for diagnostics and possible future differentiation;

@@ -17,7 +17,7 @@ export type RecordingId = string & {
 };
 
 /**
- * A summary beyond the primary one (see `TranscriptAndSummary.additionalSummaries`).
+ * A summary beyond the primary one (see `RecordingArtifacts.additionalSummaries`).
  * `heading` is the note section title derived from the summary's object type
  * (e.g. `SUMMARY_BETA` -> "Summary (beta)"); `text` is the markdown body, already
  * image-resolved by the client. Rendered as its own `## <heading>` section.
@@ -98,6 +98,25 @@ export interface RecordingPage {
 export type RecordingSource =
 	| { readonly kind: 'device'; readonly serial: string }
 	| { readonly kind: 'app' };
+
+/** A screenshot the user captured at a point in the recording. */
+export interface RecordingMark {
+	/**
+	 * Offset of the mark from the recording's start, in seconds. The wire value
+	 * is milliseconds; the parser converts it to seconds to match
+	 * `TranscriptSegment.startSeconds`. Used only to label the image with its
+	 * position in the recording, so a missing or implausible value is clamped to
+	 * 0 rather than dropping the screenshot.
+	 */
+	readonly offsetSeconds: number;
+	/**
+	 * Pre-signed image URL for the screenshot, resolved from the entry's
+	 * `picture_link` content id via `relation_content_mapping`. It carries its
+	 * own signature, so download it WITHOUT the service's bearer (like every other
+	 * pre-signed content URL). Short-lived: download at import time.
+	 */
+	readonly url: string;
+}
 
 export interface Recording {
 	readonly id: RecordingId;
@@ -237,4 +256,64 @@ export interface Summary {
 interface SummarySection {
 	readonly heading: string;
 	readonly body: string;
+}
+
+/**
+ * Bundle of derived artifacts for a single recording: what the import runner
+ * fetches per recording and writes into the note. Every field past `transcript`
+ * and `summary` is optional; a service fills only what it has.
+ *
+ * Either field may be null independently: a recording can have a
+ * transcript without an AI summary (or vice versa) depending on the
+ * service's processing status.
+ */
+export interface RecordingArtifacts {
+	readonly transcript: Transcript | null;
+	readonly summary: Summary | null;
+	/**
+	 * Optional map of relative asset paths (as they appear inside the service's
+	 * own wrapper documents) to download URLs. Attachment import uses it to
+	 * resolve embedded picture links to real image bytes instead of wrapper pages.
+	 */
+	readonly nestedAssetLinks?: Readonly<Record<string, string>>;
+	/**
+	 * AI-generated keyword tags, when the service provides them. Left undefined
+	 * when it does not. Consumers route these through `buildNoteTags` in
+	 * note-writer.ts so the tag-mode setting, namespacing and dedup rules stay
+	 * in one place.
+	 */
+	readonly aiKeywords?: readonly string[];
+	/**
+	 * Ordered AI-generated chapter markers for the recording. Left undefined when
+	 * the service has none or fetching them failed.
+	 */
+	readonly chapters?: readonly Chapter[];
+	/**
+	 * Downloadable supplemental artifacts (screenshots, generated media), found
+	 * best-effort by the client. The URLs are usually short-lived pre-signed
+	 * links, so import downloads them immediately and stores them in the vault.
+	 */
+	readonly attachments?: readonly AttachmentAsset[];
+	/**
+	 * Additional AI template outputs the user generated in the service (Key
+	 * Points, Daily Journal, Meeting Summary and so on), each a Markdown body.
+	 * Note-writer folds each into the note as a section instead of saving it as
+	 * an attachment. Left undefined when the recording has none.
+	 */
+	readonly consumerNotes?: readonly ConsumerNote[];
+	/**
+	 * Screenshots ("marks") the user captured during the recording, each an
+	 * image URL plus its offset into the recording. Left undefined when the
+	 * recording has none or the service does not provide them. Note-writer
+	 * renders these as a Screenshots section and the attachment pipeline
+	 * downloads them into the note's `-assets` folder.
+	 */
+	readonly marks?: readonly RecordingMark[];
+	/**
+	 * Summaries BEYOND the primary one in `summary`, each with its own section
+	 * `heading` (e.g. "Summary (beta)"). All of them are imported when the user
+	 * selects the Summary artifact. Left undefined when the recording has only
+	 * one summary or the service provides no extras.
+	 */
+	readonly additionalSummaries?: readonly AdditionalSummary[];
 }

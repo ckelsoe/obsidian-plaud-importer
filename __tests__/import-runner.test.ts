@@ -12,6 +12,8 @@ import {
 import { PlaudApiError, PlaudAuthError } from '../plaud-client-re';
 import type { ArtifactSelection, ImportModalOptions } from '../import-core';
 import { PLAUD_ERROR_POLICY } from '../plaud-errors';
+import { PLAUD_PROFILE } from '../plaud-profile';
+import { plaudFolderLoader } from '../folder-catalog';
 import type { TranscriptAndSummary } from '../plaud-client';
 import type {
 	AttachmentAsset,
@@ -39,6 +41,7 @@ function makeWriter(
 	options: Partial<ConstructorParameters<typeof NoteWriter>[1]> = {},
 ): NoteWriter {
 	return new NoteWriter(vault, {
+		profile: PLAUD_PROFILE,
 		outputFolder: 'Plaud',
 		onDuplicate: 'skip',
 		...options,
@@ -106,6 +109,7 @@ const SELECTION: ArtifactSelection = {
 
 const OPTIONS: ImportModalOptions = {
 	errorPolicy: PLAUD_ERROR_POLICY,
+	profile: PLAUD_PROFILE,
 	outputFolder: 'Plaud',
 	onDuplicate: 'skip',
 };
@@ -389,8 +393,9 @@ describe('runImport', () => {
 			attachments: makeAttachmentStub().pipeline,
 			options: OPTIONS,
 			fetchArtifacts,
-			fetchFolderCatalog: () =>
+			loadFolders: plaudFolderLoader(() =>
 				Promise.resolve([{ id: 'id-rec', name: 'Recordings' }]),
+			),
 		});
 
 		const note = [...vault.files.values()][0];
@@ -484,8 +489,9 @@ describe('runImport', () => {
 			attachments: makeAttachmentStub().pipeline,
 			options: OPTIONS,
 			fetchArtifacts,
-			fetchFolderCatalog: () =>
+			loadFolders: plaudFolderLoader(() =>
 				Promise.resolve([{ id: 'id-work', name: 'Work' }]),
+			),
 		});
 
 		const note = [...vault.files.values()][0];
@@ -509,11 +515,12 @@ describe('runImport', () => {
 			attachments: makeAttachmentStub().pipeline,
 			options: OPTIONS,
 			fetchArtifacts,
-			fetchFolderCatalog: () =>
+			loadFolders: plaudFolderLoader(() =>
 				Promise.resolve([
 					{ id: 'id-work', name: 'Work' },
 					{ id: 'id-bnb', name: 'B&B' },
 				]),
+			),
 		});
 
 		expect(outcome.stop).toBe('completed');
@@ -540,8 +547,9 @@ describe('runImport', () => {
 			attachments: makeAttachmentStub().pipeline,
 			options: OPTIONS,
 			fetchArtifacts,
-			fetchFolderCatalog: () =>
+			loadFolders: plaudFolderLoader(() =>
 				Promise.resolve([{ id: 'id-known', name: 'Known' }]),
+			),
 		});
 
 		const note = [...vault.files.values()][0];
@@ -557,7 +565,7 @@ describe('runImport', () => {
 			new Map([[recording.id, makeArtifacts(recording)]]),
 		);
 
-		// No fetchFolderCatalog: mirrors an older caller. Ids must vanish, never
+		// No loadFolders: a service without folders. Ids must vanish, never
 		// fall through raw into tags: (the pre-#16 bug).
 		const outcome = await runImport({
 			recordings: [recording],
@@ -588,10 +596,11 @@ describe('runImport', () => {
 			attachments: makeAttachmentStub().pipeline,
 			options: OPTIONS,
 			fetchArtifacts,
-			fetchFolderCatalog: () =>
+			loadFolders: plaudFolderLoader(() =>
 				asyncResult(() => {
 					throw new Error('boom');
 				}),
+			),
 		});
 
 		expect(outcome.stop).toBe('completed');

@@ -1,5 +1,6 @@
 import type { App, TFile } from 'obsidian';
 import { buildImportedIndex } from '../vault-index';
+import { PLAUD_PROFILE } from '../plaud-profile';
 import { planMigration, type PlannableRecording } from '../migration-plan';
 import { at } from './helpers/checked';
 
@@ -50,7 +51,11 @@ const START_NOTE: [string, FM] = [
 
 describe('planMigration', () => {
 	it('plans a start-time heal for a changed-id recording', () => {
-		const index = buildImportedIndex(makeApp([START_NOTE]), 'Plaud');
+		const index = buildImportedIndex(
+			PLAUD_PROFILE,
+			makeApp([START_NOTE]),
+			'Plaud',
+		);
 		const plan = planMigration(
 			[r('v4-new', '2026-08-07T18:52:41Z', 600)],
 			index,
@@ -83,7 +88,11 @@ describe('planMigration', () => {
 				'duration-seconds': 42,
 			},
 		];
-		const index = buildImportedIndex(makeApp([bareNote]), 'Plaud');
+		const index = buildImportedIndex(
+			PLAUD_PROFILE,
+			makeApp([bareNote]),
+			'Plaud',
+		);
 		const plan = planMigration(
 			[
 				r(
@@ -109,7 +118,11 @@ describe('planMigration', () => {
 			'Plaud/prefixed.md',
 			{ 'plaud-id': 'of_ab4db03305b77f8e67f345ab89b163ab' },
 		];
-		const index = buildImportedIndex(makeApp([ofNote]), 'Plaud');
+		const index = buildImportedIndex(
+			PLAUD_PROFILE,
+			makeApp([ofNote]),
+			'Plaud',
+		);
 		const plan = planMigration(
 			[
 				r(
@@ -125,7 +138,11 @@ describe('planMigration', () => {
 	});
 
 	it('counts a recording already on the current id as alreadyCurrent (no heal)', () => {
-		const index = buildImportedIndex(makeApp([START_NOTE]), 'Plaud');
+		const index = buildImportedIndex(
+			PLAUD_PROFILE,
+			makeApp([START_NOTE]),
+			'Plaud',
+		);
 		const plan = planMigration(
 			[r('old-precise', '2026-08-07T18:52:11Z', 600)],
 			index,
@@ -143,7 +160,11 @@ describe('planMigration', () => {
 				'duration-seconds': 226,
 			},
 		];
-		const index = buildImportedIndex(makeApp([dateNote]), 'Plaud');
+		const index = buildImportedIndex(
+			PLAUD_PROFILE,
+			makeApp([dateNote]),
+			'Plaud',
+		);
 		// Build a recording whose LOCAL day is 2026-06-25 (noon avoids TZ edges).
 		const iso = new Date(2026, 5, 25, 12, 0, 0).toISOString();
 		const plan = planMigration([r('v4-date', iso, 226)], index);
@@ -161,7 +182,11 @@ describe('planMigration', () => {
 				'duration-seconds': 226,
 			},
 		];
-		const index = buildImportedIndex(makeApp([dateNote]), 'Plaud');
+		const index = buildImportedIndex(
+			PLAUD_PROFILE,
+			makeApp([dateNote]),
+			'Plaud',
+		);
 		const isoA = new Date(2026, 5, 25, 9, 0, 0).toISOString();
 		const isoB = new Date(2026, 5, 25, 17, 0, 0).toISOString();
 		const plan = planMigration(
@@ -172,7 +197,11 @@ describe('planMigration', () => {
 	});
 
 	it('counts a recording matching no note as unmatched', () => {
-		const index = buildImportedIndex(makeApp([START_NOTE]), 'Plaud');
+		const index = buildImportedIndex(
+			PLAUD_PROFILE,
+			makeApp([START_NOTE]),
+			'Plaud',
+		);
 		const plan = planMigration(
 			[r('brand-new', '2026-09-01T10:00:00Z', 99)],
 			index,
@@ -183,7 +212,11 @@ describe('planMigration', () => {
 	});
 
 	it('carries version_ms via the versionOf resolver', () => {
-		const index = buildImportedIndex(makeApp([START_NOTE]), 'Plaud');
+		const index = buildImportedIndex(
+			PLAUD_PROFILE,
+			makeApp([START_NOTE]),
+			'Plaud',
+		);
 		const plan = planMigration(
 			[r('v4-new', '2026-08-07T18:52:11Z', 600)],
 			index,

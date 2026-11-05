@@ -13,11 +13,34 @@
  * order) is never overwritten: the writer refuses and reports it.
  */
 
-export const MANAGED_BLOCK_START = '<!-- plaud:managed:start -->';
-export const MANAGED_BLOCK_END = '<!-- plaud:managed:end -->';
+import type { ServiceProfile } from './service-profile';
 
-const START_LINE = /^<!-- plaud:managed:start -->[^\S\n]*$/gm;
-const END_LINE = /^<!-- plaud:managed:end -->[^\S\n]*$/gm;
+/** One service's marker lines, built once by `managedMarkers`. */
+export interface ManagedMarkers {
+	readonly start: string;
+	readonly end: string;
+	/** Whole-line patterns, no flags, so `test` keeps no `lastIndex` state. */
+	readonly startLine: RegExp;
+	readonly endLine: RegExp;
+}
+
+function markerLinePattern(marker: string): RegExp {
+	// The prefix is service data, so escape it before it becomes a pattern.
+	const escaped = marker.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+	return new RegExp(`^${escaped}[^\\S\\n]*$`);
+}
+
+/** The managed-block markers for one service, e.g. `<!-- plaud:managed:start -->`. */
+export function managedMarkers(profile: ServiceProfile): ManagedMarkers {
+	const start = `<!-- ${profile.keyPrefix}:managed:start -->`;
+	const end = `<!-- ${profile.keyPrefix}:managed:end -->`;
+	return {
+		start,
+		end,
+		startLine: markerLinePattern(start),
+		endLine: markerLinePattern(end),
+	};
+}
 
 /**
  * Where a note's managed block sits.
@@ -37,28 +60,29 @@ export type ManagedBlockLocation =
 			readonly after: string;
 	  };
 
-// Single-line forms of the patterns above. No `g` flag, so `test` keeps no
-// `lastIndex` state and the regexes can be shared.
-const START_ONE_LINE = new RegExp(START_LINE.source);
-const END_ONE_LINE = new RegExp(END_LINE.source);
-
 /** True when `line` (one line, no newline) is a start or end marker line. */
-export function isManagedMarkerLine(line: string): boolean {
-	return START_ONE_LINE.test(line) || END_ONE_LINE.test(line);
+export function isManagedMarkerLine(
+	markers: ManagedMarkers,
+	line: string,
+): boolean {
+	return markers.startLine.test(line) || markers.endLine.test(line);
 }
 
 /** Every whole-line match of `pattern`, using a fresh regex so no `lastIndex` leaks between calls. */
 function lineMatches(content: string, pattern: RegExp): RegExpExecArray[] {
-	return [...content.matchAll(new RegExp(pattern.source, pattern.flags))];
+	return [...content.matchAll(new RegExp(pattern.source, 'gm'))];
 }
 
 /**
  * Find the managed block in a note. Markers count only when alone on their
  * line, so a marker quoted inline in the user's prose is ignored.
  */
-export function locateManagedBlock(content: string): ManagedBlockLocation {
-	const starts = lineMatches(content, START_LINE);
-	const ends = lineMatches(content, END_LINE);
+export function locateManagedBlock(
+	markers: ManagedMarkers,
+	content: string,
+): ManagedBlockLocation {
+	const starts = lineMatches(content, markers.startLine);
+	const ends = lineMatches(content, markers.endLine);
 	if (starts.length === 0 && ends.length === 0) {
 		return { kind: 'none' };
 	}
@@ -95,8 +119,8 @@ export function locateManagedBlock(content: string): ManagedBlockLocation {
  * emits: marker, blank line, body, blank line, marker. Shared by the renderer
  * and every post-write rewrite so repeated passes never drift the whitespace.
  */
-export function wrapManagedBody(body: string): string {
-	return `${MANAGED_BLOCK_START}\n\n${body.trim()}\n\n${MANAGED_BLOCK_END}`;
+export function wrapManagedBody(markers: ManagedMarkers, body: string): string {
+	return `${markers.start}\n\n${body.trim()}\n\n${markers.end}`;
 }
 
 /**
@@ -108,17 +132,18 @@ export function wrapManagedBody(body: string): string {
  * edited it mid-import) is returned unchanged: the whole note may be theirs.
  */
 export function transformManagedBody(
+	markers: ManagedMarkers,
 	content: string,
 	transform: (body: string) => string,
 ): string {
-	const located = locateManagedBlock(content);
+	const located = locateManagedBlock(markers, content);
 	if (located.kind === 'none') {
 		return transform(content);
 	}
 	if (located.kind === 'malformed') {
 		return content;
 	}
-	return `${located.before}${wrapManagedBody(transform(located.inner))}${located.after}`;
+	return `${located.before}${wrapManagedBody(markers, transform(located.inner))}${located.after}`;
 }
 
 /**
@@ -127,16 +152,19 @@ export function transformManagedBody(
  * transcript fold), plus whether the user has text after the block. Without a
  * well-formed block the whole note is the region.
  */
-export function managedBodyRegion(content: string): {
+export function managedBodyRegion(
+	markers: ManagedMarkers,
+	content: string,
+): {
 	readonly body: string;
 	readonly lineOffset: number;
 	readonly textBelow: boolean;
 } {
-	const located = locateManagedBlock(content);
+	const located = locateManagedBlock(markers, content);
 	if (located.kind !== 'ok') {
 		return { body: content, lineOffset: 0, textBelow: false };
 	}
-	const precedingLines = `${located.before}${MANAGED_BLOCK_START}\n`;
+	const precedingLines = `${located.before}${markers.start}\n`;
 	return {
 		body: located.inner,
 		lineOffset: precedingLines.split('\n').length - 1,
@@ -166,17 +194,18 @@ function frontmatterEnd(content: string): number {
  * caller leaves the note untouched.
  */
 export function spliceManagedBlock(
+	markers: ManagedMarkers,
 	existing: string,
 	rendered: string,
 ): string | null {
-	const current = locateManagedBlock(existing);
+	const current = locateManagedBlock(markers, existing);
 	if (current.kind === 'none') {
 		return rendered;
 	}
 	if (current.kind === 'malformed') {
 		return null;
 	}
-	const fresh = locateManagedBlock(rendered);
+	const fresh = locateManagedBlock(markers, rendered);
 	if (fresh.kind !== 'ok') {
 		// The renderer always emits one block; without it there is nothing to
 		// splice in, and a full rebuild would destroy the user's text.
@@ -184,5 +213,5 @@ export function spliceManagedBlock(
 	}
 	const newFrontmatter = rendered.slice(0, frontmatterEnd(rendered));
 	const userAbove = current.before.slice(frontmatterEnd(current.before));
-	return `${newFrontmatter}${userAbove}${wrapManagedBody(fresh.inner)}${current.after}`;
+	return `${newFrontmatter}${userAbove}${wrapManagedBody(markers, fresh.inner)}${current.after}`;
 }
