@@ -6,6 +6,8 @@ All notable changes to Plaud Importer will be documented in this file.
 
 ## [Unreleased]
 
+## [0.46.5] - 2026-11-05
+
 ### Fixed
 
 - **Clearing the Plaud token picker no longer breaks the plugin.** Unlinking the secret in the **Plaud token** picker saved an empty value the plugin could not read, so the next import, sync or settings check failed with an error. A cleared picker now saves the same empty link as signing out, and a value already saved that way is repaired when the plugin loads.
