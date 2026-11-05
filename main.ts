@@ -49,6 +49,7 @@ import {
 	hideManagedMarkers,
 } from 'obsidian-recording-importer-core';
 import { ImportModal, classifyError } from './import-modal';
+import { focusMainWindow } from './main-window';
 import { PLAUD_ERROR_POLICY } from './plaud-errors';
 import {
 	formatPlaudWebUrl,
@@ -330,6 +331,9 @@ export default class PlaudImporterPlugin extends Plugin {
 	// open/close never clobbers a tick's in-flight state and vice versa. An
 	// auto-sync tick starts only when BOTH are clear.
 	private importModalOpen = false;
+	// Pending wait for the main window to take focus before the import window
+	// opens; aborted on unload.
+	private importFocusWait: AbortController | null = null;
 	private autoSyncTickInFlight = false;
 	// Set once in onunload. A tick or backfill captures `this.client` in a local
 	// before its awaits, so clearing the client alone does not stop an in-flight
@@ -947,6 +951,9 @@ export default class PlaudImporterPlugin extends Plugin {
 		// still sees the abort.
 		this.disposed = true;
 		this.client = undefined;
+		// Settle a pending import-window focus wait so its timer and listener go.
+		this.importFocusWait?.abort();
+		this.importFocusWait = null;
 		// Clear the auto-sync timers. Both the interval and the deferred first-run
 		// timeout are ours (plain setInterval/setTimeout), so we clear both here.
 		if (this.autoSyncIntervalId !== undefined) {
@@ -2722,61 +2729,91 @@ export default class PlaudImporterPlugin extends Plugin {
 		// tick does not start alongside a manual import. Cleared from onClosed
 		// below. Uses its own flag (not the tick's) so the two never clobber.
 		this.importModalOpen = true;
-		try {
-			// Snapshot settings at invocation time (via buildImportRuntimeOptions,
-			// the same builder the headless auto-sync path uses) so changes in the
-			// settings tab take effect on the next click without reinstantiation.
-			new ImportModal(this.app, this.client, {
-				...this.buildImportRuntimeOptions(),
-				// Single-source the routing decision with reconnectFromNotice
-				// (issue #78): a browser/bookmarklet (SSO) session must not be
-				// pushed at the embedded email window on auth-error screens.
-				prefersSsoReauth: !this.reconnectPrefersWindow(),
-				// The 4.0 list never includes trash, so its Trashed filter
-				// would do nothing.
-				trashListed: !this.usesV4Portal(),
-				// After a successful in-modal re-auth, clear any auth pause so
-				// background sync resumes without waiting for the settings tab.
-				onReauth: async () => {
-					// The modal only needs to know whether to carry on, and
-					// reauthenticate has already explained any failure it can.
-					const captured =
-						(await this.reauthenticate()) === 'captured';
-					if (captured) this.resumeAutoSyncIfPaused();
-					return captured;
-				},
-				onReauthSso: {
-					setupBookmark: () => {
-						void this.openBookmarkSetupPage();
-					},
-					signIn: () => {
-						new BrowserSignInModal(this.app, () =>
-							this.openPlaudInBrowser(),
-						).open();
-					},
-					pasteToken: async () => {
-						const ok = await this.pasteTokenFromClipboard();
-						if (ok) this.resumeAutoSyncIfPaused();
-						return ok;
-					},
-				},
-				onClosed: () => {
+		const client = this.client;
+		const focusWait = new AbortController();
+		this.importFocusWait = focusWait;
+		void focusMainWindow(focusWait.signal)
+			.then((mainActive) => {
+				if (this.importFocusWait === focusWait)
+					this.importFocusWait = null;
+				// The plugin may have unloaded during the focus wait.
+				if (this.disposed) {
 					this.importModalOpen = false;
+					return;
+				}
+				// Opening anywhere else would tie the import to a window that
+				// closes it when it closes.
+				if (!mainActive) {
+					this.importModalOpen = false;
+					new Notice(
+						'Plaud importer: switch to the main Obsidian window, then start the import again.',
+					);
+					return;
+				}
+				this.openImportModal(client);
+			})
+			.catch((err: unknown) => {
+				// onClosed never fires for a modal that failed to open; release
+				// the flag so a background tick is not blocked forever.
+				this.importModalOpen = false;
+				console.error(
+					'Plaud importer: could not open the import window',
+					err,
+				);
+				new Notice(
+					'Plaud importer: could not open the import window. See the developer console for details.',
+				);
+			});
+	}
+
+	private openImportModal(client: PlaudClient): void {
+		// Snapshot settings at invocation time (via buildImportRuntimeOptions,
+		// the same builder the headless auto-sync path uses) so changes in the
+		// settings tab take effect on the next click without reinstantiation.
+		new ImportModal(this.app, client, {
+			...this.buildImportRuntimeOptions(),
+			// Single-source the routing decision with reconnectFromNotice
+			// (issue #78): a browser/bookmarklet (SSO) session must not be
+			// pushed at the embedded email window on auth-error screens.
+			prefersSsoReauth: !this.reconnectPrefersWindow(),
+			// The 4.0 list never includes trash, so its Trashed filter
+			// would do nothing.
+			trashListed: !this.usesV4Portal(),
+			// After a successful in-modal re-auth, clear any auth pause so
+			// background sync resumes without waiting for the settings tab.
+			onReauth: async () => {
+				// The modal only needs to know whether to carry on, and
+				// reauthenticate has already explained any failure it can.
+				const captured = (await this.reauthenticate()) === 'captured';
+				if (captured) this.resumeAutoSyncIfPaused();
+				return captured;
+			},
+			onReauthSso: {
+				setupBookmark: () => {
+					void this.openBookmarkSetupPage();
 				},
-				// Persist dialog filter toggles and ignore-set changes back to
-				// settings so they survive reopen and auto-sync sees the updated
-				// ignore set on its next tick. The modal owns its own in-memory
-				// copy and calls this after each change.
-				onViewStateChange: (patch) => {
-					void this.applyImportViewState(patch);
+				signIn: () => {
+					new BrowserSignInModal(this.app, () =>
+						this.openPlaudInBrowser(),
+					).open();
 				},
-			}).open();
-		} catch (err) {
-			// If constructing/opening the modal throws, onClosed never fires;
-			// release the flag here so a background tick is not blocked forever.
-			this.importModalOpen = false;
-			throw err;
-		}
+				pasteToken: async () => {
+					const ok = await this.pasteTokenFromClipboard();
+					if (ok) this.resumeAutoSyncIfPaused();
+					return ok;
+				},
+			},
+			onClosed: () => {
+				this.importModalOpen = false;
+			},
+			// Persist dialog filter toggles and ignore-set changes back to
+			// settings so they survive reopen and auto-sync sees the updated
+			// ignore set on its next tick. The modal owns its own in-memory
+			// copy and calls this after each change.
+			onViewStateChange: (patch) => {
+				void this.applyImportViewState(patch);
+			},
+		}).open();
 	}
 
 	async loadSettings() {
