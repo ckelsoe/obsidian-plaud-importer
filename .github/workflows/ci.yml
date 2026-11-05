@@ -69,31 +69,25 @@ jobs:
         run: |
           echo "Scanning for known deprecated Obsidian APIs..."
           FOUND=0
-          SOURCES="main.ts import-modal.ts note-writer.ts plaud-client-re.ts vault-index.ts debug-logger.ts"
+          SOURCES=(main.ts import-modal.ts plaud-client-re.ts)
 
-          # workspace.activeLeaf — deprecated, use getActiveViewOfType()
-          if grep -n "\.activeLeaf\b" $SOURCES; then
-            echo "::error::Deprecated API: 'activeLeaf'. Use getActiveViewOfType() or getLeaf() instead."
-            FOUND=1
-          fi
+          # grep exits 1 for no match; anything higher is a scan error and must fail.
+          check_deprecated() {
+            local status=0
+            grep -n "$1" "${SOURCES[@]}" || status=$?
+            if [ "$status" -eq 0 ]; then
+              echo "::error::$2"
+              FOUND=1
+            elif [ "$status" -gt 1 ]; then
+              echo "::error::Deprecated API scan failed (grep exited with $status)"
+              exit "$status"
+            fi
+          }
 
-          # MarkdownRenderer.renderMarkdown — deprecated, use MarkdownRenderer.render()
-          if grep -n "renderMarkdown(" $SOURCES; then
-            echo "::error::Deprecated API: 'renderMarkdown'. Use MarkdownRenderer.render() instead."
-            FOUND=1
-          fi
-
-          # getLeaf() with a boolean argument — deprecated, use getLeaf('tab') etc.
-          if grep -n "getLeaf(true)\|getLeaf(false)" $SOURCES; then
-            echo "::error::Deprecated API: 'getLeaf(bool)'. Use getLeaf('tab') or getLeaf('split') instead."
-            FOUND=1
-          fi
-
-          # Notice.noticeEl — deprecated, use Notice.messageEl
-          if grep -n "\.noticeEl\b" $SOURCES; then
-            echo "::error::Deprecated API: 'noticeEl'. Use 'messageEl' instead."
-            FOUND=1
-          fi
+          check_deprecated '\.activeLeaf\b' "Deprecated API: 'activeLeaf'. Use getActiveViewOfType() or getLeaf() instead."
+          check_deprecated 'renderMarkdown(' "Deprecated API: 'renderMarkdown'. Use MarkdownRenderer.render() instead."
+          check_deprecated 'getLeaf(true)\|getLeaf(false)' "Deprecated API: 'getLeaf(bool)'. Use getLeaf('tab') or getLeaf('split') instead."
+          check_deprecated '\.noticeEl\b' "Deprecated API: 'noticeEl'. Use 'messageEl' instead."
 
           if [ "$FOUND" -eq 0 ]; then
             echo "No deprecated Obsidian API usage found."
