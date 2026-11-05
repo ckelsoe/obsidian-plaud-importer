@@ -38,6 +38,8 @@ class ChainableStub {
 		return new ChainableStub();
 	}
 	addEventListener(_type: string, _listener: unknown): void {}
+	setText(_text: string): void {}
+	toggleClass(_cls: string, _on: boolean): void {}
 }
 
 export class Modal {
@@ -257,6 +259,10 @@ export class Setting {
 	addSearch(_cb: unknown): this {
 		return this;
 	}
+	addComponent(cb: (el: ChainableStub) => unknown): this {
+		cb(new ChainableStub());
+		return this;
+	}
 	then(_cb: unknown): this {
 		return this;
 	}
@@ -279,7 +285,14 @@ export function settingButton(setting: Setting, label: string): ButtonStub {
 }
 
 export class SecretComponent {
-	constructor(_containerEl?: unknown) {}
+	/** Every picker built, newest last, so a test can fire its change handler. */
+	static instances: SecretComponent[] = [];
+	/** The handler passed to `onChange`; Obsidian 1.14 passes null when cleared. */
+	changeHandler: ((id: string | null) => unknown) | undefined;
+
+	constructor(_app?: unknown, _containerEl?: unknown) {
+		SecretComponent.instances.push(this);
+	}
 
 	setValue(_value: string): this {
 		return this;
@@ -287,7 +300,8 @@ export class SecretComponent {
 	getValue(): string {
 		return '';
 	}
-	onChange(_cb: unknown): this {
+	onChange(cb: (id: string | null) => unknown): this {
+		this.changeHandler = cb;
 		return this;
 	}
 	setPlaceholder(_text: string): this {
