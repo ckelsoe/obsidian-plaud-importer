@@ -339,7 +339,7 @@ export async function runImport(
 				includeSummary: selection.includeSummary,
 				keywords: tagResult.keywords,
 				folders: folders.names,
-				plaudLocation: folders.location,
+				location: folders.location,
 				consumerNotes,
 				marks: selection.includeScreenshots ? marks : undefined,
 				additionalSummaries: selection.includeSummary

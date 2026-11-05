@@ -49,7 +49,7 @@ export interface ImportedRecord {
 	readonly versionMs?: number;
 	/** The note's own `plaud-id`, so a heal can tell whether it is already the
 	 * current id (no rewrite needed) or a stale one. */
-	readonly plaudId?: string;
+	readonly recordingId?: string;
 }
 
 /**
@@ -114,7 +114,7 @@ function recordFromFrontmatter(
 		id,
 		record: {
 			path: file.path,
-			plaudId: id,
+			recordingId: id,
 			summaryVersion: pickFrontmatterString(
 				rawFm[`${p}-summary-version`],
 			),

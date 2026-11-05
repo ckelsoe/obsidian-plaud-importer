@@ -1767,7 +1767,7 @@ export default class PlaudImporterPlugin extends Plugin {
 				// Canonicalize the lookup: byId is keyed by canonical id (of_
 				// stripped), so a v4 `of_<id>` recording matches its v3-imported
 				// note. Matches findImportedNote and the byId keying.
-				existingPathForPlaudId: (id) =>
+				existingPathForRecordingId: (id) =>
 					index.byId.get(index.canonicalId(id) as RecordingId)
 						?.path ?? null,
 			});

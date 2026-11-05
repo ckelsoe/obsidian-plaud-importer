@@ -16,6 +16,20 @@ import type {
  * as `PlaudMark` so the clients keep Plaud's `mark_type`. Plaud returns the
  * transcript and summary together in a single POST /ai/transsumm/{id}
  * response, hence the name.
+ *
+ * Where the optional fields come from:
+ * - `nestedAssetLinks`: the transsumm response's `download_link_map`.
+ * - `aiKeywords`: `/file/detail/{id}` → `data.extra_data.aiContentHeader.keywords`.
+ * - `chapters`: the `outline` entry of the detail's `content_list`, a pre-signed
+ *   S3 body parsed by `parseOutlineBody`, which logs an unrecognized body at
+ *   debug level so the parser can be widened.
+ * - `attachments`: detail `content_list` entries with an unknown data type and
+ *   a `data_link` URL; transcript and summary entries are excluded.
+ * - `consumerNotes`: `content_list` entries of `data_type: consumer_note`, each
+ *   a pre-signed `text/plain` Markdown body.
+ * - `marks`: the v4 detail's `MARK_MEMO` object (none from the v3 client).
+ * - `additionalSummaries`: v4 summaries other than the classic `SUMMARY`, such
+ *   as `SUMMARY_BETA` (none from the v3 client).
  */
 export interface TranscriptAndSummary extends RecordingArtifacts {
 	readonly marks?: readonly PlaudMark[];

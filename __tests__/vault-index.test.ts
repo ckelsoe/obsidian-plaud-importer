@@ -190,7 +190,7 @@ describe('buildImportedIndex byId', () => {
 		const entry = buildImportedIndex(PLAUD_PROFILE, app, 'Plaud').byId.get(
 			'rec-rich' as RecordingId,
 		);
-		expect(entry?.plaudId).toBe('rec-rich');
+		expect(entry?.recordingId).toBe('rec-rich');
 		expect(entry?.summaryVersion).toBe('3');
 		expect(entry?.summaryId).toBe('sum-xyz');
 	});
@@ -256,7 +256,9 @@ describe('findImportedNote by canonical id', () => {
 		expect(match?.matchedBy).toBe('id');
 		expect(match?.record.path).toBe('Plaud/bare.md');
 		// The note still reports its stored (bare) id, so a migration can rewrite it.
-		expect(match?.record.plaudId).toBe('340aec0e020aaee63768f043b7841393');
+		expect(match?.record.recordingId).toBe(
+			'340aec0e020aaee63768f043b7841393',
+		);
 	});
 
 	it('matches an of_ note to its of_ recording by id (already current)', () => {
@@ -279,7 +281,7 @@ describe('findImportedNote by canonical id', () => {
 			),
 		);
 		expect(match?.matchedBy).toBe('id');
-		expect(match?.record.plaudId).toBe(
+		expect(match?.record.recordingId).toBe(
 			'of_ab4db03305b77f8e67f345ab89b163ab',
 		);
 	});
@@ -321,7 +323,7 @@ describe('buildImportedIndex fallback keys + findImportedNote', () => {
 		);
 		expect(match?.matchedBy).toBe('instant');
 		expect(match?.record.path).toBe('Plaud/a.md');
-		expect(match?.record.plaudId).toBe('old-v3-id');
+		expect(match?.record.recordingId).toBe('old-v3-id');
 	});
 
 	it('falls back to the day key for a date-only legacy note', () => {

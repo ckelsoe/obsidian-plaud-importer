@@ -16,7 +16,6 @@ import {
 import type { ServiceProfile } from './service-profile';
 import { NoopDebugLogger, type DebugLogger } from './debug-logger';
 import type { ArtifactSelection } from './import-core';
-import { PLAUD_MARK_DATA_TYPE } from './plaud-profile';
 import { trimTrailingChars } from './text-trim';
 import { isTrustedPlaudUrl } from './plaud-hosts';
 
@@ -84,6 +83,7 @@ export class AttachmentImporter {
 	private readonly app: App;
 	private readonly markers: ManagedMarkers;
 	private readonly logPrefix: string;
+	private readonly markDataType: string;
 	private readonly resolveAuthToken: () => string | null;
 	private readonly resolveApiBaseUrl: () => string;
 	private readonly debugLogger: DebugLogger;
@@ -92,6 +92,7 @@ export class AttachmentImporter {
 		this.app = options.app;
 		this.markers = managedMarkers(options.profile);
 		this.logPrefix = `${options.profile.serviceName} importer`;
+		this.markDataType = options.profile.markDataType;
 		this.resolveAuthToken = options.getAuthToken ?? (() => null);
 		this.resolveApiBaseUrl =
 			options.getApiBaseUrl ?? (() => DEFAULT_PLAUD_API_BASE);
@@ -984,7 +985,7 @@ export class AttachmentImporter {
 		// Marks are tagged with an exact dataType by the import runner, so match it
 		// precisely rather than by substring (a pre-signed image URL must not be
 		// misread as a mark, and a mark must not be reclassified as mindmap/card).
-		if (dataType === PLAUD_MARK_DATA_TYPE) {
+		if (dataType === this.markDataType) {
 			return 'mark';
 		}
 		const haystack = `${dataType} ${name ?? ''} ${url}`.toLowerCase();

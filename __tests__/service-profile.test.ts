@@ -10,6 +10,9 @@ import { locateManagedBlock, managedMarkers } from '../managed-block';
 import {
 	NoteWriter,
 	buildNoteTags,
+	customFrontmatterContext,
+	expandCustomFrontmatterValue,
+	resolveSubfolder,
 	transcriptFileMarker,
 } from '../note-writer';
 import { PLAUD_PROFILE } from '../plaud-profile';
@@ -20,7 +23,7 @@ import type {
 	Recording,
 	Transcript,
 } from '../recording-model';
-import type { ServiceProfile } from '../service-profile';
+import { folderToken, type ServiceProfile } from '../service-profile';
 import { buildImportedIndex } from '../vault-index';
 import { asyncResult } from './helpers/async-result';
 import { makeFakeVault } from './helpers/fake-vault';
@@ -117,6 +120,28 @@ describe('a non-Plaud service profile', () => {
 		expect(tags).toEqual(['comu/ai-agent']);
 	});
 
+	it('fills its own folder token and leaves the Plaud one alone', () => {
+		const folder = { token: folderToken(COMU), name: 'Work' };
+		expect(folder.token).toBe('comu-folder');
+		expect(
+			resolveSubfolder(
+				'{{comu-folder}}',
+				RECORDING.createdAt,
+				undefined,
+				'-',
+				folder,
+			),
+		).toBe('Work');
+		const ctx = customFrontmatterContext(COMU, RECORDING, null, 'Work');
+		expect(expandCustomFrontmatterValue('{{comu-folder}}', ctx)).toBe(
+			'Work',
+		);
+		// Not this service's token, so Moment renders it as a date format.
+		expect(expandCustomFrontmatterValue('{{plaud-folder}}', ctx)).not.toBe(
+			'Work',
+		);
+	});
+
 	it('indexes notes by its own id key and canonical id', () => {
 		const app = {
 			vault: { getMarkdownFiles: () => [{ path: 'Comu/a.md' }] },
@@ -128,7 +153,9 @@ describe('a non-Plaud service profile', () => {
 		} as unknown as App;
 		const index = buildImportedIndex(COMU, app, 'Comu');
 		expect([...index.byId.keys()]).toEqual(['abc123']);
-		expect(index.byId.get('abc123' as RecordingId)?.plaudId).toBe('ABC123');
+		expect(index.byId.get('abc123' as RecordingId)?.recordingId).toBe(
+			'ABC123',
+		);
 	});
 
 	it('writes no Plaud branding into a note or a placeholder', async () => {

@@ -25,6 +25,7 @@ import { describeTokenLifetime, readTokenLifetime } from './plaud-token';
 import { deviceModelLabel } from './plaud-client';
 import { isTrustedPlaudUrl } from './plaud-hosts';
 import { PLAUD_PROFILE } from './plaud-profile';
+import { folderToken } from './service-profile';
 import {
 	DEFAULT_NOTE_NAME_TEMPLATE,
 	isValidNoteNameTemplate,
@@ -1555,7 +1556,10 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 					TEMPLATE_PREVIEW_DATE,
 					TEMPLATE_PREVIEW_TITLE,
 					this.plugin.settings.forbiddenCharReplacement,
-					TEMPLATE_PREVIEW_FOLDER,
+					{
+						token: folderToken(PLAUD_PROFILE),
+						name: TEMPLATE_PREVIEW_FOLDER,
+					},
 				)}`;
 			} catch (err) {
 				return `Preview (not usable): ${
@@ -2589,7 +2593,10 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 					TEMPLATE_PREVIEW_DATE,
 					TEMPLATE_PREVIEW_TITLE,
 					this.plugin.settings.forbiddenCharReplacement,
-					TEMPLATE_PREVIEW_FOLDER,
+					{
+						token: folderToken(PLAUD_PROFILE),
+						name: TEMPLATE_PREVIEW_FOLDER,
+					},
 				);
 				this.plugin.settings.subfolderTemplate = next;
 			} catch {

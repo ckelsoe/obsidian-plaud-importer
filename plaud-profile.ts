@@ -91,7 +91,7 @@ export function substitutePlaudPlaceholders(
  * WITHOUT a managed "Images and Attachments" entry (note-writer already renders
  * them in a `## Screenshots` section). The runner reads it from the profile.
  */
-export const PLAUD_MARK_DATA_TYPE = 'plaud_mark';
+const PLAUD_MARK_DATA_TYPE = 'plaud_mark';
 
 export const PLAUD_PROFILE: ServiceProfile = {
 	keyPrefix: 'plaud',

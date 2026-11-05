@@ -105,12 +105,12 @@ export function planMigration(
 
 	const pushHeal = (
 		recording: PlannableRecording,
-		record: { path: string; plaudId?: string },
+		record: { path: string; recordingId?: string },
 		via: MigrationHeal['via'],
 	): void => {
 		heals.push({
 			notePath: record.path,
-			fromId: record.plaudId ?? '(unknown)',
+			fromId: record.recordingId ?? '(unknown)',
 			toId: recording.id,
 			via,
 			recordingTitle: recording.title,
@@ -129,7 +129,7 @@ export function planMigration(
 			// Exact canonical-id match. Already the current id, or the note stored
 			// the bare/old form and we rewrite it to the current id. No guard: an
 			// exact identity can never point at the wrong meeting.
-			if (match.record.plaudId === recording.id) {
+			if (match.record.recordingId === recording.id) {
 				alreadyCurrent += 1;
 			} else {
 				pushHeal(recording, match.record, 'id');

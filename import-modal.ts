@@ -2572,7 +2572,7 @@ export class ImportModal extends Modal {
 				// after the subfolder template changed) so it never writes a
 				// second copy. Backed by the vault index, read live so it reflects
 				// notes written earlier in this same run.
-				existingPathForPlaudId: (id) =>
+				existingPathForRecordingId: (id) =>
 					this.importedIndex.byId.get(
 						this.importedIndex.canonicalId(id) as RecordingId,
 					)?.path ?? null,

@@ -7,10 +7,11 @@
 //   2. valid Obsidian tag tokens for the `tags:` field (issue #16 fixes the
 //      latent bug where raw filetag IDs leaked into `tags:`).
 //
-// No I/O and no `obsidian` import: the client fetches `GET /filetag/`, these
-// functions do the id->name join and the name->tag slug so both are unit
-// testable in isolation. Phase 4 (folder mirroring) will extend this module
-// with the reverse name->id direction.
+// The helpers are pure (no I/O, no `obsidian` import): the client fetches
+// `GET /filetag/`, and they do the id->name join and the name->tag slug, so
+// both are unit testable in isolation. `plaudFolderLoader` at the end is the
+// one async piece: the import runner's `loadFolders` hook, which fetches the
+// catalog through the client and builds the resolver from these helpers.
 // -----------------------------------------------------------------------------
 
 import type { FolderResolver, ImportDebugLog } from './import-runner';

@@ -61,3 +61,18 @@ export interface ServiceProfile {
 		readonly sampleName: string;
 	};
 }
+
+/**
+ * The template token for the recording's folder name, `{{<keyPrefix>-folder}}`,
+ * named after the frontmatter key it mirrors. Users' saved templates hold it, so
+ * it is a stored name like the rest of the profile.
+ */
+export function folderToken(profile: ServiceProfile): string {
+	return `${profile.keyPrefix}-folder`;
+}
+
+/** A folder token and the name it expands to in a template. */
+export interface TemplateFolder {
+	readonly token: string;
+	readonly name: string;
+}

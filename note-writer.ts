@@ -40,7 +40,11 @@ import type {
 	Transcript,
 	TranscriptSegment,
 } from './recording-model';
-import type { ServiceProfile } from './service-profile';
+import {
+	folderToken,
+	type ServiceProfile,
+	type TemplateFolder,
+} from './service-profile';
 import { trimChars, trimTrailingChars } from './text-trim';
 import {
 	locateManagedBlock,
@@ -238,7 +242,9 @@ export interface NoteWriterOptions {
 	 * Returns null when no prior note exists. When omitted, the writer falls
 	 * back to the path-scoped check only.
 	 */
-	readonly existingPathForPlaudId?: (plaudId: string) => string | null;
+	readonly existingPathForRecordingId?: (
+		recordingId: string,
+	) => string | null;
 	/**
 	 * Optional capability to migrate an existing note to its recomputed target
 	 * path (rename the note and its `<base>-assets` folder as a unit) before
@@ -696,7 +702,7 @@ function expandDateTemplate(
 	date: Date,
 	offsetMinutes: number = machineOffsetMinutes(date),
 	title?: string,
-	folder?: string,
+	folder?: TemplateFolder,
 ): string {
 	// Render in the recording's capture zone (see captureMoment). Passing the
 	// effective offset here is what keeps the note name, its subfolder, and the
@@ -710,8 +716,8 @@ function expandDateTemplate(
 			if (title !== undefined && inner === 'title') {
 				return title;
 			}
-			if (folder !== undefined && inner === 'plaud-folder') {
-				return folder;
+			if (folder !== undefined && inner === folder.token) {
+				return folder.name;
 			}
 			return m.format(inner);
 		},
@@ -825,7 +831,7 @@ export function resolveSubfolder(
 	date: Date,
 	title?: string,
 	replacement: string = '-',
-	folder?: string,
+	folder?: TemplateFolder,
 	offsetMinutes: number = machineOffsetMinutes(date),
 ): string {
 	if (template.trim() === '') {
@@ -865,9 +871,12 @@ export function resolveSubfolder(
 	// alone -> _unfiled, {{plaud-folder}}/{{YYYY}} -> _unfiled/2026 — instead of
 	// dropping the empty segment and mixing unfiled recordings into the sibling
 	// levels. Mirrors the _undated bucket for a missing date.
-	let safeFolder: string | undefined;
+	let safeFolder: TemplateFolder | undefined;
 	if (folder !== undefined) {
-		safeFolder = sanitizeFilename(folder, replacement, '') || '_unfiled';
+		safeFolder = {
+			token: folder.token,
+			name: sanitizeFilename(folder.name, replacement, '') || '_unfiled',
+		};
 	}
 	const resolved = normalizeFolderPath(
 		expandDateTemplate(
@@ -1305,7 +1314,11 @@ export function mergeTagSources(
 	}).tags;
 }
 
-/** Which tag sources land in the note's `tags:` frontmatter. */
+/**
+ * Which tag sources land in the note's `tags:` frontmatter. `'plaud'` means
+ * "the service's own tags" for every service: it is the value stored in users'
+ * settings, so it keeps its original spelling.
+ */
 export type TagMode = 'none' | 'custom' | 'plaud' | 'all';
 
 export interface TagBuildOptions {
@@ -1490,6 +1503,8 @@ export interface CustomFrontmatterContext {
 	/** Capture-zone offset (minutes) the date tokens render in. */
 	readonly offsetMinutes: number;
 	readonly title: string;
+	/** The profile's folder token (`folderToken`) that `folderName` fills. */
+	readonly folderToken: string;
 	readonly folderName: string;
 	readonly durationSeconds: number;
 	readonly category: string;
@@ -1523,6 +1538,7 @@ export function customFrontmatterContext(
 			fallbackTimezone,
 		),
 		title: recording.title,
+		folderToken: folderToken(profile),
 		folderName,
 		durationSeconds: Number.isFinite(recording.durationSeconds)
 			? Math.max(0, Math.floor(recording.durationSeconds))
@@ -1580,7 +1596,7 @@ export function expandCustomFrontmatterValue(
 		if (inner === 'title') {
 			return ctx.title;
 		}
-		if (inner === 'plaud-folder') {
+		if (inner === ctx.folderToken) {
 			return ctx.folderName;
 		}
 		return m.format(inner);
@@ -1592,7 +1608,10 @@ export function expandCustomFrontmatterValue(
  * date set plus the content tokens (`{{duration}}`, `{{category}}`, ...) resolve
  * to sample values as they type.
  */
-export const TEMPLATE_PREVIEW_CUSTOM_CONTEXT: CustomFrontmatterContext = {
+export const TEMPLATE_PREVIEW_CUSTOM_CONTEXT: Omit<
+	CustomFrontmatterContext,
+	'folderToken'
+> = {
 	date: TEMPLATE_PREVIEW_DATE,
 	// The preview has no real recording, so its date tokens render in the
 	// importing device's own zone, matching what the user sees on their machine.
@@ -1631,6 +1650,7 @@ export function renderCustomFrontmatterPreview(
 		seen.add(key);
 		const expanded = expandCustomFrontmatterValue(row.value, {
 			...TEMPLATE_PREVIEW_CUSTOM_CONTEXT,
+			folderToken: folderToken(profile),
 			device: profile.devices?.sampleName ?? '',
 		});
 		const safeKey = yamlScalar(key);
@@ -1657,7 +1677,7 @@ export function formatFrontmatter(
 	fallbackTimezone = '',
 	deviceNames: ReadonlyMap<string, string> = new Map(),
 	webBaseUrl?: string,
-	plaudLocation = '',
+	location = '',
 ): string {
 	const duration = Number.isFinite(recording.durationSeconds)
 		? Math.max(0, Math.floor(recording.durationSeconds))
@@ -1752,8 +1772,8 @@ export function formatFrontmatter(
 	// queryable (Dataview `WHERE plaud-location = "unfiled"`) without polluting the
 	// tag pane. Import sets this only for a nonzero system_folder_type, and only
 	// then is `folders` empty, so the two are mutually exclusive by construction.
-	if (plaudLocation.trim().length > 0) {
-		entries.set(`${p}-location`, yamlScalar(plaudLocation.trim()));
+	if (location.trim().length > 0) {
+		entries.set(`${p}-location`, yamlScalar(location.trim()));
 	}
 	// AI keywords demoted from tags by the tag-mode setting. A plain
 	// frontmatter property is searchable and Dataview-queryable but does
@@ -1979,7 +1999,7 @@ function frontmatterKeyValue(body: string, key: string): string | null {
  * Returns null if the content has no frontmatter, no plaud-id key, or the
  * frontmatter is malformed enough that we can't parse the id.
  */
-export function extractPlaudIdFromFrontmatter(
+export function extractRecordingIdFromFrontmatter(
 	profile: ServiceProfile,
 	content: string,
 ): string | null {
@@ -2137,7 +2157,7 @@ export function extractFrontmatterValues(content: string): Map<string, string> {
  * Returns false for any note without frontmatter, without the key, or with the
  * key set to anything other than a truthy `true`/`yes` token.
  */
-export function extractPlaudPlaceholderFlag(
+export function extractPlaceholderFlag(
 	profile: ServiceProfile,
 	content: string,
 ): boolean {
@@ -2841,7 +2861,7 @@ export interface FormatMarkdownOptions {
 	 * of `folders` for a system-bucket recording, so the two never both appear.
 	 * Empty or omitted emits no line. See `normalizePlaudLocation`.
 	 */
-	readonly plaudLocation?: string;
+	readonly location?: string;
 	/**
 	 * Extra Plaud AI template outputs (Key Points, Daily Journal, etc.) to
 	 * render in the note as a `## Template outputs` block. Empty or omitted
@@ -3010,7 +3030,7 @@ export function formatMarkdown(
 			options.fallbackTimezone ?? '',
 			options.deviceNames,
 			options.webBaseUrl,
-			options.plaudLocation ?? '',
+			options.location ?? '',
 		),
 		'',
 		// Everything from here to the end marker is plugin-owned. A re-import
@@ -3291,7 +3311,10 @@ async function readPlaudId(
 	file: FileLike,
 ): Promise<string | null> {
 	try {
-		return extractPlaudIdFromFrontmatter(profile, await vault.read(file));
+		return extractRecordingIdFromFrontmatter(
+			profile,
+			await vault.read(file),
+		);
 	} catch {
 		// A read failure must not mask the caller's intent with a spurious
 		// collision; treat an unreadable note as "no id" so the guard falls back
@@ -3341,8 +3364,8 @@ export class NoteWriter {
 	private readonly customFrontmatter: readonly CustomFrontmatterRow[];
 	private readonly preserveUnknownFrontmatter: boolean;
 	private readonly forbiddenCharReplacement: string;
-	private readonly existingPathForPlaudId?: (
-		plaudId: string,
+	private readonly existingPathForRecordingId?: (
+		recordingId: string,
 	) => string | null;
 	private readonly migrateExistingNote?: (
 		oldNotePath: string,
@@ -3401,7 +3424,7 @@ export class NoteWriter {
 		)
 			? (options.forbiddenCharReplacement as string)
 			: '-';
-		this.existingPathForPlaudId = options.existingPathForPlaudId;
+		this.existingPathForRecordingId = options.existingPathForRecordingId;
 		this.migrateExistingNote = options.migrateExistingNote;
 		this.trashFile = options.trashFile;
 		this.onDuplicate = options.onDuplicate;
@@ -3428,7 +3451,7 @@ export class NoteWriter {
 	 * names, which writeNote passes and the placeholder path (an error path that
 	 * has not resolved them) does not — so a {{plaud-folder}} template can file a
 	 * placeholder under _unfiled and the later real note under its folder. The
-	 * cross-folder dedup (existingPathForPlaudId + migrateExistingNote) reconciles
+	 * cross-folder dedup (existingPathForRecordingId + migrateExistingNote) reconciles
 	 * that by migrating the stub to the real path on the successful import.
 	 */
 	private async resolveTargetPath(
@@ -3440,9 +3463,9 @@ export class NoteWriter {
 		// buckets to _unfiled). Always pass a string so {{plaud-folder}} resolves
 		// instead of being handed to Moment as a format. The placeholder path passes
 		// no folders (they are not resolved on the error path); cross-folder dedup
-		// (existingPathForPlaudId) migrates such a stub to the real folder on the
+		// (existingPathForRecordingId) migrates such a stub to the real folder on the
 		// later successful import.
-		const folderName = folders && folders.length > 0 ? folders[0] : '';
+		const folderName = folders?.[0] ?? '';
 		// The note name and its subfolder must use the SAME capture-zone basis as
 		// the frontmatter date, or a recording near midnight could land in a
 		// subfolder for one day while its `date:` reads another.
@@ -3455,7 +3478,7 @@ export class NoteWriter {
 			recording.createdAt,
 			recording.title,
 			this.forbiddenCharReplacement,
-			folderName,
+			{ token: folderToken(this.profile), name: folderName },
 			offsetMinutes,
 		);
 		const destinationFolder = joinFolderPath(this.outputFolder, subfolder);
@@ -3532,8 +3555,8 @@ export class NoteWriter {
 	): { existing: FileLike | null; notePath: string } {
 		let existing = this.vault.getFileByPath(targetPath);
 		let notePath = targetPath;
-		if (existing === null && this.existingPathForPlaudId) {
-			const priorPath = this.existingPathForPlaudId(recording.id);
+		if (existing === null && this.existingPathForRecordingId) {
+			const priorPath = this.existingPathForRecordingId(recording.id);
 			if (priorPath !== null && priorPath !== targetPath) {
 				const priorFile = this.vault.getFileByPath(priorPath);
 				if (priorFile !== null) {
@@ -3567,7 +3590,7 @@ export class NoteWriter {
 				}`,
 			);
 		}
-		const existingPlaudId = extractPlaudIdFromFrontmatter(
+		const existingPlaudId = extractRecordingIdFromFrontmatter(
 			this.profile,
 			existingContent,
 		);
@@ -3637,7 +3660,7 @@ export class NoteWriter {
 			notePath,
 			recording.id,
 		);
-		if (!extractPlaudPlaceholderFlag(this.profile, existingContent)) {
+		if (!extractPlaceholderFlag(this.profile, existingContent)) {
 			// A real note already exists for this recording, so keep it. The fetch
 			// failed this run, but a prior import succeeded, so the good content
 			// wins over a stub.
@@ -3840,7 +3863,7 @@ export class NoteWriter {
 		// This is what makes the placeholder self-healing: a later import that
 		// actually has the transcript/summary replaces the stub even under a
 		// 'skip' or 'prompt' policy that would otherwise leave it stranded.
-		const supersedingPlaceholder = extractPlaudPlaceholderFlag(
+		const supersedingPlaceholder = extractPlaceholderFlag(
 			this.profile,
 			existingContent,
 		);
