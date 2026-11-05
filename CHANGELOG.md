@@ -8,7 +8,7 @@ All notable changes to Plaud Importer will be documented in this file.
 
 ### Fixed
 
-- **The import window always opens in the main Obsidian window.** Since Obsidian 1.14, Settings opens in its own window. Starting an import from a command while Settings had focus opened the import window inside Settings, and closing Settings closed it and stopped the import. The plugin now brings the main window forward first.
+- **The import window always opens in the main Obsidian window.** Since Obsidian 1.14, Settings opens in its own window. Starting an import from a command while Settings had focus opened the import window inside Settings, and closing Settings closed it and stopped the import. The plugin now brings the main window forward first. If it cannot, it asks you to switch to the main window and start the import again.
 
 ### Changed
 

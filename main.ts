@@ -2733,12 +2733,21 @@ export default class PlaudImporterPlugin extends Plugin {
 		const focusWait = new AbortController();
 		this.importFocusWait = focusWait;
 		void focusMainWindow(focusWait.signal)
-			.then(() => {
+			.then((mainActive) => {
 				if (this.importFocusWait === focusWait)
 					this.importFocusWait = null;
 				// The plugin may have unloaded during the focus wait.
 				if (this.disposed) {
 					this.importModalOpen = false;
+					return;
+				}
+				// Opening anywhere else would tie the import to a window that
+				// closes it when it closes.
+				if (!mainActive) {
+					this.importModalOpen = false;
+					new Notice(
+						'Plaud importer: switch to the main Obsidian window, then start the import again.',
+					);
 					return;
 				}
 				this.openImportModal(client);
