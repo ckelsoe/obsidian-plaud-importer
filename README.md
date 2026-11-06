@@ -87,11 +87,11 @@ Plaud does not offer an official API yet, so this plugin works by using Plaud's 
 
 ### From Community plugins (recommended)
 
+Open the [Plaud Importer listing](https://community.obsidian.md/plugins/plaud-importer) and click **Install**, or inside Obsidian:
+
 1. Open **Settings → Community plugins → Browse**.
 2. Search for **Plaud Importer** and click **Install**.
 3. Click **Enable**.
-
-> If you don't find it in Browse yet, it may still be in review for the community catalog. Use BRAT (below) to install it in the meantime.
 
 ### Via BRAT (beta and pre-release versions)
 
