@@ -207,7 +207,7 @@ type RecordedRequest = {
 
 function installNetwork(routes: Record<string, Route>): RecordedRequest[] {
 	const requests: RecordedRequest[] = [];
-	jest.spyOn(obsidian, 'requestUrl').mockImplementation(
+	vi.spyOn(obsidian, 'requestUrl').mockImplementation(
 		(param: RequestUrlParam | string): RequestUrlResponsePromise => {
 			const req = typeof param === 'string' ? { url: param } : param;
 			requests.push({ url: req.url, headers: { ...req.headers } });
@@ -332,14 +332,14 @@ function snapshotState(
 	};
 }
 
-let warnSpy: jest.SpyInstance;
+let warnSpy: import('vitest').MockInstance;
 
 beforeEach(() => {
-	warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+	warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
 });
 
 afterEach(() => {
-	jest.restoreAllMocks();
+	vi.restoreAllMocks();
 });
 
 // ---------------------------------------------------------------------------

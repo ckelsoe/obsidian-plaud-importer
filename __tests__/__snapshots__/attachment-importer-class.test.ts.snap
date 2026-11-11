@@ -1,6 +1,6 @@
-// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
 
-exports[`AttachmentImporter.importAttachmentsForNote: JSON picture_link envelopes downloads every distinct picture_link and never saves the JSON 1`] = `
+exports[`AttachmentImporter.importAttachmentsForNote: JSON picture_link envelopes > downloads every distinct picture_link and never saves the JSON 1`] = `
 {
   "files": [
     {
@@ -69,7 +69,7 @@ User text below.
 }
 `;
 
-exports[`AttachmentImporter.importAttachmentsForNote: generic attachments names, dedupes and renders generic images and files, continuing past failures 1`] = `
+exports[`AttachmentImporter.importAttachmentsForNote: generic attachments > names, dedupes and renders generic images and files, continuing past failures 1`] = `
 {
   "files": [
     {
@@ -167,7 +167,7 @@ User text below.
 }
 `;
 
-exports[`AttachmentImporter.importAttachmentsForNote: mindmap and card handles mindmap images, mindmap HTML, card HTML wrappers and card files 1`] = `
+exports[`AttachmentImporter.importAttachmentsForNote: mindmap and card > handles mindmap images, mindmap HTML, card HTML wrappers and card files 1`] = `
 {
   "files": [
     {
@@ -338,7 +338,7 @@ User text below.
 }
 `;
 
-exports[`AttachmentImporter.importAttachmentsForNote: replaceExisting true: trashes everything except the top-level Transcript.md, then reuses the freed names 1`] = `
+exports[`AttachmentImporter.importAttachmentsForNote: replaceExisting > true: trashes everything except the top-level Transcript.md, then reuses the freed names 1`] = `
 {
   "files": [
     {
@@ -391,7 +391,7 @@ User text below.
 }
 `;
 
-exports[`AttachmentImporter.importAudioForNote downloads, writes the file, inserts the section before the transcript, and returns the byte count 1`] = `
+exports[`AttachmentImporter.importAudioForNote > downloads, writes the file, inserts the section before the transcript, and returns the byte count 1`] = `
 {
   "files": [
     {

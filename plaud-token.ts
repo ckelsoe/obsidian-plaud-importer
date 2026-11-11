@@ -33,7 +33,7 @@ const REFRESH_TOKEN_TYP = 'WRT';
 
 // Decodes one base64url JWT segment to an object, or null when it is not valid
 // base64url JSON. atob is always present in Obsidian's Electron renderer and in
-// Node 18+ (the jest env); the Node `Buffer` global is avoided because it is
+// Node 18+ (the test env); the Node `Buffer` global is avoided because it is
 // untyped under the marketplace scan's type-checked lint.
 function decodeSegment(seg: string): Record<string, unknown> | null {
 	try {

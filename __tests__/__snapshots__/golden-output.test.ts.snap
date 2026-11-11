@@ -1,6 +1,6 @@
-// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
 
-exports[`golden output (stored format must not change) all tag mode with keywords, v4 portal URL 1`] = `
+exports[`golden output (stored format must not change) > all tag mode with keywords, v4 portal URL 1`] = `
 {
   "files": {
     "Plaud/2026-04-14 Quarterly planning.md": "---
@@ -258,7 +258,7 @@ Remember the **budget** cap.
 }
 `;
 
-exports[`golden output (stored format must not change) callout layout 1`] = `
+exports[`golden output (stored format must not change) > callout layout 1`] = `
 {
   "files": {
     "Plaud/2026-04-14 Quarterly planning.md": "---
@@ -494,7 +494,7 @@ Remember the **budget** cap.
 }
 `;
 
-exports[`golden output (stored format must not change) heading layout, H3 transcript, not folded 1`] = `
+exports[`golden output (stored format must not change) > heading layout, H3 transcript, not folded 1`] = `
 {
   "files": {
     "Plaud/2026-04-14 Quarterly planning.md": "---
@@ -742,7 +742,7 @@ Remember the **budget** cap.
 }
 `;
 
-exports[`golden output (stored format must not change) re-import keeps user text and preserved frontmatter outside the managed block 1`] = `
+exports[`golden output (stored format must not change) > re-import keeps user text and preserved frontmatter outside the managed block 1`] = `
 {
   "files": {
     "Plaud/2026-04-14 Quarterly planning.md": "---
@@ -998,7 +998,7 @@ My notes below the import.
 }
 `;
 
-exports[`golden output (stored format must not change) real attachment pipeline: screenshot, image asset and audio 1`] = `
+exports[`golden output (stored format must not change) > real attachment pipeline: screenshot, image asset and audio 1`] = `
 {
   "binaries": {
     "Plaud/2026-04-14 Quarterly planning-assets/a1b2c3d4-audio.ogg": 33,
@@ -1144,7 +1144,7 @@ _Original recording audio downloaded from Plaud at import time._
 }
 `;
 
-exports[`golden output (stored format must not change) rich recording, default options, heading layout 1`] = `
+exports[`golden output (stored format must not change) > rich recording, default options, heading layout 1`] = `
 {
   "files": {
     "Plaud/2026-04-14 Quarterly planning.md": "---
@@ -1410,7 +1410,7 @@ Remember the **budget** cap.
 }
 `;
 
-exports[`golden output (stored format must not change) separate transcript file, embedded 1`] = `
+exports[`golden output (stored format must not change) > separate transcript file, embedded 1`] = `
 {
   "files": {
     "Plaud/2026-04-14 Quarterly planning-assets/Transcript.md": "%% plaud-importer: managed transcript %%
@@ -1671,7 +1671,7 @@ Remember the **budget** cap.
 }
 `;
 
-exports[`golden output (stored format must not change) separate transcript file, linked 1`] = `
+exports[`golden output (stored format must not change) > separate transcript file, linked 1`] = `
 {
   "files": {
     "Plaud/2026-04-14 Quarterly planning-assets/Transcript.md": "%% plaud-importer: managed transcript %%
@@ -1932,7 +1932,7 @@ Remember the **budget** cap.
 }
 `;
 
-exports[`golden output (stored format must not change) summary and transcript excluded, no attachments 1`] = `
+exports[`golden output (stored format must not change) > summary and transcript excluded, no attachments 1`] = `
 {
   "files": {
     "Plaud/2026-04-14 Quarterly planning.md": "---
@@ -2066,7 +2066,7 @@ Remember the **budget** cap.
 }
 `;
 
-exports[`golden output (stored format must not change) system folder recording records plaud-location 1`] = `
+exports[`golden output (stored format must not change) > system folder recording records plaud-location 1`] = `
 {
   "files": {
     "Plaud/2026-04-14 Quarterly planning.md": "---
@@ -2320,7 +2320,7 @@ Remember the **budget** cap.
 }
 `;
 
-exports[`golden output (stored format must not change) templates: subfolder, note name, datetime, custom frontmatter, replacement char 1`] = `
+exports[`golden output (stored format must not change) > templates: subfolder, note name, datetime, custom frontmatter, replacement char 1`] = `
 {
   "files": {
     "Plaud/2026/04 April/Plan_ Q2 _ review 2026-04-14.md": "---
@@ -2582,7 +2582,7 @@ Remember the **budget** cap.
 }
 `;
 
-exports[`golden output (stored format must not change) title collision between two recordings on the same day 1`] = `
+exports[`golden output (stored format must not change) > title collision between two recordings on the same day 1`] = `
 {
   "files": {
     "Plaud/2026-04-14 Standup 2.md": "---
@@ -3071,7 +3071,7 @@ Remember the **budget** cap.
 }
 `;
 
-exports[`golden output (stored format must not change) transcript only, no summary available 1`] = `
+exports[`golden output (stored format must not change) > transcript only, no summary available 1`] = `
 {
   "files": {
     "Plaud/2026-04-14 Quarterly planning.md": "---
@@ -3183,7 +3183,7 @@ _No summary available._
 }
 `;
 
-exports[`golden output (stored format must not change) unprocessed recording writes a placeholder 1`] = `
+exports[`golden output (stored format must not change) > unprocessed recording writes a placeholder 1`] = `
 {
   "files": {
     "Plaud/2026-04-14 Still processing.md": "---

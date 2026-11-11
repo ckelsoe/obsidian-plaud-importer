@@ -1,12 +1,12 @@
-// Harness bootstrap for globals that Obsidian injects at runtime but jest's
-// `node` testEnvironment does not provide. Obsidian's typings already declare
+// Harness bootstrap for globals that Obsidian injects at runtime but the
+// `node` test environment does not provide. Obsidian's typings already declare
 // `createFragment` globally, so source files call it without importing it; under
-// jest it simply would not exist.
+// test it simply would not exist.
 //
-// This lives in a `.js` harness file beside jest.config.js on purpose. Test
+// This lives in a `.js` harness file beside vitest.config.mts on purpose. Test
 // files themselves must not poke at `globalThis` (obsidianmd/no-global-this,
 // which is never disabled), and harness bootstrapping is the same category of
-// file as the jest config it sits next to.
+// file as the test config it sits next to.
 
 /** Minimal stand-in for an Obsidian DOM element. Chainable, inert. */
 function makeElementStub() {
@@ -26,8 +26,8 @@ function makeElementStub() {
 global.createFragment = () => makeElementStub();
 
 // Plugin code runs in Obsidian's renderer, so it reaches for `window`: timers
-// (`window.setTimeout`) and Electron's bridge (`window.require`). jest's `node`
-// environment provides neither. Timers delegate to node's own so behavior is
+// (`window.setTimeout`) and Electron's bridge (`window.require`). the `node`
+// test environment provides neither. Timers delegate to node's own so behavior is
 // faithful rather than inert; `require` is deliberately ABSENT, because that is
 // what a build without the remote module looks like and several call sites are
 // specified to return "unavailable" in exactly that case. A test that wants

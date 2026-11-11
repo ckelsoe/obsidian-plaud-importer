@@ -220,14 +220,12 @@ function makeHarness(settings: Partial<HarnessSettings> = {}): Harness {
 	return harness;
 }
 describe('storing a capture is all-or-nothing (issue #86)', () => {
-	let consoleError: jest.SpyInstance;
+	let consoleError: import('vitest').MockInstance;
 
 	beforeEach(() => {
 		// The store logs the cause; keep it out of the test output, and assert it
 		// happened so a vault error is not swallowed silently either.
-		consoleError = jest
-			.spyOn(console, 'error')
-			.mockImplementation(() => {});
+		consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
 	});
 
 	afterEach(() => {

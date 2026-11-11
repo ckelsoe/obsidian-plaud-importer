@@ -9,7 +9,7 @@
 		"package:brat": "npm run build && node package-brat.mjs",
 		"lint": "eslint . --max-warnings 0 && prettier --check \"**/*.ts\" && node scripts/check-submission.mjs && node scripts/check-icons.mjs && npm run typecheck:marketplace",
 		"typecheck:marketplace": "tsc --noEmit -p tsconfig.scan.json",
-		"test": "jest --passWithNoTests",
+		"test": "vitest run --passWithNoTests",
 		"version": "node version-bump.mjs && git add manifest.json versions.json",
 		"knip": "knip",
 		"type-coverage": "type-coverage",
@@ -32,9 +32,8 @@
 		"@codemirror/state": "^6.7.6",
 		"@codemirror/view": "^6.43.13",
 		"@eslint/js": "^9.39.2",
-		"@stryker-mutator/core": "^9.6.1",
-		"@stryker-mutator/jest-runner": "^9.6.1",
-		"@types/jest": "^30.0.0",
+		"@stryker-mutator/core": "^10.1.1",
+		"@stryker-mutator/vitest-runner": "^10.1.1",
 		"@types/node": "^24.0.7",
 		"bestzip": "^4.0.3",
 		"esbuild": "^0.28.1",
@@ -44,20 +43,18 @@
 		"eslint-plugin-sonarjs": "^4.2.1",
 		"globals": "^17.1.0",
 		"husky": "^9.1.7",
-		"jest": "^30.5.2",
 		"knip": "^6.38.0",
 		"lucide-static": "^1.23.0",
 		"moment": "^2.31.0",
 		"obsidian": "^1.14.4",
 		"prettier": "^3.9.6",
-		"ts-jest": "^29.4.6",
 		"tslib": "^2.8.1",
 		"type-coverage": "^2.30.1",
 		"typescript": "^5.8.3",
-		"typescript-eslint": "^8.70.1"
+		"typescript-eslint": "^8.70.1",
+		"vitest": "^5.1.0"
 	},
 	"overrides": {
-		"@babel/core": "^7.29.6",
 		"@humanfs/node": "^0.16.8",
 		"brace-expansion@1": "^1.1.21",
 		"brace-expansion@2": "^2.1.7",
@@ -67,9 +64,17 @@
 		"glob": "^14.0.3",
 		"handlebars": "^4.7.10",
 		"js-yaml": "^4.3.2",
+		"minimatch@10": "^11.0.8",
+		"minimatch@9": "^11.0.8",
 		"moment": "^2.31.0",
 		"qs": "^6.16.1",
+		"readdir-glob": {
+			"minimatch": "^11.0.8"
+		},
 		"test-exclude": "^8.0.0",
+		"type-coverage-core": {
+			"minimatch": "^11.0.8"
+		},
 		"zod": "^4.6.6"
 	},
 	"typeCoverage": {

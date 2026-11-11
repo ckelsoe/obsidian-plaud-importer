@@ -23,7 +23,7 @@ npm install
 npm run dev              # watch-mode esbuild
 npm run build            # tsc type check + production esbuild
 npm run lint             # eslint, zero warnings tolerated
-npm test                 # jest
+npm test                 # vitest
 npm run knip             # unused files, exports, and dependencies
 npm run type-coverage    # fails below 99% typed identifiers
 npm run test:mutation    # Stryker mutation testing (slow, run on demand)

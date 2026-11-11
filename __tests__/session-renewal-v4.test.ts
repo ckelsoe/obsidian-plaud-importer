@@ -90,8 +90,8 @@ interface Harness {
 
 // Every SessionRenewal built here, so afterEach can dispose them. A failed
 // refresh reconciles the pre-expiry warning, which can arm a real (up to 20 day)
-// timer against the fresh token; left running it keeps the Jest process alive
-// after the suite finishes ("Jest did not exit"). dispose() clears both timers.
+// timer against the fresh token; left running it keeps the test process alive
+// after the suite finishes. dispose() clears both timers.
 const built: SessionRenewal[] = [];
 afterEach(() => {
 	for (const r of built) r.dispose();
@@ -308,10 +308,10 @@ function envelope(body: Record<string, unknown>): PlaudHttpResponse {
 
 describe('transient refresh failures retry on a ladder', () => {
 	beforeEach(() => {
-		jest.useFakeTimers();
+		vi.useFakeTimers();
 	});
 	afterEach(() => {
-		jest.useRealTimers();
+		vi.useRealTimers();
 	});
 
 	it('keeps the session and schedules a retry when Plaud is unreachable', async () => {
@@ -331,14 +331,14 @@ describe('transient refresh failures retry on a ladder', () => {
 		expect(await h.renewal.refreshNow()).toBe('retrying');
 		expect(h.fetchCalls).toBe(1);
 
-		await jest.advanceTimersByTimeAsync(4 * 60_000);
+		await vi.advanceTimersByTimeAsync(4 * 60_000);
 		expect(h.fetchCalls).toBe(1);
-		await jest.advanceTimersByTimeAsync(60_000);
+		await vi.advanceTimersByTimeAsync(60_000);
 		expect(h.fetchCalls).toBe(2);
-		await jest.advanceTimersByTimeAsync(20 * 60_000);
+		await vi.advanceTimersByTimeAsync(20 * 60_000);
 		expect(h.fetchCalls).toBe(3);
 		expect(h.renewal.paused).toBe(false);
-		await jest.advanceTimersByTimeAsync(60 * 60_000);
+		await vi.advanceTimersByTimeAsync(60 * 60_000);
 		expect(h.fetchCalls).toBe(4);
 
 		expect(h.renewal.paused).toBe(true);
@@ -347,7 +347,7 @@ describe('transient refresh failures retry on a ladder', () => {
 		expect(h.notices).toHaveLength(1);
 		expect(at(h.notices, 0)).toContain('Reconnect');
 		// Paused means no more attempts against the hourly ceiling.
-		await jest.advanceTimersByTimeAsync(3 * 60 * 60_000);
+		await vi.advanceTimersByTimeAsync(3 * 60 * 60_000);
 		expect(h.fetchCalls).toBe(4);
 	});
 
@@ -356,7 +356,7 @@ describe('transient refresh failures retry on a ladder', () => {
 		h.setFetch(() => Promise.resolve(httpError(503)));
 		expect(await h.renewal.refreshNow()).toBe('retrying');
 		h.renewal.reconcileRefresh();
-		await jest.advanceTimersByTimeAsync(60_000);
+		await vi.advanceTimersByTimeAsync(60_000);
 		expect(h.fetchCalls).toBe(1);
 	});
 
@@ -367,7 +367,7 @@ describe('transient refresh failures retry on a ladder', () => {
 			Promise.resolve(calls++ === 0 ? httpError(503) : okRefresh()),
 		);
 		expect(await h.renewal.refreshNow()).toBe('retrying');
-		await jest.advanceTimersByTimeAsync(5 * 60_000);
+		await vi.advanceTimersByTimeAsync(5 * 60_000);
 		expect(h.stored).toEqual([
 			{ token: FRESH_WT, refreshToken: ROTATED_REFRESH },
 		]);
@@ -501,7 +501,7 @@ describe('email session renewal falls back to the bearer refresh', () => {
 describe('renewal safety around the fallback and retries', () => {
 	afterEach(() => {
 		delete (window as unknown as { require?: unknown }).require;
-		jest.useRealTimers();
+		vi.useRealTimers();
 	});
 
 	it('holds the in-flight lock until the bearer fallback has stored', async () => {
@@ -529,14 +529,14 @@ describe('renewal safety around the fallback and retries', () => {
 	});
 
 	it('keeps persistent conflicts within 8 requests an hour', async () => {
-		jest.useFakeTimers();
+		vi.useFakeTimers();
 		const urls = installCookieTransport([
 			{ status: 200, body: JSON.stringify({ status: -4302 }) },
 		]);
 		const h = makeHarness({ signInMethod: 'window' });
 		h.storedRefresh.value = '';
 		void h.renewal.refreshNow();
-		await jest.advanceTimersByTimeAsync(59 * 60_000);
+		await vi.advanceTimersByTimeAsync(59 * 60_000);
 		// Two attempts of four step-1 calls each fill the budget, so the next
 		// ladder step waits for the first attempt to age out of the hour
 		// instead of firing at 25 minutes.
@@ -548,18 +548,18 @@ describe('renewal safety around the fallback and retries', () => {
 	});
 
 	it('ends a pending conflict wait on unload without another request', async () => {
-		jest.useFakeTimers();
+		vi.useFakeTimers();
 		const urls = installCookieTransport([
 			{ status: 200, body: JSON.stringify({ status: -4302 }) },
 		]);
 		let disposed = false;
 		const h = makeHarness({ signInMethod: 'window' }, () => disposed);
 		const pending = h.renewal.refreshNow();
-		await jest.advanceTimersByTimeAsync(0);
+		await vi.advanceTimersByTimeAsync(0);
 		expect(urls).toHaveLength(1);
 		disposed = true;
 		h.renewal.dispose();
-		expect(jest.getTimerCount()).toBe(0);
+		expect(vi.getTimerCount()).toBe(0);
 		expect(await pending).toBe('failed');
 		expect(urls).toHaveLength(1);
 	});
@@ -585,16 +585,16 @@ describe('renewal safety around the fallback and retries', () => {
 	});
 
 	it('stops a conflict retry when the user signs out meanwhile', async () => {
-		jest.useFakeTimers();
+		vi.useFakeTimers();
 		const urls = installCookieTransport([
 			{ status: 200, body: JSON.stringify({ status: -4302 }) },
 		]);
 		const h = makeHarness({ signInMethod: 'window' });
 		const pending = h.renewal.refreshNow();
-		await jest.advanceTimersByTimeAsync(0);
+		await vi.advanceTimersByTimeAsync(0);
 		expect(urls).toHaveLength(1);
 		h.storedToken.value = '';
-		await jest.advanceTimersByTimeAsync(1000);
+		await vi.advanceTimersByTimeAsync(1000);
 		expect(await pending).toBe('superseded');
 		expect(urls).toHaveLength(1);
 		expect(h.fetchCalls).toBe(0);
