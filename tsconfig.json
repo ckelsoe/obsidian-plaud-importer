@@ -1,14 +1,14 @@
 {
   "compilerOptions": {
-    "baseUrl": ".",
     "inlineSourceMap": true,
     "inlineSources": true,
     "module": "ESNext",
     "target": "ES6",
     "allowJs": true,
-    "moduleResolution": "node",
+    "moduleResolution": "bundler",
     "importHelpers": true,
     "isolatedModules": true,
+    "types": ["node", "vitest/globals"],
     "strict": true,
     "skipLibCheck": true,
     "noUncheckedIndexedAccess": true,
