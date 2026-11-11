@@ -3095,10 +3095,9 @@ export class ImportModal extends Modal {
 					return;
 				}
 				this.cancelAutoClose();
-				if (
-					!(event.target instanceof Node) ||
-					!closeButton.contains(event.target)
-				) {
+				// The event path, not `instanceof Node`, which is false for a
+				// node in a popout window (it has its own `Node`).
+				if (!event.composedPath().includes(closeButton)) {
 					countdownEl.setText('Auto-close cancelled');
 				}
 			},

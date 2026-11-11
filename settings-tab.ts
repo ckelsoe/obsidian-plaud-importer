@@ -446,6 +446,17 @@ const DISCORD_URL = 'https://discord.gg/gd6tKJDPj4';
 const AI_KEYWORDS_PROPERTY_DESC =
 	"When AI keywords are excluded from tags, write them to a keywords frontmatter property instead. Plaud's keyword list can run to hundreds of low-value entries per recording, so this is off by default. The property is searchable and Dataview-queryable but stays out of the tag pane.";
 
+// Settings that another row's `visible` predicate reads, so a change to one
+// re-evaluates which rows show.
+const VISIBILITY_PARENTS = new Set([
+	'showRibbonIcon',
+	'tagMode',
+	'autoCloseSummary',
+	'autoSyncEnabled',
+	'sourceFilterEnabled',
+	'transcriptPlacement',
+]);
+
 // Exported for tests only (issue #90). The plugin registers this itself in
 // onload; nothing outside main.ts constructs it.
 export class PlaudImporterSettingsTab extends PluginSettingTab {
@@ -2130,8 +2141,8 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 				desc: "Your stored Plaud token. The status below shows whether you are connected. The value stays in Obsidian's secret storage, never in data.json.",
 				// SecretComponent needs an App instance and is added via
 				// Setting#addComponent, so it lives in a render callback rather
-				// than a declarative control. It is not search-indexable.
-				searchable: false,
+				// than a declarative control.
+				aliases: ['secret', 'credential', 'connected', 'status'],
 				render: (setting: Setting) => this.renderTokenControl(setting),
 			},
 			{
@@ -2147,49 +2158,67 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 					{
 						name: 'Sign in with email',
 						desc: 'Best for email and password logins. Click Sign in, log in to Plaud in the window that opens, and your token is saved automatically. Google and Apple logins do not work in this window; use the option below for those.',
-						searchable: false,
+						aliases: ['login', 'log in', 'password', 'token'],
 						render: (setting: Setting) =>
 							this.renderSigninControl(setting),
 					},
 					{
 						name: 'Sign in with Google or Apple',
 						desc: 'For Google and Apple logins, which only work in a real browser. The first time needs a one-time bookmark setup. After that, sign in to Plaud in your normal browser and send the token back with the steps below.',
-						searchable: false,
+						aliases: [
+							'login',
+							'log in',
+							'browser',
+							'bookmark',
+							'bookmarklet',
+							'token',
+						],
 						render: (setting: Setting) =>
 							this.renderBrowserSignInControl(setting),
 					},
 					{
 						name: 'Test connection',
 						desc: 'Check that your stored token can reach Plaud. Use this after signing in, or any time imports start failing, to see whether you need to sign in again.',
-						searchable: false,
+						aliases: ['check', 'verify', 'token', 'connected'],
 						render: (setting: Setting) =>
 							this.renderTestControl(setting),
 					},
 					{
 						name: 'Clear sign-in',
 						desc: CLEAR_SIGN_IN_DESC,
-						searchable: false,
+						aliases: [
+							'sign out',
+							'log out',
+							'logout',
+							'reset',
+							'forget token',
+						],
 						render: (setting: Setting) =>
 							this.renderClearSignInControl(setting),
 					},
 					{
 						name: 'Plaud version',
 						desc: PLAUD_VERSION_DESC,
-						searchable: false,
+						aliases: [
+							'plaud 3.0',
+							'plaud 4.0',
+							'platform',
+							'auto detect',
+						],
 						render: (setting: Setting) =>
 							this.renderPlaudVersionControl(setting),
 					},
 					{
 						name: 'Sign-in portal',
 						desc: 'The Plaud portal the sign-in window opens. Defaults to web.plaud.ai, the main Plaud web app. Point it at your regional portal if you use a different one, and the token, workspace, and API region are all detected from wherever you sign in.',
-						searchable: false,
+						aliases: ['portal', 'web.plaud.ai', 'region', 'url'],
 						render: (setting: Setting) =>
 							this.renderPortalControl(setting),
 					},
 					{
 						name: 'API region',
 						desc: 'Plaud API host this vault uses (an https plaud.ai or theplaud.com domain). Detected on sign-in; override it here only if a specific regional host is needed.',
-						searchable: false,
+						aliases: ['region', 'host', 'server', 'api host'],
 						render: (setting: Setting) =>
 							this.renderRegionControl(setting),
 					},
@@ -2212,9 +2241,8 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 						name: 'Subfolder template',
 						desc: SUBFOLDER_TEMPLATE_INTRO,
 						// Rendered imperatively so the token reference (a list,
-						// not a one-line string) appears in the description. Not
-						// search-indexable, like the other render-based rows.
-						searchable: false,
+						// not a one-line string) appears in the description.
+						aliases: ['folder', 'date folder', 'year', 'month'],
 						render: (setting: Setting) =>
 							this.renderSubfolderTemplateControl(setting),
 					},
@@ -2222,9 +2250,13 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 						name: 'Note name template',
 						desc: NOTE_NAME_TEMPLATE_INTRO,
 						// Rendered imperatively for the token + examples lists plus
-						// the preset buttons. Not search-indexable, like the
-						// subfolder row above.
-						searchable: false,
+						// the preset buttons.
+						aliases: [
+							'file name',
+							'filename',
+							'title',
+							'note title',
+						],
 						render: (setting: Setting) =>
 							this.renderNoteNameTemplateControl(setting),
 					},
@@ -2233,7 +2265,13 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 						desc: DATETIME_TEMPLATE_INTRO,
 						// Rendered imperatively for the token + examples lists, like
 						// the two template rows above.
-						searchable: false,
+						aliases: [
+							'date',
+							'time',
+							'timestamp',
+							'moment',
+							'frontmatter',
+						],
 						render: (setting: Setting) =>
 							this.renderDatetimeTemplateControl(setting),
 					},
@@ -2242,7 +2280,7 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 						desc: FALLBACK_TIMEZONE_INTRO,
 						// Rendered imperatively for the live offset preview, like the
 						// datetime row above.
-						searchable: false,
+						aliases: ['timezone', 'time zone', 'utc', 'offset'],
 						render: (setting: Setting) =>
 							this.renderFallbackTimezoneControl(setting),
 					},
@@ -2251,7 +2289,12 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 						desc: CUSTOM_FRONTMATTER_INTRO,
 						// Rendered imperatively for the token/example lists and the
 						// dynamic key/value/preserve rowset.
-						searchable: false,
+						aliases: [
+							'custom frontmatter',
+							'properties',
+							'yaml',
+							'metadata',
+						],
 						render: (setting: Setting) =>
 							this.renderCustomFrontmatterControl(setting),
 					},
@@ -2339,7 +2382,8 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 					{
 						name: 'Ribbon icon',
 						desc: "Which icon to display in the left rail. Only applies when 'show ribbon icon' is on.",
-						searchable: false,
+						visible: () => this.plugin.settings.showRibbonIcon,
+						aliases: ['icon', 'left rail', 'ribbon'],
 						render: (setting: Setting) =>
 							this.renderRibbonControl(setting),
 					},
@@ -2366,6 +2410,7 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 					{
 						name: 'Custom tags',
 						desc: "Comma-separated tags added to every imported note, except in 'no tags' mode.",
+						visible: () => this.plugin.settings.tagMode !== 'none',
 						control: {
 							type: 'text',
 							key: 'customTags',
@@ -2375,6 +2420,8 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 					{
 						name: 'Keep AI keywords as note property',
 						desc: AI_KEYWORDS_PROPERTY_DESC,
+						// 'all' already puts AI keywords in tags (buildNoteTags).
+						visible: () => this.plugin.settings.tagMode !== 'all',
 						control: {
 							type: 'toggle',
 							key: 'aiKeywordsAsProperty',
@@ -2407,6 +2454,7 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 					{
 						name: 'Auto-close delay',
 						desc: 'Seconds to wait before the summary closes itself. Only applies when auto-close is on.',
+						visible: () => this.plugin.settings.autoCloseSummary,
 						control: {
 							type: 'text',
 							key: 'autoCloseSummarySeconds',
@@ -2452,6 +2500,7 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 					{
 						name: 'Sync interval',
 						desc: 'How often the background sync checks Plaud for new and changed recordings. Minimum 15 minutes.',
+						visible: () => this.plugin.settings.autoSyncEnabled,
 						control: {
 							type: 'dropdown',
 							key: 'autoSyncIntervalMinutes',
@@ -2484,8 +2533,15 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 						name: 'Sources',
 						desc: RECORDING_SOURCES_CONTROL_DESC,
 						// Dynamic checkbox list backed by a network device fetch, so
-						// it is rendered imperatively and is not search-indexable.
-						searchable: false,
+						// it is rendered imperatively.
+						visible: () => this.plugin.settings.sourceFilterEnabled,
+						aliases: [
+							'devices',
+							'device',
+							'notepin',
+							'filter',
+							'source',
+						],
 						render: (setting: Setting) =>
 							this.renderRecordingSourcesControl(setting),
 					},
@@ -2507,11 +2563,13 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 					{
 						name: 'Fold transcript by default',
 						desc: FOLD_TRANSCRIPT_DESC,
+						visible: () => !this.usesCalloutTranscript(),
 						control: { type: 'toggle', key: 'foldTranscript' },
 					},
 					{
 						name: 'Transcript heading level',
 						desc: TRANSCRIPT_HEADING_LEVEL_DESC,
+						visible: () => !this.usesCalloutTranscript(),
 						control: {
 							type: 'dropdown',
 							key: 'transcriptHeaderLevel',
@@ -2703,6 +2761,10 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 		}
 		await this.plugin.saveSettings();
 
+		if (VISIBILITY_PARENTS.has(key)) {
+			this.refreshVisibility();
+		}
+
 		// Side effects that the imperative onChange handlers used to run inline.
 		if (key === 'forbiddenCharReplacement') {
 			// The note-name and subfolder previews render with this character.
@@ -2737,6 +2799,20 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 					'Plaud importer: Debug logging disabled. The buffer is preserved — use the clear command to wipe it.',
 				);
 			}
+		}
+	}
+
+	// The callout layout ignores the fold and heading-level settings.
+	private usesCalloutTranscript(): boolean {
+		return this.plugin.settings.transcriptPlacement === 'callout';
+	}
+
+	// Re-evaluates the `visible` predicates in getSettingDefinitions(). update()
+	// only exists from Obsidian 1.13, the first version that reads `visible`; the
+	// 1.12 display() path shows every row, so there is nothing to refresh there.
+	private refreshVisibility(): void {
+		if (typeof this.update === 'function') {
+			this.update();
 		}
 	}
 
