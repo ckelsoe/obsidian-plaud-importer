@@ -91,7 +91,6 @@ describe('settings search', () => {
 		['Ribbon icon', 'showRibbonIcon', true, false],
 		['Auto-close delay', 'autoCloseSummary', true, false],
 		['Sync interval', 'autoSyncEnabled', true, false],
-		['Sources', 'sourceFilterEnabled', true, false],
 		['Custom tags', 'tagMode', 'custom', 'none'],
 		['Keep AI keywords as note property', 'tagMode', 'plaud', 'all'],
 		[
@@ -121,6 +120,12 @@ describe('settings search', () => {
 			expect(shown(items, name)).toBe(true);
 		},
 	);
+
+	it('keeps Sources visible while the filter is off, so devices can be excluded first', () => {
+		const { settings, items } = makeTab();
+		settings.sourceFilterEnabled = false;
+		expect(shown(items, 'Sources')).toBe(true);
+	});
 
 	it('does not re-evaluate visibility for a setting no row depends on', async () => {
 		const { tab, update } = makeTab();

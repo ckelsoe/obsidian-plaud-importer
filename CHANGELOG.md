@@ -9,7 +9,7 @@ All notable changes to Plaud Importer will be documented in this file.
 ### Changed
 
 - **Settings search finds every setting.** Search settings used to skip the sign-in rows, the token picker, the note name, subfolder and datetime templates, the time zone, extra frontmatter, the ribbon icon and the recording sources list. It now finds them, including by common words such as "login", "filename" or "devices".
-- **Settings that do not apply are hidden.** On Obsidian 1.13 and later, a setting that only matters while another one is on now shows only then: the ribbon icon, the auto-close delay, the sync interval, the source list, custom tags (hidden in "No tags" mode), the AI keywords property (hidden in "All tags" mode), and the transcript fold and heading level (hidden for the callout layout). Obsidian 1.12 still shows every setting.
+- **Settings that do not apply are hidden.** On Obsidian 1.13 and later, a setting that only matters while another one is on now shows only then: the ribbon icon, the auto-close delay, the sync interval, custom tags (hidden in "No tags" mode), the AI keywords property (hidden in "All tags" mode), and the transcript fold and heading level (hidden for the callout layout). Obsidian 1.12 still shows every setting.
 
 ## [0.46.6] - 2026-11-05
 

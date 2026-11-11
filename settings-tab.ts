@@ -2533,8 +2533,9 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 						name: 'Sources',
 						desc: RECORDING_SOURCES_CONTROL_DESC,
 						// Dynamic checkbox list backed by a network device fetch, so
-						// it is rendered imperatively.
-						visible: () => this.plugin.settings.sourceFilterEnabled,
+						// it is rendered imperatively. Shown even while the filter is
+						// off, so devices can be excluded before the filter goes on;
+						// otherwise a sync could import them in between.
 						aliases: [
 							'devices',
 							'device',
