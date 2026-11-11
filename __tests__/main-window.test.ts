@@ -7,12 +7,12 @@ const OTHER_WINDOW = {} as Window;
 // the way Obsidian updates `activeWindow` before later focus listeners run.
 function fakeWindow(takesFocus: boolean): {
 	win: Window;
-	focus: jest.Mock;
+	focus: import('vitest').Mock;
 	getActive: () => Window;
 } {
 	const target = new EventTarget();
 	let active: Window = OTHER_WINDOW;
-	const focus = jest.fn(() => {
+	const focus = vi.fn(() => {
 		if (!takesFocus) return;
 		active = win;
 		target.dispatchEvent(new Event('focus'));
@@ -28,7 +28,7 @@ function fakeWindow(takesFocus: boolean): {
 }
 
 describe('focusMainWindow', () => {
-	afterEach(() => jest.useRealTimers());
+	afterEach(() => vi.useRealTimers());
 
 	it('is true at once when the main window is already active', async () => {
 		const { win, focus } = fakeWindow(true);
@@ -40,7 +40,7 @@ describe('focusMainWindow', () => {
 	});
 
 	it('focuses the main window and is true on its focus event', async () => {
-		jest.useFakeTimers();
+		vi.useFakeTimers();
 		const { win, focus, getActive } = fakeWindow(true);
 		const signal = new AbortController().signal;
 		await expect(focusMainWindow(signal, win, getActive)).resolves.toBe(
@@ -48,11 +48,11 @@ describe('focusMainWindow', () => {
 		);
 		expect(focus).toHaveBeenCalledTimes(1);
 		// Settled by the event, not the fallback timer, which is cleared.
-		expect(jest.getTimerCount()).toBe(0);
+		expect(vi.getTimerCount()).toBe(0);
 	});
 
 	it('is false after the wait when the main window never takes focus', async () => {
-		jest.useFakeTimers();
+		vi.useFakeTimers();
 		const { win, focus, getActive } = fakeWindow(false);
 		const signal = new AbortController().signal;
 		let result: boolean | undefined;
@@ -62,20 +62,20 @@ describe('focusMainWindow', () => {
 		await Promise.resolve();
 		expect(focus).toHaveBeenCalledTimes(1);
 		expect(result).toBeUndefined();
-		jest.advanceTimersByTime(FOCUS_WAIT_MS);
+		vi.advanceTimersByTime(FOCUS_WAIT_MS);
 		await p;
 		expect(result).toBe(false);
 	});
 
 	it('is false at once and frees the timer when aborted', async () => {
-		jest.useFakeTimers();
+		vi.useFakeTimers();
 		const { win, getActive } = fakeWindow(false);
 		const ac = new AbortController();
 		const p = focusMainWindow(ac.signal, win, getActive);
-		expect(jest.getTimerCount()).toBe(1);
+		expect(vi.getTimerCount()).toBe(1);
 		ac.abort();
 		await expect(p).resolves.toBe(false);
-		expect(jest.getTimerCount()).toBe(0);
+		expect(vi.getTimerCount()).toBe(0);
 	});
 
 	it('does not focus when already aborted', async () => {

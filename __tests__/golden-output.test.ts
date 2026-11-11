@@ -123,8 +123,8 @@ function attachmentApp(vault: FakeVault, binaries: Map<string, number>): App {
 function installNetwork(
 	routes: Readonly<Record<string, { type: string; size: number }>>,
 	requested: string[],
-): jest.SpyInstance {
-	return jest
+): import('vitest').MockInstance {
+	return vi
 		.spyOn(obsidian, 'requestUrl')
 		.mockImplementation(
 			(param: RequestUrlParam | string): RequestUrlResponsePromise => {

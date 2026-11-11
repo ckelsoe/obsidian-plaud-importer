@@ -12,7 +12,7 @@
  * needed to exercise notice lifecycle. Each test assigns only the fields the
  * methods under test actually read.
  *
- * Globals Obsidian injects (`createFragment`) come from jest.setup.js, so
+ * Globals Obsidian injects (`createFragment`) come from vi.setup.js, so
  * nothing here touches globalThis.
  */
 import PlaudImporterPlugin from '../main';
@@ -42,7 +42,7 @@ function makeHost(overrides: Partial<NoticeHost> = {}): NoticeHost {
 	host.autoSyncPauseNotice = null;
 	host.actionNotices = new Set();
 	// Off so scheduleFollowUpTick() early-returns before it reaches `window`,
-	// which jest's node environment does not provide. Tick scheduling is a
+	// which the node test environment does not provide. Tick scheduling is a
 	// separate concern from notice lifecycle and is not what these cover.
 	host.settings = { autoSyncEnabled: false };
 	host.debugLogger = { enabled: false };

@@ -652,7 +652,7 @@ describe('productionPortalApiFallback', () => {
 		'https://web.plaud.ai/',
 		'https://web.plaud.ai/file-list?x=1',
 		'https://WEB.plaud.ai/',
-	])('returns production for %p', (href) => {
+	])('returns production for %o', (href) => {
 		expect(productionPortalApiFallback(href)).toBe('https://api.plaud.ai');
 	});
 
@@ -664,7 +664,7 @@ describe('productionPortalApiFallback', () => {
 		'not a url',
 		null,
 		undefined,
-	])('returns null for %p', (href) => {
+	])('returns null for %o', (href) => {
 		expect(productionPortalApiFallback(href)).toBeNull();
 	});
 });

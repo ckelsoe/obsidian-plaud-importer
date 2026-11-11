@@ -657,7 +657,7 @@ describe('PlaudV4Client.getAudioTempUrl', () => {
 	});
 
 	it('refetches the detail after the cache TTL expires', async () => {
-		const nowSpy = jest.spyOn(Date, 'now');
+		const nowSpy = vi.spyOn(Date, 'now');
 		try {
 			const { fetcher, requests } = routingFetcher([
 				{ match: '/files/detail/', response: detailEnvelope() },

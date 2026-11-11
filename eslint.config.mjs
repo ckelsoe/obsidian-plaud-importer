@@ -85,13 +85,13 @@ export default tseslint.config(
 		files: ["__tests__/**/*.ts"],
 		languageOptions: {
 			globals: {
-				...globals.jest,
+				...globals.vitest,
 			},
 		},
 	},
 	{
 		// __tests__/__mocks__/obsidian.ts IS the stub that stands in for the
-		// `obsidian` module under jest, so the restricted-import rule's remedy
+		// `obsidian` module under test, so the restricted-import rule's remedy
 		// ("import moment from 'obsidian'") would make it import itself. Scoped
 		// off here for the mocks directory only, because the config forbids
 		// disabling this rule inline and real test files should keep it.
@@ -108,6 +108,7 @@ export default tseslint.config(
 		"scripts/**",
 		".husky/**",
 		"*.mjs",
+		"*.mts",
 		"*.js",
 		"*.json",
 		"*.md",

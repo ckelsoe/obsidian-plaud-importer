@@ -18,7 +18,7 @@ interface TokenRowHost {
 			signInMethod: string;
 			plaudDetectedVersion: string;
 		};
-		saveSettings: jest.Mock;
+		saveSettings: import('vitest').Mock;
 	};
 	renderTokenControl(setting: Setting): void;
 }
@@ -34,7 +34,7 @@ function makeTab(): TokenRowHost {
 			signInMethod: 'google',
 			plaudDetectedVersion: 'v4',
 		},
-		saveSettings: jest.fn(() => Promise.resolve()),
+		saveSettings: vi.fn(() => Promise.resolve()),
 		readStoredTokenValue: () => '',
 		canRenewCredential: () => false,
 		sessionRenewalPaused: false,

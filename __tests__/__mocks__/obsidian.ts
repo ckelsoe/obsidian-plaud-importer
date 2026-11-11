@@ -1,9 +1,9 @@
-// Minimal stub of the `obsidian` module for jest. Wired in via
-// moduleNameMapper in jest.config.js.
+// Minimal stub of the `obsidian` module for the tests. Wired in via
+// resolve.alias in vitest.config.mts.
 //
 // The `obsidian` package is a peer dependency provided at runtime by
 // Obsidian itself — at test time there is no real module to resolve, so
-// any source file that imports from it would fail in jest without this
+// any source file that imports from it would fail under test without this
 // stub. Add more stub classes here as new source modules begin importing
 // from obsidian.
 //
@@ -19,8 +19,8 @@
 // broken with the whole suite green. See issue #90. Prefer making a stub
 // observable over declaring the behavior untestable.
 //
-// Globals Obsidian injects but jest's `node` environment lacks (e.g.
-// createFragment) are installed in jest.setup.js, NOT here and not from test
+// Globals Obsidian injects but the `node` test environment lacks (e.g.
+// createFragment) are installed in vitest.setup.js, NOT here and not from test
 // files, which must not touch globalThis (obsidianmd/no-global-this).
 
 /** Stand-in for an Obsidian DOM element, for the stubs below. */
@@ -157,7 +157,7 @@ export class PluginSettingTab {
  * `addExtraButton` take. The real components are chainable and register a click
  * handler; this records the label and keeps the handler callable so a test can
  * fire the click. Without that, everything a settings button DOES is unreachable
- * from jest, which is how the issue #86 silent-failure path went uncovered.
+ * from a test, which is how the issue #86 silent-failure path went uncovered.
  */
 export class ButtonStub {
 	label = '';
@@ -322,7 +322,7 @@ export class TFolder {
 	children: Array<TFile | TFolder> = [];
 }
 
-/** Network stub. Tests that need a response should jest.mock this per suite. */
+/** Network stub. Tests that need a response should vi.spyOn this per suite. */
 export function requestUrl(_options: unknown): never {
 	throw new Error(
 		'requestUrl is not stubbed for this test. Mock it in the suite that needs it.',
@@ -334,17 +334,19 @@ export function setIcon(_el: unknown, _icon: string): void {}
 // Re-export the REAL moment. At runtime the plugin gets moment from Obsidian's
 // externalized bundle (`import { moment } from 'obsidian'`); at test time there
 // is no real obsidian module, so the pure date formatters would have no moment
-// to call. moment@2.29.4 is already in node_modules (transitive via obsidian),
-// so this needs no new install and keeps the formatters unit-testable. moment
-// ships as an `export =` module, so a namespace import (not a default import)
-// is what type-checks without esModuleInterop.
+// to call. moment is already in node_modules, so this needs no new install and
+// keeps the formatters unit-testable. moment ships as an `export =` CommonJS
+// module: an ES namespace import of it is not callable, and a default import
+// does not type-check without esModuleInterop, so it is loaded with require.
 // The restricted-import rule's remedy is "import moment from 'obsidian'", which
 // this file cannot do: it IS the 'obsidian' stub, so it would import itself.
 // Scoped off for __mocks__ in the eslint config rather than disabled inline,
 // because the config forbids inline disables of that rule.
-import * as moment from 'moment';
+import { createRequire } from 'node:module';
 import { StateField } from '@codemirror/state';
-export { moment };
+export const moment = createRequire(import.meta.url)(
+	'moment',
+) as typeof import('moment');
 
 // Obsidian's Live Preview flag. The stub always reports Live Preview on; a test
 // that needs source mode passes its own value to the decoration builder.

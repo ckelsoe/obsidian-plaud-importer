@@ -23,12 +23,12 @@ describe('migrateSignInPortalUrl', () => {
 		'https://beta.plaud.ai',
 		'https://beta.plaud.ai/',
 		' https://beta.plaud.ai ',
-	])('moves the retired default %p to web.plaud.ai', (stored) => {
+	])('moves the retired default %o to web.plaud.ai', (stored) => {
 		expect(migrateSignInPortalUrl(stored)).toBe('https://web.plaud.ai');
 	});
 
 	it.each([undefined, null, 42, '', '   '])(
-		'repairs a missing or malformed value (%p) to the default',
+		'repairs a missing or malformed value (%o) to the default',
 		(stored) => {
 			expect(migrateSignInPortalUrl(stored)).toBe('https://web.plaud.ai');
 		},
@@ -40,7 +40,7 @@ describe('migrateSignInPortalUrl', () => {
 		'https://beta.plaud.ai/file-list',
 		'https://web-staging.plaud.ai',
 		'https://eu.plaud.ai',
-	])('keeps a chosen portal %p', (stored) => {
+	])('keeps a chosen portal %o', (stored) => {
 		expect(migrateSignInPortalUrl(stored)).toBe(stored);
 	});
 });
@@ -53,7 +53,7 @@ describe('migrateApiBaseUrl', () => {
 		'https://api-test.plaud.ai/',
 		'https://api-pre-euc1.plaud.ai',
 		'https://API-PRE-APSE1.plaud.ai',
-	])('moves the pre-release host %p to production', (stored) => {
+	])('moves the pre-release host %o to production', (stored) => {
 		expect(migrateApiBaseUrl(stored)).toBe('https://api.plaud.ai');
 	});
 
@@ -64,12 +64,12 @@ describe('migrateApiBaseUrl', () => {
 		'https://api-pre-.plaud.ai',
 		'https://api-pre-euc1.plaud.ai.evil.example',
 		'not a url',
-	])('keeps %p unchanged', (stored) => {
+	])('keeps %o unchanged', (stored) => {
 		expect(migrateApiBaseUrl(stored)).toBe(stored);
 	});
 
 	it.each([undefined, null, '', '  '])(
-		'repairs a missing value (%p) to production',
+		'repairs a missing value (%o) to production',
 		(stored) => {
 			expect(migrateApiBaseUrl(stored)).toBe('https://api.plaud.ai');
 		},

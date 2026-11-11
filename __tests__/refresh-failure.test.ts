@@ -12,7 +12,7 @@ import {
 // retries a dead one. Both directions are pinned.
 describe('classifyEnvelope', () => {
 	it.each([-100, -101, -102, -104, -105, -401])(
-		'treats the user-session status %p as session ended',
+		'treats the user-session status %o as session ended',
 		(status) => {
 			expect(classifyEnvelope({ status })).toEqual({
 				failed: 'denied',
@@ -109,7 +109,7 @@ describe('classifyHttpStatus', () => {
 	});
 
 	it.each([408, 429, 500, 502, 503, 504])(
-		'treats %p as transient',
+		'treats %o as transient',
 		(code) => {
 			expect(classifyHttpStatus(code)).toMatchObject({
 				failed: 'unreachable',
@@ -138,7 +138,7 @@ describe('deniedNoticeText', () => {
 		'sso-required',
 		'step-up-required',
 		'workspace-invalid',
-	])('gives %p a reconnect prompt', (reason) => {
+	])('gives %o a reconnect prompt', (reason) => {
 		expect(deniedNoticeText(reason)).toMatch(/Reconnect/);
 	});
 });

@@ -712,7 +712,7 @@ describe('selectWorkingCandidate', () => {
 	});
 
 	it('reports none-usable without probing when nothing passes the guard', async () => {
-		const probe = jest.fn(() => Promise.resolve(undefined));
+		const probe = vi.fn(() => Promise.resolve(undefined));
 		const result = await selectWorkingCandidate(
 			[PROFILE_JWT, REFRESH_TOKEN],
 			probe,

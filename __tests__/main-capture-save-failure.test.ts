@@ -56,15 +56,13 @@ function vaultWriteError(): Error {
 }
 
 describe('settings tab reports a capture that failed to save (issue #86)', () => {
-	let consoleError: jest.SpyInstance;
+	let consoleError: import('vitest').MockInstance;
 
 	beforeEach(() => {
 		Notice.reset();
 		// The handlers log the cause; keep it out of the test output, and assert
 		// it happened so the error is not swallowed silently either.
-		consoleError = jest
-			.spyOn(console, 'error')
-			.mockImplementation(() => {});
+		consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
 	});
 
 	afterEach(() => {
