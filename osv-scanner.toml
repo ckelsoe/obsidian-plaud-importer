@@ -2,24 +2,19 @@
 # accepted and what would let us drop it. Revisit whenever the dependency tree
 # changes (a new lockfile may remove the transitive path entirely).
 #
-# One active suppression, below. The deepmerge advisory left with Jest
-# (2026-11-11): Vitest does not use deepmerge. The minimatch 9.x and 10.x
-# copies are fixed through version-keyed `overrides` (`minimatch@9`,
-# `minimatch@10` to 11, plus a nested one for type-coverage-core, whose range
-# npm 10 skips), which leave eslint's own 3.x copies alone
-# (2026-11-11); only the 8.x copy below remains. (The braces entry was dropped
-# 2026-11-04: GitHub withdrew GHSA-vfj7-8cjw-p6xm on 2026-10-23.) Every other
-# dev-only advisory is FIXED rather than ignored: the package.json `overrides`
-# block pins brace-expansion, fast-uri, handlebars, and moment to patched
-# versions (2026-10-15), and glob and test-exclude to patched majors
-# (2026-11-04); the earlier brace-expansion, fast-uri, and js-yaml advisories
-# were cleared the same way on 2026-08-10.
+# No active suppressions. The deepmerge advisory left with Jest (2026-11-11):
+# Vitest does not use deepmerge. The minimatch 9.x and 10.x copies are fixed
+# through version-keyed `overrides` (`minimatch@9`, `minimatch@10` to 11, plus
+# a nested one for type-coverage-core, whose range npm 10 skips), which leave
+# eslint's own 3.x copies alone (2026-11-11). The 8.x copy, reached through
+# eslint-plugin-obsidianmd 0.4.x, left with the 0.5.1 bump (2026-11-11). (The
+# braces entry was dropped 2026-11-04: GitHub withdrew GHSA-vfj7-8cjw-p6xm on
+# 2026-10-23.) Every other dev-only advisory is FIXED rather than ignored: the
+# package.json `overrides` block pins brace-expansion, fast-uri, handlebars, and
+# moment to patched versions (2026-10-15), and glob and test-exclude to patched
+# majors (2026-11-04); the earlier brace-expansion, fast-uri, and js-yaml
+# advisories were cleared the same way on 2026-08-10.
 #
 # Add an [[IgnoredVulns]] entry here only for an advisory that is genuinely
 # unfixable without breaking a build (dev-only, not reachable, no non-breaking
 # upgrade), and say what would let us remove it.
-
-[[IgnoredVulns]]
-id = "GHSA-g3hv-75wg-m249"
-ignoreUntil = 2026-12-31
-reason = "minimatch: denial of service when a crafted glob pattern is compiled with optimizationLevel 2 or higher. Affects 7.0.0 up to 11.0.1. The 9.x and 10.x copies are overridden to 11. The one copy left is minimatch 8.0.7, reached through eslint-plugin-obsidianmd 0.4.x > eslint-plugin-json-schema-validator, which requires ^8.0.0, so an override to 11 would break its range. Dev-only: it matches this repo's own lint config patterns against its own source; nothing ships in main.js. The eslint-plugin-obsidianmd 0.5.x bump, which drops eslint-plugin-json-schema-validator, lands in this plugin's next reviewed PR: 0.5.1 reports one prefer-instanceof warning in import-modal.ts whose fix changes main.js, so it cannot ride in the test-runner migration. Drop this entry with that bump."
