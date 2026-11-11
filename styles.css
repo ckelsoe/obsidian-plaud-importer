@@ -184,6 +184,13 @@
 	gap: var(--size-4-2);
 }
 
+.plaud-importer-footer-link {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--size-4-2);
+	white-space: nowrap;
+}
+
 .plaud-importer-footer-separator {
 	color: var(--text-faint);
 }

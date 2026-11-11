@@ -2837,11 +2837,16 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 			text: string,
 			url: string,
 		): HTMLAnchorElement => {
-			inner.createSpan({
+			// Separator and its link are one nowrap item, so a narrow pane wraps
+			// between whole "| Link" units and never strands a "|".
+			const item = inner.createSpan({
+				cls: 'plaud-importer-footer-link',
+			});
+			item.createSpan({
 				cls: 'plaud-importer-footer-separator',
 				text: '|',
 			});
-			return inner.createEl('a', {
+			return item.createEl('a', {
 				text,
 				href: url,
 				attr: { target: '_blank', rel: 'noopener' },
