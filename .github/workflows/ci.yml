@@ -38,6 +38,12 @@ jobs:
       - name: Test
         run: npm test
 
+      - name: Unused files, exports and dependencies
+        run: npm run knip
+
+      - name: Type coverage
+        run: npm run type-coverage
+
       - name: Build
         run: npm run build
 
