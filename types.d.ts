@@ -92,4 +92,9 @@ declare global {
 	interface HTMLElementTagNameMap {
 		webview: ElectronWebviewTag;
 	}
+
+	// Electron's Node require, present only in the desktop app.
+	interface Window {
+		require?: (id: string) => unknown;
+	}
 }
