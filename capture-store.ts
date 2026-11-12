@@ -13,6 +13,7 @@ import { isUsableUserToken } from './plaud-token';
 import {
 	selectRefreshTokenForWorkspace,
 	selectWorkingCandidate,
+	type CandidateSelection,
 } from './token-candidates';
 import type { SignInMethod } from './reconnect-routing';
 import type { PlaudVersion } from './plaud-version';
@@ -653,7 +654,7 @@ export class CaptureStore<S extends CaptureSettings> {
 			candidates.length > 1
 				? new Notice(DEEP_LINK_PROBING_NOTICE, 15000)
 				: null;
-		let selection;
+		let selection: CandidateSelection;
 		try {
 			selection = await selectWorkingCandidate(
 				candidates,

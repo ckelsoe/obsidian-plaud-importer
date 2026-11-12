@@ -1114,7 +1114,7 @@ export class AttachmentImporter {
 			const parsed: unknown = JSON.parse(text);
 			const walk = (value: unknown): void => {
 				if (Array.isArray(value)) {
-					for (const item of value) {
+					for (const item of value as readonly unknown[]) {
 						walk(item);
 					}
 					return;
