@@ -3278,7 +3278,7 @@ export default class PlaudImporterPlugin extends Plugin {
 	// bar. Falls back to copying the bookmarklet if Node/Electron APIs are
 	// unavailable (e.g. a hardened build), so the manual path still works.
 	async openBookmarkSetupPage(): Promise<void> {
-		const req = (window as { require?: (id: string) => unknown }).require;
+		const req = window.require;
 		if (typeof req !== 'function') {
 			void copyToClipboard(
 				buildSignInBookmarklet(this.app.vault.getName()),

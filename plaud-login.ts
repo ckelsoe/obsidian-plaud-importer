@@ -403,7 +403,7 @@ interface ElectronLike {
 }
 
 function requireElectron(): ElectronLike | null {
-	const req = (window as { require?: (id: string) => unknown }).require;
+	const req = window.require;
 	if (typeof req !== 'function') {
 		return null;
 	}

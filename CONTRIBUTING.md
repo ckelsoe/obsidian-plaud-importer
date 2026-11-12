@@ -59,7 +59,7 @@ Bug fixes that change user-visible behavior need a `CHANGELOG.md` entry under `[
 
 ## Releases
 
-Releases are maintainer-driven and tag-triggered through GitHub Actions. Contributors do not need to publish releases or attach artifacts manually.
+Releases are cut by the maintainer. Contributors do not need to bump versions or create release artifacts.
 
 ## Reporting issues
 
