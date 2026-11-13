@@ -19,6 +19,7 @@ import {
 	Setting,
 	type TextComponent,
 	type SettingDefinitionItem,
+	requireApiVersion,
 	setIcon,
 } from 'obsidian';
 import { describeTokenLifetime, readTokenLifetime } from './plaud-token';
@@ -2811,8 +2812,10 @@ export class PlaudImporterSettingsTab extends PluginSettingTab {
 	// Re-evaluates the `visible` predicates in getSettingDefinitions(). update()
 	// only exists from Obsidian 1.13, the first version that reads `visible`; the
 	// 1.12 display() path shows every row, so there is nothing to refresh there.
+	// requireApiVersion is the guard the marketplace scan recognises; it does not
+	// accept a `typeof this.update` check.
 	private refreshVisibility(): void {
-		if (typeof this.update === 'function') {
+		if (requireApiVersion('1.13.0')) {
 			this.update();
 		}
 	}

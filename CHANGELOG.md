@@ -6,6 +6,10 @@ All notable changes to Plaud Importer will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- On Obsidian 1.13 and later, the settings tab refreshes which settings show through an Obsidian version check. The marketplace scan rejected the previous check, because the API it used is newer than the plugin's minimum Obsidian version.
+
 ## [0.46.7] - 2026-11-13
 
 ### Changed
