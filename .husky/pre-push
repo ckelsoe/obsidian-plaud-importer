@@ -1,4 +1,20 @@
 # Local CI before every push: the full gate (type check, lint, tests, knip,
 # type coverage, build, marketplace scan rules, OSV-Scanner, zizmor). GitHub
 # runs only a short check per PR, so this is where problems are caught.
+#
+# The gate checks the working tree, so the working tree must be what is pushed:
+# no uncommitted tracked changes, and every pushed ref must be the checked-out
+# commit (git gives "<local ref> <local sha> <remote ref> <remote sha>" lines).
+if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
+	echo "pre-push: commit or stash your changes first. The local CI must check what you push." >&2
+	exit 1
+fi
+head=$(git rev-parse HEAD)
+while read -r _ sha _ _; do
+	case $sha in *[!0]*) ;; *) continue ;; esac # all zeros: a branch or tag delete
+	if [ "$(git rev-parse "$sha^{commit}")" != "$head" ]; then
+		echo "pre-push: check out what you push first. The local CI checks only the checked-out commit." >&2
+		exit 1
+	fi
+done
 npm run ci
