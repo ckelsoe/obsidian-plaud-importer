@@ -12,7 +12,9 @@ import { existsSync, readFileSync } from "node:fs";
 
 const scripts = JSON.parse(readFileSync("package.json", "utf8")).scripts ?? {};
 const has = (name) => typeof scripts[name] === "string";
-const onPath = (bin) => spawnSync("sh", ["-c", `command -v ${bin}`]).status === 0;
+// npm and npx are .cmd launchers on Windows, which Node starts only through a shell.
+const win = process.platform === "win32";
+const onPath = (bin) => spawnSync(bin, ["--version"], { stdio: "ignore", shell: win }).status === 0;
 
 const steps = [
 	["Type check", "npx", ["tsc", "--noEmit"]],
@@ -34,7 +36,7 @@ for (const [name, bin, args, enabled = true, install] of steps) {
 	}
 	console.log(`\n▶ ${name}`);
 	try {
-		execFileSync(bin, args, { stdio: "inherit" });
+		execFileSync(bin, args, { stdio: "inherit", shell: win });
 	} catch {
 		console.error(`\n✗ ${name} failed. Fix it before pushing.`);
 		process.exit(1);

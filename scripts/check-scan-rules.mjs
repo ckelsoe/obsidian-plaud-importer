@@ -25,7 +25,7 @@ const pkg = join(cache, "package");
 if (!existsSync(join(pkg, "dist", "lib", "index.js"))) {
 	rmSync(cache, { recursive: true, force: true });
 	mkdirSync(cache, { recursive: true });
-	execFileSync("npm", ["pack", "--silent", `eslint-plugin-obsidianmd@${SCAN_VERSION}`], { cwd: cache, stdio: ["ignore", "ignore", "inherit"] });
+	execFileSync("npm", ["pack", "--silent", `eslint-plugin-obsidianmd@${SCAN_VERSION}`], { cwd: cache, stdio: ["ignore", "ignore", "inherit"], shell: process.platform === "win32" });
 	const tgz = readdirSync(cache).find((f) => f.endsWith(".tgz"));
 	if (!tgz) throw new Error("npm pack produced no tarball");
 	execFileSync("tar", ["-xzf", tgz], { cwd: cache });
@@ -69,7 +69,8 @@ export default [
 );
 
 try {
-	execFileSync("npx", ["eslint", "--config", wrapper, "--max-warnings", "0", "."], { stdio: "inherit" });
+	// Relative config path: in Windows shell mode the arguments are joined unquoted.
+	execFileSync("npx", ["eslint", "--config", ".eslint-scan.config.mts", "--max-warnings", "0", "."], { cwd: root, stdio: "inherit", shell: process.platform === "win32" });
 	console.log(`Scan-rule check passed (eslint-plugin-obsidianmd ${SCAN_VERSION}).`);
 } catch {
 	console.error(`Scan-rule check failed: eslint-plugin-obsidianmd ${SCAN_VERSION}, which the marketplace scan follows, reports the problems above.`);
