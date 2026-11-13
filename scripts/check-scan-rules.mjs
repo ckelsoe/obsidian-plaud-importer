@@ -31,7 +31,8 @@ if (!existsSync(join(pkg, "dist", "lib", "index.js"))) {
 	execFileSync("tar", ["-xzf", tgz], { cwd: cache });
 	// The installed plugin's own nested dependencies, if it has any.
 	const nested = join(root, "node_modules", "eslint-plugin-obsidianmd", "node_modules");
-	if (existsSync(nested)) symlinkSync(nested, join(pkg, "node_modules"));
+	// "junction" needs no symlink privilege on Windows; other platforms ignore it.
+	if (existsSync(nested)) symlinkSync(nested, join(pkg, "node_modules"), "junction");
 }
 
 const base = ["eslint.config.mts", "eslint.config.mjs", "eslint.config.js"].find((f) => existsSync(join(root, f)));
