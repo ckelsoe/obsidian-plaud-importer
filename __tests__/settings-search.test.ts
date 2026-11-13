@@ -6,6 +6,7 @@
 // re-evaluates it.
 
 import type { App } from 'obsidian';
+import { setMockApiVersion } from './__mocks__/obsidian';
 import {
 	PlaudImporterSettingsTab,
 	type SettingsTabHost,
@@ -125,6 +126,17 @@ describe('settings search', () => {
 		const { settings, items } = makeTab();
 		settings.sourceFilterEnabled = false;
 		expect(shown(items, 'Sources')).toBe(true);
+	});
+
+	it('does not call update() before Obsidian 1.13, where it does not exist', async () => {
+		setMockApiVersion('1.12.7');
+		try {
+			const { tab, update } = makeTab();
+			await tab.setControlValue('autoSyncEnabled', true);
+			expect(update).not.toHaveBeenCalled();
+		} finally {
+			setMockApiVersion(null);
+		}
 	});
 
 	it('does not re-evaluate visibility for a setting no row depends on', async () => {

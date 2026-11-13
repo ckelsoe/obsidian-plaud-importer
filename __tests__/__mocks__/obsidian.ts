@@ -331,6 +331,23 @@ export function requestUrl(_options: unknown): never {
 
 export function setIcon(_el: unknown, _icon: string): void {}
 
+// Tests run as the newest Obsidian unless a test sets an older version.
+let mockApiVersion: string | null = null;
+export function setMockApiVersion(version: string | null): void {
+	mockApiVersion = version;
+}
+export function requireApiVersion(version: string): boolean {
+	if (mockApiVersion === null) return true;
+	const have = mockApiVersion.split('.').map(Number);
+	const need = version.split('.').map(Number);
+	for (let i = 0; i < need.length; i++) {
+		const a = have[i] ?? 0;
+		const b = need[i] ?? 0;
+		if (a !== b) return a > b;
+	}
+	return true;
+}
+
 // Re-export the REAL moment. At runtime the plugin gets moment from Obsidian's
 // externalized bundle (`import { moment } from 'obsidian'`); at test time there
 // is no real obsidian module, so the pure date formatters would have no moment
