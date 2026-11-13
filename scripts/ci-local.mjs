@@ -16,6 +16,13 @@ const has = (name) => typeof scripts[name] === "string";
 const win = process.platform === "win32";
 const onPath = (bin) => spawnSync(bin, ["--version"], { stdio: "ignore", shell: win }).status === 0;
 
+// zizmor's advisory audit (known-vulnerable-actions) needs a GitHub token; use
+// the gh CLI login when there is one, else run offline and say so.
+const ghBin = "gh";
+const token = process.env.GH_TOKEN || process.env.GITHUB_TOKEN || (spawnSync(ghBin, ["auth", "token"], { encoding: "utf8", shell: win }).stdout ?? "").trim();
+if (token) process.env.GH_TOKEN = token;
+else console.warn("No GitHub token (gh auth login): zizmor runs offline and skips the action advisory audit.");
+
 const steps = [
 	["Type check", "npx", ["tsc", "--noEmit"]],
 	["Lint", "npm", ["run", "lint"], has("lint")],
@@ -25,7 +32,7 @@ const steps = [
 	["Build", "npm", ["run", "build"], has("build")],
 	["Marketplace scan rules", "npm", ["run", "scan-rules"], has("scan-rules")],
 	["OSV-Scanner", "osv-scanner", ["scan", "source", "--lockfile=package-lock.json"], true, "brew install osv-scanner"],
-	["Workflow audit (zizmor)", "uvx", ["zizmor@1.31.1", "--offline", "--quiet", ".github"], existsSync(".github"), "brew install uv"],
+	["Workflow audit (zizmor)", "uvx", ["zizmor@1.31.1", ...(token ? [] : ["--offline"]), "--quiet", ".github"], existsSync(".github"), "brew install uv"],
 ];
 
 for (const [name, bin, args, enabled = true, install] of steps) {
