@@ -94,8 +94,9 @@ try {
 // typecheck:marketplace can see it; this scan does. Either use the built-in
 // Date and Intl APIs (toLocaleTimeString or Intl.DateTimeFormat, with
 // getLanguage() from obsidian for the app's locale), or go through the cast
-// `(moment as typeof import('moment'))`, which pins moment's own type at that
-// boundary. Type positions such as `moment.Moment` or `typeof moment` are fine.
+// `(moment as unknown as typeof import('moment'))`, which pins moment's own type
+// at that boundary. The `unknown` step is required from TypeScript 6, which types
+// obsidian.d.ts's `import * as Moment` re-export as a non-callable namespace. Type positions such as `moment.Moment` or `typeof moment` are fine.
 // Shipped source only: tests never reach the scan. Caught by the plumbline 0.8.0
 // scan.
 //
@@ -106,10 +107,20 @@ try {
 const TEST_DIR = /(?:^|\/)(?:__tests__|__mocks__)\//;
 const TEST_FILE = /\.test\.[cm]?[jt]sx?$/;
 const MOMENT_WHY =
-	"moment from obsidian is `any` in the marketplace scan. Use Date and Intl (with getLanguage()), or go through `(moment as typeof import('moment'))`.";
+	"moment from obsidian is `any` in the marketplace scan. Use Date and Intl (with getLanguage()), or go through `(moment as unknown as typeof import('moment'))`.";
 
 // `... as typeof import('moment')`. Sanctioned only when what it casts is moment
-// itself (checked by the caller): casting a call's RESULT leaves the call unsafe.
+// itself, optionally through `as unknown` (checked by the caller): casting a
+// call's RESULT leaves the call unsafe.
+// `moment as unknown` -> `moment`, so the TypeScript 6 form of the cast matches.
+function skipUnknownCast(node) {
+	const inner = ts.skipParentheses(node);
+	return ts.isAsExpression(inner) &&
+		inner.type.kind === ts.SyntaxKind.UnknownKeyword
+		? ts.skipParentheses(inner.expression)
+		: inner;
+}
+
 function isMomentCastType(node) {
 	return (
 		ts.isAsExpression(node) &&
@@ -204,7 +215,7 @@ for (const file of walkCode(".")) {
 		if (
 			ts.isImportDeclaration(node) ||
 			isTypeOnly(node) ||
-			(isMomentCastType(node) && isMoment(ts.skipParentheses(node.expression)))
+			(isMomentCastType(node) && isMoment(skipUnknownCast(node.expression)))
 		) {
 			return;
 		}
