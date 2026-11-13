@@ -78,6 +78,11 @@
 		"zod": "^4.6.6"
 	},
 	"typeCoverage": {
-		"atLeast": 99
+		"atLeast": 100,
+		"ignoreFiles": [
+			"**/__tests__/**",
+			"**/__mocks__/**",
+			"**/*.test.ts"
+		]
 	}
 }

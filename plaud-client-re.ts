@@ -1394,7 +1394,7 @@ function parseListResponse(
 			endpoint,
 		);
 	}
-	return list.map((item, index) => {
+	return list.map((item: unknown, index) => {
 		if (!isRawRecording(item)) {
 			throw new PlaudParseError(
 				`data_file_list[${index}] is missing required fields`,
@@ -1457,7 +1457,7 @@ function parseFolderCatalog(
 	}
 	const catalog: PlaudFolder[] = [];
 	let skipped = 0;
-	for (const item of list) {
+	for (const item of list as readonly unknown[]) {
 		if (!isRawFiletag(item)) {
 			skipped++;
 			continue;
@@ -1521,7 +1521,7 @@ export function parseDeviceCatalog(
 	}
 	const devices: PlaudDevice[] = [];
 	let skipped = 0;
-	for (const item of list) {
+	for (const item of list as readonly unknown[]) {
 		if (!isRawDevice(item)) {
 			skipped++;
 			continue;
@@ -1772,7 +1772,7 @@ function isRawRecording(value: unknown): value is RawRecording {
 		value.filetag_id_list !== undefined &&
 		!(
 			Array.isArray(value.filetag_id_list) &&
-			value.filetag_id_list.every((t) => typeof t === 'string')
+			value.filetag_id_list.every((t: unknown) => typeof t === 'string')
 		)
 	) {
 		return false;
@@ -1956,7 +1956,7 @@ function findContentListLink(
 			endpoint,
 		);
 	}
-	for (const item of contentList) {
+	for (const item of contentList as readonly unknown[]) {
 		if (!isRecord(item)) {
 			continue;
 		}
@@ -1990,7 +1990,7 @@ export function findNewerSummaryMarkdown(
 			endpoint,
 		);
 	}
-	for (const item of list) {
+	for (const item of list as readonly unknown[]) {
 		if (!isRecord(item)) {
 			continue;
 		}
@@ -2107,7 +2107,7 @@ export function findAiKeywords(
 		return [];
 	}
 	const out: string[] = [];
-	for (const kw of keywords) {
+	for (const kw of keywords as readonly unknown[]) {
 		if (typeof kw === 'string' && kw.trim().length > 0) {
 			out.push(kw.trim());
 		}
@@ -2235,7 +2235,7 @@ function findAutoSumNoteExtra(
 	if (!Array.isArray(list)) {
 		return undefined;
 	}
-	for (const item of list) {
+	for (const item of list as readonly unknown[]) {
 		if (
 			isRecord(item) &&
 			item.data_type === 'auto_sum_note' &&
@@ -2365,7 +2365,7 @@ export function findConsumerNoteEntries(
 	if (!Array.isArray(list)) {
 		return out;
 	}
-	for (const item of list) {
+	for (const item of list as readonly unknown[]) {
 		if (!isRecord(item)) {
 			continue;
 		}
@@ -2432,7 +2432,7 @@ export function findAttachmentAssets(
 		if (!Array.isArray(list)) {
 			return;
 		}
-		for (const item of list) {
+		for (const item of list as readonly unknown[]) {
 			if (!isRecord(item)) {
 				continue;
 			}
@@ -2533,7 +2533,7 @@ function collectAttachmentUrls(value: unknown): readonly string[] {
 			return;
 		}
 		if (Array.isArray(cursor)) {
-			for (const item of cursor) {
+			for (const item of cursor as readonly unknown[]) {
 				walk(item);
 			}
 			return;
@@ -2691,7 +2691,7 @@ function collectDetailDataTypes(raw: unknown): readonly string[] {
 		if (!Array.isArray(list)) {
 			return;
 		}
-		for (const item of list) {
+		for (const item of list as readonly unknown[]) {
 			if (!isRecord(item)) {
 				continue;
 			}

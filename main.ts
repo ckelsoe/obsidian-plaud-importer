@@ -5,7 +5,6 @@ import {
 	TFile,
 	type ObsidianProtocolData,
 	requestUrl,
-	type RequestUrlResponse,
 } from 'obsidian';
 import {
 	PlaudAuthError,
@@ -208,7 +207,7 @@ const obsidianFetcher: PlaudHttpFetcher = async ({
 // Any other exception type is a genuine bug (e.g. an internal Obsidian API
 // change) and should propagate so it can be surfaced loudly instead of
 // silently misclassified as "unexpected shape from Plaud."
-function safeJson(response: RequestUrlResponse): unknown {
+function safeJson(response: { readonly json: unknown }): unknown {
 	try {
 		return response.json;
 	} catch (err) {

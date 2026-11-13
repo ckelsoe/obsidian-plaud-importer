@@ -1224,7 +1224,7 @@ function readKeywords(meta: unknown): readonly string[] {
 		return [];
 	}
 	const out: string[] = [];
-	for (const k of raw) {
+	for (const k of raw as readonly unknown[]) {
 		const s = readNonEmptyString(k);
 		if (s !== undefined) {
 			out.push(s);
@@ -1377,7 +1377,7 @@ export function parseMarkMemoArray(
 		return [];
 	}
 	const out: PlaudMark[] = [];
-	for (const entry of body) {
+	for (const entry of body as readonly unknown[]) {
 		if (!isRecord(entry)) {
 			continue;
 		}

@@ -224,13 +224,13 @@ export function collectTokenCandidates(
 			return;
 		}
 		if (Array.isArray(node)) {
-			for (const item of node) {
+			for (const item of node as readonly unknown[]) {
 				walk(item, depth + 1);
 			}
 			return;
 		}
 		if (node !== null && typeof node === 'object') {
-			for (const value of Object.values(node)) {
+			for (const value of Object.values(node) as readonly unknown[]) {
 				walk(value, depth + 1);
 			}
 		}
@@ -364,13 +364,13 @@ export function collectRefreshCandidates(
 			return;
 		}
 		if (Array.isArray(node)) {
-			for (const item of node) {
+			for (const item of node as readonly unknown[]) {
 				walk(item, depth + 1);
 			}
 			return;
 		}
 		if (node !== null && typeof node === 'object') {
-			for (const value of Object.values(node)) {
+			for (const value of Object.values(node) as readonly unknown[]) {
 				walk(value, depth + 1);
 			}
 		}
@@ -521,7 +521,10 @@ export function parseTokenCandidates(params: {
 			parsed = null;
 		}
 		if (Array.isArray(parsed)) {
-			for (const item of parsed.slice(0, MAX_DEEP_LINK_CANDIDATES)) {
+			for (const item of (parsed as readonly unknown[]).slice(
+				0,
+				MAX_DEEP_LINK_CANDIDATES,
+			)) {
 				push(item);
 			}
 		}
@@ -573,7 +576,10 @@ export function parseRefreshCandidates(params: {
 			parsed = null;
 		}
 		if (Array.isArray(parsed)) {
-			for (const item of parsed.slice(0, MAX_DEEP_LINK_REFRESH)) {
+			for (const item of (parsed as readonly unknown[]).slice(
+				0,
+				MAX_DEEP_LINK_REFRESH,
+			)) {
 				push(item);
 			}
 		}

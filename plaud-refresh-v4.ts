@@ -40,7 +40,7 @@
 // unit-testable with a stub fetcher, like plaud-client-re.ts and
 // plaud-refresh-net.ts.
 
-import type { PlaudHttpFetcher } from './plaud-client-re';
+import type { PlaudHttpFetcher, PlaudHttpResponse } from './plaud-client-re';
 import { normalizeTrustedOrigin } from './plaud-refresh-net';
 import { readTokenClientId, workspaceIdFromToken } from './plaud-token';
 import { redactJwtLike } from './jwt-redact';
@@ -218,7 +218,7 @@ export async function performV4Refresh(
 			headers['x-device-id'] = deviceId;
 		}
 
-		let res;
+		let res: PlaudHttpResponse;
 		try {
 			res = await deps.fetch({
 				url: `${base}${WORKSPACE_REFRESH_PATH_PREFIX}${wid}`,

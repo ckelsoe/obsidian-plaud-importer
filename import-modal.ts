@@ -596,7 +596,7 @@ export class ImportModal extends Modal {
 	onOpen(): void {
 		this.modalEl.addClass('plaud-importer-modal');
 		this.setTitle('Import plaud recordings');
-		this.refresh().catch((err) => {
+		this.refresh().catch((err: unknown) => {
 			// refresh() has its own try/catch around the fetch and always
 			// calls renderError internally. This outer catch is purely
 			// defense-in-depth against a future bug that throws outside the
@@ -1058,7 +1058,7 @@ export class ImportModal extends Modal {
 				cls: 'mod-cta',
 			});
 			retryButton.addEventListener('click', () => {
-				this.refresh().catch((err) => {
+				this.refresh().catch((err: unknown) => {
 					console.error('Plaud importer: retry failed', err);
 					this.renderError(classifyError(err));
 				});
@@ -1296,7 +1296,7 @@ export class ImportModal extends Modal {
 		this.importButton.disabled = true;
 		this.importButton.addEventListener('click', () => {
 			const selection = this.getDefaultArtifactSelection();
-			this.onImportClick(selection).catch((err) => {
+			this.onImportClick(selection).catch((err: unknown) => {
 				// onImportClick has internal error handling around every
 				// write and the writer construction — this outer catch is
 				// defense-in-depth against a future bug that throws outside
@@ -1315,7 +1315,7 @@ export class ImportModal extends Modal {
 		customizeButton.disabled =
 			this.selectedIds.size === 0 || this.preparingCustomization;
 		customizeButton.addEventListener('click', () => {
-			this.beginCustomizationFlow().catch((err) => {
+			this.beginCustomizationFlow().catch((err: unknown) => {
 				console.error(
 					'Plaud importer: customization preflight failed',
 					err,
@@ -1926,7 +1926,7 @@ export class ImportModal extends Modal {
 		this.autoAdvanceCapped = false;
 		void this.loadMore(trigger)
 			.then(() => this.pageUntilVisibleOrCapped())
-			.catch((err) => {
+			.catch((err: unknown) => {
 				console.error(
 					'Plaud importer: unexpected error in loadMore',
 					err,
@@ -2128,7 +2128,7 @@ export class ImportModal extends Modal {
 					received: incoming.length,
 				});
 			})
-			.catch((err) => {
+			.catch((err: unknown) => {
 				if (generation !== this.fetchGeneration) {
 					return;
 				}
@@ -2256,7 +2256,7 @@ export class ImportModal extends Modal {
 			source,
 			...this.scrollStateSnapshot(),
 		});
-		void this.loadMore('auto').catch((err) => {
+		void this.loadMore('auto').catch((err: unknown) => {
 			console.error('Plaud importer: unexpected auto-load error', err);
 		});
 	}
@@ -2679,7 +2679,7 @@ export class ImportModal extends Modal {
 					priorResults,
 					false,
 				),
-			).catch((err) => {
+			).catch((err: unknown) => {
 				console.error('Plaud importer: resume import failed', err);
 				this.renderError(classifyError(err));
 			});
@@ -2689,7 +2689,7 @@ export class ImportModal extends Modal {
 			text: 'Back to list',
 		});
 		backButton.addEventListener('click', () => {
-			this.refresh().catch((err) => {
+			this.refresh().catch((err: unknown) => {
 				console.error(
 					'Plaud importer: reload after re-auth failed',
 					err,
