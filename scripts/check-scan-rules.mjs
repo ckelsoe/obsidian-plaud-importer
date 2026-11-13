@@ -57,6 +57,13 @@ export default [
 		}
 		return out;
 	}),
+	// The scan also reports require() imports, which obsidianmd's recommended
+	// config turns off. Shipped source only; tests may require freely.
+	{
+		files: ["**/*.ts"],
+		ignores: ["__tests__/**", "__mocks__/**", "**/*.test.ts"],
+		rules: { "@typescript-eslint/no-require-imports": "warn" },
+	},
 ];
 `,
 );
