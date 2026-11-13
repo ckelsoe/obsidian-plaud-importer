@@ -6,6 +6,8 @@ All notable changes to Plaud Importer will be documented in this file.
 
 ## [Unreleased]
 
+## [0.46.7] - 2026-11-13
+
 ### Changed
 
 - **Settings search finds every setting.** Search settings used to skip the sign-in rows, the token picker, the note name, subfolder and datetime templates, the time zone, extra frontmatter, the ribbon icon and the recording sources list. It now finds them, including by common words such as "login", "filename" or "devices".
