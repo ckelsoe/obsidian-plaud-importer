@@ -1,19 +1,24 @@
 name: CI
 
 on:
-  push:
-    branches: [main]
   pull_request:
     branches: [main]
   schedule:
-    # Weekly OSV re-scan so new advisories surface even when no code changes
+    # Weekly security sweep (OSV, zizmor) so new advisories surface even
+    # when no code changes. Everything else runs locally (npm run ci).
     - cron: "0 12 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
 
 jobs:
   check:
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
 
     steps:
@@ -112,6 +117,7 @@ jobs:
           fi
 
   osv-scan:
+    if: github.event_name != 'pull_request'
     name: OSV Scanner
     runs-on: ubuntu-latest
     permissions:
@@ -128,23 +134,8 @@ jobs:
             --lockfile=package-lock.json
             --recursive
 
-  dependency-review:
-    name: Dependency Review
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      pull-requests: write
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
-        with:
-          fail-on-severity: high
-          comment-summary-in-pr: on-failure
-
   zizmor:
+    if: github.event_name != 'pull_request'
     name: zizmor
     # Audits the workflows, including advisories against the SHA-pinned
     # actions, which Dependabot does not alert on. The weekly cron re-checks.

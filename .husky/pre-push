@@ -1,0 +1,4 @@
+# Local CI before every push: the full gate (type check, lint, tests, knip,
+# type coverage, build, marketplace scan rules, OSV-Scanner, zizmor). GitHub
+# runs only a short check per PR, so this is where problems are caught.
+npm run ci
